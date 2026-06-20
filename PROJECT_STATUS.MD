@@ -2,6 +2,24 @@
 
 ## Status Terakhir
 
+### Fase UI-2 - Pagination List & Table Dashboard
+Status: PASS LOKAL
+
+Hasil:
+- Pagination client-side default 15 item per halaman.
+- Helper reusable: `getPaginatedSlice`, `createPaginationControlsElement`, `resetPaginationPage`, `clampPaginationPage`.
+- Diterapkan ke 9 list: open F&B, riwayat order F&B, inventory, mutasi stok, penjualan menu, stok rendah, transaksi, cashier closing, room time logs.
+- Pagination tersembunyi jika data <= 15.
+- Filter reset halaman ke 1; refresh data mem-clamp halaman aktif.
+- Backend tidak berubah.
+
+Catatan:
+- Fase frontend-only; `Code.gs` tidak berubah.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu validasi visual user.
+
+---
+
 ### Fase UI-1 - Modular Tab Layout Dashboard
 Status: PASS LOKAL
 

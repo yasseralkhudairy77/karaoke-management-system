@@ -24,6 +24,19 @@ Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab ter
 
 Fase ini **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga tidak perlu deploy Apps Script setelah update UI ini.
 
+## Fase UI-2 - Pagination List & Table Dashboard
+
+List dan tabel panjang di dalam tab kini memakai pagination client-side.
+
+- Default: **15 data per halaman**
+- Pagination hanya tampil jika data lebih dari 15 item
+- Tombol: `Sebelumnya` / `Berikutnya`
+- Info: `Menampilkan x-y dari z data · Halaman n dari m`
+- Filter mengembalikan halaman ke 1
+- Backend tidak berubah; tidak perlu deploy Apps Script
+
+List yang dipagination: Open Order F&B, Riwayat Order F&B, Inventory, Riwayat Mutasi Stok, Penjualan per Menu, Stok Rendah, Riwayat Transaksi, Riwayat Closing, Riwayat Tambah Waktu Room.
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

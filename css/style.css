@@ -182,6 +182,61 @@ body {
   gap: 18px;
 }
 
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pagination-info {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.pagination-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pagination-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(92, 213, 155, 0.45);
+  border-radius: 8px;
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.pagination-button:hover,
+.pagination-button:focus-visible {
+  background: rgba(92, 213, 155, 0.2);
+  outline: 3px solid rgba(92, 213, 155, 0.15);
+  outline-offset: 2px;
+}
+
+.pagination-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .rooms-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -4081,6 +4136,20 @@ body {
     min-height: 40px;
     padding: 0 14px;
     font-size: 0.88rem;
+  }
+
+  .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination-actions {
+    width: 100%;
+  }
+
+  .pagination-button {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .app-badge {

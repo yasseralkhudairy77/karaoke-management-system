@@ -99,6 +99,8 @@ let customExtendMinutes = "";
 let extendSessionNote = "";
 let isExtendingSession = false;
 let activeDashboardTab = loadActiveDashboardTab();
+const PAGINATION_PAGE_SIZE = 15;
+const paginationState = {};
 let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
@@ -588,6 +590,7 @@ async function fetchTodayStockMovementsFromApi() {
 
 function setStockMovementItemFilter(stockItemId) {
   stockMovementItemFilter = stockItemId || "all";
+  resetPaginationPage("stockMovements");
   loadTodayStockMovements();
 }
 
@@ -597,6 +600,7 @@ function setStockMovementTypeFilter(movementType) {
   }
 
   stockMovementTypeFilter = movementType;
+  resetPaginationPage("stockMovements");
   loadTodayStockMovements();
 }
 
@@ -606,6 +610,7 @@ function setStockMovementReferenceFilter(referenceType) {
   }
 
   stockMovementReferenceFilter = referenceType;
+  resetPaginationPage("stockMovements");
   loadTodayStockMovements();
 }
 
@@ -813,6 +818,7 @@ function setTransactionHistoryFilter(filter) {
   }
 
   transactionHistoryFilter = filter;
+  resetPaginationPage("transactions");
   renderRooms();
 }
 
@@ -1037,6 +1043,7 @@ function setSelectedFbRoom(roomId) {
     selectedFbRoomId = nextRoomId;
   }
 
+  resetPaginationPage("openFnbOrders");
   renderRooms();
 }
 
@@ -1202,11 +1209,13 @@ function setTodayFnbOrderStatusFilter(status) {
   }
 
   todayFnbOrderStatusFilter = status;
+  resetPaginationPage("todayFnbOrders");
   renderRooms();
 }
 
 function setTodayFnbOrderRoomFilter(roomId) {
   todayFnbOrderRoomFilter = roomId || "all";
+  resetPaginationPage("todayFnbOrders");
   renderRooms();
 }
 
@@ -3397,9 +3406,11 @@ function createOpenFnbOrdersPanelElement() {
     empty.textContent = getOpenFnbEmptyMessage();
     list.appendChild(empty);
   } else {
-    orders.forEach((order) => {
+    const paginatedOrders = getPaginatedSlice("openFnbOrders", orders);
+    paginatedOrders.items.forEach((order) => {
       list.appendChild(createOpenFnbOrderCardElement(order));
     });
+    list.appendChild(createPaginationControlsElement("openFnbOrders", orders.length));
   }
 
   panel.append(
@@ -3609,9 +3620,11 @@ function createTodayFnbOrdersPanelElement() {
     empty.textContent = getTodayFnbEmptyMessage();
     list.appendChild(empty);
   } else {
-    filteredOrders.forEach((order) => {
+    const paginatedOrders = getPaginatedSlice("todayFnbOrders", filteredOrders);
+    paginatedOrders.items.forEach((order) => {
       list.appendChild(createTodayFnbOrderCardElement(order));
     });
+    list.appendChild(createPaginationControlsElement("todayFnbOrders", filteredOrders.length));
   }
 
   panel.append(
@@ -3892,9 +3905,11 @@ function createInventoryPanelElement() {
     empty.textContent = "Belum ada data stok F&B.";
     list.appendChild(empty);
   } else {
-    inventoryItems.forEach((item) => {
+    const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
+    paginatedInventory.items.forEach((item) => {
       list.appendChild(createInventoryItemRowElement(item));
     });
+    list.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
   }
 
   panel.append(
@@ -4281,9 +4296,11 @@ function createTodayStockMovementsPanelElement() {
     empty.textContent = getTodayStockMovementEmptyMessage();
     list.appendChild(empty);
   } else {
-    todayStockMovements.forEach((movement) => {
+    const paginatedMovements = getPaginatedSlice("stockMovements", todayStockMovements);
+    paginatedMovements.items.forEach((movement) => {
       list.appendChild(createTodayStockMovementRowElement(movement));
     });
+    list.appendChild(createPaginationControlsElement("stockMovements", todayStockMovements.length));
   }
 
   panel.append(
@@ -4593,9 +4610,11 @@ function createFnbMenuSalesSectionElement() {
     empty.textContent = "Belum ada penjualan F&B hari ini.";
     list.appendChild(empty);
   } else {
-    todayFnbMenuSales.forEach((menuSale) => {
+    const paginatedMenuSales = getPaginatedSlice("fnbMenuSales", todayFnbMenuSales);
+    paginatedMenuSales.items.forEach((menuSale) => {
       list.appendChild(createFnbMenuSalesRowElement(menuSale));
     });
+    list.appendChild(createPaginationControlsElement("fnbMenuSales", todayFnbMenuSales.length));
   }
 
   section.append(title, list);
@@ -4657,9 +4676,11 @@ function createLowStockReportSectionElement() {
     empty.textContent = "Tidak ada stok rendah saat ini.";
     list.appendChild(empty);
   } else {
-    lowStockReportItems.forEach((item) => {
+    const paginatedLowStock = getPaginatedSlice("lowStockItems", lowStockReportItems);
+    paginatedLowStock.items.forEach((item) => {
       list.appendChild(createLowStockReportRowElement(item));
     });
+    list.appendChild(createPaginationControlsElement("lowStockItems", lowStockReportItems.length));
   }
 
   section.append(title, list);
@@ -4799,9 +4820,11 @@ function createTransactionHistoryElement() {
     empty.textContent = getEmptyTransactionMessage();
     list.appendChild(empty);
   } else {
-    filteredTransactions.forEach((transaction) => {
+    const paginatedTransactions = getPaginatedSlice("transactions", filteredTransactions);
+    paginatedTransactions.items.forEach((transaction) => {
       list.appendChild(createTransactionRowElement(transaction));
     });
+    list.appendChild(createPaginationControlsElement("transactions", filteredTransactions.length));
   }
 
   history.append(
@@ -4866,9 +4889,11 @@ function createCashierClosingHistoryElement() {
     empty.textContent = "Belum ada closing kasir hari ini.";
     list.appendChild(empty);
   } else {
-    todayCashierClosings.forEach((closing) => {
+    const paginatedClosings = getPaginatedSlice("cashierClosings", todayCashierClosings);
+    paginatedClosings.items.forEach((closing) => {
       list.appendChild(createCashierClosingRowElement(closing));
     });
+    list.appendChild(createPaginationControlsElement("cashierClosings", todayCashierClosings.length));
   }
 
   history.append(header, list);
@@ -5188,6 +5213,109 @@ function createTransactionActionsElement(transaction) {
 
 function queryDashboard(selector) {
   return dashboardShell ? dashboardShell.querySelector(selector) : null;
+}
+
+function getPaginationState(key) {
+  if (!paginationState[key]) {
+    paginationState[key] = { page: 1 };
+  }
+
+  return paginationState[key];
+}
+
+function getPaginationTotalPages(totalItems) {
+  return Math.max(1, Math.ceil(totalItems / PAGINATION_PAGE_SIZE));
+}
+
+function resetPaginationPage(key) {
+  getPaginationState(key).page = 1;
+}
+
+function setPaginationPage(key, page) {
+  const state = getPaginationState(key);
+  const totalPages = getPaginationTotalPages(state.totalItems || 0);
+  state.page = Math.max(1, Math.min(Number(page) || 1, totalPages));
+  renderRooms();
+}
+
+function clampPaginationPage(key, totalItems) {
+  const state = getPaginationState(key);
+  const totalPages = getPaginationTotalPages(totalItems);
+  state.totalItems = totalItems;
+
+  if (state.page > totalPages) {
+    state.page = totalPages;
+  }
+
+  if (state.page < 1) {
+    state.page = 1;
+  }
+}
+
+function getPaginatedSlice(key, items) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  const totalItems = sourceItems.length;
+
+  clampPaginationPage(key, totalItems);
+
+  const state = getPaginationState(key);
+  const page = state.page;
+  const startIndex = (page - 1) * PAGINATION_PAGE_SIZE;
+  const endIndex = Math.min(startIndex + PAGINATION_PAGE_SIZE, totalItems);
+
+  return {
+    items: sourceItems.slice(startIndex, endIndex),
+    page,
+    totalPages: getPaginationTotalPages(totalItems),
+    totalItems,
+    rangeStart: totalItems === 0 ? 0 : startIndex + 1,
+    rangeEnd: endIndex,
+  };
+}
+
+function createPaginationControlsElement(key, totalItems) {
+  if (totalItems <= PAGINATION_PAGE_SIZE) {
+    return document.createDocumentFragment();
+  }
+
+  clampPaginationPage(key, totalItems);
+
+  const state = getPaginationState(key);
+  const page = state.page;
+  const totalPages = getPaginationTotalPages(totalItems);
+  const rangeStart = (page - 1) * PAGINATION_PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGINATION_PAGE_SIZE, totalItems);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "pagination";
+
+  const info = document.createElement("p");
+  info.className = "pagination-info";
+  info.textContent = `Menampilkan ${rangeStart}-${rangeEnd} dari ${totalItems} data · Halaman ${page} dari ${totalPages}`;
+
+  const actions = document.createElement("div");
+  actions.className = "pagination-actions";
+
+  const prevButton = document.createElement("button");
+  prevButton.className = "pagination-button";
+  prevButton.type = "button";
+  prevButton.dataset.action = "pagination-prev";
+  prevButton.dataset.paginationKey = key;
+  prevButton.disabled = page <= 1;
+  prevButton.textContent = "Sebelumnya";
+
+  const nextButton = document.createElement("button");
+  nextButton.className = "pagination-button";
+  nextButton.type = "button";
+  nextButton.dataset.action = "pagination-next";
+  nextButton.dataset.paginationKey = key;
+  nextButton.disabled = page >= totalPages;
+  nextButton.textContent = "Berikutnya";
+
+  actions.append(prevButton, nextButton);
+  wrapper.append(info, actions);
+
+  return wrapper;
 }
 
 function loadActiveDashboardTab() {
@@ -5532,6 +5660,7 @@ async function fetchTodayRoomTimeLogsFromApi() {
 
 function setRoomTimeLogRoomFilter(roomId) {
   roomTimeLogRoomFilter = roomId || "all";
+  resetPaginationPage("roomTimeLogs");
   loadTodayRoomTimeLogs();
 }
 
@@ -5625,9 +5754,11 @@ function createTodayRoomTimeLogsPanelElement() {
     empty.textContent = getRoomTimeLogEmptyMessage();
     list.appendChild(empty);
   } else {
-    todayRoomTimeLogs.forEach((log) => {
+    const paginatedLogs = getPaginatedSlice("roomTimeLogs", todayRoomTimeLogs);
+    paginatedLogs.items.forEach((log) => {
       list.appendChild(createRoomTimeLogRowElement(log));
     });
+    list.appendChild(createPaginationControlsElement("roomTimeLogs", todayRoomTimeLogs.length));
   }
 
   panel.append(
@@ -6046,6 +6177,20 @@ async function handleRoomAction(event) {
 
   if (action === "switch-dashboard-tab") {
     setActiveDashboardTab(button.dataset.tab || "rooms");
+    return;
+  }
+
+  if (action === "pagination-prev") {
+    const paginationKey = button.dataset.paginationKey || "";
+    const state = getPaginationState(paginationKey);
+    setPaginationPage(paginationKey, state.page - 1);
+    return;
+  }
+
+  if (action === "pagination-next") {
+    const paginationKey = button.dataset.paginationKey || "";
+    const state = getPaginationState(paginationKey);
+    setPaginationPage(paginationKey, state.page + 1);
     return;
   }
 
