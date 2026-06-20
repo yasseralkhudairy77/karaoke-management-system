@@ -37,6 +37,25 @@ List dan tabel panjang di dalam tab kini memakai pagination client-side.
 
 List yang dipagination: Open Order F&B, Riwayat Order F&B, Inventory, Riwayat Mutasi Stok, Penjualan per Menu, Stok Rendah, Riwayat Transaksi, Riwayat Closing, Riwayat Tambah Waktu Room.
 
+## Fase UI-2A - Filter Tanggal Transaksi & Closing
+
+Tab Transaksi kini memiliki filter periode agar kasir/admin bisa melihat transaksi di luar hari kalender saat ini — berguna untuk operasional karaoke yang lewat tengah malam.
+
+- Default: **Hari Ini**
+- Pilihan: **Kemarin**, **7 Hari**, **Bulan Ini**, **Semua**, **Custom** (tanggal mulai & akhir)
+- Summary omzet, rekap kasir, dan riwayat closing mengikuti periode terpilih
+- Filter status transaksi (Semua / Lunas / Belum Dibayar) tetap berjalan di atas data periode
+- Pagination UI-2 tetap aktif; ganti periode mengembalikan halaman ke 1
+
+Backend (`getTodayTransactions`, `getTodayCashierClosings`) menerima parameter opsional `period`, `start_date`, `end_date`. Tanpa parameter, perilaku lama (hari ini) tetap berlaku.
+
+**Perlu deploy Apps Script** setelah update `apps-script/Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase UI-2A - Filter Tanggal Transaksi"
+```
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

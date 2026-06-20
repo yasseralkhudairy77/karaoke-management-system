@@ -163,11 +163,19 @@ function doGet(e) {
     }
 
     if (action === "getTodayTransactions") {
-      return jsonResponse(getTodayTransactions_());
+      return jsonResponse(getTransactionsByPeriod_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
     }
 
     if (action === "getTodayCashierClosings") {
-      return jsonResponse(getTodayCashierClosings_());
+      return jsonResponse(getCashierClosingsByPeriod_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
     }
 
     if (action === "getOpenFnbOrders") {
@@ -679,10 +687,29 @@ function toNonNegativeStockQuantity_(value) {
 }
 
 function getTodayTransactions_() {
-  var today = new Date();
+  return getTransactionsByPeriod_("today", "", "");
+}
+
+function getTransactionsByPeriod_(period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var transactions = readSheetAsObjects_("Transactions")
     .filter(function (transaction) {
-      return isSameJakartaDate_(transaction.created_at, today);
+      if (periodResult.period === "all") {
+        return true;
+      }
+
+      var transactionDate = resolveTransactionDateString_(transaction);
+
+      return isDateWithinInclusiveRange_(
+        transactionDate,
+        periodResult.startDate,
+        periodResult.endDate
+      );
     })
     .map(function (transaction) {
       return {
@@ -710,17 +737,29 @@ function getTodayTransactions_() {
   var summary = transactions.reduce(function (result, transaction) {
     var amount = getTransactionAmount_(transaction);
     var paymentStatus = String(transaction.payment_status || "").trim();
+    var paymentMethod = String(transaction.payment_method || "").trim().toLowerCase();
 
     result.total_transactions += 1;
     result.total_revenue_all += amount;
+    result.total_bill += amount;
 
     if (paymentStatus === "paid") {
       result.paid_transactions += 1;
       result.total_revenue_paid += amount;
+      result.paid_revenue += amount;
+
+      if (paymentMethod === "cash") {
+        result.cash_revenue += amount;
+      }
+
+      if (paymentMethod === "transfer") {
+        result.transfer_revenue += amount;
+      }
     }
 
     if (paymentStatus === "unpaid") {
       result.unpaid_transactions += 1;
+      result.unpaid_revenue += amount;
     }
 
     return result;
@@ -730,20 +769,46 @@ function getTodayTransactions_() {
     unpaid_transactions: 0,
     total_revenue_paid: 0,
     total_revenue_all: 0,
+    paid_revenue: 0,
+    unpaid_revenue: 0,
+    total_bill: 0,
+    cash_revenue: 0,
+    transfer_revenue: 0,
   });
 
   return {
     ok: true,
     transactions: transactions,
     summary: summary,
+    period: periodResult.period,
   };
 }
 
 function getTodayCashierClosings_() {
-  var todayDateString = getJakartaDateString_(new Date());
+  return getCashierClosingsByPeriod_("today", "", "");
+}
+
+function getCashierClosingsByPeriod_(period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var closings = readCashierClosingsOrEmpty_()
     .filter(function (closing) {
-      return normalizeJakartaDateString_(closing.closing_date) === todayDateString;
+      if (periodResult.period === "all") {
+        return true;
+      }
+
+      var closingDate = normalizeJakartaDateString_(closing.closing_date)
+        || normalizeJakartaDateString_(closing.created_at);
+
+      return isDateWithinInclusiveRange_(
+        closingDate,
+        periodResult.startDate,
+        periodResult.endDate
+      );
     })
     .map(function (closing) {
       return {
@@ -778,7 +843,128 @@ function getTodayCashierClosings_() {
       latest_closing_id: closings.length > 0 ? closings[0].closing_id : "",
       latest_created_at: closings.length > 0 ? closings[0].created_at : "",
     },
+    period: periodResult.period,
   };
+}
+
+function parseTransactionPeriod_(period, startDate, endDate) {
+  var normalizedPeriod = String(period || "today").trim().toLowerCase();
+  var today = getJakartaDateString_(new Date());
+
+  if (["today", "yesterday", "last7days", "thismonth", "all", "custom"].indexOf(normalizedPeriod) === -1) {
+    return {
+      ok: false,
+      error: "Periode transaksi tidak dikenal.",
+    };
+  }
+
+  if (normalizedPeriod === "today") {
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: today,
+      endDate: today,
+    };
+  }
+
+  if (normalizedPeriod === "yesterday") {
+    var yesterday = getJakartaDateWithOffset_(-1);
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: yesterday,
+      endDate: yesterday,
+    };
+  }
+
+  if (normalizedPeriod === "last7days") {
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: getJakartaDateWithOffset_(-6),
+      endDate: today,
+    };
+  }
+
+  if (normalizedPeriod === "thismonth") {
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: getJakartaMonthStartDateString_(),
+      endDate: today,
+    };
+  }
+
+  if (normalizedPeriod === "all") {
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: "",
+      endDate: "",
+    };
+  }
+
+  var normalizedStartDate = normalizeJakartaDateString_(startDate);
+  var normalizedEndDate = normalizeJakartaDateString_(endDate);
+
+  if (!normalizedStartDate || !normalizedEndDate) {
+    return {
+      ok: false,
+      error: "Tanggal mulai dan tanggal akhir wajib diisi untuk periode custom.",
+    };
+  }
+
+  if (normalizedStartDate > normalizedEndDate) {
+    return {
+      ok: false,
+      error: "Tanggal mulai tidak boleh lebih besar dari tanggal akhir.",
+    };
+  }
+
+  return {
+    ok: true,
+    period: normalizedPeriod,
+    startDate: normalizedStartDate,
+    endDate: normalizedEndDate,
+  };
+}
+
+function resolveTransactionDateString_(transaction) {
+  return normalizeJakartaDateString_(transaction.created_at)
+    || normalizeJakartaDateString_(transaction.end_time)
+    || normalizeJakartaDateString_(transaction.start_time)
+    || "";
+}
+
+function isDateWithinInclusiveRange_(dateString, startDateString, endDateString) {
+  if (!dateString) {
+    return false;
+  }
+
+  if (startDateString && dateString < startDateString) {
+    return false;
+  }
+
+  if (endDateString && dateString > endDateString) {
+    return false;
+  }
+
+  return true;
+}
+
+function getJakartaDateWithOffset_(dayOffset) {
+  var now = new Date();
+
+  return Utilities.formatDate(
+    new Date(now.getTime() + (Number(dayOffset) || 0) * 86400000),
+    "Asia/Jakarta",
+    "yyyy-MM-dd"
+  );
+}
+
+function getJakartaMonthStartDateString_() {
+  return Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyy-MM") + "-01";
 }
 
 function readCashierClosingsOrEmpty_() {

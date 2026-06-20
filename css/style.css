@@ -182,6 +182,113 @@ body {
   gap: 18px;
 }
 
+.period-filter {
+  display: grid;
+  gap: 12px;
+}
+
+.period-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.period-filter-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(139, 150, 168, 0.45);
+  border-radius: 999px;
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.period-filter-button:hover,
+.period-filter-button:focus-visible,
+.period-filter-button.active {
+  border-color: rgba(92, 213, 155, 0.45);
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  outline: 3px solid rgba(92, 213, 155, 0.15);
+  outline-offset: 2px;
+}
+
+.custom-date-filter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.custom-date-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.custom-date-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.custom-date-input {
+  min-height: 42px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(10, 16, 28, 0.86);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.custom-date-input:focus-visible {
+  border-color: rgba(92, 213, 155, 0.55);
+  outline: 3px solid rgba(92, 213, 155, 0.18);
+  outline-offset: 2px;
+}
+
+.period-filter-apply-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(92, 213, 155, 0.45);
+  border-radius: 8px;
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.period-filter-apply-button:hover,
+.period-filter-apply-button:focus-visible {
+  background: rgba(92, 213, 155, 0.2);
+  outline: 3px solid rgba(92, 213, 155, 0.2);
+  outline-offset: 2px;
+}
+
+.period-filter-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 193, 102, 0.35);
+  border-radius: 8px;
+  color: var(--billing-amber);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .pagination {
   display: flex;
   flex-wrap: wrap;
@@ -4149,6 +4256,22 @@ body {
 
   .pagination-button {
     flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .period-filter-buttons {
+    width: 100%;
+  }
+
+  .period-filter-button {
+    flex: 1 1 auto;
+  }
+
+  .custom-date-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .period-filter-apply-button {
     width: 100%;
   }
 

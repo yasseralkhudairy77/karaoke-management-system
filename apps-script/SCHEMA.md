@@ -110,6 +110,56 @@ Contoh `payment_status`:
 - `paid`
 - `cancelled`
 
+### Fase UI-2A - Filter Periode Transaksi
+
+GET `getTodayTransactions` tetap backward compatible. Tanpa parameter `period`, default `today`.
+
+Query parameter opsional:
+
+- `period` — `today`, `yesterday`, `last7days`, `thismonth`, `all`, `custom`
+- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+- `end_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+
+Filter tanggal memakai timezone Jakarta dengan urutan field:
+
+1. `created_at`
+2. fallback `end_time`
+3. fallback `start_time`
+
+Periode:
+
+- `today` — hari ini (Jakarta)
+- `yesterday` — kemarin (Jakarta)
+- `last7days` — 6 hari sebelum hari ini sampai hari ini (7 hari inklusif)
+- `thismonth` — tanggal 1 bulan berjalan sampai hari ini
+- `all` — semua transaksi
+- `custom` — `start_date` sampai `end_date` inklusif
+
+Error:
+
+- period tidak dikenal → `Periode transaksi tidak dikenal.`
+- custom tanpa tanggal → `Tanggal mulai dan tanggal akhir wajib diisi untuk periode custom.`
+- `start_date > end_date` → `Tanggal mulai tidak boleh lebih besar dari tanggal akhir.`
+
+Summary response dihitung dari hasil filter periode, termasuk `cash_revenue` dan `transfer_revenue`.
+
+### Fase UI-2A - Filter Periode Cashier Closings
+
+GET `getTodayCashierClosings` tetap backward compatible. Tanpa parameter `period`, default `today`.
+
+Query parameter opsional (sama dengan transaksi):
+
+- `period` — `today`, `yesterday`, `last7days`, `thismonth`, `all`, `custom`
+- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+- `end_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+
+Filter tanggal memakai timezone Jakarta dengan urutan field:
+
+1. `closing_date`
+2. fallback `created_at`
+
+Periode dan error mengikuti aturan yang sama dengan `getTodayTransactions`.
+
 ## CashierClosings
 
 Menyimpan hasil tutup kasir sederhana.

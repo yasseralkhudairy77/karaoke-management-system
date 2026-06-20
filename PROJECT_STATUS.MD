@@ -2,6 +2,26 @@
 
 ## Status Terakhir
 
+### Fase UI-2A - Filter Tanggal Transaksi & Closing
+Status: PASS LOKAL
+
+Hasil:
+- Filter periode di tab Transaksi: Hari Ini (default), Kemarin, 7 Hari, Bulan Ini, Semua, Custom.
+- Backend `getTodayTransactions` dan `getTodayCashierClosings` backward compatible dengan parameter `period`, `start_date`, `end_date`.
+- Filter tanggal transaksi: `created_at` → fallback `end_time` → fallback `start_time` (timezone Jakarta).
+- Filter tanggal closing: `closing_date` → fallback `created_at`.
+- Summary omzet, rekap kasir, dan riwayat closing mengikuti periode terpilih.
+- Filter status (Semua / Lunas / Belum Dibayar) dan pagination UI-2 tetap berjalan.
+- Empty state dinamis: "Belum ada transaksi pada periode ini."
+- `node --check js/app.js` PASS; syntax `Code.gs` PASS.
+
+Catatan:
+- `Code.gs` berubah; deploy Apps Script diperlukan sebelum test production.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy + validasi production (terutama skenario lewat tengah malam).
+
+---
+
 ### Fase UI-2 - Pagination List & Table Dashboard
 Status: PASS LOKAL
 

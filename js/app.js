@@ -37,6 +37,18 @@ let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
 let transactionHistoryFilter = "all";
+let transactionPeriodFilter = "today";
+let transactionCustomStartDate = "";
+let transactionCustomEndDate = "";
+let transactionPeriodNotice = "";
+const TRANSACTION_PERIOD_OPTIONS = [
+  ["today", "Hari Ini"],
+  ["yesterday", "Kemarin"],
+  ["last7days", "7 Hari"],
+  ["thisMonth", "Bulan Ini"],
+  ["all", "Semua"],
+  ["custom", "Custom"],
+];
 let cashierClosingPreviewVisible = false;
 let cashierClosingCashActual = "";
 let cashierClosingNote = "";
@@ -156,8 +168,47 @@ async function fetchRoomsFromApi() {
   return data.rooms;
 }
 
+function normalizeTransactionPeriodForApi(period) {
+  if (period === "thisMonth") {
+    return "thismonth";
+  }
+
+  return period;
+}
+
+function buildTransactionPeriodQueryParams() {
+  const params = new URLSearchParams();
+
+  params.set("period", normalizeTransactionPeriodForApi(transactionPeriodFilter));
+
+  if (transactionPeriodFilter === "custom") {
+    if (transactionCustomStartDate) {
+      params.set("start_date", transactionCustomStartDate);
+    }
+
+    if (transactionCustomEndDate) {
+      params.set("end_date", transactionCustomEndDate);
+    }
+  }
+
+  return params;
+}
+
+function canFetchTransactionPeriodData() {
+  if (transactionPeriodFilter !== "custom") {
+    return true;
+  }
+
+  return Boolean(transactionCustomStartDate && transactionCustomEndDate);
+}
+
 async function loadTodayTransactions() {
   if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  if (!canFetchTransactionPeriodData()) {
+    renderRooms();
     return;
   }
 
@@ -168,7 +219,8 @@ async function loadTodayTransactions() {
     todayTransactionSummary = data.summary;
     renderRooms();
   } catch (error) {
-    console.warn("Gagal memuat riwayat transaksi hari ini.", error);
+    console.warn("Gagal memuat riwayat transaksi.", error);
+    showInlineNotice(error.message || "Gagal memuat riwayat transaksi.", "error");
     todayTransactions = [];
     todayTransactionSummary = null;
     renderRooms();
@@ -176,7 +228,8 @@ async function loadTodayTransactions() {
 }
 
 async function fetchTodayTransactionsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions`);
+  const params = buildTransactionPeriodQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -185,7 +238,7 @@ async function fetchTodayTransactionsFromApi() {
   const data = await response.json();
 
   if (!data || data.ok !== true || !Array.isArray(data.transactions)) {
-    throw new Error("API response is invalid.");
+    throw new Error(data?.error || "API response is invalid.");
   }
 
   return {
@@ -199,6 +252,11 @@ async function loadTodayCashierClosings() {
     return;
   }
 
+  if (!canFetchTransactionPeriodData()) {
+    renderRooms();
+    return;
+  }
+
   try {
     const data = await fetchTodayCashierClosingsFromApi();
 
@@ -207,7 +265,8 @@ async function loadTodayCashierClosings() {
     lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
     renderRooms();
   } catch (error) {
-    console.warn("Gagal memuat riwayat closing hari ini.", error);
+    console.warn("Gagal memuat riwayat closing.", error);
+    showInlineNotice(error.message || "Gagal memuat riwayat closing.", "error");
     todayCashierClosings = [];
     todayCashierClosingSummary = null;
     renderRooms();
@@ -215,7 +274,8 @@ async function loadTodayCashierClosings() {
 }
 
 async function fetchTodayCashierClosingsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings`);
+  const params = buildTransactionPeriodQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -224,7 +284,7 @@ async function fetchTodayCashierClosingsFromApi() {
   const data = await response.json();
 
   if (!data || data.ok !== true || !Array.isArray(data.closings)) {
-    throw new Error("API response is invalid.");
+    throw new Error(data?.error || "API response is invalid.");
   }
 
   return {
@@ -822,6 +882,77 @@ function setTransactionHistoryFilter(filter) {
   renderRooms();
 }
 
+function getTransactionPeriodTitleSuffix() {
+  const labels = {
+    today: "Hari Ini",
+    yesterday: "Kemarin",
+    last7days: "7 Hari Terakhir",
+    thisMonth: "Bulan Ini",
+    all: "Semua",
+    custom: "Custom",
+  };
+
+  return labels[transactionPeriodFilter] || "Hari Ini";
+}
+
+function getTransactionPeriodRevenueNote() {
+  if (transactionPeriodFilter === "custom" && transactionCustomStartDate && transactionCustomEndDate) {
+    return `Semua transaksi ${transactionCustomStartDate} s/d ${transactionCustomEndDate}`;
+  }
+
+  return `Semua transaksi ${getTransactionPeriodTitleSuffix().toLowerCase()}`;
+}
+
+function setTransactionPeriodFilter(period) {
+  if (!TRANSACTION_PERIOD_OPTIONS.some(([value]) => value === period)) {
+    return;
+  }
+
+  transactionPeriodFilter = period;
+  resetPaginationPage("transactions");
+  resetPaginationPage("cashierClosings");
+
+  if (period !== "custom") {
+    transactionCustomStartDate = "";
+    transactionCustomEndDate = "";
+    transactionPeriodNotice = "";
+    loadTodayTransactions();
+    loadTodayCashierClosings();
+    return;
+  }
+
+  transactionPeriodNotice = "Pilih tanggal mulai dan tanggal akhir, lalu klik Terapkan.";
+  renderRooms();
+}
+
+function updateTransactionCustomStartDate(value) {
+  transactionCustomStartDate = value || "";
+}
+
+function updateTransactionCustomEndDate(value) {
+  transactionCustomEndDate = value || "";
+}
+
+async function applyTransactionCustomPeriod() {
+  if (!transactionCustomStartDate || !transactionCustomEndDate) {
+    transactionPeriodNotice = "Pilih tanggal mulai dan tanggal akhir, lalu klik Terapkan.";
+    renderRooms();
+    return;
+  }
+
+  if (transactionCustomStartDate > transactionCustomEndDate) {
+    transactionPeriodNotice = "Tanggal mulai tidak boleh lebih besar dari tanggal akhir.";
+    renderRooms();
+    return;
+  }
+
+  transactionPeriodNotice = "";
+  resetPaginationPage("transactions");
+  resetPaginationPage("cashierClosings");
+  await loadTodayTransactions();
+  await loadTodayCashierClosings();
+}
+
 function getFilteredTodayTransactions() {
   if (transactionHistoryFilter === "all") {
     return todayTransactions;
@@ -851,14 +982,18 @@ function showTransactionFromHistory(transactionId) {
 
 function getEmptyTransactionMessage() {
   if (transactionHistoryFilter === "paid") {
-    return "Belum ada transaksi lunas hari ini.";
+    return "Belum ada transaksi lunas pada periode ini.";
   }
 
   if (transactionHistoryFilter === "unpaid") {
-    return "Tidak ada transaksi yang belum dibayar.";
+    return "Tidak ada transaksi yang belum dibayar pada periode ini.";
   }
 
-  return "Belum ada transaksi hari ini.";
+  return "Belum ada transaksi pada periode ini.";
+}
+
+function getEmptyCashierClosingMessage() {
+  return "Belum ada closing kasir pada periode ini.";
 }
 
 function toggleCashierClosingPreview() {
@@ -1827,7 +1962,7 @@ function createCashierRevenueSummaryElement(summary) {
       `${summary.unpaidCount} transaksi`,
       "warning",
     ],
-    ["Total Tagihan", formatCurrency(summary.totalRevenue), "Semua transaksi hari ini"],
+    ["Total Tagihan", formatCurrency(summary.totalRevenue), getTransactionPeriodRevenueNote()],
   ].forEach(([labelText, valueText, noteText, modifierClass]) => {
     const card = document.createElement("div");
     card.className = modifierClass
@@ -4775,7 +4910,7 @@ function createTransactionHistoryElement() {
 
   const title = document.createElement("h2");
   title.id = "transaction-history-title";
-  title.textContent = "Riwayat Transaksi Hari Ini";
+  title.textContent = `Riwayat Transaksi - ${getTransactionPeriodTitleSuffix()}`;
 
   header.appendChild(title);
 
@@ -4829,6 +4964,7 @@ function createTransactionHistoryElement() {
 
   history.append(
     header,
+    createTransactionPeriodFilterElement(),
     summaryGrid,
     createCashierRevenueSummaryElement(calculateCashierRevenueSummary(todayTransactions)),
     createCashierClosingTriggerElement(),
@@ -4876,7 +5012,7 @@ function createCashierClosingHistoryElement() {
   const title = document.createElement("h3");
   title.className = "cashier-closing-history-title";
   title.id = "cashier-closing-history-title";
-  title.textContent = "Riwayat Closing Hari Ini";
+  title.textContent = `Riwayat Closing - ${getTransactionPeriodTitleSuffix()}`;
 
   header.appendChild(title);
 
@@ -4886,7 +5022,7 @@ function createCashierClosingHistoryElement() {
   if (todayCashierClosings.length === 0) {
     const empty = document.createElement("p");
     empty.className = "state-message";
-    empty.textContent = "Belum ada closing kasir hari ini.";
+    empty.textContent = getEmptyCashierClosingMessage();
     list.appendChild(empty);
   } else {
     const paginatedClosings = getPaginatedSlice("cashierClosings", todayCashierClosings);
@@ -5087,6 +5223,82 @@ function getClosingHistoryDifferenceLabel(difference) {
   }
 
   return "Sesuai";
+}
+
+function createTransactionPeriodFilterElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "period-filter";
+  wrapper.setAttribute("aria-label", "Filter periode transaksi");
+
+  const buttons = document.createElement("div");
+  buttons.className = "period-filter-buttons";
+
+  TRANSACTION_PERIOD_OPTIONS.forEach(([period, labelText]) => {
+    const button = document.createElement("button");
+    button.className = period === transactionPeriodFilter
+      ? "period-filter-button active"
+      : "period-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-transaction-period";
+    button.dataset.period = period;
+    button.textContent = labelText;
+    buttons.appendChild(button);
+  });
+
+  wrapper.appendChild(buttons);
+
+  if (transactionPeriodFilter === "custom") {
+    const custom = document.createElement("div");
+    custom.className = "custom-date-filter";
+
+    const startField = document.createElement("div");
+    startField.className = "custom-date-field";
+
+    const startLabel = document.createElement("label");
+    startLabel.className = "custom-date-label";
+    startLabel.textContent = "Tanggal Mulai";
+
+    const startInput = document.createElement("input");
+    startInput.className = "custom-date-input";
+    startInput.type = "date";
+    startInput.dataset.action = "update-transaction-custom-start-date";
+    startInput.value = transactionCustomStartDate;
+
+    startField.append(startLabel, startInput);
+
+    const endField = document.createElement("div");
+    endField.className = "custom-date-field";
+
+    const endLabel = document.createElement("label");
+    endLabel.className = "custom-date-label";
+    endLabel.textContent = "Tanggal Akhir";
+
+    const endInput = document.createElement("input");
+    endInput.className = "custom-date-input";
+    endInput.type = "date";
+    endInput.dataset.action = "update-transaction-custom-end-date";
+    endInput.value = transactionCustomEndDate;
+
+    endField.append(endLabel, endInput);
+
+    const applyButton = document.createElement("button");
+    applyButton.className = "period-filter-apply-button";
+    applyButton.type = "button";
+    applyButton.dataset.action = "apply-transaction-custom-period";
+    applyButton.textContent = "Terapkan";
+
+    custom.append(startField, endField, applyButton);
+    wrapper.appendChild(custom);
+  }
+
+  if (transactionPeriodNotice) {
+    const notice = document.createElement("p");
+    notice.className = "period-filter-notice";
+    notice.textContent = transactionPeriodNotice;
+    wrapper.appendChild(notice);
+  }
+
+  return wrapper;
 }
 
 function createTransactionFilterElement() {
@@ -6258,6 +6470,16 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "filter-transaction-period") {
+    setTransactionPeriodFilter(button.dataset.period || "today");
+    return;
+  }
+
+  if (action === "apply-transaction-custom-period") {
+    await applyTransactionCustomPeriod();
+    return;
+  }
+
   if (action === "filter-menu-category") {
     setMenuCategoryFilter(button.dataset.category || "all");
     return;
@@ -6501,6 +6723,16 @@ function handleDashboardInput(event) {
 
   if (action === "update-extend-session-note") {
     updateExtendSessionNote(field.value);
+    return;
+  }
+
+  if (action === "update-transaction-custom-start-date") {
+    updateTransactionCustomStartDate(field.value);
+    return;
+  }
+
+  if (action === "update-transaction-custom-end-date") {
+    updateTransactionCustomEndDate(field.value);
     return;
   }
 
