@@ -72,6 +72,9 @@ let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
+let extendSelectionRoomId = "";
+let customExtendMinutes = "";
+let isExtendingSession = false;
 
 async function loadRooms() {
   roomsLoading = true;
@@ -2436,11 +2439,29 @@ function createRoomCard(room) {
   tvButton.dataset.action = "turn-off-tv";
   tvButton.textContent = "Matikan TV";
 
-  actions.append(sessionButton, tvButton);
+  if (room.status === "occupied") {
+    actions.classList.add("room-actions-occupied");
+
+    const extendButton = document.createElement("button");
+    extendButton.className = "room-button room-button-extend";
+    extendButton.type = "button";
+    extendButton.dataset.action = "show-extend-selection";
+    extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
+
+    tvButton.classList.add("room-button-full");
+    actions.append(sessionButton, extendButton, tvButton);
+  } else {
+    actions.append(sessionButton, tvButton);
+  }
+
   card.append(topLine, meta, actions);
 
   if (durationSelectionRoomId === room.room_id && room.status === "available") {
     card.appendChild(createDurationSelectionElement(room));
+  }
+
+  if (extendSelectionRoomId === room.room_id && room.status === "occupied") {
+    card.appendChild(createExtendSelectionElement(room));
   }
 
   return card;
@@ -2553,6 +2574,64 @@ function createDurationSelectionElement(room) {
   cancelButton.className = "duration-cancel-button";
   cancelButton.type = "button";
   cancelButton.dataset.action = "cancel-duration-selection";
+  cancelButton.textContent = "Batal";
+
+  panel.append(title, options, custom, cancelButton);
+
+  return panel;
+}
+
+function createExtendSelectionElement(room) {
+  const panel = document.createElement("div");
+  panel.className = "extend-selection";
+
+  const title = document.createElement("p");
+  title.className = "extend-selection-title";
+  title.textContent = `Tambah waktu untuk ${room.room_name}`;
+
+  const options = document.createElement("div");
+  options.className = "extend-options";
+
+  [
+    [30, "+30 menit"],
+    [60, "+1 jam"],
+    [120, "+2 jam"],
+  ].forEach(([minutes, labelText]) => {
+    const button = document.createElement("button");
+    button.className = "extend-option-button";
+    button.type = "button";
+    button.dataset.action = "extend-session-duration";
+    button.dataset.roomId = room.room_id;
+    button.dataset.addMinutes = String(minutes);
+    button.textContent = labelText;
+    options.appendChild(button);
+  });
+
+  const custom = document.createElement("div");
+  custom.className = "extend-custom";
+
+  const input = document.createElement("input");
+  input.className = "extend-custom-input";
+  input.type = "number";
+  input.min = "15";
+  input.step = "1";
+  input.placeholder = "Custom menit";
+  input.dataset.action = "update-custom-extend";
+  input.value = customExtendMinutes;
+
+  const customButton = document.createElement("button");
+  customButton.className = "extend-custom-button";
+  customButton.type = "button";
+  customButton.dataset.action = "extend-session-custom-duration";
+  customButton.dataset.roomId = room.room_id;
+  customButton.textContent = "Tambah Custom";
+
+  custom.append(input, customButton);
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "extend-cancel-button";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "cancel-extend-selection";
   cancelButton.textContent = "Batal";
 
   panel.append(title, options, custom, cancelButton);
@@ -4374,6 +4453,89 @@ function updateCustomDuration(value) {
   customDurationMinutes = value;
 }
 
+function showExtendSelection(roomId) {
+  extendSelectionRoomId = roomId;
+  customExtendMinutes = "";
+  renderRooms();
+}
+
+function cancelExtendSelection() {
+  extendSelectionRoomId = "";
+  customExtendMinutes = "";
+  renderRooms();
+}
+
+function updateCustomExtendMinutes(value) {
+  customExtendMinutes = value;
+}
+
+function getExtendSuccessMessage(roomName, addMinutes) {
+  const minutes = Number(addMinutes) || 0;
+
+  if (minutes === 30) {
+    return `Waktu ${roomName} berhasil ditambah 30 menit.`;
+  }
+
+  if (minutes === 60) {
+    return `Waktu ${roomName} berhasil ditambah 1 jam.`;
+  }
+
+  if (minutes === 120) {
+    return `Waktu ${roomName} berhasil ditambah 2 jam.`;
+  }
+
+  return `Waktu ${roomName} berhasil ditambah ${formatDurationMinutes(minutes)}.`;
+}
+
+async function extendSession(roomId, addMinutes) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  const selectedMinutes = Number(addMinutes);
+
+  if (!Number.isFinite(selectedMinutes) || selectedMinutes <= 0) {
+    showInlineNotice("Tambahan waktu wajib berupa angka positif.", "error");
+    return;
+  }
+
+  if (selectedMinutes < 15) {
+    showInlineNotice("Tambahan waktu minimal 15 menit.", "error");
+    return;
+  }
+
+  const room = rooms.find((item) => item.room_id === roomId);
+  const roomName = room?.room_name || "ruangan";
+
+  isExtendingSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "extendSession",
+      room_id: roomId,
+      add_minutes: selectedMinutes,
+      cashier_name: "Kasir",
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal menambah waktu sesi.");
+    }
+
+    showInlineNotice(getExtendSuccessMessage(roomName, selectedMinutes));
+    extendSelectionRoomId = "";
+    customExtendMinutes = "";
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menambah waktu sesi.", "error");
+  } finally {
+    isExtendingSession = false;
+    setActionButtonsDisabled(false);
+  }
+}
+
 async function startSession(roomId, durationMinutes) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
@@ -4562,6 +4724,7 @@ function setActionButtonsDisabled(isDisabled) {
       ".room-button, .billing-payment-button, .transaction-filter-button, .transaction-action-button, .transaction-pay-button"
         + ", .cashier-closing-button, .today-fnb-button, .today-fnb-filter-button, .fnb-cancel-button, .inventory-button"
         + ", .stock-adjustment-button, .duration-option-button, .duration-custom-button, .duration-cancel-button"
+        + ", .room-button-extend, .extend-option-button, .extend-custom-button, .extend-cancel-button"
     )
     .forEach((button) => {
       button.disabled = isDisabled;
@@ -4754,6 +4917,38 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "show-extend-selection") {
+    showExtendSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "extend-session-duration") {
+    await extendSession(button.dataset.roomId || "", Number(button.dataset.addMinutes));
+    return;
+  }
+
+  if (action === "extend-session-custom-duration") {
+    const selectedMinutes = Number(customExtendMinutes);
+
+    if (!Number.isFinite(selectedMinutes) || selectedMinutes <= 0) {
+      showInlineNotice("Isi tambahan waktu custom terlebih dahulu.", "error");
+      return;
+    }
+
+    if (selectedMinutes < 15) {
+      showInlineNotice("Tambahan waktu minimal 15 menit.", "error");
+      return;
+    }
+
+    await extendSession(button.dataset.roomId || "", selectedMinutes);
+    return;
+  }
+
+  if (action === "cancel-extend-selection") {
+    cancelExtendSelection();
+    return;
+  }
+
   console.log("Aksi ruangan:", {
     action,
     room_id: roomId,
@@ -4819,6 +5014,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-custom-duration") {
     updateCustomDuration(field.value);
+    return;
+  }
+
+  if (action === "update-custom-extend") {
+    updateCustomExtendMinutes(field.value);
     return;
   }
 

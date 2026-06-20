@@ -922,6 +922,54 @@ Cara test:
 4. Klik `Selesaikan Sesi`, pastikan `closeSession`, F&B, stok, dan pembayaran tetap normal.
 5. Untuk sesi lama tanpa `scheduled_end_time`, pastikan tidak muncul warning/expired dan fallback tetap aman.
 
+## Fase 5C - Tambah Waktu / Extend Session
+
+Room `occupied` kini memiliki tombol `Tambah Waktu` di samping `Selesaikan Sesi`. Kasir bisa memilih tambahan waktu:
+
+- `+30 menit`
+- `+1 jam`
+- `+2 jam`
+- custom minimal 15 menit
+
+Frontend memanggil POST `extendSession`:
+
+```json
+{
+  "action": "extendSession",
+  "room_id": "ROOM-001",
+  "add_minutes": 30,
+  "cashier_name": "Kasir"
+}
+```
+
+Backend menambahkan waktu ke sesi aktif:
+
+- `booked_duration_minutes += add_minutes`
+- `scheduled_end_time += add_minutes` dari jadwal selesai lama, bukan dari waktu sekarang
+- `start_time` tidak berubah
+- room tetap `occupied`
+
+Countdown dan status visual Fase 5B otomatis mengikuti `scheduled_end_time` baru setelah refresh rooms. Kasir tetap harus klik `Selesaikan Sesi` untuk menutup sesi dan membuat transaksi.
+
+Fase ini belum membuat audit extend, overtime otomatis, atau perubahan billing room. Schema Google Sheets tidak berubah.
+
+Deploy backend setelah perubahan `Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase 5C - Tambah Waktu Extend Session"
+```
+
+Cara test:
+
+1. Mulai sesi room dengan durasi pendek.
+2. Klik `Tambah Waktu`, pilih `+30 menit`, pastikan `booked_duration_minutes` dan `scheduled_end_time` bertambah.
+3. Pastikan `start_time` tidak berubah dan countdown ikut bertambah.
+4. Uji `+1 jam`, `+2 jam`, dan custom 15 menit.
+5. Uji custom di bawah 15 menit, pastikan ditolak.
+6. Uji room warning atau expired, tambah waktu, pastikan status visual kembali normal jika sisa > 10 menit.
+7. Klik `Selesaikan Sesi`, pastikan F&B, stok, dan transaksi tetap normal.
+
 ## Spreadsheet Template
 
 Folder `spreadsheet-template/` berisi CSV template untuk membuat Google Spreadsheet database awal. Setiap file CSV mewakili satu tab spreadsheet:

@@ -2987,6 +2987,25 @@ body {
   gap: 10px;
 }
 
+.room-actions-occupied {
+  grid-template-columns: 1fr 1fr;
+}
+
+.room-button-extend {
+  background: rgba(255, 255, 255, 0.92);
+  color: #4a2a00;
+}
+
+.room-button-extend:hover,
+.room-button-extend:focus-visible {
+  background: #ffe8bf;
+  outline: 3px solid rgba(255, 193, 102, 0.55);
+}
+
+.room-button-full {
+  grid-column: 1 / -1;
+}
+
 .room-button {
   min-height: 44px;
   width: 100%;
@@ -3087,6 +3106,77 @@ body {
   color: var(--card-text);
 }
 
+.extend-selection {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255, 193, 102, 0.45);
+  border-radius: 8px;
+  background: rgba(74, 42, 0, 0.22);
+}
+
+.extend-selection-title {
+  margin: 0;
+  color: var(--card-text);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.extend-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.extend-option-button,
+.extend-custom-button,
+.extend-cancel-button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--button);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.extend-option-button:hover,
+.extend-option-button:focus-visible,
+.extend-custom-button:hover,
+.extend-custom-button:focus-visible,
+.extend-cancel-button:hover,
+.extend-cancel-button:focus-visible {
+  background: var(--button-hover);
+  outline: 3px solid rgba(255, 193, 102, 0.45);
+  outline-offset: 2px;
+}
+
+.extend-custom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.extend-custom-input {
+  min-height: 40px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 193, 102, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #132238;
+  font: inherit;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.extend-cancel-button {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--card-text);
+}
+
 @media (min-width: 768px) and (max-width: 1024px) {
   .rooms-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3135,11 +3225,13 @@ body {
 }
 
 @media (max-width: 520px) {
-  .duration-options {
+  .duration-options,
+  .extend-options {
     grid-template-columns: 1fr;
   }
 
-  .duration-custom {
+  .duration-custom,
+  .extend-custom {
     grid-template-columns: 1fr;
   }
 }

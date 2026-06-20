@@ -194,6 +194,10 @@ function doPost(e) {
       return jsonResponse(startSession_(payload.room_id, payload.duration_minutes));
     }
 
+    if (action === "extendSession") {
+      return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name));
+    }
+
     if (action === "closeSession") {
       return jsonResponse(closeSession_(payload.room_id, payload.cashier_name));
     }
@@ -840,6 +844,99 @@ function startSession_(roomId, durationMinutes) {
       ok: true,
       message: "Sesi berhasil dimulai.",
       room: getRoomFromRow_(sheet, headerMap, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function extendSession_(roomId, addMinutes, cashierName) {
+  if (!roomId) {
+    return {
+      ok: false,
+      error: "room_id wajib diisi.",
+    };
+  }
+
+  var addedMinutes = Number(addMinutes);
+
+  if (!isFinite(addedMinutes) || addedMinutes <= 0) {
+    return {
+      ok: false,
+      error: "add_minutes wajib berupa angka positif.",
+    };
+  }
+
+  if (addedMinutes < 15) {
+    return {
+      ok: false,
+      error: "Tambahan waktu minimal 15 menit.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var sheet = ensureRoomsBookingColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var rowNumber = findRowByValue_(sheet, headerMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        error: "Ruangan tidak ditemukan.",
+      };
+    }
+
+    var room = getRowObject_(sheet, headerMap, rowNumber);
+    var status = String(room.status || "").trim();
+
+    if (status !== "occupied") {
+      return {
+        ok: false,
+        error: "Tambah waktu hanya bisa dilakukan untuk room yang sedang terisi.",
+      };
+    }
+
+    if (!room.start_time) {
+      return {
+        ok: false,
+        error: "Waktu mulai sesi tidak valid.",
+      };
+    }
+
+    if (!room.scheduled_end_time) {
+      return {
+        ok: false,
+        error: "Sesi ini belum memiliki jadwal selesai. Tutup sesi lama dan mulai ulang dengan durasi booking.",
+      };
+    }
+
+    var oldBookedDurationMinutes = Number(room.booked_duration_minutes) || 0;
+    var oldScheduledEndTime = room.scheduled_end_time instanceof Date
+      ? toJakartaIsoString_(room.scheduled_end_time)
+      : String(room.scheduled_end_time).trim();
+    var newBookedDurationMinutes = oldBookedDurationMinutes + addedMinutes;
+    var newScheduledEndTime = addMinutesToJakartaIsoString_(oldScheduledEndTime, addedMinutes);
+    var now = toJakartaIsoString_(new Date());
+
+    sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(newBookedDurationMinutes);
+    sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(newScheduledEndTime);
+    sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
+
+    return {
+      ok: true,
+      message: "Waktu sesi berhasil ditambah.",
+      room: getRoomFromRow_(sheet, headerMap, rowNumber),
+      extension: {
+        add_minutes: addedMinutes,
+        old_booked_duration_minutes: oldBookedDurationMinutes,
+        new_booked_duration_minutes: newBookedDurationMinutes,
+        old_scheduled_end_time: oldScheduledEndTime,
+        new_scheduled_end_time: newScheduledEndTime,
+        cashier_name: cashierName || "Kasir",
+      },
     };
   } finally {
     lock.releaseLock();
