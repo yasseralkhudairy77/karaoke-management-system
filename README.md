@@ -88,6 +88,24 @@ cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
 .\deploy.ps1 "Fase UI-2B - Tanggal Operasional Shift Karaoke"
 ```
 
+## Fase 5F - Laporan Pemakaian Room & Revenue Shift
+
+Tab **Laporan** menambahkan panel **Laporan Pemakaian Room** dengan filter shift operasional (sama seperti UI-2B).
+
+- Endpoint: `getRoomUsageReport`
+- Sumber data: sheet `Transactions`
+- Revenue dari `grand_total` (fallback `room_total + fnb_total`)
+- Room aktif belum masuk revenue final sampai sesi ditutup (`closeSession`)
+- Summary: total sesi, durasi, omzet room/F&B, paid/unpaid, room terlaris
+- List pemakaian per room + detail transaksi dengan pagination
+
+**Perlu deploy Apps Script** setelah update `apps-script/Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase 5F - Laporan Pemakaian Room"
+```
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

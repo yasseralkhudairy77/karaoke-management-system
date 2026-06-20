@@ -221,6 +221,14 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getRoomUsageReport") {
+      return jsonResponse(getRoomUsageReportByPeriod_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
     if (action === "getFnbOrdersByIds") {
       return jsonResponse({
         ok: true,
@@ -796,6 +804,205 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
     transactions: transactions,
     summary: summary,
   }, buildOperationalPeriodMetadata_(periodResult));
+}
+
+function getRoomUsageReportByPeriod_(period, startDate, endDate) {
+  var periodResult = parseRoomUsageReportPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
+  var filteredTransactions = readSheetAsObjects_("Transactions")
+    .filter(function (transaction) {
+      if (periodResult.period === "all") {
+        return true;
+      }
+
+      return matchesOperationalPeriod_(
+        resolveTransactionOperationalDateString_(transaction),
+        periodResult
+      );
+    })
+    .map(function (transaction) {
+      return mapRoomUsageTransactionRow_(transaction);
+    })
+    .sort(function (first, second) {
+      return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+    });
+
+  var roomUsageMap = {};
+  var summary = createRoomUsageReportEmptySummary_();
+
+  filteredTransactions.forEach(function (transaction) {
+    var roomKey = getRoomUsageGroupKey_(transaction);
+    var durationMinutes = Number(transaction.duration_minutes) || 0;
+    var roomRevenue = Number(transaction.room_total) || 0;
+    var fnbRevenue = Number(transaction.fnb_total) || 0;
+    var grandRevenue = Number(transaction.grand_total) || 0;
+    var isPaid = isTransactionPaidForReport_(transaction);
+
+    summary.total_sessions += 1;
+    summary.total_duration_minutes += durationMinutes;
+    summary.total_room_revenue += roomRevenue;
+    summary.total_fnb_revenue += fnbRevenue;
+    summary.total_grand_revenue += grandRevenue;
+
+    if (isPaid) {
+      summary.paid_revenue += grandRevenue;
+      summary.paid_sessions += 1;
+    } else {
+      summary.unpaid_revenue += grandRevenue;
+      summary.unpaid_sessions += 1;
+    }
+
+    if (!roomUsageMap[roomKey]) {
+      roomUsageMap[roomKey] = {
+        room_id: transaction.room_id || "",
+        room_name: transaction.room_name || roomKey,
+        session_count: 0,
+        duration_minutes: 0,
+        room_revenue: 0,
+        fnb_revenue: 0,
+        grand_revenue: 0,
+        paid_revenue: 0,
+        unpaid_revenue: 0,
+      };
+    }
+
+    var roomUsage = roomUsageMap[roomKey];
+
+    roomUsage.session_count += 1;
+    roomUsage.duration_minutes += durationMinutes;
+    roomUsage.room_revenue += roomRevenue;
+    roomUsage.fnb_revenue += fnbRevenue;
+    roomUsage.grand_revenue += grandRevenue;
+
+    if (isPaid) {
+      roomUsage.paid_revenue += grandRevenue;
+    } else {
+      roomUsage.unpaid_revenue += grandRevenue;
+    }
+  });
+
+  var roomUsage = Object.keys(roomUsageMap)
+    .map(function (roomKey) {
+      var entry = roomUsageMap[roomKey];
+      var sessionCount = Number(entry.session_count) || 0;
+      var durationMinutes = Number(entry.duration_minutes) || 0;
+
+      return {
+        room_id: entry.room_id,
+        room_name: entry.room_name,
+        session_count: sessionCount,
+        duration_minutes: durationMinutes,
+        duration_hours: durationMinutes / 60,
+        room_revenue: entry.room_revenue,
+        fnb_revenue: entry.fnb_revenue,
+        grand_revenue: entry.grand_revenue,
+        paid_revenue: entry.paid_revenue,
+        unpaid_revenue: entry.unpaid_revenue,
+        average_duration_minutes: sessionCount > 0
+          ? Math.round(durationMinutes / sessionCount)
+          : 0,
+      };
+    })
+    .sort(function (first, second) {
+      if (second.duration_minutes !== first.duration_minutes) {
+        return second.duration_minutes - first.duration_minutes;
+      }
+
+      return second.grand_revenue - first.grand_revenue;
+    });
+
+  summary.total_duration_hours = summary.total_duration_minutes / 60;
+  summary.unique_rooms_used = roomUsage.length;
+
+  if (roomUsage.length > 0) {
+    summary.top_room_name = roomUsage[0].room_name;
+    summary.top_room_duration_minutes = roomUsage[0].duration_minutes;
+  }
+
+  return Object.assign({
+    ok: true,
+    summary: summary,
+    room_usage: roomUsage,
+    transactions: filteredTransactions,
+  }, buildOperationalPeriodMetadata_(periodResult));
+}
+
+function parseRoomUsageReportPeriod_(period, startDate, endDate) {
+  var normalizedPeriod = normalizeOperationalPeriodKey_(period);
+
+  if (["today", "yesterday", "last7days", "thismonth", "all", "custom"].indexOf(normalizedPeriod) === -1) {
+    return {
+      ok: false,
+      error: "Periode laporan room tidak dikenal.",
+    };
+  }
+
+  return getOperationalDateRangeForPeriod_(period, startDate, endDate);
+}
+
+function mapRoomUsageTransactionRow_(transaction) {
+  return {
+    transaction_id: transaction.transaction_id || "",
+    room_id: transaction.room_id || "",
+    room_name: transaction.room_name || "",
+    start_time: transaction.start_time || "",
+    end_time: transaction.end_time || "",
+    duration_minutes: Number(transaction.duration_minutes) || 0,
+    room_total: Number(transaction.room_total) || 0,
+    fnb_total: Number(transaction.fnb_total) || 0,
+    grand_total: getTransactionGrandTotalForReport_(transaction),
+    payment_status: transaction.payment_status || "",
+    payment_method: transaction.payment_method || "",
+    cashier_name: transaction.cashier_name || "",
+    created_at: transaction.created_at || "",
+    operational_date: resolveTransactionOperationalDateString_(transaction),
+  };
+}
+
+function getRoomUsageGroupKey_(transaction) {
+  var roomId = String(transaction.room_id || "").trim();
+
+  if (roomId) {
+    return roomId;
+  }
+
+  return String(transaction.room_name || "").trim() || "UNKNOWN";
+}
+
+function getTransactionGrandTotalForReport_(transaction) {
+  var grandTotal = Number(transaction.grand_total) || 0;
+
+  if (grandTotal > 0) {
+    return grandTotal;
+  }
+
+  return (Number(transaction.room_total) || 0) + (Number(transaction.fnb_total) || 0);
+}
+
+function isTransactionPaidForReport_(transaction) {
+  return String(transaction.payment_status || "").trim().toLowerCase() === "paid";
+}
+
+function createRoomUsageReportEmptySummary_() {
+  return {
+    total_sessions: 0,
+    total_duration_minutes: 0,
+    total_duration_hours: 0,
+    total_room_revenue: 0,
+    total_fnb_revenue: 0,
+    total_grand_revenue: 0,
+    paid_revenue: 0,
+    unpaid_revenue: 0,
+    paid_sessions: 0,
+    unpaid_sessions: 0,
+    unique_rooms_used: 0,
+    top_room_name: "",
+    top_room_duration_minutes: 0,
+  };
 }
 
 function getTodayCashierClosings_() {

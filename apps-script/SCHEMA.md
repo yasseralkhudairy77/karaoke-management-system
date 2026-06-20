@@ -191,6 +191,38 @@ Semua endpoint "Today" di bawah ini default ke shift aktif (`period=today`) dan 
 | `getTodayStockMovements` | `created_at` |
 | `getTodayRoomTimeLogs` | `created_at` |
 
+### Fase 5F - Laporan Pemakaian Room (`getRoomUsageReport`)
+
+GET `getRoomUsageReport` — laporan pemakaian room dan revenue berdasarkan `operational_date`.
+
+Query parameter:
+
+- `period` — `today`, `yesterday`, `last7days`, `thismonth`, `all`, `custom` (default `today` = shift aktif)
+- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD` (tanggal operasional)
+- `end_date` — wajib untuk `custom`
+
+Sumber data: sheet `Transactions` (hanya transaksi yang sudah dibuat via `closeSession`).
+
+Filter `operational_date` dari:
+
+1. `created_at`
+2. fallback `end_time`
+3. fallback `start_time`
+
+Revenue:
+
+- `grand_total` jika ada
+- fallback `room_total + fnb_total`
+
+Response:
+
+- `summary` — total sesi, durasi, omzet room/F&B/grand, paid/unpaid, room terpakai, room terlaris
+- `room_usage[]` — agregat per `room_id` (fallback `room_name`)
+- `transactions[]` — detail transaksi hasil filter, termasuk `operational_date`
+- metadata: `operational_date_start`, `operational_date_end`, `operational_cutoff_hour`
+
+Error period tidak dikenal: `Periode laporan room tidak dikenal.`
+
 ## CashierClosings
 
 Menyimpan hasil tutup kasir sederhana.

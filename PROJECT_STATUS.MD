@@ -2,6 +2,24 @@
 
 ## Status Terakhir
 
+### Fase 5F - Laporan Pemakaian Room & Revenue Shift
+Status: PASS LOKAL
+
+Hasil:
+- Endpoint GET `getRoomUsageReport` dengan filter operational_date dari Transactions.
+- Summary: total sesi, durasi, omzet room/F&B/grand, paid/unpaid, unique rooms, top room.
+- Response `room_usage[]` (group per room) dan `transactions[]` (detail).
+- UI panel di tab Laporan dengan filter shift sendiri (`roomUsagePeriodFilter`).
+- Pagination: `roomUsage` dan `roomUsageTransactions`.
+- `node --check js/app.js` PASS; syntax `Code.gs` PASS.
+
+Catatan:
+- `Code.gs` berubah; deploy Apps Script diperlukan sebelum test production.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy + validasi production.
+
+---
+
 ### Fase UI-2B - Tanggal Operasional / Shift Karaoke
 Status: PASS LOKAL
 

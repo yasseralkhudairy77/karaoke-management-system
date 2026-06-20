@@ -228,6 +228,22 @@ let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
 let isLoadingRoomTimeLogs = false;
+let roomUsagePeriodFilter = "today";
+let roomUsageCustomStartDate = "";
+let roomUsageCustomEndDate = "";
+let roomUsagePeriodNotice = "";
+let roomUsageSummary = null;
+let roomUsageItems = [];
+let roomUsageTransactions = [];
+let isLoadingRoomUsageReport = false;
+const ROOM_USAGE_PERIOD_OPTIONS = [
+  ["today", "Shift Aktif"],
+  ["yesterday", "Shift Kemarin"],
+  ["last7days", "7 Shift"],
+  ["thisMonth", "Bulan Ini"],
+  ["all", "Semua"],
+  ["custom", "Custom"],
+];
 
 async function loadRooms() {
   roomsLoading = true;
@@ -632,6 +648,166 @@ async function submitStockAdjustment() {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+function normalizeRoomUsagePeriodForApi(period) {
+  if (period === "thisMonth") {
+    return "thismonth";
+  }
+
+  return period;
+}
+
+function buildRoomUsagePeriodQueryParams() {
+  const params = new URLSearchParams();
+
+  params.set("period", normalizeRoomUsagePeriodForApi(roomUsagePeriodFilter));
+
+  if (roomUsagePeriodFilter === "custom") {
+    if (roomUsageCustomStartDate) {
+      params.set("start_date", roomUsageCustomStartDate);
+    }
+
+    if (roomUsageCustomEndDate) {
+      params.set("end_date", roomUsageCustomEndDate);
+    }
+  }
+
+  return params;
+}
+
+function canFetchRoomUsagePeriodData() {
+  if (roomUsagePeriodFilter !== "custom") {
+    return true;
+  }
+
+  return Boolean(roomUsageCustomStartDate && roomUsageCustomEndDate);
+}
+
+function getRoomUsagePeriodTitleSuffix() {
+  const labels = {
+    today: "Shift Aktif",
+    yesterday: "Shift Kemarin",
+    last7days: "7 Shift",
+    thisMonth: "Bulan Ini",
+    all: "Semua",
+    custom: "Custom",
+  };
+
+  return labels[roomUsagePeriodFilter] || "Shift Aktif";
+}
+
+function setRoomUsagePeriodFilter(period) {
+  if (!ROOM_USAGE_PERIOD_OPTIONS.some(([value]) => value === period)) {
+    return;
+  }
+
+  roomUsagePeriodFilter = period;
+  resetPaginationPage("roomUsage");
+  resetPaginationPage("roomUsageTransactions");
+
+  if (period !== "custom") {
+    roomUsageCustomStartDate = "";
+    roomUsageCustomEndDate = "";
+    roomUsagePeriodNotice = "";
+    loadRoomUsageReport();
+    return;
+  }
+
+  roomUsagePeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+  renderRooms();
+}
+
+function updateRoomUsageCustomStartDate(value) {
+  roomUsageCustomStartDate = value || "";
+}
+
+function updateRoomUsageCustomEndDate(value) {
+  roomUsageCustomEndDate = value || "";
+}
+
+async function applyRoomUsageCustomPeriod() {
+  if (!roomUsageCustomStartDate || !roomUsageCustomEndDate) {
+    roomUsagePeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+    renderRooms();
+    return;
+  }
+
+  if (roomUsageCustomStartDate > roomUsageCustomEndDate) {
+    roomUsagePeriodNotice = "Tanggal mulai tidak boleh lebih besar dari tanggal akhir.";
+    renderRooms();
+    return;
+  }
+
+  roomUsagePeriodNotice = "";
+  resetPaginationPage("roomUsage");
+  resetPaginationPage("roomUsageTransactions");
+  await loadRoomUsageReport();
+}
+
+async function loadRoomUsageReport() {
+  roomUsageSummary = null;
+
+  if (!API_BASE_URL.trim()) {
+    roomUsageItems = [];
+    roomUsageTransactions = [];
+    renderRooms();
+    return;
+  }
+
+  if (!canFetchRoomUsagePeriodData()) {
+    renderRooms();
+    return;
+  }
+
+  isLoadingRoomUsageReport = true;
+  renderRooms();
+
+  try {
+    const data = await fetchRoomUsageReportFromApi();
+
+    roomUsageSummary = data.summary || null;
+    roomUsageItems = Array.isArray(data.room_usage) ? data.room_usage : [];
+    roomUsageTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+  } catch (error) {
+    console.warn("Gagal memuat laporan pemakaian room.", error);
+    showInlineNotice(error.message || "Gagal memuat laporan pemakaian room.", "error");
+    roomUsageSummary = null;
+    roomUsageItems = [];
+    roomUsageTransactions = [];
+  } finally {
+    isLoadingRoomUsageReport = false;
+    renderRooms();
+  }
+}
+
+async function fetchRoomUsageReportFromApi() {
+  if (!API_BASE_URL.trim()) {
+    return {
+      summary: null,
+      room_usage: [],
+      transactions: [],
+    };
+  }
+
+  const params = buildRoomUsagePeriodQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return {
+    summary: data.summary || null,
+    room_usage: Array.isArray(data.room_usage) ? data.room_usage : [],
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+  };
 }
 
 async function loadTodayFnbSalesReport() {
@@ -4772,6 +4948,304 @@ function getLowStockReportStatusClass(status) {
   return "unknown";
 }
 
+function createRoomUsagePeriodFilterElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "period-filter room-usage-period-filter";
+  wrapper.setAttribute("aria-label", "Filter periode laporan pemakaian room");
+
+  const buttons = document.createElement("div");
+  buttons.className = "period-filter-buttons";
+
+  ROOM_USAGE_PERIOD_OPTIONS.forEach(([period, labelText]) => {
+    const button = document.createElement("button");
+    button.className = period === roomUsagePeriodFilter
+      ? "period-filter-button active"
+      : "period-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-room-usage-period";
+    button.dataset.period = period;
+    button.textContent = labelText;
+    buttons.appendChild(button);
+  });
+
+  wrapper.appendChild(buttons);
+
+  if (roomUsagePeriodFilter === "custom") {
+    const custom = document.createElement("div");
+    custom.className = "custom-date-filter";
+
+    const startField = document.createElement("div");
+    startField.className = "custom-date-field";
+
+    const startLabel = document.createElement("label");
+    startLabel.className = "custom-date-label";
+    startLabel.textContent = "Tanggal Operasional Mulai";
+
+    const startInput = document.createElement("input");
+    startInput.className = "custom-date-input";
+    startInput.type = "date";
+    startInput.dataset.action = "update-room-usage-custom-start-date";
+    startInput.value = roomUsageCustomStartDate;
+
+    startField.append(startLabel, startInput);
+
+    const endField = document.createElement("div");
+    endField.className = "custom-date-field";
+
+    const endLabel = document.createElement("label");
+    endLabel.className = "custom-date-label";
+    endLabel.textContent = "Tanggal Operasional Akhir";
+
+    const endInput = document.createElement("input");
+    endInput.className = "custom-date-input";
+    endInput.type = "date";
+    endInput.dataset.action = "update-room-usage-custom-end-date";
+    endInput.value = roomUsageCustomEndDate;
+
+    endField.append(endLabel, endInput);
+
+    const applyButton = document.createElement("button");
+    applyButton.className = "period-filter-apply-button";
+    applyButton.type = "button";
+    applyButton.dataset.action = "apply-room-usage-custom-period";
+    applyButton.textContent = "Terapkan";
+
+    custom.append(startField, endField, applyButton);
+    wrapper.appendChild(custom);
+  }
+
+  if (roomUsagePeriodNotice) {
+    const notice = document.createElement("p");
+    notice.className = "period-filter-notice";
+    notice.textContent = roomUsagePeriodNotice;
+    wrapper.appendChild(notice);
+  }
+
+  return wrapper;
+}
+
+function createRoomUsageSummaryElement(summary) {
+  const grid = document.createElement("div");
+  grid.className = "room-usage-summary";
+
+  const topRoomLabel = summary.top_room_name
+    ? `${summary.top_room_name} (${formatDurationMinutes(summary.top_room_duration_minutes)})`
+    : "-";
+
+  [
+    ["Total Sesi", Number(summary.total_sessions) || 0],
+    ["Total Durasi Terjual", formatDurationMinutes(summary.total_duration_minutes)],
+    ["Omzet Room", formatCurrency(summary.total_room_revenue)],
+    ["Omzet F&B", formatCurrency(summary.total_fnb_revenue)],
+    ["Total Revenue", formatCurrency(summary.total_grand_revenue)],
+    ["Room Terpakai", Number(summary.unique_rooms_used) || 0],
+    ["Room Terlaris", topRoomLabel],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("div");
+    card.className = "room-usage-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createRoomUsageRowElement(item) {
+  const row = document.createElement("article");
+  row.className = "room-usage-row";
+
+  [
+    ["Room", item.room_name || item.room_id || "-"],
+    ["Jumlah Sesi", String(Number(item.session_count) || 0)],
+    ["Total Durasi", formatDurationMinutes(item.duration_minutes)],
+    ["Omzet Room", formatCurrency(item.room_revenue)],
+    ["Omzet F&B", formatCurrency(item.fnb_revenue)],
+    ["Total Revenue", formatCurrency(item.grand_revenue)],
+    ["Rata-rata Durasi", formatDurationMinutes(item.average_duration_minutes)],
+  ].forEach(([labelText, valueText]) => {
+    const cell = document.createElement("div");
+    cell.className = "room-usage-cell";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    cell.append(label, value);
+    row.appendChild(cell);
+  });
+
+  return row;
+}
+
+function createRoomUsageTransactionsListElement() {
+  const section = document.createElement("section");
+  section.className = "room-usage-transactions";
+  section.setAttribute("aria-labelledby", "room-usage-transactions-title");
+
+  const title = document.createElement("h3");
+  title.className = "room-usage-section-title";
+  title.id = "room-usage-transactions-title";
+  title.textContent = "Detail Transaksi Room";
+
+  const list = document.createElement("div");
+  list.className = "room-usage-transactions-list";
+
+  if (isLoadingRoomUsageReport) {
+    list.appendChild(createStateMessage("Memuat detail transaksi room..."));
+  } else if (roomUsageTransactions.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "state-message";
+    empty.textContent = "Belum ada pemakaian room pada shift/periode ini.";
+    list.appendChild(empty);
+  } else {
+    const paginatedTransactions = getPaginatedSlice("roomUsageTransactions", roomUsageTransactions);
+    paginatedTransactions.items.forEach((transaction) => {
+      list.appendChild(createRoomUsageTransactionRowElement(transaction));
+    });
+    list.appendChild(createPaginationControlsElement("roomUsageTransactions", roomUsageTransactions.length));
+  }
+
+  section.append(title, list);
+
+  return section;
+}
+
+function createRoomUsageTransactionRowElement(transaction) {
+  const row = document.createElement("article");
+  row.className = "room-usage-transaction-row";
+
+  const statusTone = getPaymentStatusTone(transaction?.payment_status);
+
+  [
+    ["ID Transaksi", transaction?.transaction_id || "-"],
+    ["Room", transaction?.room_name || transaction?.room_id || "-"],
+    ["Mulai", transaction?.start_time || "-"],
+    ["Selesai", transaction?.end_time || "-"],
+    ["Durasi", formatDurationMinutes(transaction?.duration_minutes)],
+    ["Total Room", formatCurrency(transaction?.room_total)],
+    ["F&B", formatCurrency(transaction?.fnb_total)],
+    ["Grand Total", formatCurrency(transaction?.grand_total)],
+    ["Status Bayar", formatPaymentStatusLabel(transaction?.payment_status), "payment-status"],
+    ["Kasir", transaction?.cashier_name || "-"],
+  ].forEach(([labelText, valueText, modifier]) => {
+    const cell = document.createElement("div");
+    cell.className = "room-usage-cell";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = modifier === "payment-status"
+      ? withStatusBadge("transaction-value", statusTone)
+      : "transaction-value";
+    value.textContent = valueText;
+
+    cell.append(label, value);
+    row.appendChild(cell);
+  });
+
+  return row;
+}
+
+function createRoomUsageReportPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "room-usage-report";
+  panel.setAttribute("aria-labelledby", "room-usage-report-title");
+
+  const header = document.createElement("div");
+  header.className = "room-usage-report-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "room-usage-report-title";
+  title.id = "room-usage-report-title";
+  title.textContent = `Laporan Pemakaian Room - ${getRoomUsagePeriodTitleSuffix()}`;
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "room-usage-report-subtitle";
+  subtitle.textContent = "Mengikuti tanggal operasional karaoke. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+
+  titleGroup.append(title, subtitle);
+
+  const actions = document.createElement("div");
+  actions.className = "room-usage-report-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "room-usage-report-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-room-usage-report";
+  refreshButton.disabled = isLoadingRoomUsageReport || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingRoomUsageReport ? "Memuat..." : "Refresh Laporan Room";
+
+  actions.appendChild(refreshButton);
+  header.append(titleGroup, actions);
+
+  const summary = roomUsageSummary || {
+    total_sessions: 0,
+    total_duration_minutes: 0,
+    total_room_revenue: 0,
+    total_fnb_revenue: 0,
+    total_grand_revenue: 0,
+    unique_rooms_used: 0,
+    top_room_name: "",
+    top_room_duration_minutes: 0,
+  };
+
+  const roomUsageSection = document.createElement("section");
+  roomUsageSection.className = "room-usage-section";
+  roomUsageSection.setAttribute("aria-labelledby", "room-usage-list-title");
+
+  const roomUsageTitle = document.createElement("h3");
+  roomUsageTitle.className = "room-usage-section-title";
+  roomUsageTitle.id = "room-usage-list-title";
+  roomUsageTitle.textContent = "Pemakaian per Room";
+
+  const roomUsageList = document.createElement("div");
+  roomUsageList.className = "room-usage-list";
+
+  if (isLoadingRoomUsageReport) {
+    roomUsageList.appendChild(createStateMessage("Memuat laporan pemakaian room..."));
+  } else if (roomUsageItems.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "state-message";
+    empty.textContent = "Belum ada pemakaian room pada shift/periode ini.";
+    roomUsageList.appendChild(empty);
+  } else {
+    const paginatedUsage = getPaginatedSlice("roomUsage", roomUsageItems);
+    paginatedUsage.items.forEach((item) => {
+      roomUsageList.appendChild(createRoomUsageRowElement(item));
+    });
+    roomUsageList.appendChild(createPaginationControlsElement("roomUsage", roomUsageItems.length));
+  }
+
+  roomUsageSection.append(roomUsageTitle, roomUsageList);
+
+  panel.append(
+    header,
+    createRoomUsagePeriodFilterElement(),
+    createRoomUsageSummaryElement(summary),
+    roomUsageSection,
+    createRoomUsageTransactionsListElement()
+  );
+
+  return panel;
+}
+
 function createTodayFnbSalesReportPanelElement() {
   const panel = document.createElement("section");
   panel.className = "fnb-sales-report-panel";
@@ -5728,6 +6202,7 @@ function refreshActiveTabData() {
       break;
     case "reports":
       loadTodayFnbSalesReport();
+      loadRoomUsageReport();
       break;
     case "transactions":
       loadTodayTransactions();
@@ -5827,7 +6302,10 @@ function appendDashboardTabContent(panel, tabKey) {
       );
       break;
     case "reports":
-      panel.appendChild(createTodayFnbSalesReportPanelElement());
+      panel.append(
+        createTodayFnbSalesReportPanelElement(),
+        createRoomUsageReportPanelElement()
+      );
       break;
     case "transactions":
       try {
@@ -6686,6 +7164,21 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-room-usage-report") {
+    await loadRoomUsageReport();
+    return;
+  }
+
+  if (action === "filter-room-usage-period") {
+    setRoomUsagePeriodFilter(button.dataset.period || "today");
+    return;
+  }
+
+  if (action === "apply-room-usage-custom-period") {
+    await applyRoomUsageCustomPeriod();
+    return;
+  }
+
   if (action === "refresh-room-time-logs") {
     await loadTodayRoomTimeLogs();
     return;
@@ -6882,6 +7375,16 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-room-usage-custom-start-date") {
+    updateRoomUsageCustomStartDate(field.value);
+    return;
+  }
+
+  if (action === "update-room-usage-custom-end-date") {
+    updateRoomUsageCustomEndDate(field.value);
+    return;
+  }
+
   if (action === "update-stock-adjustment-quantity") {
     updateStockAdjustmentForm("quantity", field.value);
     focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -6955,6 +7458,7 @@ async function initializeDashboard() {
     loadTodayFnbOrders(),
     loadTodayStockMovements(),
     loadTodayFnbSalesReport(),
+    loadRoomUsageReport(),
     loadTodayRoomTimeLogs(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
