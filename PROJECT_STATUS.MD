@@ -2,6 +2,27 @@
 
 ## Status Terakhir
 
+### Fase 4K - Restock / Adjustment Stok F&B
+Status: PASS LOKAL
+
+Hasil:
+- Panel `Tambah / Koreksi Stok` tersedia di area `Stok F&B`.
+- Restock (`adjustment_type = restock`) menambah stok dan mencatat `movement_type = in`.
+- Koreksi stok (`adjustment_type = set_stock`) menyetel stok aktual dan mencatat `movement_type = adjustment`.
+- Setiap perubahan stok menulis `StockMovements` sebelum mengubah `Inventory.stock_qty`.
+- `Inventory.updated_at` ikut diperbarui.
+- Item stok tidak aktif ditolak backend.
+- `set_stock` ke nilai sama ditolak dengan `Stok tidak berubah.`
+- Restock 0 atau negatif ditolak.
+- Panel stok refresh setelah sukses.
+- `closeSession` dan pengurangan stok F&B saat billing tidak berubah.
+
+Catatan:
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy backend dan uji production.
+
+---
+
 ### Fase 5A - Durasi Booking & Countdown Room
 Status: PASS FINAL
 
@@ -49,44 +70,6 @@ Hasil:
 ---
 
 ### Fase 5D - Billing Berdasarkan Durasi Booking
-Status: PASS LOKAL
-
-Hasil:
-- closeSession menghitung tagihan room dari booked_duration_minutes jika valid.
-- Booking 1 jam tetap ditagih 1 jam walau ditutup lebih cepat.
-- Tambah waktu ikut menambah durasi tagihan.
-- Waktu habis tanpa extend tetap ditagih durasi booking terakhir.
-- Tidak ada overtime otomatis.
-- Data lama tanpa booked_duration_minutes fallback ke durasi aktual.
-- Response closeSession menyertakan billing_basis.
-- Ringkasan tagihan dan struk menampilkan dasar tagihan jika tersedia.
-- F&B, stok, payment, closing, dan cancel order tetap aman.
-
-Catatan:
-- PASS LOKAL berarti implementasi dan syntax check lulus.
-- PASS FINAL menunggu deploy backend dan uji production.
-
----
-
-## Catatan Penting
-
-- start_time adalah jangkar sesi.
-- Jangan mengubah start_time saat extend.
-- F&B tetap terikat ke room_id + room_start_time.
-- scheduled_end_time boleh berubah saat Tambah Waktu.
-- Room tidak otomatis kosong saat waktu habis.
-- Billing room memakai booked_duration_minutes untuk sesi booking valid.
-- Sesi legacy tanpa booked_duration_minutes masih memakai durasi aktual.
-
----
-
-## Next Phase
-
-### Fase 5E - Audit Extend Session
-Rencana:
-- Catat riwayat tambah waktu ke sheet audit.
-- Belum diimplementasikan.
-Fase 5D - Billing Berdasarkan Durasi Booking
 Status: PASS FINAL
 
 Hasil:
@@ -100,7 +83,9 @@ Hasil:
 - Data lama fallback ke durasi aktual.
 - F&B, stok, payment, transaksi, dan closing tetap aman.
 
-Bugfix F&B Dropdown Room
+---
+
+### Bugfix F&B Dropdown Room
 Status: PASS
 
 Hasil:
@@ -108,3 +93,30 @@ Hasil:
 - Room kosong dan perbaikan tampil tapi disabled.
 - Status room dinormalisasi.
 - Backend tidak berubah.
+
+---
+
+## Catatan Penting
+
+- start_time adalah jangkar sesi.
+- Jangan mengubah start_time saat extend.
+- F&B tetap terikat ke room_id + room_start_time.
+- scheduled_end_time boleh berubah saat Tambah Waktu.
+- Room tidak otomatis kosong saat waktu habis.
+- Billing room memakai booked_duration_minutes untuk sesi booking valid.
+- Sesi legacy tanpa booked_duration_minutes masih memakai durasi aktual.
+- Stok manual wajib lewat StockMovements; jangan update Inventory tanpa movement.
+
+---
+
+## Next Phase
+
+### Fase 4L - Riwayat Mutasi Stok
+Rencana:
+- Tampilkan riwayat StockMovements di dashboard.
+- Belum diimplementasikan.
+
+### Fase 5E - Audit Extend Session
+Rencana:
+- Catat riwayat tambah waktu ke sheet audit.
+- Belum diimplementasikan.

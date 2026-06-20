@@ -121,7 +121,7 @@ Fase stok dasar hanya mendukung stok item langsung. Recipe/BOM belum dipakai.
 
 ## StockMovements
 
-Menyimpan audit mutasi stok saat F&B masuk tagihan.
+Menyimpan audit mutasi stok dari transaksi F&B dan perubahan manual inventory.
 
 | Column | Description |
 | --- | --- |
@@ -129,7 +129,7 @@ Menyimpan audit mutasi stok saat F&B masuk tagihan.
 | `created_at` | Timestamp mutasi dibuat. |
 | `stock_item_id` | ID item stok. |
 | `stock_item_name` | Nama item stok saat mutasi dibuat. |
-| `movement_type` | Jenis mutasi, contoh `out`, `in`, atau `adjustment`. |
+| `movement_type` | Jenis mutasi: `out` (F&B billed), `in` (restock manual), atau `adjustment` (koreksi stok aktual). |
 | `reference_type` | Referensi mutasi, contoh `transaction` atau `manual_adjustment`. |
 | `reference_id` | ID transaksi room atau `movement_id` untuk adjustment manual. |
 | `qty_change` | Perubahan stok, negatif untuk stok keluar. |
@@ -137,6 +137,15 @@ Menyimpan audit mutasi stok saat F&B masuk tagihan.
 | `stock_after` | Stok setelah mutasi. |
 | `note` | Catatan mutasi. |
 | `cashier_name` | Nama kasir yang memproses transaksi. |
+
+### Fase 4K - Restock / Adjustment Manual
+
+Perubahan stok manual lewat endpoint POST `adjustInventoryStock` wajib menulis row ke tab ini sebelum atau bersamaan dengan update `Inventory.stock_qty`.
+
+- `restock`: `movement_type = in`, `reference_type = manual_adjustment`, `qty_change` positif.
+- `set_stock`: `movement_type = adjustment`, `reference_type = manual_adjustment`, `qty_change` = selisih stok aktual baru dengan stok sebelumnya.
+
+Tidak ada sheet baru. Gunakan tab existing `Inventory` dan `StockMovements`.
 
 ## FnbOrders
 

@@ -486,6 +486,14 @@ function adjustInventoryStock_(stockItemId, adjustmentType, quantity, note, cash
     }
 
     var currentItem = buildInventoryItemFromRow_(inventorySheet, inventoryHeaderMap, rowNumber);
+
+    if (!isInventoryItemActive_(currentItem.status)) {
+      return {
+        ok: false,
+        error: "Item stok tidak aktif.",
+      };
+    }
+
     var stockBefore = Number(currentItem.stock_qty) || 0;
     var stockAfter = normalizedAdjustmentType === "restock"
       ? stockBefore + parsedQuantity
@@ -524,15 +532,47 @@ function adjustInventoryStock_(stockItemId, adjustmentType, quantity, note, cash
 
     appendStockMovement_(movement);
 
+    var updatedItem = buildInventoryItemFromRow_(inventorySheet, inventoryHeaderMap, rowNumber);
+
     return {
       ok: true,
       message: "Stok berhasil diperbarui.",
-      item: buildInventoryItemFromRow_(inventorySheet, inventoryHeaderMap, rowNumber),
+      stock_item: {
+        stock_item_id: updatedItem.stock_item_id,
+        stock_item_name: updatedItem.stock_item_name,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        qty_change: qtyChange,
+        status: updatedItem.stock_status,
+      },
+      stock_movement: {
+        movement_id: movement.movement_id,
+        movement_type: movement.movement_type,
+        reference_type: movement.reference_type,
+        reference_id: movement.reference_id,
+        qty_change: movement.qty_change,
+        stock_before: movement.stock_before,
+        stock_after: movement.stock_after,
+        note: movement.note,
+        cashier_name: movement.cashier_name,
+        created_at: movement.created_at,
+      },
+      item: updatedItem,
       movement: movement,
     };
   } finally {
     lock.releaseLock();
   }
+}
+
+function isInventoryItemActive_(status) {
+  var normalizedStatus = String(status || "").trim().toLowerCase();
+
+  if (!normalizedStatus) {
+    return true;
+  }
+
+  return normalizedStatus === "active";
 }
 
 function findInventoryRowByStockItemId_(stockItemId, sheet, headerMap) {

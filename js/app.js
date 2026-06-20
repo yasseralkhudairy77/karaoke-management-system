@@ -3932,8 +3932,8 @@ function createLastStockAdjustmentElement(adjustment) {
 
   const grid = document.createElement("div");
   grid.className = "last-stock-adjustment-grid";
-  const item = adjustment.item || {};
-  const movement = adjustment.movement || {};
+  const item = adjustment.stock_item || adjustment.item || {};
+  const movement = adjustment.stock_movement || adjustment.movement || {};
 
   [
     ["Item Stok", item.stock_item_name || item.stock_item_id || "-"],
