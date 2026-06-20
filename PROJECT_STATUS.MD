@@ -48,6 +48,26 @@ Hasil:
 
 ---
 
+### Fase 5D - Billing Berdasarkan Durasi Booking
+Status: PASS LOKAL
+
+Hasil:
+- closeSession menghitung tagihan room dari booked_duration_minutes jika valid.
+- Booking 1 jam tetap ditagih 1 jam walau ditutup lebih cepat.
+- Tambah waktu ikut menambah durasi tagihan.
+- Waktu habis tanpa extend tetap ditagih durasi booking terakhir.
+- Tidak ada overtime otomatis.
+- Data lama tanpa booked_duration_minutes fallback ke durasi aktual.
+- Response closeSession menyertakan billing_basis.
+- Ringkasan tagihan dan struk menampilkan dasar tagihan jika tersedia.
+- F&B, stok, payment, closing, dan cancel order tetap aman.
+
+Catatan:
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy backend dan uji production.
+
+---
+
 ## Catatan Penting
 
 - start_time adalah jangkar sesi.
@@ -55,18 +75,36 @@ Hasil:
 - F&B tetap terikat ke room_id + room_start_time.
 - scheduled_end_time boleh berubah saat Tambah Waktu.
 - Room tidak otomatis kosong saat waktu habis.
-- Billing saat ini masih berdasarkan durasi aktual sampai closeSession.
-- Billing berdasarkan durasi booking akan dibahas di Fase 5D.
+- Billing room memakai booked_duration_minutes untuk sesi booking valid.
+- Sesi legacy tanpa booked_duration_minutes masih memakai durasi aktual.
 
 ---
 
 ## Next Phase
 
-### Fase 5D - Billing Berdasarkan Durasi Booking
+### Fase 5E - Audit Extend Session
 Rencana:
-- Tagihan room dihitung dari booked_duration_minutes.
-- Contoh:
-  - Booking 1 jam = tagih 1 jam penuh.
-  - Booking 1 jam + extend 30 menit = tagih 1 jam 30 menit.
-- Tidak lagi murni berdasarkan stopwatch aktual.
-- Perlu diskusi bisnis sebelum coding.
+- Catat riwayat tambah waktu ke sheet audit.
+- Belum diimplementasikan.
+Fase 5D - Billing Berdasarkan Durasi Booking
+Status: PASS FINAL
+
+Hasil:
+- closeSession menghitung tagihan room berdasarkan booked_duration_minutes.
+- Booking 1 jam tetap ditagih 1 jam walau selesai lebih cepat.
+- Tambah waktu ikut menambah durasi tagihan.
+- Contoh test: durasi 90 menit, tarif Rp95.000/jam, biaya room Rp142.500.
+- F&B tetap masuk tagihan.
+- grand_total = room_total + fnb_total.
+- Tidak ada overtime otomatis.
+- Data lama fallback ke durasi aktual.
+- F&B, stok, payment, transaksi, dan closing tetap aman.
+
+Bugfix F&B Dropdown Room
+Status: PASS
+
+Hasil:
+- Room terisi bisa dipilih untuk Order F&B.
+- Room kosong dan perbaikan tampil tapi disabled.
+- Status room dinormalisasi.
+- Backend tidak berubah.
