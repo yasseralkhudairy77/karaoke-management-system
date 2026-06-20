@@ -208,6 +208,18 @@ body {
   line-height: 1.2;
 }
 
+.billing-basis-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(120, 247, 198, 0.38);
+  border-radius: 8px;
+  background: rgba(120, 247, 198, 0.1);
+  color: var(--billing-accent);
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .billing-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -767,6 +779,16 @@ body {
   border-color: rgba(120, 247, 198, 0.5);
   outline: 3px solid rgba(120, 247, 198, 0.2);
   outline-offset: 2px;
+}
+
+.fb-room-select option {
+  color: #111827;
+  background: #ffffff;
+}
+
+.fb-room-select option:disabled {
+  color: #9ca3af;
+  background: #f3f4f6;
 }
 
 .fb-order-note {

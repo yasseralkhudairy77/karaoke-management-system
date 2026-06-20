@@ -84,6 +84,7 @@ async function loadRooms() {
 
   if (!API_BASE_URL.trim()) {
     rooms = normalizeRooms(mockRooms);
+    syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Mode Data Contoh", "mock");
     console.info("Memakai data contoh karena API_BASE_URL masih kosong.");
@@ -93,6 +94,7 @@ async function loadRooms() {
 
   try {
     rooms = normalizeRooms(await fetchRoomsFromApi());
+    syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Terhubung ke Server", "live");
     console.info("Data ruangan berhasil dimuat dari Google Apps Script API.");
@@ -103,6 +105,7 @@ async function loadRooms() {
     setDataSourceBadge("Server Bermasalah", "error");
     showErrorState("Gagal memuat data dari server, sementara memakai data contoh.");
     rooms = normalizeRooms(mockRooms);
+    syncSelectedFbRoomWithRooms();
     renderRooms();
   }
 }
@@ -767,6 +770,26 @@ function createStockWarningListElement(warnings) {
   return list;
 }
 
+function normalizeRoomStatus(status) {
+  return String(status || "available").trim().toLowerCase();
+}
+
+function isFbOrderRoomSelectable(room) {
+  return normalizeRoomStatus(room?.status) === "occupied";
+}
+
+function syncSelectedFbRoomWithRooms() {
+  if (!selectedFbRoomId) {
+    return;
+  }
+
+  const selectedRoom = rooms.find((room) => room.room_id === selectedFbRoomId);
+
+  if (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom)) {
+    selectedFbRoomId = "";
+  }
+}
+
 function normalizeRooms(rawRooms) {
   return rawRooms.map((room) => {
     const ratePerHour = Number(room.rate_per_hour);
@@ -774,7 +797,7 @@ function normalizeRooms(rawRooms) {
     return {
       room_id: room.room_id || "",
       room_name: room.room_name || "Ruangan Tanpa Nama",
-      status: room.status || "available",
+      status: normalizeRoomStatus(room.status),
       start_time: room.start_time || null,
       booked_duration_minutes: Number(room.booked_duration_minutes) || 0,
       scheduled_end_time: room.scheduled_end_time || null,
@@ -827,7 +850,15 @@ function getMenuCategories() {
 }
 
 function setSelectedFbRoom(roomId) {
-  selectedFbRoomId = roomId || "";
+  const nextRoomId = roomId || "";
+  const room = rooms.find((item) => item.room_id === nextRoomId);
+
+  if (nextRoomId && (!room || !isFbOrderRoomSelectable(room))) {
+    selectedFbRoomId = "";
+  } else {
+    selectedFbRoomId = nextRoomId;
+  }
+
   renderRooms();
 }
 
@@ -914,7 +945,7 @@ function getSelectedFbRoom() {
 function getSelectedFbRoomStartTime() {
   const selectedRoom = getSelectedFbRoom();
 
-  if (!selectedRoom || selectedRoom.status !== "occupied") {
+  if (!isFbOrderRoomSelectable(selectedRoom)) {
     return "";
   }
 
@@ -928,7 +959,7 @@ function getSelectedRoomOpenFnbOrders() {
     return openFnbOrders;
   }
 
-  if (selectedRoom.status !== "occupied") {
+  if (!isFbOrderRoomSelectable(selectedRoom)) {
     return [];
   }
 
@@ -1077,7 +1108,7 @@ async function saveFnbOrder() {
     return;
   }
 
-  if (selectedRoom.status !== "occupied") {
+  if (!isFbOrderRoomSelectable(selectedRoom)) {
     showInlineNotice("Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.", "error");
     return;
   }
@@ -1976,6 +2007,32 @@ function createPaymentControlElement(transaction) {
   return payment;
 }
 
+function getBillingBasisLabel(basis) {
+  if (basis === "booked_duration") {
+    return "Durasi Booking";
+  }
+
+  if (basis === "actual_duration") {
+    return "Durasi Aktual";
+  }
+
+  return "";
+}
+
+function createBillingBasisNoteElement(transaction) {
+  const basisLabel = getBillingBasisLabel(transaction?.billing_basis);
+
+  if (!basisLabel) {
+    return document.createDocumentFragment();
+  }
+
+  const note = document.createElement("p");
+  note.className = "billing-basis-note";
+  note.textContent = `Dasar tagihan: ${basisLabel}`;
+
+  return note;
+}
+
 function createBillingSummaryElement(transaction) {
   const summary = document.createElement("section");
   summary.className = "billing-summary";
@@ -2046,6 +2103,7 @@ function createBillingSummaryElement(transaction) {
 
   summary.append(
     header,
+    createBillingBasisNoteElement(transaction),
     grid,
     createBillingBreakdownElement(transaction),
     createBillingFnbDetailsElement(transaction),
@@ -2219,13 +2277,20 @@ function createReceiptPrintElement(transaction) {
 
   header.append(brand, title, meta);
 
-  const roomSection = createReceiptSection("Informasi Ruangan", [
+  const roomRows = [
     ["Nama Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Waktu Mulai", transaction?.start_time || "-"],
     ["Waktu Selesai", transaction?.end_time || "-"],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
     ["Tarif per Jam", formatCurrency(transaction?.rate_per_hour)],
-  ]);
+  ];
+  const basisLabel = getBillingBasisLabel(transaction?.billing_basis);
+
+  if (basisLabel) {
+    roomRows.push(["Dasar Tagihan", basisLabel]);
+  }
+
+  const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
   const billingSection = createReceiptSection("Rincian Tagihan", [
     ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
@@ -2835,11 +2900,24 @@ function createFbRoomControlElement() {
 
   rooms.forEach((room) => {
     const option = document.createElement("option");
+    const isSelectable = isFbOrderRoomSelectable(room);
+
     option.value = room.room_id;
     option.textContent = `${room.room_name} - ${getStatusLabel(room.status)}`;
-    option.selected = room.room_id === selectedFbRoomId;
+    option.disabled = !isSelectable;
+
+    if (isSelectable && room.room_id === selectedFbRoomId) {
+      option.selected = true;
+    }
+
     select.appendChild(option);
   });
+
+  const selectedRoom = getSelectedFbRoom();
+
+  if (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom)) {
+    placeholder.selected = true;
+  }
 
   control.append(label, select);
 
@@ -2864,7 +2942,7 @@ function createFbRoomInfoElement() {
 
   info.append(roomName, roomStatus);
 
-  if (selectedRoom && selectedRoom.status !== "occupied") {
+  if (selectedRoom && !isFbOrderRoomSelectable(selectedRoom)) {
     const warning = document.createElement("p");
     warning.className = "fb-room-warning";
     warning.textContent = "Ruangan belum memiliki sesi aktif.";
@@ -3064,7 +3142,7 @@ function createFbOrderActionsElement() {
   const selectedRoom = getSelectedFbRoom();
   const canSave =
     Boolean(selectedRoom) &&
-    selectedRoom.status === "occupied" &&
+    isFbOrderRoomSelectable(selectedRoom) &&
     fbCartItems.length > 0 &&
     !isSavingFnbOrder;
 
@@ -3175,7 +3253,7 @@ function createOpenFnbFilterNoteElement() {
 
   if (!selectedRoom) {
     note.textContent = "Menampilkan semua order F&B yang masih open.";
-  } else if (selectedRoom.status === "occupied") {
+  } else if (isFbOrderRoomSelectable(selectedRoom)) {
     note.textContent = `Menampilkan order untuk sesi: ${selectedRoom.room_name}`;
   } else {
     note.textContent = "Ruangan belum memiliki sesi aktif.";
@@ -3904,7 +3982,7 @@ function getOpenFnbEmptyMessage() {
     return "Belum ada open order F&B.";
   }
 
-  if (selectedRoom.status !== "occupied") {
+  if (!isFbOrderRoomSelectable(selectedRoom)) {
     return "Tidak ada sesi aktif untuk ruangan ini.";
   }
 

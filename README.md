@@ -970,6 +970,45 @@ Cara test:
 6. Uji room warning atau expired, tambah waktu, pastikan status visual kembali normal jika sisa > 10 menit.
 7. Klik `Selesaikan Sesi`, pastikan F&B, stok, dan transaksi tetap normal.
 
+## Fase 5D - Billing Berdasarkan Durasi Booking
+
+Tagihan room saat `closeSession` kini memakai `booked_duration_minutes`, bukan durasi aktual dari `start_time` sampai kasir menutup sesi.
+
+Rumus:
+
+```text
+room_total = rate_per_hour * booked_duration_minutes / 60
+```
+
+Contoh:
+
+- Booking 1 jam, ditutup di menit ke-45 → tetap ditagih 1 jam.
+- Booking 1 jam + tambah waktu 30 menit → ditagih 90 menit.
+- Waktu habis tanpa extend → tetap ditagih durasi booking terakhir.
+- Tidak ada overtime otomatis di fase ini.
+
+Jika `booked_duration_minutes` kosong atau tidak valid (data lama), sistem fallback ke durasi aktual seperti sebelum Fase 5D. Response `closeSession` dapat menyertakan `billing_basis`:
+
+- `booked_duration` untuk sesi booking valid
+- `actual_duration` untuk fallback legacy
+
+F&B, stok, payment, closing, dan cancel order tidak berubah. Schema Google Sheets tidak berubah.
+
+Deploy backend setelah perubahan `Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase 5D - Billing Berdasarkan Durasi Booking"
+```
+
+Cara test:
+
+1. Mulai sesi 1 jam, tutup sebelum 1 jam habis, pastikan `duration_minutes = 60` dan `room_total = rate_per_hour`.
+2. Mulai sesi 1 jam, tambah 30 menit, tutup sesi, pastikan `duration_minutes = 90`.
+3. Biarkan waktu habis tanpa extend, tutup sesi, pastikan tetap ditagih durasi booking terakhir.
+4. Uji sesi lama tanpa `booked_duration_minutes`, pastikan fallback durasi aktual.
+5. Pastikan F&B, `grand_total`, stok, payment, closing, riwayat, dan struk tetap normal.
+
 ## Spreadsheet Template
 
 Folder `spreadsheet-template/` berisi CSV template untuk membuat Google Spreadsheet database awal. Setiap file CSV mewakili satu tab spreadsheet:

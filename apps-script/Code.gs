@@ -988,9 +988,10 @@ function closeSession_(roomId, cashierName) {
     var endDate = new Date();
     var endTime = toJakartaIsoString_(endDate);
     var startTime = room.start_time instanceof Date ? toJakartaIsoString_(room.start_time) : room.start_time;
-    var durationMinutes = calculateDurationMinutes_(startDate, endDate);
+    var billing = resolveSessionBilling_(room, startDate, endDate);
+    var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
-    var roomTotal = calculateRoomTotal_(durationMinutes, ratePerHour);
+    var roomTotal = billing.room_total;
     var fnbOrders = getOpenFnbOrdersForSession_(room.room_id || "", startTime || "");
     var fnbTotal = calculateFnbTotal_(fnbOrders);
     var fnbOrderIds = fnbOrders.map(function (order) {
@@ -1013,6 +1014,7 @@ function closeSession_(roomId, cashierName) {
       payment_status: "unpaid",
       cashier_name: cashierName || "Kasir",
       created_at: endTime,
+      billing_basis: billing.billing_basis,
     };
 
     appendTransaction_(transaction);
@@ -2332,6 +2334,27 @@ function calculateDurationMinutes_(startTime, endTime) {
   var diffMs = endDate.getTime() - startDate.getTime();
 
   return Math.max(1, Math.ceil(diffMs / 60000));
+}
+
+function resolveSessionBilling_(room, startDate, endDate) {
+  var bookedDurationMinutes = Number(room.booked_duration_minutes) || 0;
+  var ratePerHour = Number(room.rate_per_hour) || 0;
+
+  if (isFinite(bookedDurationMinutes) && bookedDurationMinutes > 0) {
+    return {
+      duration_minutes: bookedDurationMinutes,
+      room_total: calculateRoomTotal_(bookedDurationMinutes, ratePerHour),
+      billing_basis: "booked_duration",
+    };
+  }
+
+  var actualDurationMinutes = calculateDurationMinutes_(startDate, endDate);
+
+  return {
+    duration_minutes: actualDurationMinutes,
+    room_total: calculateRoomTotal_(actualDurationMinutes, ratePerHour),
+    billing_basis: "actual_duration",
+  };
 }
 
 function calculateRoomTotal_(durationMinutes, ratePerHour) {
