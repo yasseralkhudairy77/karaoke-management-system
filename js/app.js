@@ -9,7 +9,19 @@
 import { API_BASE_URL } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
 
-const roomsGrid = document.querySelector("#roomsGrid");
+const dashboardShell = document.querySelector(".dashboard-shell");
+const dashboardGlobal = document.querySelector("#dashboardGlobal");
+const appTabsNav = document.querySelector("#appTabs");
+const dashboardPanels = document.querySelector("#dashboardPanels");
+const DASHBOARD_TAB_STORAGE_KEY = "karaoke_active_dashboard_tab";
+const DASHBOARD_TABS = [
+  { key: "rooms", label: "Ruangan" },
+  { key: "fnb", label: "F&B" },
+  { key: "stock", label: "Stok" },
+  { key: "reports", label: "Laporan" },
+  { key: "transactions", label: "Transaksi" },
+  { key: "audit", label: "Audit" },
+];
 const dataSourceBadge = document.querySelector("#dataSourceBadge");
 const currencyFormatter = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -86,6 +98,7 @@ let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
 let isExtendingSession = false;
+let activeDashboardTab = loadActiveDashboardTab();
 let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
@@ -331,7 +344,7 @@ function updateStockAdjustmentForm(field, value) {
 }
 
 function focusStockAdjustmentField(selector) {
-  const field = roomsGrid.querySelector(selector);
+  const field = queryDashboard(selector);
 
   if (!field) {
     return;
@@ -861,7 +874,7 @@ function updateCashierClosingCashActual(value) {
   cashierClosingCashActual = value;
   renderRooms();
 
-  const cashInput = roomsGrid.querySelector("#cashierClosingCashActual");
+  const cashInput = queryDashboard("#cashierClosingCashActual");
 
   if (cashInput) {
     cashInput.focus();
@@ -992,7 +1005,7 @@ function setMenuSearchQuery(value) {
   menuSearchQuery = value;
   renderRooms();
 
-  const searchInput = roomsGrid.querySelector(".menu-search");
+  const searchInput = queryDashboard(".menu-search");
 
   if (searchInput) {
     searchInput.focus();
@@ -5173,7 +5186,84 @@ function createTransactionActionsElement(transaction) {
   return actions;
 }
 
-function renderRooms() {
+function queryDashboard(selector) {
+  return dashboardShell ? dashboardShell.querySelector(selector) : null;
+}
+
+function loadActiveDashboardTab() {
+  try {
+    const savedTab = localStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
+
+    if (savedTab && DASHBOARD_TABS.some((tab) => tab.key === savedTab)) {
+      return savedTab;
+    }
+  } catch (error) {
+    console.warn("Gagal membaca tab dashboard dari localStorage.", error);
+  }
+
+  return "rooms";
+}
+
+function saveActiveDashboardTab(tabKey) {
+  try {
+    localStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, tabKey);
+  } catch (error) {
+    console.warn("Gagal menyimpan tab dashboard ke localStorage.", error);
+  }
+}
+
+function isValidDashboardTab(tabKey) {
+  return DASHBOARD_TABS.some((tab) => tab.key === tabKey);
+}
+
+function setActiveDashboardTab(tabKey) {
+  if (!isValidDashboardTab(tabKey) || activeDashboardTab === tabKey) {
+    return;
+  }
+
+  activeDashboardTab = tabKey;
+  saveActiveDashboardTab(tabKey);
+  renderRooms();
+  refreshActiveTabData();
+}
+
+function refreshActiveTabData() {
+  if (!API_BASE_URL.trim() && activeDashboardTab !== "rooms") {
+    return;
+  }
+
+  switch (activeDashboardTab) {
+    case "rooms":
+      break;
+    case "fnb":
+      loadMenuItems();
+      loadOpenFnbOrders();
+      loadTodayFnbOrders();
+      break;
+    case "stock":
+      loadInventoryItems();
+      loadTodayStockMovements();
+      break;
+    case "reports":
+      loadTodayFnbSalesReport();
+      break;
+    case "transactions":
+      loadTodayTransactions();
+      loadTodayCashierClosings();
+      break;
+    case "audit":
+      loadTodayRoomTimeLogs();
+      break;
+    default:
+      break;
+  }
+}
+
+function renderDashboardGlobal() {
+  if (!dashboardGlobal) {
+    return;
+  }
+
   const fragment = document.createDocumentFragment();
 
   if (errorMessage) {
@@ -5196,35 +5286,119 @@ function renderRooms() {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
-  if (roomsLoading) {
-    fragment.appendChild(createStateMessage("Memuat data ruangan..."));
-  } else {
-    rooms.forEach((room) => {
-      fragment.appendChild(createRoomCard(room));
-    });
+  dashboardGlobal.replaceChildren(fragment);
+}
+
+function renderAppTabs() {
+  if (!appTabsNav) {
+    return;
   }
 
-  fragment.appendChild(createTodayRoomTimeLogsPanelElement());
-  fragment.appendChild(createMenuPanelElement());
-  fragment.appendChild(createFbOrderPanelElement());
-  fragment.appendChild(createOpenFnbOrdersPanelElement());
-  fragment.appendChild(createTodayFnbOrdersPanelElement());
-  fragment.appendChild(createInventoryPanelElement());
-  fragment.appendChild(createTodayStockMovementsPanelElement());
-  fragment.appendChild(createTodayFnbSalesReportPanelElement());
+  const fragment = document.createDocumentFragment();
 
-  try {
-    fragment.appendChild(renderTransactionHistory());
-  } catch (error) {
-    console.warn("Gagal merender riwayat transaksi.", error);
-    fragment.appendChild(createStateMessage("Riwayat transaksi gagal ditampilkan.", "error"));
+  DASHBOARD_TABS.forEach((tab) => {
+    const button = document.createElement("button");
+    button.className = activeDashboardTab === tab.key
+      ? "app-tab-button active"
+      : "app-tab-button";
+    button.type = "button";
+    button.role = "tab";
+    button.dataset.action = "switch-dashboard-tab";
+    button.dataset.tab = tab.key;
+    button.setAttribute("aria-selected", activeDashboardTab === tab.key ? "true" : "false");
+    button.textContent = tab.label;
+    fragment.appendChild(button);
+  });
+
+  appTabsNav.replaceChildren(fragment);
+}
+
+function appendDashboardTabContent(panel, tabKey) {
+  switch (tabKey) {
+    case "rooms": {
+      const roomsContainer = document.createElement("div");
+      roomsContainer.className = "rooms-tab-grid";
+
+      if (roomsLoading) {
+        roomsContainer.appendChild(createStateMessage("Memuat data ruangan..."));
+      } else {
+        rooms.forEach((room) => {
+          roomsContainer.appendChild(createRoomCard(room));
+        });
+      }
+
+      panel.appendChild(roomsContainer);
+      break;
+    }
+    case "fnb":
+      panel.append(
+        createMenuPanelElement(),
+        createFbOrderPanelElement(),
+        createOpenFnbOrdersPanelElement(),
+        createTodayFnbOrdersPanelElement()
+      );
+      break;
+    case "stock":
+      panel.append(
+        createInventoryPanelElement(),
+        createTodayStockMovementsPanelElement()
+      );
+      break;
+    case "reports":
+      panel.appendChild(createTodayFnbSalesReportPanelElement());
+      break;
+    case "transactions":
+      try {
+        panel.appendChild(renderTransactionHistory());
+      } catch (error) {
+        console.warn("Gagal merender riwayat transaksi.", error);
+        panel.appendChild(createStateMessage("Riwayat transaksi gagal ditampilkan.", "error"));
+      }
+      break;
+    case "audit":
+      panel.appendChild(createTodayRoomTimeLogsPanelElement());
+      break;
+    default:
+      break;
+  }
+}
+
+function renderDashboardTabPanels() {
+  if (!dashboardPanels) {
+    return;
   }
 
-  roomsGrid.replaceChildren(fragment);
+  const fragment = document.createDocumentFragment();
+
+  DASHBOARD_TABS.forEach((tab) => {
+    const panel = document.createElement("section");
+    panel.className = activeDashboardTab === tab.key
+      ? `app-tab-panel app-tab-panel--${tab.key} active`
+      : `app-tab-panel app-tab-panel--${tab.key}`;
+    panel.dataset.tabPanel = tab.key;
+    panel.setAttribute("role", "tabpanel");
+    panel.hidden = activeDashboardTab !== tab.key;
+
+    if (activeDashboardTab === tab.key) {
+      appendDashboardTabContent(panel, tab.key);
+    }
+
+    fragment.appendChild(panel);
+  });
+
+  dashboardPanels.replaceChildren(fragment);
+}
+
+function renderRooms() {
+  renderDashboardGlobal();
+  renderAppTabs();
+  renderDashboardTabPanels();
 }
 
 function updateRunningTimers() {
-  const occupiedCards = roomsGrid.querySelectorAll(".room-card.occupied");
+  const occupiedCards = dashboardPanels
+    ? dashboardPanels.querySelectorAll(".room-card.occupied")
+    : [];
 
   occupiedCards.forEach((card) => {
     const timer = card.querySelector(".room-countdown-value");
@@ -5843,7 +6017,11 @@ function formatCurrency(value) {
 }
 
 function setActionButtonsDisabled(isDisabled) {
-  roomsGrid
+  if (!dashboardShell) {
+    return;
+  }
+
+  dashboardShell
     .querySelectorAll(
       ".room-button, .billing-payment-button, .transaction-filter-button, .transaction-action-button, .transaction-pay-button"
         + ", .cashier-closing-button, .today-fnb-button, .today-fnb-filter-button, .fnb-cancel-button, .inventory-button"
@@ -5865,6 +6043,11 @@ async function handleRoomAction(event) {
   const card = button.closest(".room-card");
   const action = button.dataset.action;
   const roomId = card?.dataset.roomId;
+
+  if (action === "switch-dashboard-tab") {
+    setActiveDashboardTab(button.dataset.tab || "rooms");
+    return;
+  }
 
   if (action === "close-billing-summary") {
     clearBillingSummary();
@@ -6231,9 +6414,11 @@ function handleDashboardChange(event) {
   }
 }
 
-roomsGrid.addEventListener("click", handleRoomAction);
-roomsGrid.addEventListener("input", handleDashboardInput);
-roomsGrid.addEventListener("change", handleDashboardChange);
+if (dashboardShell) {
+  dashboardShell.addEventListener("click", handleRoomAction);
+  dashboardShell.addEventListener("input", handleDashboardInput);
+  dashboardShell.addEventListener("change", handleDashboardChange);
+}
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 

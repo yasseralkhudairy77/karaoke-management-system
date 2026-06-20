@@ -19,8 +19,14 @@
     </header>
 
     <main class="dashboard-shell">
-      <!-- Kartu ruangan dirender oleh js/app.js dari API atau data contoh. -->
-      <section id="roomsGrid" class="rooms-grid" aria-label="Daftar ruangan karaoke"></section>
+      <!-- Pesan global, ringkasan tagihan, dan struk dirender oleh js/app.js. -->
+      <div id="dashboardGlobal" class="dashboard-global" aria-live="polite"></div>
+
+      <!-- Navigasi tab modul dashboard. -->
+      <nav id="appTabs" class="app-tabs" role="tablist" aria-label="Navigasi modul dashboard"></nav>
+
+      <!-- Panel konten tab aktif dirender oleh js/app.js. -->
+      <div id="dashboardPanels" class="dashboard-panels"></div>
     </main>
 
     <!--

@@ -9,6 +9,21 @@ Scaffold awal web app statis untuk dashboard kasir karaoke. Project ini memakai 
 
 Field teknis tetap memakai format database seperti `room_id`, tetapi teks yang tampil ke pengguna memakai Bahasa Indonesia.
 
+## Fase UI-1 - Modular Tab Layout Dashboard
+
+Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab terakhir yang dibuka disimpan di `localStorage` (`karaoke_active_dashboard_tab`).
+
+| Tab | Isi modul |
+| --- | --- |
+| Ruangan | Kartu room, mulai sesi, countdown, tambah waktu, selesaikan sesi |
+| F&B | Menu, keranjang, order, open order, riwayat order hari ini |
+| Stok | Inventory, restock/koreksi, riwayat mutasi stok |
+| Laporan | Laporan penjualan F&B & stok rendah |
+| Transaksi | Riwayat transaksi, payment, cashier closing, struk |
+| Audit | Riwayat tambah waktu room hari ini |
+
+Fase ini **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga tidak perlu deploy Apps Script setelah update UI ini.
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

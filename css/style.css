@@ -116,6 +116,72 @@ body {
   padding: 24px clamp(16px, 3vw, 32px) 36px;
 }
 
+.dashboard-global {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.app-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.app-tab-button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.app-tab-button:hover,
+.app-tab-button:focus-visible {
+  border-color: rgba(92, 213, 155, 0.45);
+  color: var(--text);
+  outline: 3px solid rgba(92, 213, 155, 0.15);
+  outline-offset: 2px;
+}
+
+.app-tab-button.active {
+  border-color: rgba(92, 213, 155, 0.55);
+  background: rgba(92, 213, 155, 0.14);
+  color: #5cd59b;
+}
+
+.dashboard-panels {
+  display: block;
+}
+
+.app-tab-panel {
+  display: none;
+  gap: 18px;
+}
+
+.app-tab-panel.active {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+.rooms-tab-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+}
+
 .rooms-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -4005,6 +4071,16 @@ body {
   .app-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .app-tabs {
+    margin-bottom: 16px;
+  }
+
+  .app-tab-button {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 0.88rem;
   }
 
   .app-badge {

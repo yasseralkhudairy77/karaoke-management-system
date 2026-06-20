@@ -2,6 +2,25 @@
 
 ## Status Terakhir
 
+### Fase UI-1 - Modular Tab Layout Dashboard
+Status: PASS LOKAL
+
+Hasil:
+- Dashboard memakai 6 tab: Ruangan, F&B, Stok, Laporan, Transaksi, Audit.
+- Default tab aktif: Ruangan.
+- Tab terakhir disimpan di `localStorage` (`karaoke_active_dashboard_tab`).
+- Konten tab tidak aktif disembunyikan; hanya modul aktif yang dirender.
+- Refresh ringan saat pindah tab memakai fungsi load existing.
+- Pesan global, ringkasan tagihan, dan struk tetap di area atas dashboard.
+- Semua fitur bisnis existing tetap berjalan tanpa perubahan backend.
+
+Catatan:
+- Fase frontend-only; `Code.gs` tidak berubah.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu validasi visual user.
+
+---
+
 ### Fase 5E - Audit Log Tambah Waktu Room
 Status: PASS LOKAL
 
