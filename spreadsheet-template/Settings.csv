@@ -1,0 +1,4 @@
+key,value,description
+business_name,Karaoke POS,Nama bisnis yang tampil di sistem
+currency,IDR,Mata uang default
+timezone,Asia/Jakarta,Timezone operasional

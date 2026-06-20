@@ -1,0 +1,4 @@
+recipe_id,menu_id,item_id,qty_used,unit
+REC-001,MENU-001,ITEM-001,1,botol
+REC-002,MENU-002,ITEM-002,1,botol
+REC-003,MENU-003,ITEM-003,1,pcs

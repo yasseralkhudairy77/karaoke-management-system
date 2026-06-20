@@ -1,0 +1,7 @@
+room_id,room_name,status,start_time,booked_duration_minutes,scheduled_end_time,rate_per_hour,tv_device_id,updated_at
+ROOM-001,Ruangan 1 - Sakura,available,,,,75000,TV-001,2026-06-18T18:00:00+07:00
+ROOM-002,Ruangan 2 - Melati,occupied,2026-06-18T18:30:00+07:00,120,2026-06-18T20:30:00+07:00,85000,TV-002,2026-06-18T18:30:00+07:00
+ROOM-003,Ruangan 3 - Kenanga,maintenance,,,,75000,TV-003,2026-06-18T18:00:00+07:00
+ROOM-004,Ruangan 4 - Anggrek,available,,,,95000,TV-004,2026-06-18T18:00:00+07:00
+ROOM-005,Ruangan 5 - Mawar,occupied,2026-06-18T19:10:00+07:00,60,2026-06-18T20:10:00+07:00,110000,TV-005,2026-06-18T19:10:00+07:00
+ROOM-006,Ruangan 6 - Cempaka,available,,,,95000,TV-006,2026-06-18T18:00:00+07:00

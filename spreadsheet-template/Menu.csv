@@ -1,0 +1,6 @@
+menu_id,menu_name,category,price,status,updated_at,stock_tracking,stock_item_id,stock_qty_per_unit
+MENU-001,Air Mineral 600ml,Minuman,8000,active,,yes,STOCK-001,1
+MENU-002,Teh Botol,Minuman,10000,active,,yes,STOCK-002,1
+MENU-003,Snack Kentang,Snack,15000,active,,yes,STOCK-003,1
+MENU-004,Mie Goreng,Makanan,20000,active,,no,,
+MENU-005,Nasi Goreng,Makanan,25000,inactive,,no,,

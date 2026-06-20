@@ -1,0 +1,4 @@
+stock_item_id,stock_item_name,category,unit,stock_qty,min_stock,status,updated_at
+STOCK-001,Air Mineral 600ml,Minuman,pcs,20,5,active,2026-06-18T18:00:00+07:00
+STOCK-002,Teh Botol,Minuman,pcs,15,5,active,2026-06-18T18:00:00+07:00
+STOCK-003,Snack Kentang,Snack,pcs,10,3,active,2026-06-18T18:00:00+07:00

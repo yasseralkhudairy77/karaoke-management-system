@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard Kasir Karaoke</title>
+
+    <!-- Style utama untuk dashboard statis yang siap dipakai di GitHub Pages. -->
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <!-- Header aplikasi tetap statis agar konteks halaman jelas sebelum JavaScript selesai dimuat. -->
+    <header class="app-header">
+      <div>
+        <p class="app-kicker">Manajemen Ruangan</p>
+        <h1>Dashboard Kasir Karaoke</h1>
+      </div>
+      <span id="dataSourceBadge" class="app-badge">Memuat Data</span>
+    </header>
+
+    <main class="dashboard-shell">
+      <!-- Kartu ruangan dirender oleh js/app.js dari API atau data contoh. -->
+      <section id="roomsGrid" class="rooms-grid" aria-label="Daftar ruangan karaoke"></section>
+    </main>
+
+    <!--
+      Modul utama aplikasi.
+      TODO: Saat integrasi Google Apps Script siap, orchestration tetap di sini
+      dan sumber data contoh digantikan oleh data API di js/app.js.
+    -->
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

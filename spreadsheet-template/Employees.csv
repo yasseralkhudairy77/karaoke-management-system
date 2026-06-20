@@ -1,0 +1,4 @@
+employee_id,employee_name,role,salary_type,base_salary,is_active
+EMP-001,Kasir 1,cashier,monthly,3000000,TRUE
+EMP-002,Admin 1,admin,monthly,3500000,TRUE
+EMP-003,Manager 1,manager,monthly,5000000,TRUE
