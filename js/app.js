@@ -42,13 +42,29 @@ let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
 let transactionPeriodNotice = "";
 const TRANSACTION_PERIOD_OPTIONS = [
-  ["today", "Hari Ini"],
-  ["yesterday", "Kemarin"],
-  ["last7days", "7 Hari"],
+  ["today", "Shift Aktif"],
+  ["yesterday", "Shift Kemarin"],
+  ["last7days", "7 Shift"],
   ["thisMonth", "Bulan Ini"],
   ["all", "Semua"],
   ["custom", "Custom"],
 ];
+
+const OPERATIONAL_SHIFT_NOTE =
+  "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+
+function buildActiveShiftQueryParams() {
+  const params = new URLSearchParams();
+  params.set("period", "today");
+  return params;
+}
+
+function createOperationalShiftNoteElement(className = "operational-date-note") {
+  const note = document.createElement("p");
+  note.className = className;
+  note.textContent = OPERATIONAL_SHIFT_NOTE;
+  return note;
+}
 
 function withStatusBadge(baseClass, tone = "neutral") {
   const tones = new Set(["success", "warning", "danger", "info", "neutral"]);
@@ -657,7 +673,8 @@ async function fetchTodayFnbSalesReportFromApi() {
     };
   }
 
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport`);
+  const params = buildActiveShiftQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -712,6 +729,9 @@ async function fetchTodayStockMovementsFromApi() {
   }
 
   const params = new URLSearchParams({ action: "getTodayStockMovements" });
+  buildActiveShiftQueryParams().forEach((value, key) => {
+    params.set(key, value);
+  });
 
   if (stockMovementItemFilter && stockMovementItemFilter !== "all") {
     params.set("stock_item_id", stockMovementItemFilter);
@@ -867,7 +887,8 @@ async function fetchTodayFnbOrdersFromApi() {
     };
   }
 
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders`);
+  const params = buildActiveShiftQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -979,20 +1000,20 @@ function setTransactionHistoryFilter(filter) {
 
 function getTransactionPeriodTitleSuffix() {
   const labels = {
-    today: "Hari Ini",
-    yesterday: "Kemarin",
-    last7days: "7 Hari Terakhir",
+    today: "Shift Aktif",
+    yesterday: "Shift Kemarin",
+    last7days: "7 Shift",
     thisMonth: "Bulan Ini",
     all: "Semua",
     custom: "Custom",
   };
 
-  return labels[transactionPeriodFilter] || "Hari Ini";
+  return labels[transactionPeriodFilter] || "Shift Aktif";
 }
 
 function getTransactionPeriodRevenueNote() {
   if (transactionPeriodFilter === "custom" && transactionCustomStartDate && transactionCustomEndDate) {
-    return `Semua transaksi ${transactionCustomStartDate} s/d ${transactionCustomEndDate}`;
+    return `Semua transaksi shift ${transactionCustomStartDate} s/d ${transactionCustomEndDate}`;
   }
 
   return `Semua transaksi ${getTransactionPeriodTitleSuffix().toLowerCase()}`;
@@ -1077,18 +1098,18 @@ function showTransactionFromHistory(transactionId) {
 
 function getEmptyTransactionMessage() {
   if (transactionHistoryFilter === "paid") {
-    return "Belum ada transaksi lunas pada periode ini.";
+    return "Belum ada transaksi lunas pada shift/periode ini.";
   }
 
   if (transactionHistoryFilter === "unpaid") {
-    return "Tidak ada transaksi yang belum dibayar pada periode ini.";
+    return "Tidak ada transaksi yang belum dibayar pada shift/periode ini.";
   }
 
-  return "Belum ada transaksi pada periode ini.";
+  return "Belum ada transaksi pada shift/periode ini.";
 }
 
 function getEmptyCashierClosingMessage() {
-  return "Belum ada closing kasir pada periode ini.";
+  return "Belum ada closing kasir pada shift/periode ini.";
 }
 
 function toggleCashierClosingPreview() {
@@ -2157,7 +2178,7 @@ function createCashierClosingPreviewElement(preview) {
 
   const subtitle = document.createElement("p");
   subtitle.className = "cashier-closing-subtitle";
-  subtitle.textContent = "Rekap sementara berdasarkan transaksi hari ini.";
+  subtitle.textContent = "Rekap sementara berdasarkan transaksi shift aktif.";
 
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
@@ -3834,11 +3855,11 @@ function createTodayFnbOrdersPanelElement() {
   const title = document.createElement("h2");
   title.className = "today-fnb-title";
   title.id = "today-fnb-title";
-  title.textContent = "Riwayat Order F&B Hari Ini";
+  title.textContent = "Riwayat Order F&B - Shift Aktif";
 
   const subtitle = document.createElement("p");
   subtitle.className = "today-fnb-subtitle";
-  subtitle.textContent = "Daftar pesanan makanan dan minuman hari ini.";
+  subtitle.textContent = "Daftar pesanan makanan dan minuman pada shift operasional aktif.";
 
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
@@ -3851,7 +3872,7 @@ function createTodayFnbOrdersPanelElement() {
   list.className = "today-fnb-list";
 
   if (isLoadingTodayFnbOrders) {
-    list.appendChild(createStateMessage("Memuat riwayat order F&B hari ini..."));
+    list.appendChild(createStateMessage("Memuat riwayat order F&B shift aktif..."));
   } else if (filteredOrders.length === 0) {
     const empty = document.createElement("p");
     empty.className = "today-fnb-empty";
@@ -3867,6 +3888,7 @@ function createTodayFnbOrdersPanelElement() {
 
   panel.append(
     header,
+    createOperationalShiftNoteElement("shift-period-note"),
     createTodayFnbSummaryElement(summary),
     createTodayFnbToolbarElement(),
     list
@@ -4096,7 +4118,7 @@ function getTodayFnbEmptyMessage() {
     return "Belum ada order F&B yang dibatalkan.";
   }
 
-  return "Belum ada order F&B hari ini.";
+  return "Belum ada order F&B pada shift aktif.";
 }
 
 function createInventoryPanelElement() {
@@ -4475,10 +4497,10 @@ function getTodayStockMovementEmptyMessage() {
     stockMovementTypeFilter !== "all" ||
     stockMovementReferenceFilter !== "all"
   ) {
-    return "Tidak ada mutasi stok hari ini untuk filter yang dipilih.";
+    return "Tidak ada mutasi stok pada shift aktif untuk filter yang dipilih.";
   }
 
-  return "Belum ada mutasi stok hari ini.";
+  return "Belum ada mutasi stok pada shift aktif.";
 }
 
 function getStockMovementItemFilterOptions() {
@@ -4514,11 +4536,11 @@ function createTodayStockMovementsPanelElement() {
   const title = document.createElement("h2");
   title.className = "stock-movements-title";
   title.id = "stock-movements-title";
-  title.textContent = "Riwayat Mutasi Stok Hari Ini";
+  title.textContent = "Riwayat Mutasi Stok - Shift Aktif";
 
   const subtitle = document.createElement("p");
   subtitle.className = "stock-movements-subtitle";
-  subtitle.textContent = "Semua perubahan stok dari transaksi F&B, restock, dan koreksi manual.";
+  subtitle.textContent = "Semua perubahan stok shift aktif dari transaksi F&B, restock, dan koreksi manual.";
 
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
@@ -4533,7 +4555,7 @@ function createTodayStockMovementsPanelElement() {
   list.className = "stock-movements-list";
 
   if (isLoadingStockMovements) {
-    list.appendChild(createStateMessage("Memuat riwayat mutasi stok hari ini..."));
+    list.appendChild(createStateMessage("Memuat riwayat mutasi stok shift aktif..."));
   } else if (todayStockMovements.length === 0) {
     const empty = document.createElement("p");
     empty.className = "stock-movements-empty";
@@ -4549,6 +4571,7 @@ function createTodayStockMovementsPanelElement() {
 
   panel.append(
     header,
+    createOperationalShiftNoteElement("shift-period-note"),
     createTodayStockMovementSummaryElement(summary),
     createTodayStockMovementToolbarElement(),
     list
@@ -4762,11 +4785,11 @@ function createTodayFnbSalesReportPanelElement() {
   const title = document.createElement("h2");
   title.className = "fnb-sales-report-title";
   title.id = "fnb-sales-report-title";
-  title.textContent = "Laporan Penjualan F&B & Stok Rendah";
+  title.textContent = "Laporan F&B - Shift Aktif";
 
   const subtitle = document.createElement("p");
   subtitle.className = "fnb-sales-report-subtitle";
-  subtitle.textContent = "Ringkasan penjualan F&B billed hari ini dan rekomendasi restock stok rendah.";
+  subtitle.textContent = "Ringkasan penjualan F&B billed shift aktif dan rekomendasi restock stok rendah. Mengikuti tanggal operasional karaoke.";
 
   titleGroup.append(title, subtitle);
 
@@ -4798,6 +4821,7 @@ function createTodayFnbSalesReportPanelElement() {
 
   panel.append(
     header,
+    createOperationalShiftNoteElement("shift-period-note"),
     createFnbSalesReportSummaryElement(summary, topMenuLabel),
     createFnbMenuSalesSectionElement(),
     createLowStockReportSectionElement()
@@ -4813,7 +4837,7 @@ function createFnbSalesReportSummaryElement(summary, topMenuLabel) {
   [
     ["Total Order F&B", Number(summary.total_fnb_orders) || 0],
     ["Total Item Terjual", Number(summary.total_items_sold) || 0],
-    ["Omzet F&B Hari Ini", formatCurrency(summary.total_fnb_sales)],
+    ["Omzet F&B Shift Aktif", formatCurrency(summary.total_fnb_sales)],
     ["Menu Terlaris", topMenuLabel],
     ["Stok Rendah", Number(summary.low_stock_count) || 0],
     ["Stok Minus", Number(summary.negative_stock_count) || 0],
@@ -4854,7 +4878,7 @@ function createFnbMenuSalesSectionElement() {
   } else if (todayFnbMenuSales.length === 0) {
     const empty = document.createElement("p");
     empty.className = "fnb-sales-report-empty";
-    empty.textContent = "Belum ada penjualan F&B hari ini.";
+    empty.textContent = "Belum ada penjualan F&B pada shift aktif.";
     list.appendChild(empty);
   } else {
     const paginatedMenuSales = getPaginatedSlice("fnbMenuSales", todayFnbMenuSales);
@@ -5361,6 +5385,7 @@ function createTransactionPeriodFilterElement() {
   });
 
   wrapper.appendChild(buttons);
+  wrapper.appendChild(createOperationalShiftNoteElement("operational-date-note"));
 
   if (transactionPeriodFilter === "custom") {
     const custom = document.createElement("div");
@@ -5371,7 +5396,7 @@ function createTransactionPeriodFilterElement() {
 
     const startLabel = document.createElement("label");
     startLabel.className = "custom-date-label";
-    startLabel.textContent = "Tanggal Mulai";
+    startLabel.textContent = "Tanggal Operasional Mulai";
 
     const startInput = document.createElement("input");
     startInput.className = "custom-date-input";
@@ -5386,7 +5411,7 @@ function createTransactionPeriodFilterElement() {
 
     const endLabel = document.createElement("label");
     endLabel.className = "custom-date-label";
-    endLabel.textContent = "Tanggal Akhir";
+    endLabel.textContent = "Tanggal Operasional Akhir";
 
     const endInput = document.createElement("input");
     endInput.className = "custom-date-input";
@@ -5964,6 +5989,9 @@ async function fetchTodayRoomTimeLogsFromApi() {
     action: "getTodayRoomTimeLogs",
     action_type: "extend_session",
   });
+  buildActiveShiftQueryParams().forEach((value, key) => {
+    params.set(key, value);
+  });
 
   if (roomTimeLogRoomFilter && roomTimeLogRoomFilter !== "all") {
     params.set("room_id", roomTimeLogRoomFilter);
@@ -6027,10 +6055,10 @@ function getRoomTimeLogEmptyMessage() {
   }
 
   if (roomTimeLogRoomFilter !== "all") {
-    return "Tidak ada riwayat tambah waktu hari ini untuk room yang dipilih.";
+    return "Tidak ada riwayat tambah waktu pada shift aktif untuk room yang dipilih.";
   }
 
-  return "Belum ada riwayat tambah waktu room hari ini.";
+  return "Belum ada riwayat tambah waktu room pada shift aktif.";
 }
 
 function createTodayRoomTimeLogsPanelElement() {
@@ -6046,11 +6074,11 @@ function createTodayRoomTimeLogsPanelElement() {
   const title = document.createElement("h2");
   title.className = "room-time-logs-title";
   title.id = "room-time-logs-title";
-  title.textContent = "Riwayat Tambah Waktu Room Hari Ini";
+  title.textContent = "Riwayat Tambah Waktu Room - Shift Aktif";
 
   const subtitle = document.createElement("p");
   subtitle.className = "room-time-logs-subtitle";
-  subtitle.textContent = "Audit log setiap perubahan durasi booking room.";
+  subtitle.textContent = "Audit log perubahan durasi booking room pada shift operasional aktif.";
 
   titleGroup.append(title, subtitle);
 
@@ -6092,6 +6120,7 @@ function createTodayRoomTimeLogsPanelElement() {
 
   panel.append(
     header,
+    createOperationalShiftNoteElement("shift-period-note"),
     createRoomTimeLogSummaryElement(summary),
     createRoomTimeLogToolbarElement(),
     list

@@ -110,30 +110,49 @@ Contoh `payment_status`:
 - `paid`
 - `cancelled`
 
-### Fase UI-2A - Filter Periode Transaksi
+### Fase UI-2A / UI-2B - Filter Periode & Tanggal Operasional
 
-GET `getTodayTransactions` tetap backward compatible. Tanpa parameter `period`, default `today`.
+GET `getTodayTransactions` tetap backward compatible. Tanpa parameter `period`, default `today` (shift operasional aktif).
 
 Query parameter opsional:
 
-- `period` — `today`, `yesterday`, `last7days`, `thismonth`, `all`, `custom`
-- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD`
-- `end_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+- `period` — `today` (alias `activeshift`), `yesterday`, `last7days`, `thismonth`, `all`, `custom`
+- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD` (tanggal operasional)
+- `end_date` — wajib untuk `custom`, format `YYYY-MM-DD` (tanggal operasional)
 
-Filter tanggal memakai timezone Jakarta dengan urutan field:
+#### Konsep `operational_date` (Fase UI-2B)
+
+Belum ada kolom baru di sheet. `operational_date` dihitung dinamis dari datetime dengan cutoff jam 10:00 pagi (Asia/Jakarta):
+
+`operational_date = date(datetime - 10 jam)`
+
+Contoh:
+
+- `2026-06-20 18:00` → `2026-06-20`
+- `2026-06-21 00:31` → `2026-06-20`
+- `2026-06-21 09:59` → `2026-06-20`
+- `2026-06-21 10:00` → `2026-06-21`
+
+Konstanta backend: `OPERATIONAL_CUTOFF_HOUR = 10`
+
+#### Filter transaksi
+
+Urutan datetime sumber:
 
 1. `created_at`
 2. fallback `end_time`
 3. fallback `start_time`
 
-Periode:
+Lalu dihitung `operational_date` dan dibandingkan dengan rentang periode.
 
-- `today` — hari ini (Jakarta)
-- `yesterday` — kemarin (Jakarta)
-- `last7days` — 6 hari sebelum hari ini sampai hari ini (7 hari inklusif)
-- `thismonth` — tanggal 1 bulan berjalan sampai hari ini
-- `all` — semua transaksi
-- `custom` — `start_date` sampai `end_date` inklusif
+#### Periode operasional
+
+- `today` — shift operasional aktif sekarang
+- `yesterday` — 1 operational day sebelum shift aktif
+- `last7days` — 7 operational day terakhir termasuk shift aktif
+- `thismonth` — operational_date dari tanggal 1 bulan operasional aktif sampai shift aktif
+- `all` — semua data
+- `custom` — `start_date` sampai `end_date` berdasarkan operational_date (inklusif)
 
 Error:
 
@@ -141,24 +160,36 @@ Error:
 - custom tanpa tanggal → `Tanggal mulai dan tanggal akhir wajib diisi untuk periode custom.`
 - `start_date > end_date` → `Tanggal mulai tidak boleh lebih besar dari tanggal akhir.`
 
+Response metadata opsional:
+
+- `operational_date_start`
+- `operational_date_end`
+- `operational_cutoff_hour`
+
 Summary response dihitung dari hasil filter periode, termasuk `cash_revenue` dan `transfer_revenue`.
 
-### Fase UI-2A - Filter Periode Cashier Closings
+### Fase UI-2A / UI-2B - Filter Periode Cashier Closings
 
-GET `getTodayCashierClosings` tetap backward compatible. Tanpa parameter `period`, default `today`.
+GET `getTodayCashierClosings` tetap backward compatible. Tanpa parameter `period`, default shift aktif.
 
-Query parameter opsional (sama dengan transaksi):
+Query parameter opsional (sama dengan transaksi).
 
-- `period` — `today`, `yesterday`, `last7days`, `thismonth`, `all`, `custom`
-- `start_date` — wajib untuk `custom`, format `YYYY-MM-DD`
-- `end_date` — wajib untuk `custom`, format `YYYY-MM-DD`
+Filter `operational_date` dari:
 
-Filter tanggal memakai timezone Jakarta dengan urutan field:
+1. `closing_date` jika format `YYYY-MM-DD` (tanpa jam) → dipakai langsung sebagai operational_date
+2. jika `closing_date` punya jam → dihitung operational_date
+3. fallback `created_at` → dihitung operational_date
 
-1. `closing_date`
-2. fallback `created_at`
+### Endpoint lain yang memakai operational_date (UI-2B)
 
-Periode dan error mengikuti aturan yang sama dengan `getTodayTransactions`.
+Semua endpoint "Today" di bawah ini default ke shift aktif (`period=today`) dan mendukung parameter periode yang sama jika aman:
+
+| Endpoint | Sumber datetime |
+| --- | --- |
+| `getTodayFnbSalesReport` | `created_at`, fallback `updated_at` |
+| `getTodayFnbOrders` | `created_at`, fallback `updated_at` |
+| `getTodayStockMovements` | `created_at` |
+| `getTodayRoomTimeLogs` | `created_at` |
 
 ## CashierClosings
 

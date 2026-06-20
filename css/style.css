@@ -693,6 +693,19 @@ body {
   line-height: 1.35;
 }
 
+.operational-date-note,
+.shift-period-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.08);
+  color: #bfdbfe;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .pagination {
   display: flex;
   flex-wrap: wrap;

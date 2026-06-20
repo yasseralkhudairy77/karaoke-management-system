@@ -69,6 +69,25 @@ Fase ini merapikan tampilan dashboard secara visual tanpa mengubah logic bisnis 
 
 Fase **frontend-only**; `apps-script/Code.gs` tidak berubah — **tidak perlu deploy Apps Script**.
 
+## Fase UI-2B - Tanggal Operasional / Shift Karaoke
+
+Laporan dan filter periode kini memakai **tanggal operasional karaoke**, bukan tanggal kalender 00:00–23:59.
+
+- Cutoff shift: **jam 10:00 pagi** (Asia/Jakarta)
+- Data jam 00:00–09:59 masuk shift hari sebelumnya
+- Formula: `operational_date = date(datetime - 10 jam)`
+- Default periode UI: **Shift Aktif** (backend: `period=today`)
+- Pilihan: Shift Kemarin, 7 Shift, Bulan Ini, Semua, Custom (tanggal operasional)
+
+Endpoint yang memakai operational_date: transaksi, closing, laporan F&B, riwayat order F&B, mutasi stok, audit tambah waktu.
+
+**Perlu deploy Apps Script** setelah update `apps-script/Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase UI-2B - Tanggal Operasional Shift Karaoke"
+```
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

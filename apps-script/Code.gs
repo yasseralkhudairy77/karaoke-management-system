@@ -183,23 +183,42 @@ function doGet(e) {
     }
 
     if (action === "getTodayFnbOrders") {
-      return jsonResponse(getTodayFnbOrders_(e.parameter.status, e.parameter.room_id));
+      return jsonResponse(getTodayFnbOrdersByPeriod_(
+        e.parameter.status,
+        e.parameter.room_id,
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
     }
 
     if (action === "getTodayStockMovements") {
-      return jsonResponse(getTodayStockMovements_(
+      return jsonResponse(getTodayStockMovementsByPeriod_(
         e.parameter.stock_item_id,
         e.parameter.movement_type,
-        e.parameter.reference_type
+        e.parameter.reference_type,
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
       ));
     }
 
     if (action === "getTodayFnbSalesReport") {
-      return jsonResponse(getTodayFnbSalesReport_());
+      return jsonResponse(getTodayFnbSalesReportByPeriod_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
     }
 
     if (action === "getTodayRoomTimeLogs") {
-      return jsonResponse(getTodayRoomTimeLogs_(e.parameter.room_id, e.parameter.action_type));
+      return jsonResponse(getTodayRoomTimeLogsByPeriod_(
+        e.parameter.room_id,
+        e.parameter.action_type,
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
     }
 
     if (action === "getFnbOrdersByIds") {
@@ -703,13 +722,9 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
         return true;
       }
 
-      var transactionDate = resolveTransactionDateString_(transaction);
+      var transactionDate = resolveTransactionOperationalDateString_(transaction);
 
-      return isDateWithinInclusiveRange_(
-        transactionDate,
-        periodResult.startDate,
-        periodResult.endDate
-      );
+      return matchesOperationalPeriod_(transactionDate, periodResult);
     })
     .map(function (transaction) {
       return {
@@ -776,12 +791,11 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
     transfer_revenue: 0,
   });
 
-  return {
+  return Object.assign({
     ok: true,
     transactions: transactions,
     summary: summary,
-    period: periodResult.period,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
 function getTodayCashierClosings_() {
@@ -801,14 +815,9 @@ function getCashierClosingsByPeriod_(period, startDate, endDate) {
         return true;
       }
 
-      var closingDate = normalizeJakartaDateString_(closing.closing_date)
-        || normalizeJakartaDateString_(closing.created_at);
+      var closingDate = resolveClosingOperationalDateString_(closing);
 
-      return isDateWithinInclusiveRange_(
-        closingDate,
-        periodResult.startDate,
-        periodResult.endDate
-      );
+      return matchesOperationalPeriod_(closingDate, periodResult);
     })
     .map(function (closing) {
       return {
@@ -835,7 +844,7 @@ function getCashierClosingsByPeriod_(period, startDate, endDate) {
       return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
     });
 
-  return {
+  return Object.assign({
     ok: true,
     closings: closings,
     summary: {
@@ -843,13 +852,96 @@ function getCashierClosingsByPeriod_(period, startDate, endDate) {
       latest_closing_id: closings.length > 0 ? closings[0].closing_id : "",
       latest_created_at: closings.length > 0 ? closings[0].created_at : "",
     },
-    period: periodResult.period,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
-function parseTransactionPeriod_(period, startDate, endDate) {
+function getOperationalCutoffHour_() {
+  return 10;
+}
+
+function parseJakartaDateTimeValue_(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+
+  var textValue = String(value).trim();
+
+  if (!textValue) {
+    return null;
+  }
+
+  var parsedDate = new Date(textValue);
+
+  return isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+function getOperationalDateString_(dateValue) {
+  var parsedDate = parseJakartaDateTimeValue_(dateValue);
+
+  if (!parsedDate) {
+    return "";
+  }
+
+  var shiftedDate = new Date(parsedDate.getTime() - getOperationalCutoffHour_() * 3600000);
+
+  return getJakartaDateString_(shiftedDate);
+}
+
+function getCurrentOperationalDateString_() {
+  return getOperationalDateString_(new Date());
+}
+
+function parseOperationalDateAnchor_(dateString) {
+  var match = String(dateString || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 5, 0, 0));
+}
+
+function addDaysToOperationalDateString_(dateString, dayOffset) {
+  var anchorDate = parseOperationalDateAnchor_(dateString);
+
+  if (!anchorDate) {
+    return "";
+  }
+
+  return Utilities.formatDate(
+    new Date(anchorDate.getTime() + (Number(dayOffset) || 0) * 86400000),
+    "Asia/Jakarta",
+    "yyyy-MM-dd"
+  );
+}
+
+function getOperationalMonthStartDateString_(operationalDateString) {
+  var activeOperationalDate = operationalDateString || getCurrentOperationalDateString_();
+
+  if (!activeOperationalDate || activeOperationalDate.length < 7) {
+    return getCurrentOperationalDateString_().substring(0, 7) + "-01";
+  }
+
+  return activeOperationalDate.substring(0, 7) + "-01";
+}
+
+function normalizeOperationalPeriodKey_(period) {
   var normalizedPeriod = String(period || "today").trim().toLowerCase();
-  var today = getJakartaDateString_(new Date());
+
+  if (normalizedPeriod === "activeshift") {
+    return "today";
+  }
+
+  return normalizedPeriod;
+}
+
+function getOperationalDateRangeForPeriod_(period, startDate, endDate) {
+  var normalizedPeriod = normalizeOperationalPeriodKey_(period);
+  var activeOperationalDate = getCurrentOperationalDateString_();
 
   if (["today", "yesterday", "last7days", "thismonth", "all", "custom"].indexOf(normalizedPeriod) === -1) {
     return {
@@ -862,19 +954,19 @@ function parseTransactionPeriod_(period, startDate, endDate) {
     return {
       ok: true,
       period: normalizedPeriod,
-      startDate: today,
-      endDate: today,
+      startDate: activeOperationalDate,
+      endDate: activeOperationalDate,
     };
   }
 
   if (normalizedPeriod === "yesterday") {
-    var yesterday = getJakartaDateWithOffset_(-1);
+    var yesterdayOperationalDate = addDaysToOperationalDateString_(activeOperationalDate, -1);
 
     return {
       ok: true,
       period: normalizedPeriod,
-      startDate: yesterday,
-      endDate: yesterday,
+      startDate: yesterdayOperationalDate,
+      endDate: yesterdayOperationalDate,
     };
   }
 
@@ -882,8 +974,8 @@ function parseTransactionPeriod_(period, startDate, endDate) {
     return {
       ok: true,
       period: normalizedPeriod,
-      startDate: getJakartaDateWithOffset_(-6),
-      endDate: today,
+      startDate: addDaysToOperationalDateString_(activeOperationalDate, -6),
+      endDate: activeOperationalDate,
     };
   }
 
@@ -891,8 +983,8 @@ function parseTransactionPeriod_(period, startDate, endDate) {
     return {
       ok: true,
       period: normalizedPeriod,
-      startDate: getJakartaMonthStartDateString_(),
-      endDate: today,
+      startDate: getOperationalMonthStartDateString_(activeOperationalDate),
+      endDate: activeOperationalDate,
     };
   }
 
@@ -930,10 +1022,57 @@ function parseTransactionPeriod_(period, startDate, endDate) {
   };
 }
 
-function resolveTransactionDateString_(transaction) {
-  return normalizeJakartaDateString_(transaction.created_at)
-    || normalizeJakartaDateString_(transaction.end_time)
-    || normalizeJakartaDateString_(transaction.start_time)
+function parseTransactionPeriod_(period, startDate, endDate) {
+  return getOperationalDateRangeForPeriod_(period, startDate, endDate);
+}
+
+function buildOperationalPeriodMetadata_(periodResult) {
+  return {
+    period: periodResult.period,
+    operational_date_start: periodResult.startDate || "",
+    operational_date_end: periodResult.endDate || "",
+    operational_cutoff_hour: getOperationalCutoffHour_(),
+  };
+}
+
+function matchesOperationalPeriod_(operationalDate, periodResult) {
+  if (periodResult.period === "all") {
+    return true;
+  }
+
+  return isDateWithinInclusiveRange_(
+    operationalDate,
+    periodResult.startDate,
+    periodResult.endDate
+  );
+}
+
+function resolveTransactionOperationalDateString_(transaction) {
+  return getOperationalDateString_(transaction.created_at)
+    || getOperationalDateString_(transaction.end_time)
+    || getOperationalDateString_(transaction.start_time)
+    || "";
+}
+
+function resolveClosingOperationalDateString_(closing) {
+  var closingDateText = String(closing.closing_date || "").trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(closingDateText)) {
+    return closingDateText;
+  }
+
+  var fromClosingDate = getOperationalDateString_(closing.closing_date);
+
+  if (fromClosingDate) {
+    return fromClosingDate;
+  }
+
+  return getOperationalDateString_(closing.created_at);
+}
+
+function resolveFnbOrderOperationalDateString_(order) {
+  return getOperationalDateString_(order.created_at)
+    || getOperationalDateString_(order.updated_at)
     || "";
 }
 
@@ -1766,6 +1905,16 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
 }
 
 function getTodayFnbOrders_(status, roomId) {
+  return getTodayFnbOrdersByPeriod_(status, roomId, "today", "", "");
+}
+
+function getTodayFnbOrdersByPeriod_(status, roomId, period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var normalizedStatus = String(status || "").trim().toLowerCase();
   var normalizedRoomId = String(roomId || "").trim();
 
@@ -1777,22 +1926,22 @@ function getTodayFnbOrders_(status, roomId) {
   }
 
   if (!sheetExists_("FnbOrders") || !sheetExists_("FnbOrderItems")) {
-    return {
+    return Object.assign({
       ok: true,
       orders: [],
       summary: createTodayFnbOrderEmptySummary_(),
-    };
+    }, buildOperationalPeriodMetadata_(periodResult));
   }
 
-  var today = new Date();
   var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
   var orders = readFnbOrdersOrEmpty_()
     .filter(function (order) {
       var orderStatus = String(order.order_status || "").trim().toLowerCase();
       var matchesStatus = !normalizedStatus || orderStatus === normalizedStatus;
       var matchesRoom = !normalizedRoomId || String(order.room_id || "").trim() === normalizedRoomId;
+      var operationalDate = resolveFnbOrderOperationalDateString_(order);
 
-      return matchesStatus && matchesRoom && isSameJakartaDateFromTimestamp_(order.created_at, today);
+      return matchesStatus && matchesRoom && matchesOperationalPeriod_(operationalDate, periodResult);
     })
     .map(function (order) {
       var orderId = order.order_id || "";
@@ -1841,11 +1990,11 @@ function getTodayFnbOrders_(status, roomId) {
     return result;
   }, createTodayFnbOrderEmptySummary_());
 
-  return {
+  return Object.assign({
     ok: true,
     orders: orders,
     summary: summary,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
 function createTodayFnbOrderEmptySummary_() {
@@ -1863,6 +2012,16 @@ function createTodayFnbOrderEmptySummary_() {
 }
 
 function getTodayStockMovements_(stockItemId, movementType, referenceType) {
+  return getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceType, "today", "", "");
+}
+
+function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceType, period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var normalizedStockItemId = String(stockItemId || "").trim();
   var normalizedMovementType = String(movementType || "").trim().toLowerCase();
   var normalizedReferenceType = String(referenceType || "").trim().toLowerCase();
@@ -1882,21 +2041,21 @@ function getTodayStockMovements_(stockItemId, movementType, referenceType) {
   }
 
   if (!sheetExists_("StockMovements")) {
-    return {
+    return Object.assign({
       ok: true,
       stock_movements: [],
       summary: createTodayStockMovementEmptySummary_(),
-    };
+    }, buildOperationalPeriodMetadata_(periodResult));
   }
 
-  var today = new Date();
   var movements = readSheetAsObjectsOrEmpty_("StockMovements")
     .filter(function (movement) {
       var movementTypeValue = String(movement.movement_type || "").trim().toLowerCase();
       var referenceTypeValue = String(movement.reference_type || "").trim().toLowerCase();
+      var operationalDate = getOperationalDateString_(movement.created_at);
 
       return (
-        isSameJakartaDateFromTimestamp_(movement.created_at, today) &&
+        matchesOperationalPeriod_(operationalDate, periodResult) &&
         (!normalizedStockItemId || String(movement.stock_item_id || "").trim() === normalizedStockItemId) &&
         (!normalizedMovementType || movementTypeValue === normalizedMovementType) &&
         (!normalizedReferenceType || referenceTypeValue === normalizedReferenceType)
@@ -1940,11 +2099,11 @@ function getTodayStockMovements_(stockItemId, movementType, referenceType) {
     return result;
   }, createTodayStockMovementEmptySummary_());
 
-  return {
+  return Object.assign({
     ok: true,
     stock_movements: movements,
     summary: summary,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
 function createTodayStockMovementEmptySummary_() {
@@ -1960,7 +2119,16 @@ function createTodayStockMovementEmptySummary_() {
 }
 
 function getTodayFnbSalesReport_() {
-  var today = new Date();
+  return getTodayFnbSalesReportByPeriod_("today", "", "");
+}
+
+function getTodayFnbSalesReportByPeriod_(period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var billedOrders = [];
   var billedOrderIds = {};
   var itemsByOrderId = {};
@@ -1969,11 +2137,12 @@ function getTodayFnbSalesReport_() {
     readFnbOrdersOrEmpty_().forEach(function (order) {
       var orderStatus = String(order.order_status || "").trim().toLowerCase();
       var orderId = order.order_id || "";
+      var operationalDate = resolveFnbOrderOperationalDateString_(order);
 
       if (
         orderStatus === "billed" &&
         orderId &&
-        isSameJakartaDateFromTimestamp_(order.created_at, today)
+        matchesOperationalPeriod_(operationalDate, periodResult)
       ) {
         billedOrders.push(order);
         billedOrderIds[orderId] = true;
@@ -1989,12 +2158,12 @@ function getTodayFnbSalesReport_() {
   var lowStockItems = getLowStockItemsForReport_();
   var summary = createFnbSalesReportSummary_(menuSales, billedOrders.length, lowStockItems);
 
-  return {
+  return Object.assign({
     ok: true,
     summary: summary,
     menu_sales: menuSales,
     low_stock_items: lowStockItems,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
 function createFnbSalesReportSummary_(menuSales, totalFnbOrders, lowStockItems) {
@@ -2165,6 +2334,16 @@ function getLowStockItemsForReport_() {
 }
 
 function getTodayRoomTimeLogs_(roomId, actionType) {
+  return getTodayRoomTimeLogsByPeriod_(roomId, actionType, "today", "", "");
+}
+
+function getTodayRoomTimeLogsByPeriod_(roomId, actionType, period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period, startDate, endDate);
+
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
   var normalizedRoomId = String(roomId || "").trim();
   var normalizedActionType = String(actionType || "").trim().toLowerCase();
 
@@ -2176,20 +2355,20 @@ function getTodayRoomTimeLogs_(roomId, actionType) {
   }
 
   if (!sheetExists_("RoomTimeLogs")) {
-    return {
+    return Object.assign({
       ok: true,
       room_time_logs: [],
       summary: createRoomTimeLogEmptySummary_(),
-    };
+    }, buildOperationalPeriodMetadata_(periodResult));
   }
 
-  var today = new Date();
   var logs = readSheetAsObjectsOrEmpty_("RoomTimeLogs")
     .filter(function (log) {
       var logActionType = String(log.action_type || "").trim().toLowerCase();
+      var operationalDate = getOperationalDateString_(log.created_at);
 
       return (
-        isSameJakartaDateFromTimestamp_(log.created_at, today) &&
+        matchesOperationalPeriod_(operationalDate, periodResult) &&
         (!normalizedRoomId || String(log.room_id || "").trim() === normalizedRoomId) &&
         (!normalizedActionType || logActionType === normalizedActionType)
       );
@@ -2227,11 +2406,11 @@ function getTodayRoomTimeLogs_(roomId, actionType) {
 
   summary.rooms_extended = Object.keys(uniqueRoomIds).length;
 
-  return {
+  return Object.assign({
     ok: true,
     room_time_logs: logs,
     summary: summary,
-  };
+  }, buildOperationalPeriodMetadata_(periodResult));
 }
 
 function createRoomTimeLogEmptySummary_() {

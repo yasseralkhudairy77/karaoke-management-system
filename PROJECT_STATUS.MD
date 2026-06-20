@@ -2,6 +2,24 @@
 
 ## Status Terakhir
 
+### Fase UI-2B - Tanggal Operasional / Shift Karaoke
+Status: PASS LOKAL
+
+Hasil:
+- Konsep `operational_date` dengan cutoff jam 10:00 (Asia/Jakarta), dihitung dinamis tanpa kolom sheet baru.
+- Helper backend: `getOperationalCutoffHour_`, `getOperationalDateString_`, `getCurrentOperationalDateString_`, `getOperationalDateRangeForPeriod_`.
+- Endpoint memakai operational_date: `getTodayTransactions`, `getTodayCashierClosings`, `getTodayFnbSalesReport`, `getTodayFnbOrders`, `getTodayStockMovements`, `getTodayRoomTimeLogs`.
+- Response metadata: `operational_date_start`, `operational_date_end`, `operational_cutoff_hour`.
+- UI label shift: Shift Aktif, Shift Kemarin, 7 Shift, Bulan Ini, Semua, Custom + catatan cutoff.
+- `node --check js/app.js` PASS; syntax `Code.gs` PASS.
+
+Catatan:
+- `Code.gs` berubah; deploy Apps Script diperlukan sebelum test production.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy + validasi skenario lewat tengah malam.
+
+---
+
 ### Fase UI-3 - Visual Polish Dashboard
 Status: PASS LOKAL
 
