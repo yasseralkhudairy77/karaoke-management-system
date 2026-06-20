@@ -871,6 +871,59 @@ Cara test:
 14. Pastikan quantity invalid ditolak.
 15. Pastikan stok tidak berubah tanpa movement.
 
+## Fase 4L - Riwayat Mutasi Stok Hari Ini
+
+Dashboard menampilkan panel `Riwayat Mutasi Stok Hari Ini` di area stok F&B.
+
+Endpoint baru:
+
+- GET `getTodayStockMovements`
+
+Contoh query:
+
+- `?action=getTodayStockMovements`
+- `?action=getTodayStockMovements&stock_item_id=ITEM-001`
+- `?action=getTodayStockMovements&movement_type=in`
+- `?action=getTodayStockMovements&movement_type=out`
+- `?action=getTodayStockMovements&movement_type=adjustment`
+- `?action=getTodayStockMovements&reference_type=transaction`
+- `?action=getTodayStockMovements&reference_type=manual_adjustment`
+
+Panel menampilkan:
+
+- ringkasan total mutasi, total masuk, total keluar, dan total koreksi;
+- filter per item stok, jenis mutasi, dan jenis referensi;
+- tombol `Refresh Mutasi Stok`;
+- daftar mutasi dengan waktu, item, jenis, qty, stok sebelum/sesudah, referensi, catatan, dan kasir.
+
+Label UI:
+
+- `in` → Masuk
+- `out` → Keluar
+- `adjustment` → Koreksi
+- `transaction` → Transaksi
+- `manual_adjustment` → Manual
+
+Sumber mutasi:
+
+- keluar dari transaksi F&B saat `closeSession`;
+- masuk dari restock manual Fase 4K;
+- koreksi dari adjustment manual Fase 4K.
+
+Panel ini read-only. Tidak mengubah stok, billing, payment, atau closing.
+
+Cara test:
+
+1. Buka dashboard dan pastikan panel `Riwayat Mutasi Stok Hari Ini` muncul.
+2. Lakukan restock, pastikan mutasi tampil sebagai `Masuk`.
+3. Lakukan koreksi stok, pastikan mutasi tampil sebagai `Koreksi`.
+4. Tutup sesi dengan F&B, pastikan mutasi tampil sebagai `Keluar`.
+5. Uji filter item, `movement_type`, dan `reference_type`.
+6. Pastikan ringkasan total mutasi/masuk/keluar/koreksi sesuai data.
+7. Pastikan empty state tampil jika tidak ada data.
+8. Setelah restock/koreksi sukses, pastikan riwayat ikut refresh otomatis.
+9. Pastikan panel tidak mengubah stok.
+
 ## Fase 5A - Pilih Durasi Sesi & Countdown Room Dasar
 
 Dashboard sekarang meminta durasi sebelum memulai sesi room. Klik `Mulai Sesi` pada room `available`, lalu pilih `1 jam`, `2 jam`, `3 jam`, atau isi durasi custom minimal 15 menit.

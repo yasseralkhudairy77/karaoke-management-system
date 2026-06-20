@@ -2,6 +2,25 @@
 
 ## Status Terakhir
 
+### Fase 4L - Riwayat Mutasi Stok F&B
+Status: PASS LOKAL
+
+Hasil:
+- Panel `Riwayat Mutasi Stok Hari Ini` tersedia di area stok F&B.
+- Endpoint GET `getTodayStockMovements` membaca `StockMovements` hari ini (tanggal Jakarta).
+- Filter opsional: `stock_item_id`, `movement_type`, `reference_type`.
+- Ringkasan total mutasi, masuk, keluar, dan koreksi tersedia.
+- Mutasi restock tampil sebagai `Masuk`, closeSession F&B sebagai `Keluar`, koreksi sebagai `Koreksi`.
+- Panel read-only; tidak mengubah stok.
+- Riwayat refresh otomatis setelah restock/koreksi sukses.
+- `closeSession`, `adjustInventoryStock`, billing, payment, dan closing tidak berubah.
+
+Catatan:
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy backend dan uji production.
+
+---
+
 ### Fase 4K - Restock / Adjustment Stok F&B
 Status: PASS LOKAL
 
@@ -110,11 +129,6 @@ Hasil:
 ---
 
 ## Next Phase
-
-### Fase 4L - Riwayat Mutasi Stok
-Rencana:
-- Tampilkan riwayat StockMovements di dashboard.
-- Belum diimplementasikan.
 
 ### Fase 5E - Audit Extend Session
 Rencana:

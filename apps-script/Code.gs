@@ -164,6 +164,14 @@ function doGet(e) {
       return jsonResponse(getTodayFnbOrders_(e.parameter.status, e.parameter.room_id));
     }
 
+    if (action === "getTodayStockMovements") {
+      return jsonResponse(getTodayStockMovements_(
+        e.parameter.stock_item_id,
+        e.parameter.movement_type,
+        e.parameter.reference_type
+      ));
+    }
+
     if (action === "getFnbOrdersByIds") {
       return jsonResponse({
         ok: true,
@@ -1609,6 +1617,103 @@ function createTodayFnbOrderEmptySummary_() {
     billed_amount: 0,
     cancelled_amount: 0,
     total_amount: 0,
+  };
+}
+
+function getTodayStockMovements_(stockItemId, movementType, referenceType) {
+  var normalizedStockItemId = String(stockItemId || "").trim();
+  var normalizedMovementType = String(movementType || "").trim().toLowerCase();
+  var normalizedReferenceType = String(referenceType || "").trim().toLowerCase();
+
+  if (normalizedMovementType && ["in", "out", "adjustment"].indexOf(normalizedMovementType) === -1) {
+    return {
+      ok: false,
+      error: "Jenis mutasi stok tidak dikenal.",
+    };
+  }
+
+  if (normalizedReferenceType && ["transaction", "manual_adjustment"].indexOf(normalizedReferenceType) === -1) {
+    return {
+      ok: false,
+      error: "Jenis referensi mutasi stok tidak dikenal.",
+    };
+  }
+
+  if (!sheetExists_("StockMovements")) {
+    return {
+      ok: true,
+      stock_movements: [],
+      summary: createTodayStockMovementEmptySummary_(),
+    };
+  }
+
+  var today = new Date();
+  var movements = readSheetAsObjectsOrEmpty_("StockMovements")
+    .filter(function (movement) {
+      var movementTypeValue = String(movement.movement_type || "").trim().toLowerCase();
+      var referenceTypeValue = String(movement.reference_type || "").trim().toLowerCase();
+
+      return (
+        isSameJakartaDateFromTimestamp_(movement.created_at, today) &&
+        (!normalizedStockItemId || String(movement.stock_item_id || "").trim() === normalizedStockItemId) &&
+        (!normalizedMovementType || movementTypeValue === normalizedMovementType) &&
+        (!normalizedReferenceType || referenceTypeValue === normalizedReferenceType)
+      );
+    })
+    .map(function (movement) {
+      return {
+        movement_id: movement.movement_id || "",
+        created_at: normalizeFnbOrderDateTime_(movement.created_at),
+        stock_item_id: movement.stock_item_id || "",
+        stock_item_name: movement.stock_item_name || "",
+        movement_type: String(movement.movement_type || "").trim().toLowerCase(),
+        reference_type: String(movement.reference_type || "").trim().toLowerCase(),
+        reference_id: movement.reference_id || "",
+        qty_change: Number(movement.qty_change) || 0,
+        stock_before: Number(movement.stock_before) || 0,
+        stock_after: Number(movement.stock_after) || 0,
+        note: movement.note || "",
+        cashier_name: movement.cashier_name || "",
+      };
+    })
+    .sort(function (first, second) {
+      return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+    });
+  var summary = movements.reduce(function (result, movement) {
+    var qtyChange = Number(movement.qty_change) || 0;
+
+    result.total_movements += 1;
+
+    if (movement.movement_type === "in") {
+      result.total_in_qty += qtyChange > 0 ? qtyChange : 0;
+      result.in_movements += 1;
+    } else if (movement.movement_type === "out") {
+      result.total_out_qty += Math.abs(qtyChange);
+      result.out_movements += 1;
+    } else if (movement.movement_type === "adjustment") {
+      result.total_adjustment_abs_qty += Math.abs(qtyChange);
+      result.adjustment_movements += 1;
+    }
+
+    return result;
+  }, createTodayStockMovementEmptySummary_());
+
+  return {
+    ok: true,
+    stock_movements: movements,
+    summary: summary,
+  };
+}
+
+function createTodayStockMovementEmptySummary_() {
+  return {
+    total_movements: 0,
+    total_in_qty: 0,
+    total_out_qty: 0,
+    total_adjustment_abs_qty: 0,
+    in_movements: 0,
+    out_movements: 0,
+    adjustment_movements: 0,
   };
 }
 

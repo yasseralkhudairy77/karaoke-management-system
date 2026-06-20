@@ -1967,6 +1967,271 @@ body {
   font-weight: 900;
 }
 
+.stock-movements-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.stock-movements-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.stock-movements-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.stock-movements-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.stock-movements-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stock-movements-summary-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--billing-value-bg);
+}
+
+.stock-movements-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.stock-movements-item-filter {
+  min-height: 42px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(10, 16, 28, 0.86);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.stock-movements-item-filter:focus-visible {
+  border-color: rgba(92, 213, 155, 0.55);
+  outline: 3px solid rgba(92, 213, 155, 0.18);
+  outline-offset: 2px;
+}
+
+.stock-movements-item-filter:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.stock-movements-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stock-movements-filter-button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(139, 150, 168, 0.45);
+  border-radius: 8px;
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.stock-movements-filter-button:hover,
+.stock-movements-filter-button:focus-visible,
+.stock-movements-filter-button.active {
+  border-color: rgba(92, 213, 155, 0.45);
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  outline: 3px solid rgba(92, 213, 155, 0.15);
+  outline-offset: 2px;
+}
+
+.stock-movements-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.stock-movements-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(92, 213, 155, 0.45);
+  border-radius: 8px;
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.stock-movements-button:hover,
+.stock-movements-button:focus-visible {
+  background: rgba(92, 213, 155, 0.2);
+  outline: 3px solid rgba(92, 213, 155, 0.2);
+  outline-offset: 2px;
+}
+
+.stock-movements-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: wait;
+}
+
+.stock-movements-list {
+  display: grid;
+  gap: 10px;
+}
+
+.stock-movements-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.stock-movements-row-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stock-movements-item-name {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.stock-movements-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.stock-movements-badge {
+  padding: 6px 9px;
+  border: 1px solid rgba(139, 150, 168, 0.45);
+  border-radius: 8px;
+  background: rgba(139, 150, 168, 0.12);
+  color: #d6deea;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.stock-movements-badge.in {
+  border-color: rgba(92, 213, 155, 0.45);
+  background: rgba(92, 213, 155, 0.12);
+  color: #a7f3d0;
+}
+
+.stock-movements-badge.out {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.25);
+  color: #fca5a5;
+}
+
+.stock-movements-badge.adjustment {
+  border-color: rgba(255, 193, 102, 0.5);
+  background: rgba(255, 193, 102, 0.12);
+  color: var(--billing-amber);
+}
+
+.stock-movements-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-movements-detail-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stock-movements-detail-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.stock-movements-detail-value {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.stock-movements-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(139, 150, 168, 0.35);
+  border-radius: 8px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.stock-movements-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed rgba(139, 150, 168, 0.38);
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .transaction-history {
   grid-column: 1 / -1;
   display: grid;
@@ -3305,8 +3570,10 @@ body {
   .inventory-header,
   .open-fnb-header,
   .today-fnb-header,
+  .stock-movements-header,
   .open-fnb-card-header,
-  .today-fnb-card-header {
+  .today-fnb-card-header,
+  .stock-movements-row-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3334,25 +3601,30 @@ body {
     width: 100%;
   }
 
-  .today-fnb-toolbar {
+  .today-fnb-toolbar,
+  .stock-movements-toolbar {
     grid-template-columns: 1fr;
   }
 
   .transaction-filter,
   .today-fnb-filter,
+  .stock-movements-filter,
   .transaction-filter-button {
     width: 100%;
   }
 
   .today-fnb-filter-button,
+  .stock-movements-filter-button,
   .fnb-cancel-button,
   .inventory-button,
-  .today-fnb-button {
+  .today-fnb-button,
+  .stock-movements-button {
     width: 100%;
   }
 
   .inventory-actions,
-  .today-fnb-actions {
+  .today-fnb-actions,
+  .stock-movements-actions {
     justify-content: stretch;
   }
 
@@ -3388,6 +3660,8 @@ body {
   .inventory-summary,
   .stock-adjustment-form,
   .last-stock-adjustment-grid,
+  .stock-movements-summary,
+  .stock-movements-details,
   .open-fnb-summary,
   .today-fnb-summary,
   .cashier-closing-history-row,

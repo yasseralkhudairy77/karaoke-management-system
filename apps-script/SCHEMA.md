@@ -147,6 +147,58 @@ Perubahan stok manual lewat endpoint POST `adjustInventoryStock` wajib menulis r
 
 Tidak ada sheet baru. Gunakan tab existing `Inventory` dan `StockMovements`.
 
+### Fase 4L - Riwayat Mutasi Stok Hari Ini
+
+Endpoint GET `getTodayStockMovements` membaca tab `StockMovements` dan mengembalikan mutasi hari ini berdasarkan tanggal Jakarta di kolom `created_at`.
+
+Query parameter opsional:
+
+- `stock_item_id` — filter per item stok.
+- `movement_type` — filter jenis mutasi.
+- `reference_type` — filter jenis referensi.
+
+`movement_type` valid:
+
+- `in` — stok masuk dari restock manual.
+- `out` — stok keluar dari transaksi F&B saat `closeSession`.
+- `adjustment` — koreksi stok aktual manual.
+
+Jika `movement_type` tidak valid, response: `{ ok: false, error: "Jenis mutasi stok tidak dikenal." }`.
+
+`reference_type` valid:
+
+- `transaction` — mutasi dari penagihan F&B saat sesi ditutup.
+- `manual_adjustment` — mutasi dari restock atau koreksi stok manual.
+
+Jika `reference_type` tidak valid, response: `{ ok: false, error: "Jenis referensi mutasi stok tidak dikenal." }`.
+
+Response minimal:
+
+```json
+{
+  "ok": true,
+  "stock_movements": [],
+  "summary": {
+    "total_movements": 0,
+    "total_in_qty": 0,
+    "total_out_qty": 0,
+    "total_adjustment_abs_qty": 0,
+    "in_movements": 0,
+    "out_movements": 0,
+    "adjustment_movements": 0
+  }
+}
+```
+
+Aturan summary:
+
+- `in`: jumlahkan `qty_change` positif ke `total_in_qty`.
+- `out`: jumlahkan nilai absolut `qty_change` ke `total_out_qty`.
+- `adjustment`: jumlahkan nilai absolut `qty_change` ke `total_adjustment_abs_qty`.
+- Hitung jumlah row per `movement_type`.
+
+Mutasi diurutkan terbaru di atas. Jika sheet kosong atau belum ada, response aman dengan array kosong.
+
 ## FnbOrders
 
 Menyimpan header order F&B untuk ruangan.

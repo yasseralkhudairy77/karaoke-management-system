@@ -50,6 +50,12 @@ let stockAdjustmentForm = {
 };
 let isSavingStockAdjustment = false;
 let lastStockAdjustment = null;
+let todayStockMovements = [];
+let todayStockMovementSummary = null;
+let stockMovementItemFilter = "all";
+let stockMovementTypeFilter = "all";
+let stockMovementReferenceFilter = "all";
+let isLoadingStockMovements = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
@@ -423,12 +429,103 @@ async function submitStockAdjustment() {
       note: "",
     };
     await loadInventoryItems();
+    await loadTodayStockMovements();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memperbarui stok.", "error");
   } finally {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+async function loadTodayStockMovements() {
+  todayStockMovementSummary = null;
+
+  if (!API_BASE_URL.trim()) {
+    todayStockMovements = [];
+    renderRooms();
+    return;
+  }
+
+  isLoadingStockMovements = true;
+  renderRooms();
+
+  try {
+    const data = await fetchTodayStockMovementsFromApi();
+
+    todayStockMovements = Array.isArray(data.stock_movements) ? data.stock_movements : [];
+    todayStockMovementSummary = data.summary || null;
+  } catch (error) {
+    console.warn("Gagal memuat riwayat mutasi stok hari ini.", error);
+    todayStockMovements = [];
+    todayStockMovementSummary = null;
+  } finally {
+    isLoadingStockMovements = false;
+    renderRooms();
+  }
+}
+
+async function fetchTodayStockMovementsFromApi() {
+  if (!API_BASE_URL.trim()) {
+    return {
+      stock_movements: [],
+      summary: null,
+    };
+  }
+
+  const params = new URLSearchParams({ action: "getTodayStockMovements" });
+
+  if (stockMovementItemFilter && stockMovementItemFilter !== "all") {
+    params.set("stock_item_id", stockMovementItemFilter);
+  }
+
+  if (stockMovementTypeFilter && stockMovementTypeFilter !== "all") {
+    params.set("movement_type", stockMovementTypeFilter);
+  }
+
+  if (stockMovementReferenceFilter && stockMovementReferenceFilter !== "all") {
+    params.set("reference_type", stockMovementReferenceFilter);
+  }
+
+  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true || !Array.isArray(data.stock_movements)) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return {
+    stock_movements: data.stock_movements,
+    summary: data.summary || null,
+  };
+}
+
+function setStockMovementItemFilter(stockItemId) {
+  stockMovementItemFilter = stockItemId || "all";
+  loadTodayStockMovements();
+}
+
+function setStockMovementTypeFilter(movementType) {
+  if (!["all", "in", "out", "adjustment"].includes(movementType)) {
+    return;
+  }
+
+  stockMovementTypeFilter = movementType;
+  loadTodayStockMovements();
+}
+
+function setStockMovementReferenceFilter(referenceType) {
+  if (!["all", "transaction", "manual_adjustment"].includes(referenceType)) {
+    return;
+  }
+
+  stockMovementReferenceFilter = referenceType;
+  loadTodayStockMovements();
 }
 
 async function loadOpenFnbOrders() {
@@ -3975,6 +4072,301 @@ function getStockMovementTypeLabel(type) {
   return type || "-";
 }
 
+function getTodayStockMovementTypeLabel(type) {
+  if (type === "in") {
+    return "Masuk";
+  }
+
+  if (type === "out") {
+    return "Keluar";
+  }
+
+  if (type === "adjustment") {
+    return "Koreksi";
+  }
+
+  return type || "-";
+}
+
+function getTodayStockMovementReferenceLabel(referenceType) {
+  if (referenceType === "transaction") {
+    return "Transaksi";
+  }
+
+  if (referenceType === "manual_adjustment") {
+    return "Manual";
+  }
+
+  return referenceType || "-";
+}
+
+function getTodayStockMovementTypeClass(type) {
+  if (type === "in" || type === "out" || type === "adjustment") {
+    return type;
+  }
+
+  return "unknown";
+}
+
+function getTodayStockMovementEmptyMessage() {
+  if (!API_BASE_URL.trim()) {
+    return "Riwayat mutasi stok hanya tersedia saat terhubung ke server.";
+  }
+
+  if (
+    stockMovementItemFilter !== "all" ||
+    stockMovementTypeFilter !== "all" ||
+    stockMovementReferenceFilter !== "all"
+  ) {
+    return "Tidak ada mutasi stok hari ini untuk filter yang dipilih.";
+  }
+
+  return "Belum ada mutasi stok hari ini.";
+}
+
+function getStockMovementItemFilterOptions() {
+  const itemMap = new Map();
+
+  inventoryItems.forEach((item) => {
+    if (item.stock_item_id) {
+      itemMap.set(item.stock_item_id, item.stock_item_name || item.stock_item_id);
+    }
+  });
+
+  todayStockMovements.forEach((movement) => {
+    if (movement.stock_item_id && !itemMap.has(movement.stock_item_id)) {
+      itemMap.set(movement.stock_item_id, movement.stock_item_name || movement.stock_item_id);
+    }
+  });
+
+  return [...itemMap.entries()]
+    .map(([stock_item_id, stock_item_name]) => ({ stock_item_id, stock_item_name }))
+    .sort((first, second) => first.stock_item_name.localeCompare(second.stock_item_name, "id"));
+}
+
+function createTodayStockMovementsPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "stock-movements-panel";
+  panel.setAttribute("aria-labelledby", "stock-movements-title");
+
+  const header = document.createElement("div");
+  header.className = "stock-movements-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "stock-movements-title";
+  title.id = "stock-movements-title";
+  title.textContent = "Riwayat Mutasi Stok Hari Ini";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "stock-movements-subtitle";
+  subtitle.textContent = "Semua perubahan stok dari transaksi F&B, restock, dan koreksi manual.";
+
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const summary = todayStockMovementSummary || {
+    total_movements: 0,
+    total_in_qty: 0,
+    total_out_qty: 0,
+    total_adjustment_abs_qty: 0,
+  };
+  const list = document.createElement("div");
+  list.className = "stock-movements-list";
+
+  if (isLoadingStockMovements) {
+    list.appendChild(createStateMessage("Memuat riwayat mutasi stok hari ini..."));
+  } else if (todayStockMovements.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "stock-movements-empty";
+    empty.textContent = getTodayStockMovementEmptyMessage();
+    list.appendChild(empty);
+  } else {
+    todayStockMovements.forEach((movement) => {
+      list.appendChild(createTodayStockMovementRowElement(movement));
+    });
+  }
+
+  panel.append(
+    header,
+    createTodayStockMovementSummaryElement(summary),
+    createTodayStockMovementToolbarElement(),
+    list
+  );
+
+  return panel;
+}
+
+function createTodayStockMovementSummaryElement(summary) {
+  const grid = document.createElement("div");
+  grid.className = "stock-movements-summary";
+
+  [
+    ["Total Mutasi", Number(summary.total_movements) || 0],
+    ["Total Masuk", Number(summary.total_in_qty) || 0],
+    ["Total Keluar", Number(summary.total_out_qty) || 0],
+    ["Total Koreksi", Number(summary.total_adjustment_abs_qty) || 0],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("div");
+    card.className = "stock-movements-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createTodayStockMovementToolbarElement() {
+  const toolbar = document.createElement("div");
+  toolbar.className = "stock-movements-toolbar";
+
+  const itemFilter = document.createElement("select");
+  itemFilter.className = "stock-movements-item-filter";
+  itemFilter.dataset.action = "filter-stock-movement-item";
+
+  const allItemsOption = document.createElement("option");
+  allItemsOption.value = "all";
+  allItemsOption.textContent = "Semua Item";
+  itemFilter.appendChild(allItemsOption);
+
+  getStockMovementItemFilterOptions().forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.stock_item_id;
+    option.textContent = item.stock_item_name || item.stock_item_id;
+    itemFilter.appendChild(option);
+  });
+
+  itemFilter.value = stockMovementItemFilter;
+  itemFilter.disabled = isLoadingStockMovements || !API_BASE_URL.trim();
+
+  const typeFilter = document.createElement("div");
+  typeFilter.className = "stock-movements-filter";
+
+  [
+    ["all", "Semua Jenis Mutasi"],
+    ["in", "Masuk"],
+    ["out", "Keluar"],
+    ["adjustment", "Koreksi"],
+  ].forEach(([movementType, labelText]) => {
+    const button = document.createElement("button");
+    button.className = movementType === stockMovementTypeFilter
+      ? "stock-movements-filter-button active"
+      : "stock-movements-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-stock-movement-type";
+    button.dataset.movementType = movementType;
+    button.textContent = labelText;
+    typeFilter.appendChild(button);
+  });
+
+  const referenceFilter = document.createElement("div");
+  referenceFilter.className = "stock-movements-filter";
+
+  [
+    ["all", "Semua Referensi"],
+    ["transaction", "Transaksi"],
+    ["manual_adjustment", "Manual Adjustment"],
+  ].forEach(([referenceType, labelText]) => {
+    const button = document.createElement("button");
+    button.className = referenceType === stockMovementReferenceFilter
+      ? "stock-movements-filter-button active"
+      : "stock-movements-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-stock-movement-reference";
+    button.dataset.referenceType = referenceType;
+    button.textContent = labelText;
+    referenceFilter.appendChild(button);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "stock-movements-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "stock-movements-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-stock-movements";
+  refreshButton.disabled = isLoadingStockMovements || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingStockMovements ? "Memuat..." : "Refresh Mutasi Stok";
+
+  actions.appendChild(refreshButton);
+  toolbar.append(itemFilter, typeFilter, referenceFilter, actions);
+
+  return toolbar;
+}
+
+function createTodayStockMovementRowElement(movement) {
+  const row = document.createElement("article");
+  row.className = "stock-movements-row";
+
+  const header = document.createElement("div");
+  header.className = "stock-movements-row-header";
+
+  const titleGroup = document.createElement("div");
+
+  const itemName = document.createElement("h3");
+  itemName.className = "stock-movements-item-name";
+  itemName.textContent = movement.stock_item_name || movement.stock_item_id || "-";
+
+  const meta = document.createElement("p");
+  meta.className = "stock-movements-meta";
+  meta.textContent = `${movement.created_at || "-"} - ${movement.movement_id || "-"}`;
+
+  titleGroup.append(itemName, meta);
+
+  const badge = document.createElement("span");
+  badge.className = `stock-movements-badge ${getTodayStockMovementTypeClass(movement.movement_type)}`;
+  badge.textContent = getTodayStockMovementTypeLabel(movement.movement_type);
+
+  header.append(titleGroup, badge);
+
+  const details = document.createElement("div");
+  details.className = "stock-movements-details";
+
+  [
+    ["Perubahan", String(Number(movement.qty_change) || 0)],
+    ["Stok Sebelum", String(Number(movement.stock_before) || 0)],
+    ["Stok Sesudah", String(Number(movement.stock_after) || 0)],
+    ["Referensi", getTodayStockMovementReferenceLabel(movement.reference_type)],
+    ["ID Referensi", movement.reference_id || "-"],
+    ["Kasir", movement.cashier_name || "-"],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    item.className = "stock-movements-detail-item";
+
+    const label = document.createElement("p");
+    label.className = "stock-movements-detail-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "stock-movements-detail-value";
+    value.textContent = valueText;
+
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  row.append(header, details);
+
+  if (movement.note) {
+    const note = document.createElement("p");
+    note.className = "stock-movements-note";
+    note.textContent = movement.note;
+    row.appendChild(note);
+  }
+
+  return row;
+}
+
 function getOpenFnbEmptyMessage() {
   const selectedRoom = getSelectedFbRoom();
 
@@ -4471,6 +4863,7 @@ function renderRooms() {
   fragment.appendChild(createOpenFnbOrdersPanelElement());
   fragment.appendChild(createTodayFnbOrdersPanelElement());
   fragment.appendChild(createInventoryPanelElement());
+  fragment.appendChild(createTodayStockMovementsPanelElement());
 
   try {
     fragment.appendChild(renderTransactionHistory());
@@ -4934,6 +5327,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-stock-movements") {
+    await loadTodayStockMovements();
+    return;
+  }
+
   if (action === "submit-stock-adjustment") {
     await submitStockAdjustment();
     return;
@@ -4951,6 +5349,16 @@ async function handleRoomAction(event) {
 
   if (action === "filter-today-fnb-status") {
     setTodayFnbOrderStatusFilter(button.dataset.status || "all");
+    return;
+  }
+
+  if (action === "filter-stock-movement-type") {
+    setStockMovementTypeFilter(button.dataset.movementType || "all");
+    return;
+  }
+
+  if (action === "filter-stock-movement-reference") {
+    setStockMovementReferenceFilter(button.dataset.referenceType || "all");
     return;
   }
 
@@ -5138,6 +5546,13 @@ function handleDashboardChange(event) {
 
   if (stockAdjustmentType) {
     updateStockAdjustmentForm("adjustment_type", stockAdjustmentType.value);
+    return;
+  }
+
+  const stockMovementItemFilterSelect = event.target.closest(".stock-movements-item-filter");
+
+  if (stockMovementItemFilterSelect) {
+    setStockMovementItemFilter(stockMovementItemFilterSelect.value);
   }
 }
 
@@ -5155,6 +5570,7 @@ async function initializeDashboard() {
   await loadRooms();
   await Promise.all([
     loadTodayFnbOrders(),
+    loadTodayStockMovements(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
   ]);
