@@ -2,6 +2,27 @@
 
 ## Status Terakhir
 
+### Fase 4M - Laporan Penjualan F&B & Stok Rendah
+Status: PASS LOKAL
+
+Hasil:
+- Panel `Laporan Penjualan F&B & Stok Rendah` tersedia di dashboard.
+- Endpoint GET `getTodayFnbSalesReport` membaca `FnbOrders` billed hari ini, `FnbOrderItems`, dan `Inventory`.
+- Ringkasan: total order, item terjual, omzet F&B, menu terlaris, stok rendah, stok minus.
+- Penjualan per menu di-group dan diurutkan dari qty terbesar.
+- Stok rendah/minus dengan `suggested_restock_qty` dan rekomendasi restock.
+- Panel read-only; tidak mengubah stok.
+- Laporan refresh otomatis setelah `closeSession` dan restock/koreksi sukses.
+- `closeSession`, `adjustInventoryStock`, `getTodayStockMovements`, billing, payment, dan closing tidak berubah.
+
+Catatan:
+- Recipe/BOM dipindahkan ke backlog optional.
+- Prioritas saat ini adalah laporan penjualan F&B dan stok rendah.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy backend dan uji production.
+
+---
+
 ### Fase 4L - Riwayat Mutasi Stok F&B
 Status: PASS LOKAL
 
@@ -125,6 +146,14 @@ Hasil:
 - Billing room memakai booked_duration_minutes untuk sesi booking valid.
 - Sesi legacy tanpa booked_duration_minutes masih memakai durasi aktual.
 - Stok manual wajib lewat StockMovements; jangan update Inventory tanpa movement.
+
+---
+
+## Backlog Optional
+
+### Recipe/BOM F&B
+- Di-skip dulu karena belum dibutuhkan untuk operasional karaoke saat ini.
+- Bisa dipertimbangkan kembali jika kebutuhan menu komposit muncul.
 
 ---
 

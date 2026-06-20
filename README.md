@@ -924,6 +924,45 @@ Cara test:
 8. Setelah restock/koreksi sukses, pastikan riwayat ikut refresh otomatis.
 9. Pastikan panel tidak mengubah stok.
 
+## Fase 4M - Laporan Penjualan F&B & Stok Rendah
+
+Dashboard menampilkan panel `Laporan Penjualan F&B & Stok Rendah` untuk membantu operasional harian.
+
+Endpoint baru:
+
+- GET `getTodayFnbSalesReport`
+
+Panel menampilkan:
+
+- ringkasan total order F&B billed hari ini, item terjual, omzet F&B, menu terlaris, jumlah stok rendah, dan stok minus;
+- daftar penjualan per menu (kategori, qty terjual, total penjualan, jumlah order);
+- daftar stok rendah/minus beserta rekomendasi restock;
+- tombol `Refresh Laporan F&B`.
+
+Sumber data:
+
+- penjualan dari `FnbOrders` billed hari ini + `FnbOrderItems`;
+- stok rendah dari `Inventory` (`stock_qty <= min_stock` atau minus).
+
+Panel ini read-only. Tidak mengubah stok, order F&B, billing, payment, atau closing.
+
+Catatan keputusan produk:
+
+- Recipe/BOM di-skip dulu karena belum dibutuhkan untuk operasional karaoke saat ini.
+- Prioritas saat ini adalah laporan penjualan F&B dan stok rendah.
+
+Cara test:
+
+1. Buka dashboard dan pastikan panel `Laporan Penjualan F&B & Stok Rendah` muncul.
+2. Tutup sesi dengan order F&B billed, pastikan omzet dan menu terlaris terupdate.
+3. Pastikan penjualan per menu tampil benar.
+4. Set stok di bawah `min_stock`, pastikan item muncul di stok rendah.
+5. Set stok minus, pastikan badge `Stok Minus` dan rekomendasi restock tampil.
+6. Pastikan empty state penjualan tampil jika belum ada penjualan billed hari ini.
+7. Pastikan empty state stok rendah tampil jika semua stok aman.
+8. Setelah `closeSession` atau restock/koreksi sukses, pastikan laporan ikut refresh.
+9. Pastikan panel tidak mengubah stok.
+
 ## Fase 5A - Pilih Durasi Sesi & Countdown Room Dasar
 
 Dashboard sekarang meminta durasi sebelum memulai sesi room. Klik `Mulai Sesi` pada room `available`, lalu pilih `1 jam`, `2 jam`, `3 jam`, atau isi durasi custom minimal 15 menit.

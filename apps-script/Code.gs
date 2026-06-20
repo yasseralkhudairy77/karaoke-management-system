@@ -172,6 +172,10 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getTodayFnbSalesReport") {
+      return jsonResponse(getTodayFnbSalesReport_());
+    }
+
     if (action === "getFnbOrdersByIds") {
       return jsonResponse({
         ok: true,
@@ -1715,6 +1719,211 @@ function createTodayStockMovementEmptySummary_() {
     out_movements: 0,
     adjustment_movements: 0,
   };
+}
+
+function getTodayFnbSalesReport_() {
+  var today = new Date();
+  var billedOrders = [];
+  var billedOrderIds = {};
+  var itemsByOrderId = {};
+
+  if (sheetExists_("FnbOrders")) {
+    readFnbOrdersOrEmpty_().forEach(function (order) {
+      var orderStatus = String(order.order_status || "").trim().toLowerCase();
+      var orderId = order.order_id || "";
+
+      if (
+        orderStatus === "billed" &&
+        orderId &&
+        isSameJakartaDateFromTimestamp_(order.created_at, today)
+      ) {
+        billedOrders.push(order);
+        billedOrderIds[orderId] = true;
+      }
+    });
+  }
+
+  if (sheetExists_("FnbOrderItems")) {
+    itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+  }
+
+  var menuSales = groupFnbSalesByMenu_(billedOrderIds, itemsByOrderId, getMenuItemsByIdMap_());
+  var lowStockItems = getLowStockItemsForReport_();
+  var summary = createFnbSalesReportSummary_(menuSales, billedOrders.length, lowStockItems);
+
+  return {
+    ok: true,
+    summary: summary,
+    menu_sales: menuSales,
+    low_stock_items: lowStockItems,
+  };
+}
+
+function createFnbSalesReportSummary_(menuSales, totalFnbOrders, lowStockItems) {
+  var totalItemsSold = 0;
+  var totalFnbSales = 0;
+  var topMenu = menuSales.length > 0 ? menuSales[0] : null;
+  var lowStockCount = 0;
+  var negativeStockCount = 0;
+
+  menuSales.forEach(function (menuSale) {
+    totalItemsSold += Number(menuSale.quantity_sold) || 0;
+    totalFnbSales += Number(menuSale.gross_sales) || 0;
+  });
+
+  lowStockItems.forEach(function (item) {
+    if (item.stock_status === "negative") {
+      negativeStockCount += 1;
+    } else if (item.stock_status === "low") {
+      lowStockCount += 1;
+    }
+  });
+
+  return {
+    total_fnb_orders: Number(totalFnbOrders) || 0,
+    total_items_sold: totalItemsSold,
+    total_fnb_sales: totalFnbSales,
+    unique_menus_sold: menuSales.length,
+    top_menu_name: topMenu ? topMenu.menu_name : "",
+    top_menu_quantity: topMenu ? Number(topMenu.quantity_sold) || 0 : 0,
+    low_stock_count: lowStockCount,
+    negative_stock_count: negativeStockCount,
+  };
+}
+
+function groupFnbSalesByMenu_(billedOrderIds, itemsByOrderId, menuItemsById) {
+  var menuSalesMap = {};
+
+  Object.keys(billedOrderIds).forEach(function (orderId) {
+    var items = itemsByOrderId[orderId] || [];
+
+    items.forEach(function (item) {
+      var menuId = String(item.menu_id || "").trim() || "UNKNOWN";
+      var quantity = Number(item.quantity) || 0;
+      var subtotal = Number(item.subtotal) || 0;
+      var menuFallback = menuItemsById[menuId] || {};
+
+      if (!menuSalesMap[menuId]) {
+        menuSalesMap[menuId] = {
+          menu_id: menuId,
+          menu_name: item.menu_name || menuFallback.menu_name || menuId,
+          category: item.category || menuFallback.category || "",
+          quantity_sold: 0,
+          gross_sales: 0,
+          order_ids: {},
+        };
+      }
+
+      menuSalesMap[menuId].quantity_sold += quantity;
+      menuSalesMap[menuId].gross_sales += subtotal;
+      menuSalesMap[menuId].order_ids[orderId] = true;
+
+      if (!menuSalesMap[menuId].menu_name && (item.menu_name || menuFallback.menu_name)) {
+        menuSalesMap[menuId].menu_name = item.menu_name || menuFallback.menu_name;
+      }
+
+      if (!menuSalesMap[menuId].category && (item.category || menuFallback.category)) {
+        menuSalesMap[menuId].category = item.category || menuFallback.category;
+      }
+    });
+  });
+
+  return Object.keys(menuSalesMap)
+    .map(function (menuId) {
+      var entry = menuSalesMap[menuId];
+
+      return {
+        menu_id: entry.menu_id,
+        menu_name: entry.menu_name,
+        category: entry.category,
+        quantity_sold: entry.quantity_sold,
+        gross_sales: entry.gross_sales,
+        order_count: Object.keys(entry.order_ids).length,
+      };
+    })
+    .sort(function (first, second) {
+      if (second.quantity_sold !== first.quantity_sold) {
+        return second.quantity_sold - first.quantity_sold;
+      }
+
+      return second.gross_sales - first.gross_sales;
+    });
+}
+
+function getMenuItemsByIdMap_() {
+  if (!sheetExists_("Menu")) {
+    return {};
+  }
+
+  return readSheetAsObjects_("Menu").reduce(function (map, menuItem) {
+    if (menuItem.menu_id) {
+      map[menuItem.menu_id] = {
+        menu_name: menuItem.menu_name || "",
+        category: menuItem.category || "",
+      };
+    }
+
+    return map;
+  }, {});
+}
+
+function getLowStockItemsForReport_() {
+  if (!sheetExists_("Inventory")) {
+    return [];
+  }
+
+  ensureInventorySheetColumns_();
+
+  return readSheetAsObjects_("Inventory")
+    .map(function (item) {
+      var stockItemId = item.stock_item_id || item.item_id || "";
+      var stockItemName = item.stock_item_name || item.item_name || "";
+      var stockQty = Number(item.stock_qty) || 0;
+      var minStock = Number(item.min_stock) || 0;
+      var stockStatus = getInventoryStatus_(stockQty, minStock);
+      var unit = item.unit || "pcs";
+      var suggestedRestockQty = Math.max(0, minStock - stockQty);
+      var recommendation = "";
+
+      if (stockStatus === "safe") {
+        return null;
+      }
+
+      if (stockStatus === "negative") {
+        recommendation = "Stok minus, disarankan restock minimal " + suggestedRestockQty + " " + unit + ".";
+      } else {
+        recommendation = "Stok rendah, disarankan restock minimal " + suggestedRestockQty + " " + unit + ".";
+      }
+
+      return {
+        stock_item_id: stockItemId,
+        stock_item_name: stockItemName,
+        category: item.category || "",
+        unit: unit,
+        stock_qty: stockQty,
+        min_stock: minStock,
+        stock_status: stockStatus,
+        suggested_restock_qty: suggestedRestockQty,
+        recommendation: recommendation,
+      };
+    })
+    .filter(function (item) {
+      return item && (item.stock_item_id || item.stock_item_name);
+    })
+    .sort(function (first, second) {
+      var statusOrder = {
+        negative: 0,
+        low: 1,
+      };
+      var firstOrder = statusOrder[first.stock_status] !== undefined ? statusOrder[first.stock_status] : 2;
+      var secondOrder = statusOrder[second.stock_status] !== undefined ? statusOrder[second.stock_status] : 2;
+
+      if (firstOrder !== secondOrder) {
+        return firstOrder - secondOrder;
+      }
+
+      return first.stock_qty - second.stock_qty;
+    });
 }
 
 function isSameJakartaDateFromTimestamp_(value, date) {

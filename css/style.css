@@ -2232,6 +2232,238 @@ body {
   font-weight: 800;
 }
 
+.fnb-sales-report-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.fnb-sales-report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.fnb-sales-report-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.fnb-sales-report-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.fnb-sales-report-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fnb-sales-report-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(92, 213, 155, 0.45);
+  border-radius: 8px;
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.fnb-sales-report-button:hover,
+.fnb-sales-report-button:focus-visible {
+  background: rgba(92, 213, 155, 0.2);
+  outline: 3px solid rgba(92, 213, 155, 0.2);
+  outline-offset: 2px;
+}
+
+.fnb-sales-report-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: wait;
+}
+
+.fnb-sales-report-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fnb-sales-report-summary-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--billing-value-bg);
+}
+
+.fnb-sales-report-section {
+  display: grid;
+  gap: 12px;
+}
+
+.fnb-sales-report-section-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.fnb-menu-sales-list,
+.low-stock-report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.fnb-menu-sales-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.fnb-menu-sales-name,
+.low-stock-report-name {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.fnb-menu-sales-meta,
+.low-stock-report-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.fnb-menu-sales-qty,
+.fnb-menu-sales-total,
+.fnb-menu-sales-orders {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.fnb-menu-sales-total {
+  color: #5cd59b;
+}
+
+.low-stock-report-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.low-stock-report-row-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.low-stock-report-badge {
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 193, 102, 0.5);
+  border-radius: 8px;
+  background: rgba(255, 193, 102, 0.12);
+  color: var(--billing-amber);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.low-stock-report-badge.negative {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.25);
+  color: #fca5a5;
+}
+
+.low-stock-report-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.low-stock-report-detail-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.low-stock-report-detail-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.low-stock-report-detail-value {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.low-stock-report-recommendation {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 193, 102, 0.35);
+  border-radius: 8px;
+  color: var(--billing-amber);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.fnb-sales-report-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed rgba(139, 150, 168, 0.38);
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .transaction-history {
   grid-column: 1 / -1;
   display: grid;
@@ -3571,9 +3803,11 @@ body {
   .open-fnb-header,
   .today-fnb-header,
   .stock-movements-header,
+  .fnb-sales-report-header,
   .open-fnb-card-header,
   .today-fnb-card-header,
-  .stock-movements-row-header {
+  .stock-movements-row-header,
+  .low-stock-report-row-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3618,13 +3852,15 @@ body {
   .fnb-cancel-button,
   .inventory-button,
   .today-fnb-button,
-  .stock-movements-button {
+  .stock-movements-button,
+  .fnb-sales-report-button {
     width: 100%;
   }
 
   .inventory-actions,
   .today-fnb-actions,
-  .stock-movements-actions {
+  .stock-movements-actions,
+  .fnb-sales-report-actions {
     justify-content: stretch;
   }
 
@@ -3662,6 +3898,9 @@ body {
   .last-stock-adjustment-grid,
   .stock-movements-summary,
   .stock-movements-details,
+  .fnb-sales-report-summary,
+  .fnb-menu-sales-row,
+  .low-stock-report-details,
   .open-fnb-summary,
   .today-fnb-summary,
   .cashier-closing-history-row,

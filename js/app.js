@@ -56,6 +56,10 @@ let stockMovementItemFilter = "all";
 let stockMovementTypeFilter = "all";
 let stockMovementReferenceFilter = "all";
 let isLoadingStockMovements = false;
+let todayFnbSalesSummary = null;
+let todayFnbMenuSales = [];
+let lowStockReportItems = [];
+let isLoadingFnbSalesReport = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
@@ -430,12 +434,71 @@ async function submitStockAdjustment() {
     };
     await loadInventoryItems();
     await loadTodayStockMovements();
+    await loadTodayFnbSalesReport();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memperbarui stok.", "error");
   } finally {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+async function loadTodayFnbSalesReport() {
+  todayFnbSalesSummary = null;
+
+  if (!API_BASE_URL.trim()) {
+    todayFnbMenuSales = [];
+    lowStockReportItems = [];
+    renderRooms();
+    return;
+  }
+
+  isLoadingFnbSalesReport = true;
+  renderRooms();
+
+  try {
+    const data = await fetchTodayFnbSalesReportFromApi();
+
+    todayFnbSalesSummary = data.summary || null;
+    todayFnbMenuSales = Array.isArray(data.menu_sales) ? data.menu_sales : [];
+    lowStockReportItems = Array.isArray(data.low_stock_items) ? data.low_stock_items : [];
+  } catch (error) {
+    console.warn("Gagal memuat laporan penjualan F&B.", error);
+    todayFnbSalesSummary = null;
+    todayFnbMenuSales = [];
+    lowStockReportItems = [];
+  } finally {
+    isLoadingFnbSalesReport = false;
+    renderRooms();
+  }
+}
+
+async function fetchTodayFnbSalesReportFromApi() {
+  if (!API_BASE_URL.trim()) {
+    return {
+      summary: null,
+      menu_sales: [],
+      low_stock_items: [],
+    };
+  }
+
+  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return {
+    summary: data.summary || null,
+    menu_sales: Array.isArray(data.menu_sales) ? data.menu_sales : [],
+    low_stock_items: Array.isArray(data.low_stock_items) ? data.low_stock_items : [],
+  };
 }
 
 async function loadTodayStockMovements() {
@@ -4367,6 +4430,267 @@ function createTodayStockMovementRowElement(movement) {
   return row;
 }
 
+function getLowStockReportStatusLabel(status) {
+  if (status === "low") {
+    return "Stok Rendah";
+  }
+
+  if (status === "negative") {
+    return "Stok Minus";
+  }
+
+  return status || "-";
+}
+
+function getLowStockReportStatusClass(status) {
+  if (status === "low" || status === "negative") {
+    return status;
+  }
+
+  return "unknown";
+}
+
+function createTodayFnbSalesReportPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "fnb-sales-report-panel";
+  panel.setAttribute("aria-labelledby", "fnb-sales-report-title");
+
+  const header = document.createElement("div");
+  header.className = "fnb-sales-report-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "fnb-sales-report-title";
+  title.id = "fnb-sales-report-title";
+  title.textContent = "Laporan Penjualan F&B & Stok Rendah";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "fnb-sales-report-subtitle";
+  subtitle.textContent = "Ringkasan penjualan F&B billed hari ini dan rekomendasi restock stok rendah.";
+
+  titleGroup.append(title, subtitle);
+
+  const actions = document.createElement("div");
+  actions.className = "fnb-sales-report-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "fnb-sales-report-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-fnb-sales-report";
+  refreshButton.disabled = isLoadingFnbSalesReport || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingFnbSalesReport ? "Memuat..." : "Refresh Laporan F&B";
+
+  actions.appendChild(refreshButton);
+  header.append(titleGroup, actions);
+
+  const summary = todayFnbSalesSummary || {
+    total_fnb_orders: 0,
+    total_items_sold: 0,
+    total_fnb_sales: 0,
+    top_menu_name: "-",
+    top_menu_quantity: 0,
+    low_stock_count: 0,
+    negative_stock_count: 0,
+  };
+  const topMenuLabel = summary.top_menu_name
+    ? `${summary.top_menu_name} (${Number(summary.top_menu_quantity) || 0})`
+    : "-";
+
+  panel.append(
+    header,
+    createFnbSalesReportSummaryElement(summary, topMenuLabel),
+    createFnbMenuSalesSectionElement(),
+    createLowStockReportSectionElement()
+  );
+
+  return panel;
+}
+
+function createFnbSalesReportSummaryElement(summary, topMenuLabel) {
+  const grid = document.createElement("div");
+  grid.className = "fnb-sales-report-summary";
+
+  [
+    ["Total Order F&B", Number(summary.total_fnb_orders) || 0],
+    ["Total Item Terjual", Number(summary.total_items_sold) || 0],
+    ["Omzet F&B Hari Ini", formatCurrency(summary.total_fnb_sales)],
+    ["Menu Terlaris", topMenuLabel],
+    ["Stok Rendah", Number(summary.low_stock_count) || 0],
+    ["Stok Minus", Number(summary.negative_stock_count) || 0],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("div");
+    card.className = "fnb-sales-report-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createFnbMenuSalesSectionElement() {
+  const section = document.createElement("section");
+  section.className = "fnb-sales-report-section";
+  section.setAttribute("aria-labelledby", "fnb-menu-sales-title");
+
+  const title = document.createElement("h3");
+  title.className = "fnb-sales-report-section-title";
+  title.id = "fnb-menu-sales-title";
+  title.textContent = "Penjualan per Menu";
+
+  const list = document.createElement("div");
+  list.className = "fnb-menu-sales-list";
+
+  if (isLoadingFnbSalesReport) {
+    list.appendChild(createStateMessage("Memuat laporan penjualan F&B..."));
+  } else if (todayFnbMenuSales.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "fnb-sales-report-empty";
+    empty.textContent = "Belum ada penjualan F&B hari ini.";
+    list.appendChild(empty);
+  } else {
+    todayFnbMenuSales.forEach((menuSale) => {
+      list.appendChild(createFnbMenuSalesRowElement(menuSale));
+    });
+  }
+
+  section.append(title, list);
+
+  return section;
+}
+
+function createFnbMenuSalesRowElement(menuSale) {
+  const row = document.createElement("article");
+  row.className = "fnb-menu-sales-row";
+
+  const info = document.createElement("div");
+
+  const name = document.createElement("h4");
+  name.className = "fnb-menu-sales-name";
+  name.textContent = menuSale.menu_name || menuSale.menu_id || "-";
+
+  const meta = document.createElement("p");
+  meta.className = "fnb-menu-sales-meta";
+  meta.textContent = menuSale.category || "-";
+
+  info.append(name, meta);
+
+  const qty = document.createElement("p");
+  qty.className = "fnb-menu-sales-qty";
+  qty.textContent = String(Number(menuSale.quantity_sold) || 0);
+
+  const sales = document.createElement("p");
+  sales.className = "fnb-menu-sales-total";
+  sales.textContent = formatCurrency(menuSale.gross_sales);
+
+  const orders = document.createElement("p");
+  orders.className = "fnb-menu-sales-orders";
+  orders.textContent = `${Number(menuSale.order_count) || 0} order`;
+
+  row.append(info, qty, sales, orders);
+
+  return row;
+}
+
+function createLowStockReportSectionElement() {
+  const section = document.createElement("section");
+  section.className = "fnb-sales-report-section";
+  section.setAttribute("aria-labelledby", "low-stock-report-title");
+
+  const title = document.createElement("h3");
+  title.className = "fnb-sales-report-section-title";
+  title.id = "low-stock-report-title";
+  title.textContent = "Stok Rendah & Rekomendasi Restock";
+
+  const list = document.createElement("div");
+  list.className = "low-stock-report-list";
+
+  if (isLoadingFnbSalesReport) {
+    list.appendChild(createStateMessage("Memuat data stok rendah..."));
+  } else if (lowStockReportItems.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "fnb-sales-report-empty";
+    empty.textContent = "Tidak ada stok rendah saat ini.";
+    list.appendChild(empty);
+  } else {
+    lowStockReportItems.forEach((item) => {
+      list.appendChild(createLowStockReportRowElement(item));
+    });
+  }
+
+  section.append(title, list);
+
+  return section;
+}
+
+function createLowStockReportRowElement(item) {
+  const row = document.createElement("article");
+  row.className = "low-stock-report-row";
+
+  const header = document.createElement("div");
+  header.className = "low-stock-report-row-header";
+
+  const titleGroup = document.createElement("div");
+
+  const name = document.createElement("h4");
+  name.className = "low-stock-report-name";
+  name.textContent = item.stock_item_name || item.stock_item_id || "-";
+
+  const meta = document.createElement("p");
+  meta.className = "low-stock-report-meta";
+  meta.textContent = `${item.category || "-"} - Min: ${Number(item.min_stock) || 0} ${item.unit || ""}`.trim();
+
+  titleGroup.append(name, meta);
+
+  const badge = document.createElement("span");
+  badge.className = `low-stock-report-badge ${getLowStockReportStatusClass(item.stock_status)}`;
+  badge.textContent = getLowStockReportStatusLabel(item.stock_status);
+
+  header.append(titleGroup, badge);
+
+  const details = document.createElement("div");
+  details.className = "low-stock-report-details";
+
+  [
+    ["Stok Saat Ini", `${Number(item.stock_qty) || 0} ${item.unit || ""}`.trim()],
+    ["Rekomendasi Restock", `${Number(item.suggested_restock_qty) || 0} ${item.unit || ""}`.trim()],
+  ].forEach(([labelText, valueText]) => {
+    const detail = document.createElement("div");
+    detail.className = "low-stock-report-detail-item";
+
+    const label = document.createElement("p");
+    label.className = "low-stock-report-detail-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "low-stock-report-detail-value";
+    value.textContent = valueText;
+
+    detail.append(label, value);
+    details.appendChild(detail);
+  });
+
+  row.append(header, details);
+
+  if (item.recommendation) {
+    const recommendation = document.createElement("p");
+    recommendation.className = "low-stock-report-recommendation";
+    recommendation.textContent = item.recommendation;
+    row.appendChild(recommendation);
+  }
+
+  return row;
+}
+
 function getOpenFnbEmptyMessage() {
   const selectedRoom = getSelectedFbRoom();
 
@@ -4864,6 +5188,7 @@ function renderRooms() {
   fragment.appendChild(createTodayFnbOrdersPanelElement());
   fragment.appendChild(createInventoryPanelElement());
   fragment.appendChild(createTodayStockMovementsPanelElement());
+  fragment.appendChild(createTodayFnbSalesReportPanelElement());
 
   try {
     fragment.appendChild(renderTransactionHistory());
@@ -5085,6 +5410,7 @@ async function closeSession(roomId) {
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
+    await loadTodayFnbSalesReport();
     await loadTodayTransactions();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan sesi.", "error");
@@ -5332,6 +5658,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-fnb-sales-report") {
+    await loadTodayFnbSalesReport();
+    return;
+  }
+
   if (action === "submit-stock-adjustment") {
     await submitStockAdjustment();
     return;
@@ -5571,6 +5902,7 @@ async function initializeDashboard() {
   await Promise.all([
     loadTodayFnbOrders(),
     loadTodayStockMovements(),
+    loadTodayFnbSalesReport(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
   ]);

@@ -199,6 +199,53 @@ Aturan summary:
 
 Mutasi diurutkan terbaru di atas. Jika sheet kosong atau belum ada, response aman dengan array kosong.
 
+### Fase 4M - Laporan Penjualan F&B & Stok Rendah
+
+Endpoint GET `getTodayFnbSalesReport` hanya membaca data; tidak mengubah stok, billing, payment, atau closing.
+
+Sumber data:
+
+- `FnbOrders` dengan `order_status = billed` dan `created_at` hari ini (tanggal Jakarta).
+- `FnbOrderItems` untuk item yang `order_id`-nya termasuk order billed hari ini.
+- `Inventory` untuk deteksi stok rendah dan stok minus.
+- `Menu` opsional sebagai fallback nama/kategori menu.
+
+Order `open` dan `cancelled` tidak masuk laporan penjualan.
+
+Response minimal:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "total_fnb_orders": 0,
+    "total_items_sold": 0,
+    "total_fnb_sales": 0,
+    "unique_menus_sold": 0,
+    "top_menu_name": "",
+    "top_menu_quantity": 0,
+    "low_stock_count": 0,
+    "negative_stock_count": 0
+  },
+  "menu_sales": [],
+  "low_stock_items": []
+}
+```
+
+`menu_sales` di-group per `menu_id` dengan `quantity_sold`, `gross_sales`, dan `order_count`. Urutan: `quantity_sold` terbesar, lalu `gross_sales` terbesar.
+
+`low_stock_items` memakai `Inventory`:
+
+- `stock_qty < 0` → `stock_status = negative`, masuk daftar, `negative_stock_count` bertambah.
+- `stock_qty <= min_stock` → `stock_status = low`, masuk daftar, `low_stock_count` bertambah.
+- `stock_qty > min_stock` → tidak masuk daftar.
+- `min_stock` kosong dianggap `0`.
+- `suggested_restock_qty = max(0, min_stock - stock_qty)`.
+
+Urutan `low_stock_items`: negative dulu, lalu low, lalu `stock_qty` terkecil.
+
+Catatan: Recipe/BOM di-skip dulu. Fase ini fokus laporan operasional penjualan F&B dan stok rendah.
+
 ## FnbOrders
 
 Menyimpan header order F&B untuk ruangan.
