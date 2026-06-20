@@ -2,6 +2,25 @@
 
 ## Status Terakhir
 
+### Fase UI-3 - Visual Polish Dashboard
+Status: PASS LOKAL
+
+Hasil:
+- Design tokens CSS: spacing, radius, shadow, content max-width 1320px.
+- Panel/card/list dirapikan di semua tab (Ruangan, F&B, Stok, Laporan, Transaksi, Audit).
+- Badge system reusable `.status-badge` dengan tone success/warning/danger/info/neutral.
+- Button system reusable `.btn` + variant primary/secondary/danger/ghost/sm.
+- Form controls unified: focus ring, min-height, padding konsisten.
+- Responsive diperhalus: desktop >1024px, tablet 768–1024px, mobile <768px.
+- `node --check js/app.js` PASS; `Code.gs` tidak berubah.
+
+Catatan:
+- Fase frontend-only; tidak perlu deploy Apps Script.
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu validasi visual user.
+
+---
+
 ### Fase UI-2A - Filter Tanggal Transaksi & Closing
 Status: PASS LOKAL
 

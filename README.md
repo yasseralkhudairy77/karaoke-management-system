@@ -56,6 +56,19 @@ cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
 .\deploy.ps1 "Fase UI-2A - Filter Tanggal Transaksi"
 ```
 
+## Fase UI-3 - Visual Polish Dashboard
+
+Fase ini merapikan tampilan dashboard secara visual tanpa mengubah logic bisnis atau backend.
+
+- Spacing antar panel dan section lebih konsisten
+- Card/panel dengan border radius, shadow halus, dan padding seragam
+- Badge status reusable (`.status-badge`) untuk room, transaksi, F&B, stok, audit
+- Tombol lebih konsisten (primary / secondary / danger / ghost)
+- Form input, select, textarea, dan date filter lebih nyaman
+- Responsive diperhalus untuk desktop, tablet (768–1024px), dan mobile (<768px)
+
+Fase **frontend-only**; `apps-script/Code.gs` tidak berubah — **tidak perlu deploy Apps Script**.
+
 ## Cara Menjalankan
 
 Buka `index.html` langsung di browser, atau jalankan dengan ekstensi Live Server agar refresh saat file berubah.

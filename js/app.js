@@ -49,6 +49,101 @@ const TRANSACTION_PERIOD_OPTIONS = [
   ["all", "Semua"],
   ["custom", "Custom"],
 ];
+
+function withStatusBadge(baseClass, tone = "neutral") {
+  const tones = new Set(["success", "warning", "danger", "info", "neutral"]);
+  const safeTone = tones.has(tone) ? tone : "neutral";
+
+  return `${baseClass} status-badge ${safeTone}`;
+}
+
+function getRoomStatusTone(status) {
+  if (status === "available") {
+    return "success";
+  }
+
+  if (status === "occupied") {
+    return "danger";
+  }
+
+  if (status === "maintenance") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function getPaymentStatusTone(status) {
+  if (status === "paid") {
+    return "success";
+  }
+
+  if (status === "unpaid") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function getFnbOrderStatusTone(status) {
+  if (status === "open") {
+    return "warning";
+  }
+
+  if (status === "billed") {
+    return "info";
+  }
+
+  if (status === "cancelled") {
+    return "danger";
+  }
+
+  return "neutral";
+}
+
+function getInventoryStockStatusTone(status) {
+  if (status === "safe") {
+    return "success";
+  }
+
+  if (status === "low") {
+    return "warning";
+  }
+
+  if (status === "negative") {
+    return "danger";
+  }
+
+  return "neutral";
+}
+
+function getStockMovementTypeTone(type) {
+  if (type === "in") {
+    return "success";
+  }
+
+  if (type === "out") {
+    return "danger";
+  }
+
+  if (type === "adjustment") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function getRoomTimeBadgeTone(status) {
+  if (status === "warning") {
+    return "warning";
+  }
+
+  if (status === "expired") {
+    return "danger";
+  }
+
+  return "neutral";
+}
 let cashierClosingPreviewVisible = false;
 let cashierClosingCashActual = "";
 let cashierClosingNote = "";
@@ -1704,7 +1799,9 @@ function updateRoomTimeBadge(badge, status) {
 
   badge.textContent = badgeText;
   badge.hidden = !badgeText;
-  badge.className = badgeText ? `room-time-badge room-time-badge-${status}` : "room-time-badge";
+  badge.className = badgeText
+    ? withStatusBadge(`room-time-badge room-time-badge-${status}`, getRoomTimeBadgeTone(status))
+    : "room-time-badge";
 }
 
 function getRoomTimeLabel(value) {
@@ -2783,7 +2880,7 @@ function createRoomCard(room) {
   name.textContent = room.room_name;
 
   const status = document.createElement("span");
-  status.className = "room-status";
+  status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
   status.textContent = statusLabel;
 
   topLine.append(name, status);
@@ -3152,7 +3249,10 @@ function createMenuCardElement(menuItem) {
 
   const status = document.createElement("span");
   const statusClass = menuItem.status === "active" ? "active" : "inactive";
-  status.className = `menu-status ${statusClass}`;
+  status.className = withStatusBadge(
+    `menu-status ${statusClass}`,
+    statusClass === "active" ? "success" : "neutral"
+  );
   status.textContent = getMenuStatusLabel(menuItem.status);
 
   const addButton = document.createElement("button");
@@ -3639,7 +3739,10 @@ function createOpenFnbOrderCardElement(order) {
   titleGroup.append(orderId, meta);
 
   const status = document.createElement("span");
-  status.className = `open-fnb-status ${getFnbOrderStatusClass(order.order_status)}`;
+  status.className = withStatusBadge(
+    `open-fnb-status ${getFnbOrderStatusClass(order.order_status)}`,
+    getFnbOrderStatusTone(order.order_status)
+  );
   status.textContent = getFnbOrderStatusLabel(order.order_status);
 
   header.append(titleGroup, status);
@@ -3900,7 +4003,10 @@ function createTodayFnbOrderCardElement(order) {
   titleGroup.append(orderId, meta);
 
   const status = document.createElement("span");
-  status.className = `today-fnb-status ${getFnbOrderStatusClass(order.order_status)}`;
+  status.className = withStatusBadge(
+    `today-fnb-status ${getFnbOrderStatusClass(order.order_status)}`,
+    getFnbOrderStatusTone(order.order_status)
+  );
   status.textContent = getFnbOrderStatusLabel(order.order_status);
 
   header.append(titleGroup, status);
@@ -4113,7 +4219,10 @@ function createInventoryItemRowElement(item) {
   qty.textContent = `${Number(item.stock_qty) || 0} ${item.unit || ""}`.trim();
 
   const status = document.createElement("span");
-  status.className = `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`;
+  status.className = withStatusBadge(
+    `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
+    getInventoryStockStatusTone(item.stock_status)
+  );
   status.textContent = getInventoryStockStatusLabel(item.stock_status);
 
   row.append(info, qty, status);
@@ -4574,7 +4683,10 @@ function createTodayStockMovementRowElement(movement) {
   titleGroup.append(itemName, meta);
 
   const badge = document.createElement("span");
-  badge.className = `stock-movements-badge ${getTodayStockMovementTypeClass(movement.movement_type)}`;
+  badge.className = withStatusBadge(
+    `stock-movements-badge ${getTodayStockMovementTypeClass(movement.movement_type)}`,
+    getStockMovementTypeTone(movement.movement_type)
+  );
   badge.textContent = getTodayStockMovementTypeLabel(movement.movement_type);
 
   header.append(titleGroup, badge);
@@ -4843,7 +4955,10 @@ function createLowStockReportRowElement(item) {
   titleGroup.append(name, meta);
 
   const badge = document.createElement("span");
-  badge.className = `low-stock-report-badge ${getLowStockReportStatusClass(item.stock_status)}`;
+  badge.className = withStatusBadge(
+    `low-stock-report-badge ${getLowStockReportStatusClass(item.stock_status)}`,
+    getInventoryStockStatusTone(item.stock_status)
+  );
   badge.textContent = getLowStockReportStatusLabel(item.stock_status);
 
   header.append(titleGroup, badge);
@@ -5360,13 +5475,15 @@ function createTransactionRowElement(transaction) {
       item.append(label, createTransactionActionsElement(transaction));
     } else {
       const value = document.createElement("p");
-      value.className = "transaction-value";
+      value.className = labelText === "Status"
+        ? withStatusBadge("transaction-value", getPaymentStatusTone(transaction?.payment_status))
+        : "transaction-value";
       value.textContent = valueText;
       item.append(label, value);
 
       if (modifierClass === "transaction-has-fnb") {
         const badge = document.createElement("span");
-        badge.className = "transaction-fnb-badge";
+        badge.className = withStatusBadge("transaction-fnb-badge", "warning");
         badge.textContent = "Termasuk F&B";
         item.appendChild(badge);
       }
@@ -6058,7 +6175,7 @@ function createRoomTimeLogRowElement(log) {
   titleGroup.append(roomName, meta);
 
   const badge = document.createElement("span");
-  badge.className = "room-time-logs-badge";
+  badge.className = withStatusBadge("room-time-logs-badge", "info");
   badge.textContent = getRoomTimeLogActionLabel(log.action_type);
 
   header.append(titleGroup, badge);
