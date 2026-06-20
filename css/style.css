@@ -2232,6 +2232,222 @@ body {
   font-weight: 800;
 }
 
+.room-time-logs-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.room-time-logs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.room-time-logs-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.room-time-logs-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.room-time-logs-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.room-time-logs-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 193, 102, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 193, 102, 0.12);
+  color: var(--billing-amber);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.room-time-logs-button:hover,
+.room-time-logs-button:focus-visible {
+  background: rgba(255, 193, 102, 0.2);
+  outline: 3px solid rgba(255, 193, 102, 0.18);
+  outline-offset: 2px;
+}
+
+.room-time-logs-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: wait;
+}
+
+.room-time-logs-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.room-time-logs-summary-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--billing-value-bg);
+}
+
+.room-time-logs-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px);
+  gap: 12px;
+}
+
+.room-time-logs-room-filter {
+  min-height: 42px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(10, 16, 28, 0.86);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.room-time-logs-room-filter:focus-visible {
+  border-color: rgba(255, 193, 102, 0.55);
+  outline: 3px solid rgba(255, 193, 102, 0.18);
+  outline-offset: 2px;
+}
+
+.room-time-logs-room-filter:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.room-time-logs-list {
+  display: grid;
+  gap: 10px;
+}
+
+.room-time-logs-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.room-time-logs-row-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-time-logs-room-name {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.room-time-logs-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.room-time-logs-badge {
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 193, 102, 0.5);
+  border-radius: 8px;
+  background: rgba(255, 193, 102, 0.12);
+  color: var(--billing-amber);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.room-time-logs-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.room-time-logs-detail-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.room-time-logs-detail-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.room-time-logs-detail-value {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.room-time-logs-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 193, 102, 0.35);
+  border-radius: 8px;
+  color: var(--billing-amber);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.room-time-logs-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed rgba(139, 150, 168, 0.38);
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .fnb-sales-report-panel {
   grid-column: 1 / -1;
   display: grid;
@@ -3691,6 +3907,36 @@ body {
   padding: 0 10px;
 }
 
+.extend-note-field {
+  display: grid;
+  gap: 6px;
+}
+
+.extend-note-label {
+  color: var(--card-text);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.extend-note-input {
+  min-height: 40px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 193, 102, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #132238;
+  font: inherit;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.extend-note-input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .extend-cancel-button {
   background: rgba(255, 255, 255, 0.22);
   color: var(--card-text);
@@ -3804,10 +4050,12 @@ body {
   .today-fnb-header,
   .stock-movements-header,
   .fnb-sales-report-header,
+  .room-time-logs-header,
   .open-fnb-card-header,
   .today-fnb-card-header,
   .stock-movements-row-header,
-  .low-stock-report-row-header {
+  .low-stock-report-row-header,
+  .room-time-logs-row-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3853,14 +4101,16 @@ body {
   .inventory-button,
   .today-fnb-button,
   .stock-movements-button,
-  .fnb-sales-report-button {
+  .fnb-sales-report-button,
+  .room-time-logs-button {
     width: 100%;
   }
 
   .inventory-actions,
   .today-fnb-actions,
   .stock-movements-actions,
-  .fnb-sales-report-actions {
+  .fnb-sales-report-actions,
+  .room-time-logs-actions {
     justify-content: stretch;
   }
 
@@ -3901,6 +4151,9 @@ body {
   .fnb-sales-report-summary,
   .fnb-menu-sales-row,
   .low-stock-report-details,
+  .room-time-logs-summary,
+  .room-time-logs-details,
+  .room-time-logs-toolbar,
   .open-fnb-summary,
   .today-fnb-summary,
   .cashier-closing-history-row,

@@ -84,7 +84,12 @@ let durationSelectionRoomId = "";
 let customDurationMinutes = "";
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
+let extendSessionNote = "";
 let isExtendingSession = false;
+let todayRoomTimeLogs = [];
+let todayRoomTimeLogSummary = null;
+let roomTimeLogRoomFilter = "all";
+let isLoadingRoomTimeLogs = false;
 
 async function loadRooms() {
   roomsLoading = true;
@@ -2853,13 +2858,30 @@ function createExtendSelectionElement(room) {
 
   custom.append(input, customButton);
 
+  const noteField = document.createElement("div");
+  noteField.className = "extend-note-field";
+
+  const noteLabel = document.createElement("label");
+  noteLabel.className = "extend-note-label";
+  noteLabel.textContent = "Catatan tambah waktu";
+
+  const noteInput = document.createElement("input");
+  noteInput.className = "extend-note-input";
+  noteInput.type = "text";
+  noteInput.placeholder = "Contoh: Customer tambah 30 menit";
+  noteInput.dataset.action = "update-extend-session-note";
+  noteInput.value = extendSessionNote;
+  noteInput.disabled = isExtendingSession;
+
+  noteField.append(noteLabel, noteInput);
+
   const cancelButton = document.createElement("button");
   cancelButton.className = "extend-cancel-button";
   cancelButton.type = "button";
   cancelButton.dataset.action = "cancel-extend-selection";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, cancelButton);
+  panel.append(title, options, custom, noteField, cancelButton);
 
   return panel;
 }
@@ -5182,6 +5204,7 @@ function renderRooms() {
     });
   }
 
+  fragment.appendChild(createTodayRoomTimeLogsPanelElement());
   fragment.appendChild(createMenuPanelElement());
   fragment.appendChild(createFbOrderPanelElement());
   fragment.appendChild(createOpenFnbOrdersPanelElement());
@@ -5252,17 +5275,313 @@ function updateCustomDuration(value) {
 function showExtendSelection(roomId) {
   extendSelectionRoomId = roomId;
   customExtendMinutes = "";
+  extendSessionNote = "";
   renderRooms();
 }
 
 function cancelExtendSelection() {
   extendSelectionRoomId = "";
   customExtendMinutes = "";
+  extendSessionNote = "";
   renderRooms();
 }
 
 function updateCustomExtendMinutes(value) {
   customExtendMinutes = value;
+}
+
+function updateExtendSessionNote(value) {
+  extendSessionNote = value;
+}
+
+async function loadTodayRoomTimeLogs() {
+  todayRoomTimeLogSummary = null;
+
+  if (!API_BASE_URL.trim()) {
+    todayRoomTimeLogs = [];
+    renderRooms();
+    return;
+  }
+
+  isLoadingRoomTimeLogs = true;
+  renderRooms();
+
+  try {
+    const data = await fetchTodayRoomTimeLogsFromApi();
+
+    todayRoomTimeLogs = Array.isArray(data.room_time_logs) ? data.room_time_logs : [];
+    todayRoomTimeLogSummary = data.summary || null;
+  } catch (error) {
+    console.warn("Gagal memuat riwayat tambah waktu room.", error);
+    todayRoomTimeLogs = [];
+    todayRoomTimeLogSummary = null;
+  } finally {
+    isLoadingRoomTimeLogs = false;
+    renderRooms();
+  }
+}
+
+async function fetchTodayRoomTimeLogsFromApi() {
+  if (!API_BASE_URL.trim()) {
+    return {
+      room_time_logs: [],
+      summary: null,
+    };
+  }
+
+  const params = new URLSearchParams({
+    action: "getTodayRoomTimeLogs",
+    action_type: "extend_session",
+  });
+
+  if (roomTimeLogRoomFilter && roomTimeLogRoomFilter !== "all") {
+    params.set("room_id", roomTimeLogRoomFilter);
+  }
+
+  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true || !Array.isArray(data.room_time_logs)) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return {
+    room_time_logs: data.room_time_logs,
+    summary: data.summary || null,
+  };
+}
+
+function setRoomTimeLogRoomFilter(roomId) {
+  roomTimeLogRoomFilter = roomId || "all";
+  loadTodayRoomTimeLogs();
+}
+
+function getRoomTimeLogRoomFilterOptions() {
+  const roomMap = new Map();
+
+  rooms.forEach((room) => {
+    if (room.room_id) {
+      roomMap.set(room.room_id, room.room_name || room.room_id);
+    }
+  });
+
+  todayRoomTimeLogs.forEach((log) => {
+    if (log.room_id && !roomMap.has(log.room_id)) {
+      roomMap.set(log.room_id, log.room_name || log.room_id);
+    }
+  });
+
+  return [...roomMap.entries()]
+    .map(([room_id, room_name]) => ({ room_id, room_name }))
+    .sort((first, second) => first.room_name.localeCompare(second.room_name, "id"));
+}
+
+function getRoomTimeLogActionLabel(actionType) {
+  if (actionType === "extend_session") {
+    return "Tambah Waktu";
+  }
+
+  return actionType || "-";
+}
+
+function getRoomTimeLogEmptyMessage() {
+  if (!API_BASE_URL.trim()) {
+    return "Riwayat tambah waktu hanya tersedia saat terhubung ke server.";
+  }
+
+  if (roomTimeLogRoomFilter !== "all") {
+    return "Tidak ada riwayat tambah waktu hari ini untuk room yang dipilih.";
+  }
+
+  return "Belum ada riwayat tambah waktu room hari ini.";
+}
+
+function createTodayRoomTimeLogsPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "room-time-logs-panel";
+  panel.setAttribute("aria-labelledby", "room-time-logs-title");
+
+  const header = document.createElement("div");
+  header.className = "room-time-logs-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "room-time-logs-title";
+  title.id = "room-time-logs-title";
+  title.textContent = "Riwayat Tambah Waktu Room Hari Ini";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "room-time-logs-subtitle";
+  subtitle.textContent = "Audit log setiap perubahan durasi booking room.";
+
+  titleGroup.append(title, subtitle);
+
+  const actions = document.createElement("div");
+  actions.className = "room-time-logs-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "room-time-logs-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-room-time-logs";
+  refreshButton.disabled = isLoadingRoomTimeLogs || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingRoomTimeLogs ? "Memuat..." : "Refresh Riwayat Tambah Waktu";
+
+  actions.appendChild(refreshButton);
+  header.append(titleGroup, actions);
+
+  const summary = todayRoomTimeLogSummary || {
+    total_logs: 0,
+    total_added_minutes: 0,
+    rooms_extended: 0,
+  };
+  const list = document.createElement("div");
+  list.className = "room-time-logs-list";
+
+  if (isLoadingRoomTimeLogs) {
+    list.appendChild(createStateMessage("Memuat riwayat tambah waktu room..."));
+  } else if (todayRoomTimeLogs.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "room-time-logs-empty";
+    empty.textContent = getRoomTimeLogEmptyMessage();
+    list.appendChild(empty);
+  } else {
+    todayRoomTimeLogs.forEach((log) => {
+      list.appendChild(createRoomTimeLogRowElement(log));
+    });
+  }
+
+  panel.append(
+    header,
+    createRoomTimeLogSummaryElement(summary),
+    createRoomTimeLogToolbarElement(),
+    list
+  );
+
+  return panel;
+}
+
+function createRoomTimeLogSummaryElement(summary) {
+  const grid = document.createElement("div");
+  grid.className = "room-time-logs-summary";
+
+  [
+    ["Total Tambah Waktu", Number(summary.total_logs) || 0],
+    ["Total Menit Ditambahkan", Number(summary.total_added_minutes) || 0],
+    ["Jumlah Room Ditambah Waktu", Number(summary.rooms_extended) || 0],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("div");
+    card.className = "room-time-logs-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createRoomTimeLogToolbarElement() {
+  const toolbar = document.createElement("div");
+  toolbar.className = "room-time-logs-toolbar";
+
+  const roomFilter = document.createElement("select");
+  roomFilter.className = "room-time-logs-room-filter";
+  roomFilter.dataset.action = "filter-room-time-log-room";
+
+  const allRoomsOption = document.createElement("option");
+  allRoomsOption.value = "all";
+  allRoomsOption.textContent = "Semua Room";
+  roomFilter.appendChild(allRoomsOption);
+
+  getRoomTimeLogRoomFilterOptions().forEach((room) => {
+    const option = document.createElement("option");
+    option.value = room.room_id;
+    option.textContent = room.room_name || room.room_id;
+    roomFilter.appendChild(option);
+  });
+
+  roomFilter.value = roomTimeLogRoomFilter;
+  roomFilter.disabled = isLoadingRoomTimeLogs || !API_BASE_URL.trim();
+
+  toolbar.appendChild(roomFilter);
+
+  return toolbar;
+}
+
+function createRoomTimeLogRowElement(log) {
+  const row = document.createElement("article");
+  row.className = "room-time-logs-row";
+
+  const header = document.createElement("div");
+  header.className = "room-time-logs-row-header";
+
+  const titleGroup = document.createElement("div");
+
+  const roomName = document.createElement("h3");
+  roomName.className = "room-time-logs-room-name";
+  roomName.textContent = log.room_name || log.room_id || "-";
+
+  const meta = document.createElement("p");
+  meta.className = "room-time-logs-meta";
+  meta.textContent = `${log.created_at || "-"} - ${log.log_id || "-"}`;
+
+  titleGroup.append(roomName, meta);
+
+  const badge = document.createElement("span");
+  badge.className = "room-time-logs-badge";
+  badge.textContent = getRoomTimeLogActionLabel(log.action_type);
+
+  header.append(titleGroup, badge);
+
+  const details = document.createElement("div");
+  details.className = "room-time-logs-details";
+
+  [
+    ["Durasi Lama", formatDurationMinutes(log.old_booked_duration_minutes)],
+    ["Durasi Baru", formatDurationMinutes(log.new_booked_duration_minutes)],
+    ["Jadwal Selesai Lama", log.old_scheduled_end_time || "-"],
+    ["Jadwal Selesai Baru", log.new_scheduled_end_time || "-"],
+    ["Tambah Menit", String(Number(log.add_minutes) || 0)],
+    ["Kasir", log.cashier_name || "-"],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    item.className = "room-time-logs-detail-item";
+
+    const label = document.createElement("p");
+    label.className = "room-time-logs-detail-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "room-time-logs-detail-value";
+    value.textContent = valueText;
+
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  row.append(header, details);
+
+  if (log.note) {
+    const note = document.createElement("p");
+    note.className = "room-time-logs-note";
+    note.textContent = log.note;
+    row.appendChild(note);
+  }
+
+  return row;
 }
 
 function getExtendSuccessMessage(roomName, addMinutes) {
@@ -5309,12 +5628,18 @@ async function extendSession(roomId, addMinutes) {
   renderRooms();
 
   try {
-    const data = await postApiAction({
+    const payload = {
       action: "extendSession",
       room_id: roomId,
       add_minutes: selectedMinutes,
       cashier_name: "Kasir",
-    });
+    };
+
+    if (extendSessionNote.trim()) {
+      payload.note = extendSessionNote.trim();
+    }
+
+    const data = await postApiAction(payload);
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menambah waktu sesi.");
@@ -5323,7 +5648,9 @@ async function extendSession(roomId, addMinutes) {
     showInlineNotice(getExtendSuccessMessage(roomName, selectedMinutes));
     extendSelectionRoomId = "";
     customExtendMinutes = "";
+    extendSessionNote = "";
     await loadRooms();
+    await loadTodayRoomTimeLogs();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menambah waktu sesi.", "error");
   } finally {
@@ -5663,6 +5990,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-room-time-logs") {
+    await loadTodayRoomTimeLogs();
+    return;
+  }
+
   if (action === "submit-stock-adjustment") {
     await submitStockAdjustment();
     return;
@@ -5839,6 +6171,11 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-extend-session-note") {
+    updateExtendSessionNote(field.value);
+    return;
+  }
+
   if (action === "update-stock-adjustment-quantity") {
     updateStockAdjustmentForm("quantity", field.value);
     focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -5884,6 +6221,13 @@ function handleDashboardChange(event) {
 
   if (stockMovementItemFilterSelect) {
     setStockMovementItemFilter(stockMovementItemFilterSelect.value);
+    return;
+  }
+
+  const roomTimeLogRoomFilterSelect = event.target.closest(".room-time-logs-room-filter");
+
+  if (roomTimeLogRoomFilterSelect) {
+    setRoomTimeLogRoomFilter(roomTimeLogRoomFilterSelect.value);
   }
 }
 
@@ -5903,6 +6247,7 @@ async function initializeDashboard() {
     loadTodayFnbOrders(),
     loadTodayStockMovements(),
     loadTodayFnbSalesReport(),
+    loadTodayRoomTimeLogs(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
   ]);

@@ -24,6 +24,58 @@ Contoh `status`:
 - `occupied`
 - `maintenance`
 
+`start_time` adalah jangkar sesi dan tidak boleh diubah saat tambah waktu (extend). Hanya `booked_duration_minutes` dan `scheduled_end_time` yang bertambah.
+
+## RoomTimeLogs
+
+Menyimpan audit log perubahan durasi booking room.
+
+| Column | Description |
+| --- | --- |
+| `log_id` | ID unik log, contoh `RTL-20260620-091500-123`. |
+| `created_at` | Timestamp log dibuat. |
+| `action_type` | Jenis aksi, contoh `extend_session`. |
+| `room_id` | ID room terkait. |
+| `room_name` | Nama room saat log dibuat. |
+| `old_booked_duration_minutes` | Durasi booking sebelum perubahan. |
+| `new_booked_duration_minutes` | Durasi booking setelah perubahan. |
+| `old_scheduled_end_time` | Jadwal selesai sebelum perubahan. |
+| `new_scheduled_end_time` | Jadwal selesai setelah perubahan. |
+| `add_minutes` | Jumlah menit yang ditambahkan. |
+| `cashier_name` | Nama kasir yang memproses. |
+| `note` | Catatan opsional. |
+
+### Fase 5E - Audit Log Tambah Waktu Room
+
+Sheet `RoomTimeLogs` dibuat otomatis oleh backend jika belum ada.
+
+POST `extendSession` menerima `note` opsional dan menulis log `extend_session` setelah room berhasil di-extend. Jika penulisan log gagal, perubahan durasi dibatalkan.
+
+GET `getTodayRoomTimeLogs` membaca log hari ini (tanggal Jakarta di `created_at`).
+
+Query parameter opsional:
+
+- `room_id` — filter per room.
+- `action_type` — filter jenis log; valid: `extend_session`.
+
+Jika `action_type` tidak valid: `{ ok: false, error: "Jenis log waktu room tidak dikenal." }`.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "room_time_logs": [],
+  "summary": {
+    "total_logs": 0,
+    "total_added_minutes": 0,
+    "rooms_extended": 0
+  }
+}
+```
+
+Endpoint ini read-only. Tidak mengubah durasi room, billing, F&B, atau stok.
+
 ## Transactions
 
 Menyimpan riwayat transaksi room.

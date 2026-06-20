@@ -124,6 +124,20 @@ var ROOMS_BOOKING_HEADERS = [
   "booked_duration_minutes",
   "scheduled_end_time",
 ];
+var ROOM_TIME_LOGS_HEADERS = [
+  "log_id",
+  "created_at",
+  "action_type",
+  "room_id",
+  "room_name",
+  "old_booked_duration_minutes",
+  "new_booked_duration_minutes",
+  "old_scheduled_end_time",
+  "new_scheduled_end_time",
+  "add_minutes",
+  "cashier_name",
+  "note",
+];
 
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
@@ -176,6 +190,10 @@ function doGet(e) {
       return jsonResponse(getTodayFnbSalesReport_());
     }
 
+    if (action === "getTodayRoomTimeLogs") {
+      return jsonResponse(getTodayRoomTimeLogs_(e.parameter.room_id, e.parameter.action_type));
+    }
+
     if (action === "getFnbOrdersByIds") {
       return jsonResponse({
         ok: true,
@@ -207,7 +225,7 @@ function doPost(e) {
     }
 
     if (action === "extendSession") {
-      return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name));
+      return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name, payload.note));
     }
 
     if (action === "closeSession") {
@@ -902,7 +920,7 @@ function startSession_(roomId, durationMinutes) {
   }
 }
 
-function extendSession_(roomId, addMinutes, cashierName) {
+function extendSession_(roomId, addMinutes, cashierName, note) {
   if (!roomId) {
     return {
       ok: false,
@@ -977,10 +995,43 @@ function extendSession_(roomId, addMinutes, cashierName) {
     sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(newScheduledEndTime);
     sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
 
+    var logId = generateRoomTimeLogId_();
+    var logEntry = {
+      log_id: logId,
+      created_at: now,
+      action_type: "extend_session",
+      room_id: roomId,
+      room_name: room.room_name || "",
+      old_booked_duration_minutes: oldBookedDurationMinutes,
+      new_booked_duration_minutes: newBookedDurationMinutes,
+      old_scheduled_end_time: oldScheduledEndTime,
+      new_scheduled_end_time: newScheduledEndTime,
+      add_minutes: addedMinutes,
+      cashier_name: cashierName || "Kasir",
+      note: String(note || "").trim(),
+    };
+
+    try {
+      appendRoomTimeLog_(logEntry);
+    } catch (logError) {
+      sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(oldBookedDurationMinutes);
+      sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(oldScheduledEndTime);
+      sheet.getRange(rowNumber, headerMap.updated_at).setValue(room.updated_at || "");
+
+      return {
+        ok: false,
+        error: "Gagal mencatat audit log tambah waktu. Perubahan durasi dibatalkan.",
+      };
+    }
+
     return {
       ok: true,
-      message: "Waktu sesi berhasil ditambah.",
+      message: "Waktu room berhasil ditambahkan.",
       room: getRoomFromRow_(sheet, headerMap, rowNumber),
+      audit_log: {
+        log_id: logId,
+        action_type: "extend_session",
+      },
       extension: {
         add_minutes: addedMinutes,
         old_booked_duration_minutes: oldBookedDurationMinutes,
@@ -988,6 +1039,7 @@ function extendSession_(roomId, addMinutes, cashierName) {
         old_scheduled_end_time: oldScheduledEndTime,
         new_scheduled_end_time: newScheduledEndTime,
         cashier_name: cashierName || "Kasir",
+        note: logEntry.note,
       },
     };
   } finally {
@@ -1926,6 +1978,84 @@ function getLowStockItemsForReport_() {
     });
 }
 
+function getTodayRoomTimeLogs_(roomId, actionType) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedActionType = String(actionType || "").trim().toLowerCase();
+
+  if (normalizedActionType && normalizedActionType !== "extend_session") {
+    return {
+      ok: false,
+      error: "Jenis log waktu room tidak dikenal.",
+    };
+  }
+
+  if (!sheetExists_("RoomTimeLogs")) {
+    return {
+      ok: true,
+      room_time_logs: [],
+      summary: createRoomTimeLogEmptySummary_(),
+    };
+  }
+
+  var today = new Date();
+  var logs = readSheetAsObjectsOrEmpty_("RoomTimeLogs")
+    .filter(function (log) {
+      var logActionType = String(log.action_type || "").trim().toLowerCase();
+
+      return (
+        isSameJakartaDateFromTimestamp_(log.created_at, today) &&
+        (!normalizedRoomId || String(log.room_id || "").trim() === normalizedRoomId) &&
+        (!normalizedActionType || logActionType === normalizedActionType)
+      );
+    })
+    .map(function (log) {
+      return {
+        log_id: log.log_id || "",
+        created_at: normalizeFnbOrderDateTime_(log.created_at),
+        action_type: String(log.action_type || "").trim().toLowerCase(),
+        room_id: log.room_id || "",
+        room_name: log.room_name || "",
+        old_booked_duration_minutes: Number(log.old_booked_duration_minutes) || 0,
+        new_booked_duration_minutes: Number(log.new_booked_duration_minutes) || 0,
+        old_scheduled_end_time: normalizeFnbOrderDateTime_(log.old_scheduled_end_time),
+        new_scheduled_end_time: normalizeFnbOrderDateTime_(log.new_scheduled_end_time),
+        add_minutes: Number(log.add_minutes) || 0,
+        cashier_name: log.cashier_name || "",
+        note: log.note || "",
+      };
+    })
+    .sort(function (first, second) {
+      return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+    });
+  var uniqueRoomIds = {};
+  var summary = logs.reduce(function (result, log) {
+    result.total_logs += 1;
+    result.total_added_minutes += Number(log.add_minutes) || 0;
+
+    if (log.room_id) {
+      uniqueRoomIds[log.room_id] = true;
+    }
+
+    return result;
+  }, createRoomTimeLogEmptySummary_());
+
+  summary.rooms_extended = Object.keys(uniqueRoomIds).length;
+
+  return {
+    ok: true,
+    room_time_logs: logs,
+    summary: summary,
+  };
+}
+
+function createRoomTimeLogEmptySummary_() {
+  return {
+    total_logs: 0,
+    total_added_minutes: 0,
+    rooms_extended: 0,
+  };
+}
+
 function isSameJakartaDateFromTimestamp_(value, date) {
   return normalizeJakartaDateString_(value) === getJakartaDateString_(date);
 }
@@ -2547,6 +2677,26 @@ function appendStockMovement_(movement) {
   });
 
   sheet.appendRow(rowValues);
+}
+
+function ensureRoomTimeLogsSheet_() {
+  return ensureSheetWithHeaders_("RoomTimeLogs", ROOM_TIME_LOGS_HEADERS);
+}
+
+function appendRoomTimeLog_(logEntry) {
+  var sheet = ensureRoomTimeLogsSheet_();
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var rowValues = headers.map(function (header) {
+    return logEntry[header] !== undefined ? logEntry[header] : "";
+  });
+
+  sheet.appendRow(rowValues);
+}
+
+function generateRoomTimeLogId_() {
+  return "RTL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
 function toPositiveInteger_(value) {

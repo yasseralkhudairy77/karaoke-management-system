@@ -1101,11 +1101,53 @@ Cara test:
 4. Uji sesi lama tanpa `booked_duration_minutes`, pastikan fallback durasi aktual.
 5. Pastikan F&B, `grand_total`, stok, payment, closing, riwayat, dan struk tetap normal.
 
+## Fase 5E - Audit Log Tambah Waktu Room
+
+Setiap tambah waktu room (`extendSession`) kini tercatat di sheet `RoomTimeLogs`.
+
+Payload `extendSession` dengan catatan opsional:
+
+```json
+{
+  "action": "extendSession",
+  "room_id": "ROOM-001",
+  "add_minutes": 30,
+  "cashier_name": "Kasir",
+  "note": "Customer tambah 30 menit"
+}
+```
+
+Log mencatat durasi lama/baru, jadwal selesai lama/baru, menit ditambahkan, kasir, dan catatan. `start_time` tetap tidak berubah. `scheduled_end_time` tetap bertambah dari jadwal lama (Fase 5C). Billing Fase 5D tidak berubah.
+
+Endpoint baru:
+
+- GET `getTodayRoomTimeLogs`
+
+Panel `Riwayat Tambah Waktu Room Hari Ini` menampilkan summary, filter per room, dan daftar log hari ini. Panel read-only.
+
+Deploy backend setelah perubahan `Code.gs`:
+
+```powershell
+cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
+.\deploy.ps1 "Fase 5E - Audit Log Tambah Waktu Room"
+```
+
+Cara test:
+
+1. Mulai sesi room, klik `Tambah Waktu`, isi catatan opsional, tambah waktu.
+2. Pastikan `RoomTimeLogs` bertambah 1 row dengan data durasi/jadwal lama-baru benar.
+3. Pastikan `start_time` tidak berubah.
+4. Buka panel `Riwayat Tambah Waktu Room Hari Ini`, pastikan log tampil.
+5. Uji filter per room.
+6. Tutup sesi, pastikan billing Fase 5D tetap benar.
+7. Pastikan F&B, stok, payment, dan closing tetap normal.
+
 ## Spreadsheet Template
 
 Folder `spreadsheet-template/` berisi CSV template untuk membuat Google Spreadsheet database awal. Setiap file CSV mewakili satu tab spreadsheet:
 
 - `Rooms.csv`
+- `RoomTimeLogs.csv`
 - `Transactions.csv`
 - `Inventory.csv`
 - `Menu.csv`

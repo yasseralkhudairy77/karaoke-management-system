@@ -2,6 +2,25 @@
 
 ## Status Terakhir
 
+### Fase 5E - Audit Log Tambah Waktu Room
+Status: PASS LOKAL
+
+Hasil:
+- Sheet `RoomTimeLogs` dibuat otomatis jika belum ada.
+- `extendSession` menulis audit log `extend_session` setelah extend berhasil.
+- Log mencatat durasi lama/baru, jadwal selesai lama/baru, add_minutes, kasir, dan note.
+- Jika penulisan log gagal, perubahan durasi dibatalkan dengan error jelas.
+- GET `getTodayRoomTimeLogs` dengan filter `room_id` dan `action_type`.
+- Panel `Riwayat Tambah Waktu Room Hari Ini` dengan summary dan filter per room.
+- Form tambah waktu punya field catatan opsional.
+- `start_time` tidak berubah; billing Fase 5D, F&B, stok, payment, closing tidak berubah.
+
+Catatan:
+- PASS LOKAL berarti implementasi dan syntax check lulus.
+- PASS FINAL menunggu deploy backend dan uji production.
+
+---
+
 ### Fase 4M - Laporan Penjualan F&B & Stok Rendah
 Status: PASS LOKAL
 
@@ -159,7 +178,4 @@ Hasil:
 
 ## Next Phase
 
-### Fase 5E - Audit Extend Session
-Rencana:
-- Catat riwayat tambah waktu ke sheet audit.
-- Belum diimplementasikan.
+(TBD — fase berikutnya belum ditetapkan.)
