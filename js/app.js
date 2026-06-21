@@ -234,6 +234,8 @@ let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
 let isExtendingSession = false;
+let isSendingTvCommand = false;
+let tvOffConfirmation = null;
 let activeDashboardTab = loadActiveDashboardTab();
 const PAGINATION_PAGE_SIZE = 15;
 const paginationState = {};
@@ -1606,9 +1608,36 @@ function normalizeRooms(rawRooms) {
       scheduled_end_time: room.scheduled_end_time || null,
       rate_per_hour: Number.isNaN(ratePerHour) ? 0 : ratePerHour,
       tv_device_id: room.tv_device_id || "",
+      tv_device: normalizeRoomTvDevice(room.tv_device),
       updated_at: room.updated_at || null,
     };
   });
+}
+
+function normalizeRoomTvDevice(tvDevice) {
+  if (!tvDevice || tvDevice.configured === false) {
+    return {
+      configured: false,
+      status: "not_configured",
+      status_label: "TV belum disetting",
+      last_command: "",
+      last_command_at: null,
+    };
+  }
+
+  return {
+    configured: true,
+    room_id: tvDevice.room_id || "",
+    tv_device_id: tvDevice.tv_device_id || "",
+    device_name: tvDevice.device_name || "",
+    control_type: tvDevice.control_type || "mock",
+    device_status: tvDevice.device_status || "active",
+    status: tvDevice.status || "unchecked",
+    status_label: tvDevice.status_label || getTvStatusLabel(tvDevice.status),
+    last_command: tvDevice.last_command || "",
+    last_command_result: tvDevice.last_command_result || "",
+    last_command_at: tvDevice.last_command_at || null,
+  };
 }
 
 function getFilteredMenuItems() {
@@ -2257,6 +2286,110 @@ function getSessionButtonLabel(status) {
   }
 
   return "Cek Status";
+}
+
+function getCurrentOperatorRole() {
+  try {
+    return String(
+      localStorage.getItem("karaoke_current_role")
+        || localStorage.getItem("karaoke_user_role")
+        || "cashier"
+    ).trim().toLowerCase();
+  } catch (error) {
+    return "cashier";
+  }
+}
+
+function canControlTv() {
+  return ["owner", "admin", "cashier"].includes(getCurrentOperatorRole());
+}
+
+function getTvStatusLabel(status) {
+  if (status === "active") {
+    return "TV: Aktif";
+  }
+
+  if (status === "failed") {
+    return "TV: Gagal";
+  }
+
+  if (status === "timeout") {
+    return "TV: Timeout";
+  }
+
+  if (status === "not_configured") {
+    return "TV belum disetting";
+  }
+
+  return "TV: Belum dicek";
+}
+
+function getTvStatusBadgeText(tvDevice) {
+  if (!tvDevice || tvDevice.configured === false || tvDevice.status === "not_configured") {
+    return "⚫ TV belum disetting";
+  }
+
+  if (tvDevice.status === "active") {
+    return "🟢 TV: Aktif";
+  }
+
+  if (tvDevice.status === "failed") {
+    return "🔴 TV: Gagal";
+  }
+
+  if (tvDevice.status === "timeout") {
+    return "🟡 TV: Timeout";
+  }
+
+  return "⚪ TV: Belum dicek";
+}
+
+function getTvStatusTone(tvDevice) {
+  if (!tvDevice || tvDevice.configured === false || tvDevice.status === "not_configured") {
+    return "neutral";
+  }
+
+  if (tvDevice.status === "active") {
+    return "success";
+  }
+
+  if (tvDevice.status === "failed") {
+    return "danger";
+  }
+
+  if (tvDevice.status === "timeout") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function getTvActionLabel(tvAction) {
+  if (tvAction === "power_on") {
+    return "TV ON";
+  }
+
+  if (tvAction === "power_off") {
+    return "TV OFF";
+  }
+
+  if (tvAction === "test") {
+    return "TEST";
+  }
+
+  return tvAction || "-";
+}
+
+function getTvCommandSuccessMessage(tvAction) {
+  if (tvAction === "power_on") {
+    return "Perintah TV ON berhasil dikirim.";
+  }
+
+  if (tvAction === "power_off") {
+    return "Perintah TV OFF berhasil dikirim.";
+  }
+
+  return "Perintah TEST TV berhasil dikirim.";
 }
 
 function getPaymentStatusLabel(status) {
@@ -3300,6 +3433,7 @@ function createRoomCard(room) {
   rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
 
   meta.appendChild(rate);
+  meta.appendChild(createRoomTvControlElement(room));
 
   const actions = document.createElement("div");
   actions.className = "room-actions";
@@ -3310,12 +3444,6 @@ function createRoomCard(room) {
   sessionButton.dataset.action = "toggle-session";
   sessionButton.textContent = sessionButtonLabel;
 
-  const tvButton = document.createElement("button");
-  tvButton.className = "room-button";
-  tvButton.type = "button";
-  tvButton.dataset.action = "turn-off-tv";
-  tvButton.textContent = "Matikan TV";
-
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
 
@@ -3325,10 +3453,9 @@ function createRoomCard(room) {
     extendButton.dataset.action = "show-extend-selection";
     extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
 
-    tvButton.classList.add("room-button-full");
-    actions.append(sessionButton, extendButton, tvButton);
+    actions.append(sessionButton, extendButton);
   } else {
-    actions.append(sessionButton, tvButton);
+    actions.append(sessionButton);
   }
 
   card.append(topLine, meta, actions);
@@ -5834,6 +5961,49 @@ function createOwnerDashboardMetricCard({ label, value, badgeText, badgeTone, de
   }
 
   return card;
+}
+
+function createRoomTvControlElement(room) {
+  const tvDevice = room.tv_device || normalizeRoomTvDevice(null);
+  const panel = document.createElement("div");
+  panel.className = "room-tv-control";
+
+  const badge = document.createElement("p");
+  badge.className = withStatusBadge("room-tv-badge", getTvStatusTone(tvDevice));
+  badge.textContent = getTvStatusBadgeText(tvDevice);
+  panel.appendChild(badge);
+
+  const lastCommand = document.createElement("p");
+  lastCommand.className = "room-tv-last-command";
+  lastCommand.textContent = `Last command: ${getTvActionLabel(tvDevice.last_command)}`;
+  panel.appendChild(lastCommand);
+
+  if (!canControlTv()) {
+    return panel;
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "room-tv-actions";
+
+  [
+    ["power_on", "TV ON"],
+    ["power_off", "TV OFF"],
+    ["test", "TEST"],
+  ].forEach(([tvAction, labelText]) => {
+    const button = document.createElement("button");
+    button.className = "room-tv-button";
+    button.type = "button";
+    button.dataset.action = tvAction === "power_off" ? "confirm-tv-off" : "send-tv-command";
+    button.dataset.tvAction = tvAction;
+    button.dataset.roomId = room.room_id;
+    button.dataset.tvDeviceId = tvDevice.tv_device_id || "";
+    button.disabled = isSendingTvCommand || !API_BASE_URL.trim() || tvDevice.configured === false;
+    button.textContent = isSendingTvCommand ? "Kirim..." : labelText;
+    actions.appendChild(button);
+  });
+
+  panel.appendChild(actions);
+  return panel;
 }
 
 function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, items, emptyText, detailBuilder }) {
@@ -8753,6 +8923,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
+  if (tvOffConfirmation) {
+    fragment.appendChild(createTvOffConfirmationElement());
+  }
+
   dashboardGlobal.replaceChildren(fragment);
 }
 
@@ -9402,6 +9576,113 @@ async function closeSession(roomId) {
   }
 }
 
+function openTvOffConfirmation(roomId, tvDeviceId) {
+  const room = rooms.find((item) => item.room_id === roomId);
+
+  if (!room || !tvDeviceId) {
+    showInlineNotice("TV belum disetting untuk room ini.", "error");
+    return;
+  }
+
+  tvOffConfirmation = {
+    room_id: roomId,
+    room_name: room.room_name || roomId,
+    tv_device_id: tvDeviceId,
+  };
+  renderRooms();
+}
+
+function closeTvOffConfirmation() {
+  if (isSendingTvCommand) {
+    return;
+  }
+
+  tvOffConfirmation = null;
+  renderRooms();
+}
+
+function createTvOffConfirmationElement() {
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal tv-off-modal";
+  overlay.setAttribute("aria-labelledby", "tv-off-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog tv-off-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "tv-off-title";
+  title.textContent = "Konfirmasi TV OFF";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = `Kirim perintah TV OFF untuk ${tvOffConfirmation.room_name}?`;
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-tv-off-confirmation";
+  cancelButton.textContent = "Batal";
+
+  const confirmButton = document.createElement("button");
+  confirmButton.className = "master-button danger";
+  confirmButton.type = "button";
+  confirmButton.dataset.action = "submit-tv-off";
+  confirmButton.disabled = isSendingTvCommand;
+  confirmButton.textContent = isSendingTvCommand ? "Mengirim..." : "Kirim TV OFF";
+
+  actions.append(cancelButton, confirmButton);
+  dialog.append(title, warning, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+async function sendTvCommand(roomId, tvDeviceId, tvAction) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  if (!tvDeviceId) {
+    showInlineNotice("TV belum disetting untuk room ini.", "error");
+    return;
+  }
+
+  isSendingTvCommand = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "sendTvCommand",
+      room_id: roomId,
+      tv_device_id: tvDeviceId,
+      tv_action: tvAction,
+      trigger_source: "room_card",
+      cashier_name: "Kasir",
+    });
+
+    if (!data || data.success !== true) {
+      throw new Error(data?.message || "Perintah TV gagal dikirim.");
+    }
+
+    showInlineNotice(getTvCommandSuccessMessage(tvAction));
+    tvOffConfirmation = null;
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Perintah TV gagal dikirim.", "error");
+    await loadRooms();
+  } finally {
+    isSendingTvCommand = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
 async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
@@ -9509,6 +9790,7 @@ function setActionButtonsDisabled(isDisabled) {
         + ", .cashier-closing-button, .today-fnb-button, .today-fnb-filter-button, .fnb-cancel-button, .inventory-button"
         + ", .stock-adjustment-button, .duration-option-button, .duration-custom-button, .duration-cancel-button"
         + ", .room-button-extend, .extend-option-button, .extend-custom-button, .extend-cancel-button"
+        + ", .room-tv-button"
     )
     .forEach((button) => {
       button.disabled = isDisabled;
@@ -9626,6 +9908,36 @@ async function handleRoomAction(event) {
 
   if (action === "hide-receipt-print") {
     hideReceiptPrint();
+    return;
+  }
+
+  if (action === "confirm-tv-off") {
+    openTvOffConfirmation(button.dataset.roomId || roomId || "", button.dataset.tvDeviceId || "");
+    return;
+  }
+
+  if (action === "close-tv-off-confirmation") {
+    closeTvOffConfirmation();
+    return;
+  }
+
+  if (action === "submit-tv-off") {
+    if (tvOffConfirmation) {
+      await sendTvCommand(
+        tvOffConfirmation.room_id,
+        tvOffConfirmation.tv_device_id,
+        "power_off"
+      );
+    }
+    return;
+  }
+
+  if (action === "send-tv-command") {
+    await sendTvCommand(
+      button.dataset.roomId || roomId || "",
+      button.dataset.tvDeviceId || "",
+      button.dataset.tvAction || ""
+    );
     return;
   }
 

@@ -18,6 +18,12 @@ export const rooms = [
     status: "available",
     start_time: null,
     rate_per_hour: 75000,
+    tv_device: {
+      configured: true,
+      tv_device_id: "TV-001",
+      status: "unchecked",
+      last_command: "",
+    },
   },
   {
     room_id: "ROOM-002",
@@ -25,6 +31,12 @@ export const rooms = [
     status: "occupied",
     start_time: minutesAgo(12),
     rate_per_hour: 85000,
+    tv_device: {
+      configured: true,
+      tv_device_id: "TV-002",
+      status: "active",
+      last_command: "power_on",
+    },
   },
   {
     room_id: "ROOM-003",
@@ -32,6 +44,10 @@ export const rooms = [
     status: "available",
     start_time: null,
     rate_per_hour: 75000,
+    tv_device: {
+      configured: false,
+      status: "not_configured",
+    },
   },
   {
     room_id: "ROOM-004",
@@ -39,6 +55,12 @@ export const rooms = [
     status: "occupied",
     start_time: minutesAgo(34),
     rate_per_hour: 95000,
+    tv_device: {
+      configured: true,
+      tv_device_id: "TV-FAIL",
+      status: "failed",
+      last_command: "test",
+    },
   },
   {
     room_id: "ROOM-005",
@@ -46,6 +68,12 @@ export const rooms = [
     status: "occupied",
     start_time: minutesAgo(57),
     rate_per_hour: 110000,
+    tv_device: {
+      configured: true,
+      tv_device_id: "TV-TIMEOUT",
+      status: "timeout",
+      last_command: "power_off",
+    },
   },
   {
     room_id: "ROOM-006",
@@ -53,5 +81,11 @@ export const rooms = [
     status: "available",
     start_time: null,
     rate_per_hour: 95000,
+    tv_device: {
+      configured: true,
+      tv_device_id: "TV-006",
+      status: "unchecked",
+      last_command: "",
+    },
   },
 ];

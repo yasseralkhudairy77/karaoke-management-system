@@ -86,6 +86,46 @@ Response:
 
 Endpoint ini read-only. Tidak mengubah durasi room, billing, F&B, atau stok.
 
+## TVDevices
+
+Menyimpan mapping perangkat TV per room. Fase 7A-0 hanya memakai `control_type = mock`.
+
+| Column | Description |
+| --- | --- |
+| `tv_device_id` | ID unik perangkat TV/controller, contoh `TV-001`. |
+| `room_id` | ID room yang terhubung ke perangkat. |
+| `device_name` | Nama perangkat opsional untuk pengaturan. |
+| `control_type` | Tipe kontrol, untuk fase ini `mock`. |
+| `status` | Status perangkat, `active` atau `inactive`. |
+| `middleware_url` | URL middleware untuk fase hardware berikutnya. Tidak ditampilkan di card room. |
+| `device_identifier` | Identifier teknis perangkat. Tidak ditampilkan di card room. |
+| `updated_at` | Waktu terakhir metadata perangkat diperbarui. |
+
+GET `getTvDevices` membaca data dari sheet `TVDevices`.
+
+## TVControlLogs
+
+Menyimpan audit log semua command TV, termasuk command yang gagal.
+
+| Column | Description |
+| --- | --- |
+| `log_id` | ID unik log, contoh `TVL-20260621-120000-123`. |
+| `created_at` | Timestamp log dibuat. |
+| `room_id` | ID room terkait. |
+| `tv_device_id` | ID perangkat TV yang ditargetkan. |
+| `tv_action` | `test`, `power_on`, atau `power_off`. |
+| `trigger_source` | Sumber trigger, contoh `room_card`. |
+| `cashier_name` | Nama kasir/operator. |
+| `control_type` | Tipe kontrol perangkat saat command dikirim. |
+| `result` | `sent`, `failed`, atau `timeout`. |
+| `success` | `true` jika command berhasil dikirim ke control layer. |
+| `block_reason` | Alasan gagal, contoh `TV_DEVICE_NOT_FOUND`. |
+| `message` | Pesan ringkas untuk UI. |
+
+POST `sendTvCommand` menerima `room_id`, `tv_device_id`, `tv_action`, `trigger_source`, dan `cashier_name`.
+
+GET `getTvControlLogs` membaca log TV. Query opsional: `room_id`, `tv_device_id`, `limit`.
+
 ## Transactions
 
 Menyimpan riwayat transaksi room.

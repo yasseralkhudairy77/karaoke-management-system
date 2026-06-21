@@ -138,6 +138,30 @@ var ROOM_TIME_LOGS_HEADERS = [
   "cashier_name",
   "note",
 ];
+var TV_DEVICES_HEADERS = [
+  "tv_device_id",
+  "room_id",
+  "device_name",
+  "control_type",
+  "status",
+  "middleware_url",
+  "device_identifier",
+  "updated_at",
+];
+var TV_CONTROL_LOGS_HEADERS = [
+  "log_id",
+  "created_at",
+  "room_id",
+  "tv_device_id",
+  "tv_action",
+  "trigger_source",
+  "cashier_name",
+  "control_type",
+  "result",
+  "success",
+  "block_reason",
+  "message",
+];
 var ROOMS_MASTER_HEADERS = [
   "room_id",
   "room_name",
@@ -197,6 +221,18 @@ function doGet(e) {
         ok: true,
         rooms: getRooms_(),
       });
+    }
+
+    if (action === "getTvDevices") {
+      return jsonResponse(getTvDevices_());
+    }
+
+    if (action === "getTvControlLogs") {
+      return jsonResponse(getTvControlLogs_(
+        e.parameter.room_id,
+        e.parameter.tv_device_id,
+        e.parameter.limit
+      ));
     }
 
     if (action === "getMenuItems") {
@@ -347,6 +383,10 @@ function doPost(e) {
       return jsonResponse(cancelFnbOrder_(payload.order_id, payload.cancel_reason, payload.cancelled_by));
     }
 
+    if (action === "sendTvCommand") {
+      return jsonResponse(sendTvCommand_(payload));
+    }
+
     if (action === "adjustInventoryStock") {
       return jsonResponse(adjustInventoryStock_(
         payload.stock_item_id,
@@ -477,8 +517,18 @@ function readSheetAsObjects_(sheetName) {
 
 function getRooms_() {
   ensureRoomsBookingColumns_();
+  ensureTvDevicesSheet_();
+  ensureTvControlLogsSheet_();
+
+  var tvDevicesByRoom = getTvDevicesByRoomMap_();
+  var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_();
 
   return readSheetAsObjects_("Rooms").map(function (room) {
+    var tvDevice = tvDevicesByRoom[String(room.room_id || "").trim()] || null;
+    var latestTvLog = tvDevice
+      ? latestTvLogByDevice[String(tvDevice.tv_device_id || "").trim()] || null
+      : null;
+
     return {
       room_id: room.room_id || "",
       room_name: room.room_name || "",
@@ -488,8 +538,288 @@ function getRooms_() {
       scheduled_end_time: room.scheduled_end_time || null,
       rate_per_hour: room.rate_per_hour || 0,
       tv_device_id: room.tv_device_id || "",
+      tv_device: buildRoomTvSummary_(room, tvDevice, latestTvLog),
       updated_at: room.updated_at || null,
     };
+  });
+}
+
+function normalizeTvDevice_(device) {
+  return {
+    tv_device_id: device.tv_device_id || "",
+    room_id: device.room_id || "",
+    device_name: device.device_name || "",
+    control_type: String(device.control_type || "mock").trim().toLowerCase() || "mock",
+    status: String(device.status || "active").trim().toLowerCase() || "active",
+    middleware_url: device.middleware_url || "",
+    device_identifier: device.device_identifier || "",
+    updated_at: device.updated_at || null,
+  };
+}
+
+function getTvDevices_() {
+  ensureTvDevicesSheet_();
+
+  return {
+    ok: true,
+    success: true,
+    tv_devices: readSheetAsObjects_("TVDevices").map(normalizeTvDevice_),
+  };
+}
+
+function getTvDevicesByRoomMap_() {
+  return readSheetAsObjectsOrEmpty_("TVDevices").reduce(function (map, device) {
+    var normalizedDevice = normalizeTvDevice_(device);
+    var roomId = String(normalizedDevice.room_id || "").trim();
+
+    if (roomId && !map[roomId]) {
+      map[roomId] = normalizedDevice;
+    }
+
+    return map;
+  }, {});
+}
+
+function getLatestTvControlLogByDeviceMap_() {
+  return readSheetAsObjectsOrEmpty_("TVControlLogs").reduce(function (map, log) {
+    var tvDeviceId = String(log.tv_device_id || "").trim();
+
+    if (!tvDeviceId) {
+      return map;
+    }
+
+    var normalizedLog = normalizeTvControlLog_(log);
+    var currentLog = map[tvDeviceId];
+
+    if (!currentLog || String(normalizedLog.created_at || "").localeCompare(String(currentLog.created_at || "")) > 0) {
+      map[tvDeviceId] = normalizedLog;
+    }
+
+    return map;
+  }, {});
+}
+
+function buildRoomTvSummary_(room, tvDevice, latestTvLog) {
+  if (!tvDevice) {
+    return {
+      configured: false,
+      status: "not_configured",
+      status_label: "TV belum disetting",
+      last_command: "",
+      last_command_at: null,
+    };
+  }
+
+  var result = latestTvLog ? String(latestTvLog.result || "").trim().toLowerCase() : "";
+  var status = "unchecked";
+
+  if (result === "sent") {
+    status = "active";
+  } else if (result === "failed") {
+    status = "failed";
+  } else if (result === "timeout") {
+    status = "timeout";
+  }
+
+  return {
+    configured: true,
+    room_id: room.room_id || tvDevice.room_id || "",
+    tv_device_id: tvDevice.tv_device_id || "",
+    device_name: tvDevice.device_name || "",
+    control_type: tvDevice.control_type || "mock",
+    device_status: tvDevice.status || "active",
+    status: status,
+    status_label: getTvStatusLabel_(status),
+    last_command: latestTvLog ? latestTvLog.tv_action || "" : "",
+    last_command_result: latestTvLog ? latestTvLog.result || "" : "",
+    last_command_at: latestTvLog ? latestTvLog.created_at || null : null,
+  };
+}
+
+function getTvStatusLabel_(status) {
+  if (status === "active") {
+    return "TV: Aktif";
+  }
+
+  if (status === "failed") {
+    return "TV: Gagal";
+  }
+
+  if (status === "timeout") {
+    return "TV: Timeout";
+  }
+
+  return "TV: Belum dicek";
+}
+
+function normalizeTvAction_(tvAction) {
+  var action = String(tvAction || "").trim().toLowerCase();
+  var validActions = {
+    test: true,
+    power_on: true,
+    power_off: true,
+  };
+
+  return validActions[action] ? action : "";
+}
+
+function normalizeTvControlLog_(log) {
+  return {
+    log_id: log.log_id || "",
+    created_at: normalizeFnbOrderDateTime_(log.created_at),
+    room_id: log.room_id || "",
+    tv_device_id: log.tv_device_id || "",
+    tv_action: log.tv_action || "",
+    trigger_source: log.trigger_source || "",
+    cashier_name: log.cashier_name || "",
+    control_type: log.control_type || "",
+    result: log.result || "",
+    success: String(log.success || "").trim().toLowerCase() === "true" || log.success === true,
+    block_reason: log.block_reason || "",
+    message: log.message || "",
+  };
+}
+
+function getTvControlLogs_(roomId, tvDeviceId, limit) {
+  ensureTvControlLogsSheet_();
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedTvDeviceId = String(tvDeviceId || "").trim();
+  var safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+  var logs = readSheetAsObjects_("TVControlLogs")
+    .filter(function (log) {
+      return (
+        (!normalizedRoomId || String(log.room_id || "").trim() === normalizedRoomId) &&
+        (!normalizedTvDeviceId || String(log.tv_device_id || "").trim() === normalizedTvDeviceId)
+      );
+    })
+    .map(normalizeTvControlLog_)
+    .sort(function (first, second) {
+      return String(second.created_at || "").localeCompare(String(first.created_at || ""));
+    })
+    .slice(0, safeLimit);
+
+  return {
+    ok: true,
+    success: true,
+    tv_control_logs: logs,
+    logs: logs,
+  };
+}
+
+function sendTvCommand_(payload) {
+  var roomId = String(payload.room_id || "").trim();
+  var tvDeviceId = String(payload.tv_device_id || "").trim();
+  var tvAction = normalizeTvAction_(payload.tv_action);
+  var triggerSource = String(payload.trigger_source || "room_card").trim() || "room_card";
+  var cashierName = String(payload.cashier_name || "Kasir").trim() || "Kasir";
+  var device = null;
+  var response;
+
+  if (!tvAction) {
+    response = createTvCommandFailedResponse_(roomId, tvDeviceId, tvAction, triggerSource, cashierName, "", "failed", "TV_ACTION_INVALID");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  device = findTvDevice_(roomId, tvDeviceId);
+
+  if (!device) {
+    response = createTvCommandFailedResponse_(roomId, tvDeviceId, tvAction, triggerSource, cashierName, "", "failed", "TV_DEVICE_NOT_FOUND");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  if (device.status !== "active") {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_DEVICE_INACTIVE");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  if (device.control_type !== "mock") {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_CONTROL_TYPE_UNSUPPORTED");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  if (device.tv_device_id === "TV-FAIL") {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_DEVICE_OFFLINE");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  if (device.tv_device_id === "TV-TIMEOUT") {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "timeout", "TV_DEVICE_TIMEOUT");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  response = {
+    ok: true,
+    success: true,
+    message: "Perintah TV berhasil dikirim.",
+    data: {
+      room_id: roomId || device.room_id,
+      tv_device_id: device.tv_device_id,
+      result: "sent",
+    },
+    tv_action: tvAction,
+    control_type: device.control_type,
+  };
+  appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+
+  return response;
+}
+
+function findTvDevice_(roomId, tvDeviceId) {
+  ensureTvDevicesSheet_();
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedTvDeviceId = String(tvDeviceId || "").trim();
+
+  return readSheetAsObjects_("TVDevices")
+    .map(normalizeTvDevice_)
+    .filter(function (device) {
+      if (normalizedTvDeviceId) {
+        return String(device.tv_device_id || "").trim() === normalizedTvDeviceId;
+      }
+
+      return normalizedRoomId && String(device.room_id || "").trim() === normalizedRoomId;
+    })[0] || null;
+}
+
+function createTvCommandFailedResponse_(roomId, tvDeviceId, tvAction, triggerSource, cashierName, controlType, result, blockReason) {
+  return {
+    ok: false,
+    success: false,
+    message: "Perintah TV gagal dikirim.",
+    block_reason: blockReason,
+    data: {
+      room_id: roomId || "",
+      tv_device_id: tvDeviceId || "",
+      result: result || "failed",
+    },
+    tv_action: tvAction || "",
+    trigger_source: triggerSource || "",
+    cashier_name: cashierName || "",
+    control_type: controlType || "",
+  };
+}
+
+function appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction) {
+  appendTvControlLog_({
+    log_id: generateTvControlLogId_(),
+    created_at: toJakartaIsoString_(new Date()),
+    room_id: response && response.data ? response.data.room_id || "" : "",
+    tv_device_id: response && response.data ? response.data.tv_device_id || "" : "",
+    tv_action: tvAction || response.tv_action || "",
+    trigger_source: triggerSource || response.trigger_source || "",
+    cashier_name: cashierName || response.cashier_name || "",
+    control_type: response.control_type || "",
+    result: response && response.data ? response.data.result || "" : "",
+    success: response && response.success === true,
+    block_reason: response.block_reason || "",
+    message: response.message || "",
   });
 }
 
@@ -4373,6 +4703,18 @@ function ensureRoomTimeLogsSheet_() {
   return ensureSheetWithHeaders_("RoomTimeLogs", ROOM_TIME_LOGS_HEADERS);
 }
 
+function ensureTvDevicesSheet_() {
+  var sheet = ensureSheetWithHeaders_("TVDevices", TV_DEVICES_HEADERS);
+  ensureColumns_(sheet, TV_DEVICES_HEADERS);
+  return sheet;
+}
+
+function ensureTvControlLogsSheet_() {
+  var sheet = ensureSheetWithHeaders_("TVControlLogs", TV_CONTROL_LOGS_HEADERS);
+  ensureColumns_(sheet, TV_CONTROL_LOGS_HEADERS);
+  return sheet;
+}
+
 function appendRoomTimeLog_(logEntry) {
   var sheet = ensureRoomTimeLogsSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
@@ -4385,8 +4727,24 @@ function appendRoomTimeLog_(logEntry) {
   sheet.appendRow(rowValues);
 }
 
+function appendTvControlLog_(logEntry) {
+  var sheet = ensureTvControlLogsSheet_();
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var rowValues = headers.map(function (header) {
+    return logEntry[header] !== undefined ? logEntry[header] : "";
+  });
+
+  sheet.appendRow(rowValues);
+}
+
 function generateRoomTimeLogId_() {
   return "RTL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function generateTvControlLogId_() {
+  return "TVL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
 function toPositiveInteger_(value) {
