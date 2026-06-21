@@ -174,6 +174,15 @@ var MASTER_DATA_AUDIT_LOG_HEADERS = [
   "result",
   "block_reason",
 ];
+var EMPLOYEES_HEADERS = [
+  "employee_id",
+  "employee_name",
+  "role",
+  "pin",
+  "status",
+  "created_at",
+  "updated_at",
+];
 
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
@@ -281,6 +290,10 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getEmployees") {
+      return jsonResponse(getEmployees_());
+    }
+
     return jsonResponse({
       ok: false,
       success: false,
@@ -342,6 +355,10 @@ function doPost(e) {
         payload.note,
         payload.cashier_name
       ));
+    }
+
+    if (action === "validateAdminPin") {
+      return jsonResponse(validateAdminPin_(payload));
     }
 
     if (action === "saveRoomMaster") {
@@ -879,6 +896,182 @@ function ensureMasterDataAuditLogsSheet_() {
   return sheet;
 }
 
+function ensureEmployeesSheet_() {
+  var sheet = ensureSheetWithHeaders_("Employees", EMPLOYEES_HEADERS);
+  ensureColumns_(sheet, EMPLOYEES_HEADERS);
+  return sheet;
+}
+
+function sanitizeEmployeeForAccess_(employee) {
+  if (!employee) {
+    return null;
+  }
+
+  return {
+    employee_id: employee.employee_id || "",
+    employee_name: employee.employee_name || "",
+    role: String(employee.role || "").trim().toLowerCase(),
+    status: getEmployeeStatus_(employee),
+  };
+}
+
+function getEmployeeStatus_(employee) {
+  return String(employee && employee.status || "active").trim().toLowerCase() || "active";
+}
+
+function getEmployees_() {
+  ensureEmployeesSheet_();
+
+  return {
+    ok: true,
+    success: true,
+    employees: readSheetAsObjects_("Employees").map(sanitizeEmployeeForAccess_),
+  };
+}
+
+function roleMeetsRequired_(role, requiredRole) {
+  var normalizedRole = String(role || "").trim().toLowerCase();
+  var normalizedRequiredRole = String(requiredRole || "admin").trim().toLowerCase();
+  var rank = {
+    staff: 1,
+    cashier: 2,
+    admin: 3,
+    owner: 4,
+  };
+
+  if (normalizedRole === "owner") {
+    return true;
+  }
+
+  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.admin);
+}
+
+function auditAdminPinValidation_(payload, result, blockReason, employee) {
+  var requestedAction = String(payload.requested_action || "admin_pin").trim();
+  var safeEmployee = sanitizeEmployeeForAccess_(employee);
+
+  appendMasterDataAuditLog_({
+    entity_type: "access",
+    entity_id: requestedAction,
+    entity_name: requestedAction,
+    action_type: "pin_validation",
+    old_value: "",
+    new_value: safeEmployee
+      ? {
+        employee_id: safeEmployee.employee_id,
+        employee_name: safeEmployee.employee_name,
+        role: safeEmployee.role,
+        status: safeEmployee.status,
+        required_role: payload.required_role || "admin",
+        requested_action: requestedAction,
+      }
+      : {
+        required_role: payload.required_role || "admin",
+        requested_action: requestedAction,
+      },
+    changed_by: safeEmployee ? safeEmployee.employee_name : payload.changed_by || "Admin",
+    note: requestedAction,
+    result: result,
+    block_reason: blockReason || "",
+  });
+}
+
+function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy, shouldAudit) {
+  ensureEmployeesSheet_();
+
+  var payload = {
+    pin: pin,
+    required_role: requiredRole || "admin",
+    requested_action: requestedAction || "admin_pin",
+    changed_by: changedBy || "Admin",
+  };
+  var normalizedPin = String(pin || "").trim();
+
+  if (!normalizedPin) {
+    if (shouldAudit !== false) {
+      auditAdminPinValidation_(payload, "blocked", "EMPTY_PIN", null);
+    }
+
+    return {
+      ok: false,
+      success: false,
+      message: "PIN admin wajib diisi.",
+      block_reason: "EMPTY_PIN",
+    };
+  }
+
+  var employees = readSheetAsObjects_("Employees");
+  var employee = employees.find(function (item) {
+    return getEmployeeStatus_(item) === "active"
+      && String(item.pin || "").trim() === normalizedPin;
+  });
+
+  if (!employee) {
+    if (shouldAudit !== false) {
+      auditAdminPinValidation_(payload, "blocked", "INVALID_PIN", null);
+    }
+
+    return {
+      ok: false,
+      success: false,
+      message: "PIN admin tidak valid.",
+      block_reason: "INVALID_PIN",
+    };
+  }
+
+  if (!roleMeetsRequired_(employee.role, payload.required_role)) {
+    if (shouldAudit !== false) {
+      auditAdminPinValidation_(payload, "blocked", "INSUFFICIENT_ROLE", employee);
+    }
+
+    return {
+      ok: false,
+      success: false,
+      message: "Role tidak memiliki akses untuk aksi ini.",
+      block_reason: "INSUFFICIENT_ROLE",
+      employee: sanitizeEmployeeForAccess_(employee),
+    };
+  }
+
+  if (shouldAudit !== false) {
+    auditAdminPinValidation_(payload, "success", "", employee);
+  }
+
+  return {
+    ok: true,
+    success: true,
+    message: "PIN admin valid.",
+    employee: sanitizeEmployeeForAccess_(employee),
+  };
+}
+
+function validateAdminPin_(payload) {
+  var result = validateAdminPinPayload_(
+    payload.pin,
+    payload.required_role || "admin",
+    payload.requested_action || "admin_pin",
+    payload.changed_by || "Admin",
+    true
+  );
+
+  if (result.success) {
+    return {
+      ok: true,
+      success: true,
+      message: result.message,
+      data: result.employee,
+    };
+  }
+
+  return {
+    ok: false,
+    success: false,
+    message: result.message,
+    block_reason: result.block_reason,
+    data: result.employee || null,
+  };
+}
+
 function stringifySafeJson_(value) {
   if (value === "" || value === null || value === undefined) {
     return "";
@@ -912,24 +1105,31 @@ function getNextAuditLogId_() {
 }
 
 function appendMasterDataAuditLog_(entry) {
-  var sheet = ensureMasterDataAuditLogsSheet_();
-  var log = {
-    log_id: getNextAuditLogId_(),
-    created_at: toJakartaIsoString_(new Date()),
-    entity_type: entry.entity_type || "",
-    entity_id: entry.entity_id || "",
-    entity_name: entry.entity_name || "",
-    action_type: entry.action_type || "",
-    old_value_json: stringifySafeJson_(entry.old_value),
-    new_value_json: stringifySafeJson_(entry.new_value),
-    changed_by: entry.changed_by || "Admin",
-    note: entry.note || "",
-    result: entry.result || "success",
-    block_reason: entry.block_reason || "",
-  };
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(10000);
 
-  appendObjectRow_(sheet, log);
-  return log;
+  try {
+    var sheet = ensureMasterDataAuditLogsSheet_();
+    var log = {
+      log_id: getNextAuditLogId_(),
+      created_at: toJakartaIsoString_(new Date()),
+      entity_type: entry.entity_type || "",
+      entity_id: entry.entity_id || "",
+      entity_name: entry.entity_name || "",
+      action_type: entry.action_type || "",
+      old_value_json: stringifySafeJson_(entry.old_value),
+      new_value_json: stringifySafeJson_(entry.new_value),
+      changed_by: entry.changed_by || "Admin",
+      note: entry.note || "",
+      result: entry.result || "success",
+      block_reason: entry.block_reason || "",
+    };
+
+    appendObjectRow_(sheet, log);
+    return log;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getMasterDataAuditLogs_(entityType, actionType, limit, period) {
@@ -1434,11 +1634,50 @@ function deleteBlockedResponse_(entityType, entityId, blockReason, message) {
   });
 }
 
+function authorizeAdminPinForMasterDelete_(payload, entityType, entityId) {
+  var authResult = validateAdminPinPayload_(
+    payload.admin_pin,
+    "admin",
+    "delete_permanent_" + entityType,
+    payload.changed_by || "Admin",
+    true
+  );
+
+  if (!authResult.success) {
+    auditDeleteBlocked_(entityType, entityId, entityId, "", "INVALID_ADMIN_PIN", payload);
+
+    return {
+      ok: false,
+      response: deleteBlockedResponse_(
+        entityType,
+        entityId,
+        "INVALID_ADMIN_PIN",
+        "Delete permanen membutuhkan PIN owner/admin yang valid."
+      ),
+    };
+  }
+
+  payload.changed_by = authResult.employee && authResult.employee.employee_name
+    ? authResult.employee.employee_name
+    : payload.changed_by || "Admin";
+
+  return {
+    ok: true,
+    employee: authResult.employee,
+  };
+}
+
 function deleteRoomMaster_(payload) {
   var roomId = String(payload.room_id || "").trim();
 
   if (!roomId) {
     masterError_("room_id wajib diisi.");
+  }
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "room", roomId);
+
+  if (!authResult.ok) {
+    return authResult.response;
   }
 
   var sheet = ensureRoomsMasterColumns_();
@@ -1498,6 +1737,12 @@ function deleteMenuMaster_(payload) {
     masterError_("menu_id wajib diisi.");
   }
 
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "menu", menuId);
+
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   var sheet = ensureMenuMasterColumns_();
   var headerMap = getHeaderMap_(sheet);
   var rowNumber = findRowByValue_(sheet, headerMap, "menu_id", menuId);
@@ -1538,6 +1783,12 @@ function deleteInventoryMaster_(payload) {
 
   if (!stockItemId) {
     masterError_("stock_item_id wajib diisi.");
+  }
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "inventory", stockItemId);
+
+  if (!authResult.ok) {
+    return authResult.response;
   }
 
   var sheet = ensureInventorySheetColumns_();

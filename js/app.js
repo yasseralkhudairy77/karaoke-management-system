@@ -186,6 +186,9 @@ let masterAuditEntityFilter = "all";
 let masterAuditActionFilter = "all";
 let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
+let employees = [];
+let adminPinModal = null;
+let isValidatingAdminPin = false;
 let stockWarningMessages = [];
 let stockAdjustmentForm = {
   stock_item_id: "",
@@ -535,6 +538,22 @@ async function fetchInventoryItemsFromApi() {
   };
 }
 
+async function fetchEmployeesFromApi() {
+  const response = await fetch(`${API_BASE_URL}?action=getEmployees`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || (data.ok !== true && data.success !== true) || !Array.isArray(data.employees)) {
+    throw new Error(data?.message || data?.error || "Gagal memuat data akses.");
+  }
+
+  return data.employees;
+}
+
 async function loadSettingsData() {
   if (!API_BASE_URL.trim()) {
     return;
@@ -544,16 +563,18 @@ async function loadSettingsData() {
   renderRooms();
 
   try {
-    const [latestRooms, menuData, inventoryData] = await Promise.all([
+    const [latestRooms, menuData, inventoryData, employeeData] = await Promise.all([
       fetchRoomsFromApi(),
       fetchMenuItemsFromApi(),
       fetchInventoryItemsFromApi(),
+      fetchEmployeesFromApi(),
     ]);
 
     rooms = normalizeRooms(latestRooms);
     menuItems = Array.isArray(menuData.menu_items) ? menuData.menu_items : [];
     inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
     inventorySummary = inventoryData.summary || null;
+    employees = Array.isArray(employeeData) ? employeeData : [];
     syncSelectedFbRoomWithRooms();
   } catch (error) {
     console.warn("Gagal memuat data pengaturan.", error);
@@ -6904,6 +6925,10 @@ function openMasterDataForm(type, mode, item = null) {
   masterDataForm = {
     type,
     mode,
+    originalValues: {
+      ...(item || {}),
+      qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
+    },
     values: {
       ...defaults[type],
       ...(item || {}),
@@ -7268,6 +7293,45 @@ function createInventorySettingsSection() {
     "inventory",
     createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Belum ada inventory.")
   );
+}
+
+function createAccessSettingsSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section access-settings-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Pengaturan Akses";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Daftar role aktif untuk proteksi PIN admin.";
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-settings-data";
+  refreshButton.disabled = isLoadingSettingsData || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingSettingsData ? "Memuat..." : "Refresh Akses";
+
+  const rows = employees.map((employee) => [
+    employee.employee_id || "-",
+    employee.employee_name || "-",
+    getMasterStatusBadge(employee.role),
+    getMasterStatusBadge(employee.status),
+  ]);
+
+  header.append(titleGroup, refreshButton);
+  section.append(
+    header,
+    createMasterTable(["ID", "Nama", "Role", "Status"], rows, "Belum ada data employee.")
+  );
+
+  return section;
 }
 
 function normalizeNameForDuplicateCheck(name) {
@@ -7754,6 +7818,7 @@ function createMasterAuditFiltersElement() {
       ["room", "Room"],
       ["menu", "Menu"],
       ["inventory", "Inventory"],
+      ["access", "Access"],
     ]
   );
 
@@ -7770,6 +7835,7 @@ function createMasterAuditFiltersElement() {
       ["maintenance", "Maintenance"],
       ["delete_permanent", "Delete Permanen"],
       ["delete_blocked", "Delete Ditolak"],
+      ["pin_validation", "Validasi PIN"],
     ]
   );
 
@@ -7887,6 +7953,7 @@ function createSettingsPanelElement() {
   }
 
   panel.appendChild(createDeleteMasterConfirmationElement());
+  panel.appendChild(createAdminPinModalElement());
 
   if (isLoadingSettingsData) {
     panel.appendChild(createStateMessage("Memuat data pengaturan..."));
@@ -7897,6 +7964,7 @@ function createSettingsPanelElement() {
     createRoomSettingsSection(),
     createMenuSettingsSection(),
     createInventorySettingsSection(),
+    createAccessSettingsSection(),
     createMasterAuditLogSection(),
     createMasterDataQualitySection()
   );
@@ -7993,11 +8061,12 @@ function syncDeleteMasterConfirmationControls() {
   }
 }
 
-function buildDeleteMasterPayload() {
+function buildDeleteMasterPayload(adminPin = "", authData = null) {
   const confirmation = deleteMasterConfirmation || {};
   const basePayload = {
-    changed_by: "Admin",
+    changed_by: authData?.employee_name || "Admin",
     note: confirmation.note || "",
+    admin_pin: adminPin,
   };
 
   if (confirmation.type === "room") {
@@ -8033,11 +8102,26 @@ async function submitDeleteMasterData() {
     return;
   }
 
+  openAdminPinModal({
+    title: "PIN Admin Delete Permanen",
+    message: `Masukkan PIN owner/admin untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
+    requestedAction: `delete_permanent_${deleteMasterConfirmation.type}`,
+    requiredRole: "admin",
+    validatePin: false,
+    onSuccess: (authData, adminPin) => executeDeleteMasterData(adminPin, authData),
+  });
+}
+
+async function executeDeleteMasterData(adminPin, authData) {
+  if (!deleteMasterConfirmation || isDeletingMasterData) {
+    return;
+  }
+
   isDeletingMasterData = true;
   renderRooms();
 
   try {
-    const data = await postApiAction(buildDeleteMasterPayload());
+    const data = await postApiAction(buildDeleteMasterPayload(adminPin, authData));
 
     if (!data || (data.ok !== true && data.success !== true)) {
       throw new Error(data?.message || data?.error || "Delete permanen ditolak.");
@@ -8142,12 +8226,202 @@ function createDeleteField(labelText, field, value) {
   return wrapper;
 }
 
-function buildMasterPayload() {
+function openAdminPinModal({ title, message, requestedAction, requiredRole = "admin", validatePin = true, onSuccess }) {
+  adminPinModal = {
+    title: title || "PIN Admin",
+    message: message || "Masukkan PIN owner/admin untuk melanjutkan.",
+    requestedAction: requestedAction || "admin_action",
+    requiredRole,
+    validatePin,
+    pin: "",
+    error: "",
+    onSuccess,
+  };
+  renderRooms();
+}
+
+function closeAdminPinModal() {
+  if (isValidatingAdminPin) {
+    return;
+  }
+
+  adminPinModal = null;
+  renderRooms();
+}
+
+function updateAdminPinModal(field, value) {
+  if (!adminPinModal || field !== "pin") {
+    return;
+  }
+
+  adminPinModal = {
+    ...adminPinModal,
+    pin: value,
+    error: "",
+  };
+}
+
+function syncAdminPinModalControls() {
+  const modal = queryDashboard(".admin-pin-modal");
+
+  if (!modal || !adminPinModal) {
+    return;
+  }
+
+  const submitButton = modal.querySelector("[data-action='submit-admin-pin-modal']");
+
+  if (submitButton) {
+    submitButton.disabled = isValidatingAdminPin || !String(adminPinModal.pin || "").trim();
+  }
+}
+
+async function submitAdminPinModal() {
+  if (!adminPinModal || isValidatingAdminPin) {
+    return;
+  }
+
+  const adminPin = String(adminPinModal.pin || "").trim();
+
+  if (!adminPin) {
+    adminPinModal = {
+      ...adminPinModal,
+      error: "PIN wajib diisi.",
+    };
+    renderRooms();
+    return;
+  }
+
+  const pendingAction = adminPinModal.onSuccess;
+
+  if (adminPinModal.validatePin === false) {
+    adminPinModal = null;
+    renderRooms();
+
+    if (typeof pendingAction === "function") {
+      await pendingAction({}, adminPin);
+    }
+
+    return;
+  }
+
+  isValidatingAdminPin = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "validateAdminPin",
+      pin: adminPin,
+      required_role: adminPinModal.requiredRole || "admin",
+      requested_action: adminPinModal.requestedAction || "admin_action",
+      changed_by: "Kasir",
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "PIN admin tidak valid.");
+    }
+
+    const authData = data.data || {};
+    adminPinModal = null;
+    isValidatingAdminPin = false;
+    renderRooms();
+
+    if (typeof pendingAction === "function") {
+      await pendingAction(authData, adminPin);
+    }
+  } catch (error) {
+    adminPinModal = {
+      ...adminPinModal,
+      pin: "",
+      error: error.message || "PIN admin tidak valid.",
+    };
+    isValidatingAdminPin = false;
+    renderRooms();
+  }
+}
+
+function createAdminPinModalElement() {
+  if (!adminPinModal) {
+    return document.createDocumentFragment();
+  }
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal admin-pin-modal";
+  overlay.setAttribute("aria-labelledby", "admin-pin-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "admin-pin-title";
+  title.textContent = adminPinModal.title || "PIN Admin";
+
+  const message = document.createElement("p");
+  message.className = "master-delete-warning";
+  message.textContent = adminPinModal.message || "Masukkan PIN owner/admin untuk melanjutkan.";
+
+  const field = document.createElement("label");
+  field.className = "master-form-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = "PIN Admin";
+
+  const input = document.createElement("input");
+  input.className = "master-form-input";
+  input.type = "password";
+  input.autocomplete = "off";
+  input.dataset.action = "update-admin-pin-modal";
+  input.dataset.field = "pin";
+  input.dataset.role = "admin-pin-input";
+  input.value = adminPinModal.pin || "";
+
+  field.append(label, input);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-admin-pin-modal";
+  cancelButton.disabled = isValidatingAdminPin;
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button danger";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-admin-pin-modal";
+  submitButton.disabled = isValidatingAdminPin || !String(adminPinModal.pin || "").trim();
+  submitButton.textContent = isValidatingAdminPin ? "Memvalidasi..." : "Lanjutkan";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, message, field);
+
+  if (adminPinModal.error) {
+    const error = document.createElement("p");
+    error.className = "inline-notice error";
+    error.textContent = adminPinModal.error;
+    dialog.appendChild(error);
+  }
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+function buildMasterPayload(authData = null, adminPin = "") {
   const values = masterDataForm?.values || {};
   const isEdit = masterDataForm?.mode === "edit";
+  const accessPayload = {
+    changed_by: authData?.employee_name || "Admin",
+    admin_pin: adminPin,
+  };
 
   if (masterDataForm.type === "room") {
     return {
+      ...accessPayload,
       action: isEdit ? "updateRoomMaster" : "saveRoomMaster",
       room_id: values.room_id || "",
       room_name: values.room_name || "",
@@ -8159,6 +8433,7 @@ function buildMasterPayload() {
 
   if (masterDataForm.type === "menu") {
     return {
+      ...accessPayload,
       action: isEdit ? "updateMenuMaster" : "saveMenuMaster",
       menu_id: values.menu_id || "",
       menu_name: values.menu_name || "",
@@ -8171,6 +8446,7 @@ function buildMasterPayload() {
   }
 
   return {
+    ...accessPayload,
     action: isEdit ? "updateInventoryMaster" : "saveInventoryMaster",
     stock_item_id: values.stock_item_id || "",
     stock_item_name: values.stock_item_name || "",
@@ -8191,11 +8467,96 @@ async function submitMasterDataForm() {
     return;
   }
 
+  if (isSensitiveMasterDataChange()) {
+    openAdminPinModal({
+      title: "PIN Admin Master Data",
+      message: getSensitiveMasterDataMessage(),
+      requestedAction: getSensitiveMasterDataAction(),
+      requiredRole: "admin",
+      onSuccess: (authData, adminPin) => executeMasterDataSubmit(authData, adminPin),
+    });
+    return;
+  }
+
+  await executeMasterDataSubmit();
+}
+
+function isSensitiveMasterDataChange() {
+  if (!masterDataForm || masterDataForm.mode !== "edit") {
+    return false;
+  }
+
+  const values = masterDataForm.values || {};
+  const original = masterDataForm.originalValues || {};
+
+  if (masterDataForm.type === "room") {
+    const originalRate = Number(original.rate_per_hour) || 0;
+    const nextRate = Number(values.rate_per_hour) || 0;
+    const originalStatus = String(original.status || "").trim().toLowerCase();
+    const nextStatus = String(values.status || "").trim().toLowerCase();
+
+    return originalRate !== nextRate
+      || ((originalStatus === "maintenance" || nextStatus === "maintenance") && originalStatus !== nextStatus);
+  }
+
+  if (masterDataForm.type === "menu") {
+    return (Number(original.price) || 0) !== (Number(values.price) || 0);
+  }
+
+  return false;
+}
+
+function getSensitiveMasterDataAction() {
+  if (!masterDataForm) {
+    return "update_master_data";
+  }
+
+  const values = masterDataForm.values || {};
+  const original = masterDataForm.originalValues || {};
+
+  if (masterDataForm.type === "room") {
+    const originalStatus = String(original.status || "").trim().toLowerCase();
+    const nextStatus = String(values.status || "").trim().toLowerCase();
+
+    if ((originalStatus === "maintenance" || nextStatus === "maintenance") && originalStatus !== nextStatus) {
+      return "set_room_maintenance";
+    }
+
+    return "edit_room_price";
+  }
+
+  if (masterDataForm.type === "menu") {
+    return "edit_menu_price";
+  }
+
+  return "update_master_data";
+}
+
+function getSensitiveMasterDataMessage() {
+  if (!masterDataForm) {
+    return "Masukkan PIN owner/admin untuk menyimpan perubahan.";
+  }
+
+  const labels = {
+    edit_room_price: "mengubah tarif room",
+    set_room_maintenance: "mengubah status maintenance room",
+    edit_menu_price: "mengubah harga menu",
+  };
+  const action = getSensitiveMasterDataAction();
+
+  return `Masukkan PIN owner/admin untuk ${labels[action] || "menyimpan perubahan sensitif"}.`;
+}
+
+async function executeMasterDataSubmit(authData = null, adminPin = "") {
+  if (!masterDataForm || isSavingMasterData) {
+    return;
+  }
+
   isSavingMasterData = true;
   renderRooms();
 
   try {
-    const data = await postApiAction(buildMasterPayload());
+    const data = await postApiAction(buildMasterPayload(authData, adminPin));
 
     if (!data || (data.ok !== true && data.success !== true)) {
       throw new Error(data?.message || data?.error || "Gagal menyimpan master data.");
@@ -9140,6 +9501,16 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "close-admin-pin-modal") {
+    closeAdminPinModal();
+    return;
+  }
+
+  if (action === "submit-admin-pin-modal") {
+    await submitAdminPinModal();
+    return;
+  }
+
   if (action === "refresh-master-audit-logs") {
     await loadMasterDataAuditLogs();
     return;
@@ -9540,6 +9911,12 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-admin-pin-modal") {
+    updateAdminPinModal(field.dataset.field, field.value);
+    syncAdminPinModalControls();
+    return;
+  }
+
   if (action === "update-stock-adjustment-quantity") {
     updateStockAdjustmentForm("quantity", field.value);
     focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -9565,6 +9942,14 @@ function handleDashboardChange(event) {
   if (deleteConfirmationField) {
     updateDeleteMasterConfirmation(deleteConfirmationField.dataset.field, deleteConfirmationField.value);
     syncDeleteMasterConfirmationControls();
+    return;
+  }
+
+  const adminPinField = event.target.closest("[data-action='update-admin-pin-modal']");
+
+  if (adminPinField) {
+    updateAdminPinModal(adminPinField.dataset.field, adminPinField.value);
+    syncAdminPinModalControls();
     return;
   }
 

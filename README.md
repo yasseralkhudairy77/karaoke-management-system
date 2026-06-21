@@ -124,6 +124,25 @@ Tab **Pengaturan** menambahkan section **Master Data Quality & Cleanup** setelah
 
 Fase **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga **tidak perlu `clasp push` dan tidak perlu deploy Apps Script**.
 
+## Fase 6D - User Role dan Admin PIN Protection
+
+Tab **Pengaturan** kini memiliki proteksi PIN owner/admin untuk aksi master data sensitif.
+
+- Sheet `Employees` memakai kolom `employee_id`, `employee_name`, `role`, `pin`, `status`, `created_at`, `updated_at`.
+- Endpoint `getEmployees` mengembalikan daftar employee tanpa PIN untuk section **Pengaturan Akses**.
+- Endpoint `validateAdminPin` menerima `pin`, `required_role`, `requested_action`, dan `changed_by`.
+- Status employee kosong dinormalisasi sebagai `active` untuk kompatibilitas data lama.
+- Role `owner` selalu diizinkan, `admin` diizinkan untuk akses admin, sedangkan `cashier` dan `staff` ditolak untuk aksi admin.
+- Delete permanen Room, Menu F&B, dan Inventory wajib mengirim `admin_pin` dan tetap dijaga ulang di backend.
+- Edit tarif room, edit harga menu, dan perubahan status maintenance room meminta PIN owner/admin di frontend.
+- Semua percobaan PIN dicatat ke `MasterDataAuditLogs` sebagai `entity_type=access` dan `action_type=pin_validation` tanpa menyimpan PIN.
+- Penulisan audit log memakai lock agar `log_id` tetap unik saat request paralel.
+- Modal PIN memakai input password stabil, tidak menyimpan PIN di `localStorage`, dan tidak menulis PIN ke console.
+
+PIN masih disimpan plain text di sheet untuk fase ini. Fase security berikutnya perlu mengganti penyimpanan PIN menjadi hash + salt dan menambahkan prosedur reset PIN.
+
+Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
+
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 
 Laporan dan filter periode kini memakai **tanggal operasional karaoke**, bukan tanggal kalender 00:00–23:59.

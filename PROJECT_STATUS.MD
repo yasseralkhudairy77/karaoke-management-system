@@ -2,6 +2,30 @@
 
 ## Status Terakhir
 
+### Fase 6D - User Role dan Admin PIN Protection
+Status: PASS LOKAL
+
+Hasil:
+- Sheet `Employees` distandarkan dengan kolom `employee_id`, `employee_name`, `role`, `pin`, `status`, `created_at`, `updated_at`.
+- Endpoint GET baru: `getEmployees` untuk menampilkan daftar akses tanpa membocorkan PIN.
+- Endpoint POST baru: `validateAdminPin` untuk validasi PIN owner/admin dan audit `pin_validation`.
+- Delete permanen Room, Menu F&B, dan Inventory kini wajib `admin_pin`; backend menolak tanpa PIN owner/admin valid.
+- Audit akses memakai `entity_type=access`, `action_type=pin_validation`, dan tidak menyimpan PIN.
+- UI tab Pengaturan menambahkan section `Pengaturan Akses`.
+- Modal PIN admin reusable memakai input password stabil dan tidak me-render ulang modal setiap keypress.
+- Aksi sensitif edit tarif room, edit harga menu, dan status maintenance room meminta PIN owner/admin sebelum simpan.
+
+Catatan:
+- `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
+- Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
+- Deploy Apps Script version 39.
+- Smoke test production: health OK, getEmployees OK tanpa PIN, status employee kosong ternormalisasi `active`, PIN contoh ditolak `INVALID_PIN`, delete tanpa PIN ditolak `INVALID_ADMIN_PIN`, audit akses tercatat tanpa PIN.
+- Audit log append memakai `LockService` agar `log_id` tidak tabrakan saat request paralel.
+- PIN masih plain text di sheet untuk fase ini; perlu hashing/salting di fase security hardening berikutnya.
+- PASS FINAL menunggu validasi browser UI dan test PIN valid dengan data employee production.
+
+---
+
 ### Fase 6C - Master Data Quality Cleanup
 Status: PASS LOKAL
 
