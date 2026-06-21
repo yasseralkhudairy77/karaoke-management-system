@@ -7270,6 +7270,452 @@ function createInventorySettingsSection() {
   );
 }
 
+function normalizeNameForDuplicateCheck(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function isTestOrQaData(name) {
+  return /(test|qa|dummy|sample|coba)/i.test(String(name || ""));
+}
+
+function createNameCountMap(items, nameGetter) {
+  return items.reduce((map, item) => {
+    const key = normalizeNameForDuplicateCheck(nameGetter(item));
+
+    if (key) {
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+
+    return map;
+  }, new Map());
+}
+
+function createQualityIssue({ type, id, name, issue, severity, recommendation, cleanupCandidate = false }) {
+  return {
+    type,
+    id: id || "-",
+    name: name || "-",
+    issue,
+    severity,
+    recommendation,
+    cleanupCandidate,
+  };
+}
+
+function detectRoomQualityIssues(sourceRooms) {
+  const nameCounts = createNameCountMap(sourceRooms, (room) => room.room_name);
+  const validStatuses = new Set(["available", "occupied", "maintenance"]);
+  const issues = [];
+
+  sourceRooms.forEach((room) => {
+    const roomName = room.room_name || "";
+    const normalizedName = normalizeNameForDuplicateCheck(roomName);
+    const status = normalizeRoomStatus(room.status);
+    const rate = Number(room.rate_per_hour);
+    const isOccupied = status === "occupied";
+
+    if (!roomName.trim()) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Nama room kosong",
+        severity: "critical",
+        recommendation: "Edit nama room",
+      }));
+    }
+
+    if (!Number.isFinite(rate) || rate <= 0) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Tarif room kosong atau tidak valid",
+        severity: "critical",
+        recommendation: "Edit tarif room",
+      }));
+    }
+
+    if (!validStatuses.has(status)) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Status room tidak valid",
+        severity: "critical",
+        recommendation: "Edit status room",
+      }));
+    }
+
+    if (normalizedName && nameCounts.get(normalizedName) > 1) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Nama room duplikat",
+        severity: "warning",
+        recommendation: "Review dan edit nama room",
+      }));
+    }
+
+    if (isTestOrQaData(roomName)) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Data TEST / QA terdeteksi",
+        severity: isOccupied ? "blocked" : "safe_cleanup",
+        recommendation: isOccupied ? "Jangan cleanup saat occupied" : "Delete permanen jika belum punya histori",
+        cleanupCandidate: !isOccupied,
+      }));
+    }
+
+    if (!String(room.tv_device_id || "").trim()) {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "TV device ID kosong",
+        severity: "info",
+        recommendation: "Isi TV device jika dipakai integrasi TV",
+      }));
+    }
+
+    if (status === "maintenance") {
+      issues.push(createQualityIssue({
+        type: "room",
+        id: room.room_id,
+        name: roomName,
+        issue: "Room maintenance",
+        severity: "info",
+        recommendation: "Review status maintenance",
+      }));
+    }
+  });
+
+  return issues;
+}
+
+function detectMenuQualityIssues(sourceMenuItems, sourceInventoryItems) {
+  const nameCounts = createNameCountMap(sourceMenuItems, (menuItem) => menuItem.menu_name);
+  const inventoryMap = new Map(sourceInventoryItems.map((item) => [String(item.stock_item_id || ""), item]));
+  const validStatuses = new Set(["active", "inactive"]);
+  const issues = [];
+
+  sourceMenuItems.forEach((menuItem) => {
+    const menuName = menuItem.menu_name || "";
+    const normalizedName = normalizeNameForDuplicateCheck(menuName);
+    const status = String(menuItem.status || "").trim().toLowerCase();
+    const price = Number(menuItem.price);
+    const stockItemId = String(menuItem.stock_item_id || "").trim();
+    const qtyPerUnit = Number(menuItem.stock_qty_per_unit);
+    const mappedInventory = stockItemId ? inventoryMap.get(stockItemId) : null;
+
+    if (!menuName.trim()) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Nama menu kosong", severity: "critical", recommendation: "Edit nama menu" }));
+    }
+
+    if (!String(menuItem.category || "").trim()) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Kategori menu kosong", severity: "critical", recommendation: "Edit kategori menu" }));
+    }
+
+    if (!Number.isFinite(price) || price < 0) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Harga menu kosong atau tidak valid", severity: "critical", recommendation: "Edit harga menu" }));
+    }
+
+    if (!validStatuses.has(status)) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Status menu tidak valid", severity: "critical", recommendation: "Edit status menu" }));
+    }
+
+    if (normalizedName && nameCounts.get(normalizedName) > 1) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Nama menu duplikat", severity: "warning", recommendation: "Review dan edit nama menu" }));
+    }
+
+    if (isTestOrQaData(menuName)) {
+      issues.push(createQualityIssue({
+        type: "menu",
+        id: menuItem.menu_id,
+        name: menuName,
+        issue: "Data TEST / QA terdeteksi",
+        severity: "safe_cleanup",
+        recommendation: "Delete permanen jika belum punya histori",
+        cleanupCandidate: true,
+      }));
+    }
+
+    if (!stockItemId) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Menu tanpa stock item", severity: "warning", recommendation: "Isi stock item jika perlu stok otomatis" }));
+    } else if (!mappedInventory) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Stock item tidak ditemukan", severity: "critical", recommendation: "Ganti mapping inventory" }));
+    } else if (String(mappedInventory.status || "").trim().toLowerCase() === "inactive") {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Menu memakai inventory inactive", severity: "critical", recommendation: "Aktifkan inventory atau ganti mapping menu" }));
+    }
+
+    if (stockItemId && (!Number.isFinite(qtyPerUnit) || qtyPerUnit <= 0)) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Qty per unit kosong atau 0", severity: "warning", recommendation: "Edit qty per unit" }));
+    }
+  });
+
+  return issues;
+}
+
+function detectInventoryQualityIssues(sourceInventoryItems, sourceMenuItems) {
+  const nameCounts = createNameCountMap(sourceInventoryItems, (item) => item.stock_item_name);
+  const menuUsageMap = sourceMenuItems.reduce((map, menuItem) => {
+    const stockItemId = String(menuItem.stock_item_id || "").trim();
+
+    if (stockItemId) {
+      if (!map.has(stockItemId)) {
+        map.set(stockItemId, []);
+      }
+
+      map.get(stockItemId).push(menuItem);
+    }
+
+    return map;
+  }, new Map());
+  const validStatuses = new Set(["active", "inactive"]);
+  const issues = [];
+
+  sourceInventoryItems.forEach((item) => {
+    const itemName = item.stock_item_name || "";
+    const normalizedName = normalizeNameForDuplicateCheck(itemName);
+    const status = String(item.status || "").trim().toLowerCase();
+    const minStock = Number(item.min_stock);
+    const stockQty = Number(item.stock_qty);
+    const usedMenus = menuUsageMap.get(item.stock_item_id) || [];
+    const usedByActiveMenu = usedMenus.some((menuItem) => String(menuItem.status || "").trim().toLowerCase() === "active");
+
+    if (!itemName.trim()) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Nama inventory kosong", severity: "critical", recommendation: "Edit nama inventory" }));
+    }
+
+    if (!String(item.category || "").trim()) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Kategori inventory kosong", severity: "critical", recommendation: "Edit kategori inventory" }));
+    }
+
+    if (!String(item.unit || "").trim()) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Unit inventory kosong", severity: "critical", recommendation: "Edit unit inventory" }));
+    }
+
+    if (!Number.isFinite(minStock) || minStock < 0) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Min stok kosong atau tidak valid", severity: "warning", recommendation: "Edit min stok" }));
+    }
+
+    if (!validStatuses.has(status)) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Status inventory tidak valid", severity: "critical", recommendation: "Edit status inventory" }));
+    }
+
+    if (normalizedName && nameCounts.get(normalizedName) > 1) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Nama inventory duplikat", severity: "warning", recommendation: "Review dan edit nama inventory" }));
+    }
+
+    if (isTestOrQaData(itemName)) {
+      issues.push(createQualityIssue({
+        type: "inventory",
+        id: item.stock_item_id,
+        name: itemName,
+        issue: "Data TEST / QA terdeteksi",
+        severity: "safe_cleanup",
+        recommendation: "Delete permanen jika belum punya referensi",
+        cleanupCandidate: true,
+      }));
+    }
+
+    if (status === "inactive" && usedByActiveMenu) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Inventory inactive dipakai menu active", severity: "critical", recommendation: "Aktifkan inventory atau ganti mapping menu" }));
+    }
+
+    if (usedMenus.length === 0) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Inventory tidak dipakai menu mana pun", severity: "info", recommendation: "Review apakah masih dibutuhkan" }));
+    }
+
+    if (!Number.isFinite(stockQty)) {
+      issues.push(createQualityIssue({ type: "inventory", id: item.stock_item_id, name: itemName, issue: "Stock qty kosong atau tidak valid", severity: "warning", recommendation: "Gunakan fitur Restock/Koreksi Stok" }));
+    }
+  });
+
+  return issues;
+}
+
+function buildMasterDataQualityReport() {
+  const issues = [
+    ...detectRoomQualityIssues(rooms),
+    ...detectMenuQualityIssues(menuItems, inventoryItems),
+    ...detectInventoryQualityIssues(inventoryItems, menuItems),
+  ];
+
+  return {
+    issues,
+    summary: {
+      total: issues.length,
+      room: issues.filter((issue) => issue.type === "room").length,
+      menu: issues.filter((issue) => issue.type === "menu").length,
+      inventory: issues.filter((issue) => issue.type === "inventory").length,
+      testData: issues.filter((issue) => issue.issue.includes("TEST / QA")).length,
+      duplicate: issues.filter((issue) => issue.issue.includes("duplikat")).length,
+      emptyField: issues.filter((issue) => issue.issue.includes("kosong")).length,
+      cleanup: issues.filter((issue) => issue.cleanupCandidate).length,
+    },
+  };
+}
+
+function getQualitySeverityTone(severity) {
+  if (severity === "critical") {
+    return "danger";
+  }
+
+  if (severity === "warning" || severity === "need_review") {
+    return "warning";
+  }
+
+  if (severity === "safe_cleanup") {
+    return "success";
+  }
+
+  if (severity === "blocked") {
+    return "danger";
+  }
+
+  return "info";
+}
+
+function getQualitySeverityLabel(severity) {
+  const labels = {
+    critical: "Critical",
+    warning: "Warning",
+    info: "Info",
+    safe_cleanup: "Safe Cleanup",
+    blocked: "Blocked",
+    need_review: "Need Review",
+  };
+
+  return labels[severity] || "Need Review";
+}
+
+function createQualitySeverityBadge(severity) {
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge("quality-severity-badge", getQualitySeverityTone(severity));
+  badge.textContent = getQualitySeverityLabel(severity);
+  return badge;
+}
+
+function createQualityActionButtons(issue) {
+  const actions = document.createElement("div");
+  actions.className = "quality-actions";
+  const item = findMasterItem(issue.type, issue.id);
+
+  if (item) {
+    const editButton = document.createElement("button");
+    editButton.className = "master-button";
+    editButton.type = "button";
+    editButton.dataset.action = "edit-master-data";
+    editButton.dataset.masterType = issue.type;
+    editButton.dataset.masterId = issue.id;
+    editButton.textContent = "Edit";
+    actions.appendChild(editButton);
+  }
+
+  if (issue.cleanupCandidate && item) {
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "master-button danger";
+    deleteButton.type = "button";
+    deleteButton.dataset.action = "confirm-delete-master-data";
+    deleteButton.dataset.masterType = issue.type;
+    deleteButton.dataset.masterId = issue.id;
+    deleteButton.textContent = "Delete Permanen";
+    actions.appendChild(deleteButton);
+  }
+
+  if (actions.children.length === 0) {
+    const text = document.createElement("span");
+    text.className = "settings-section-subtitle";
+    text.textContent = "Review";
+    actions.appendChild(text);
+  }
+
+  return actions;
+}
+
+function createQualitySummaryCards(summary) {
+  const grid = document.createElement("div");
+  grid.className = "quality-summary";
+
+  [
+    ["Total Issue", summary.total],
+    ["Issue Room", summary.room],
+    ["Issue Menu", summary.menu],
+    ["Issue Inventory", summary.inventory],
+    ["Data TEST / QA", summary.testData],
+    ["Duplikat Nama", summary.duplicate],
+    ["Field Kosong", summary.emptyField],
+    ["Data Bisa Dibersihkan", summary.cleanup],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("article");
+    card.className = "quality-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = String(valueText);
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createQualityIssueTable(issues) {
+  const rows = issues.map((issue) => [
+    issue.type,
+    issue.id,
+    issue.name,
+    issue.issue,
+    createQualitySeverityBadge(issue.severity),
+    issue.recommendation,
+    createQualityActionButtons(issue),
+  ]);
+
+  return createMasterTable(
+    ["Tipe", "ID", "Nama", "Issue", "Severity", "Rekomendasi", "Aksi"],
+    rows,
+    "Tidak ada issue master data."
+  );
+}
+
+function createMasterDataQualitySection() {
+  const report = buildMasterDataQualityReport();
+  const section = document.createElement("section");
+  section.className = "settings-section master-quality-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Master Data Quality & Cleanup";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Deteksi data TEST/QA, duplikat, field kosong, dan kandidat cleanup aman.";
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-settings-data";
+  refreshButton.textContent = "Refresh Quality";
+
+  header.append(titleGroup, refreshButton);
+  section.append(header, createQualitySummaryCards(report.summary), createQualityIssueTable(report.issues));
+
+  return section;
+}
+
 function getAuditBadgeTone(value) {
   const normalized = String(value || "").trim().toLowerCase();
 
@@ -7451,7 +7897,8 @@ function createSettingsPanelElement() {
     createRoomSettingsSection(),
     createMenuSettingsSection(),
     createInventorySettingsSection(),
-    createMasterAuditLogSection()
+    createMasterAuditLogSection(),
+    createMasterDataQualitySection()
   );
 
   return panel;

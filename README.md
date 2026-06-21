@@ -111,6 +111,19 @@ Tab **Pengaturan** menambahkan audit log dan delete permanen aman untuk master d
 
 Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
 
+## Fase 6C - Master Data Quality Cleanup
+
+Tab **Pengaturan** menambahkan section **Master Data Quality & Cleanup** setelah Audit Log Master Data.
+
+- Deteksi data `TEST`, `QA`, `DUMMY`, `SAMPLE`, dan `COBA`.
+- Deteksi nama duplikat, field wajib kosong, harga/tarif tidak valid, status invalid, dan mapping stok bermasalah.
+- Deteksi inventory tidak dipakai menu mana pun dan inventory inactive yang masih dipakai menu active.
+- Menampilkan summary issue dan tabel issue dengan badge severity.
+- Tombol aksi manual memakai form edit existing dan modal delete permanen aman dari Fase 6B.
+- Delete cleanup tetap diputuskan backend lewat endpoint delete aman.
+
+Fase **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga **tidak perlu `clasp push` dan tidak perlu deploy Apps Script**.
+
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 
 Laporan dan filter periode kini memakai **tanggal operasional karaoke**, bukan tanggal kalender 00:00–23:59.

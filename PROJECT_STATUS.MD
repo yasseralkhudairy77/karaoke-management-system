@@ -2,6 +2,24 @@
 
 ## Status Terakhir
 
+### Fase 6C - Master Data Quality Cleanup
+Status: PASS LOKAL
+
+Hasil:
+- Section `Master Data Quality & Cleanup` ditambahkan di tab Pengaturan setelah Audit Log Master Data.
+- Deteksi issue Room, Menu F&B, dan Inventory dari data frontend existing (`getRooms`, `getMenuItems`, `getInventoryItems`).
+- Summary card: total issue, issue per entity, data TEST/QA, duplikat nama, field kosong, dan cleanup candidate.
+- Tabel issue menampilkan tipe, ID, nama, issue, severity, rekomendasi, dan aksi.
+- Aksi `Edit` memakai form master data existing.
+- Aksi `Delete Permanen` memakai modal delete Fase 6B yang input `HAPUS`-nya sudah stabil.
+- Fase frontend-only; `Code.gs` tidak berubah.
+
+Catatan:
+- Tidak perlu `clasp push` dan tidak perlu deploy Apps Script.
+- PASS FINAL menunggu validasi browser UI dan test cleanup manual.
+
+---
+
 ### Fase 6B - Audit Log Master Data dan Delete Permanen
 Status: PASS LOKAL + DEPLOYED
 
