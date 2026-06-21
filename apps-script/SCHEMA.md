@@ -34,6 +34,7 @@ POST `saveRoomMaster` dan `updateRoomMaster` mengelola data master room.
 - Field yang boleh diubah dari Pengaturan: `room_name`, `rate_per_hour`, `tv_device_id`, `status`.
 - Field sesi tidak diubah dari Pengaturan: `start_time`, `booked_duration_minutes`, `scheduled_end_time`.
 - Room `occupied` tidak boleh diubah paksa ke `available` atau `maintenance` dari Pengaturan.
+- Fase 6B: POST `deleteRoomMaster` menghapus permanen hanya jika room belum punya histori di `Transactions`, `FnbOrders`, atau `RoomTimeLogs`.
 
 ## RoomTimeLogs
 
@@ -283,6 +284,7 @@ POST `saveInventoryMaster` dan `updateInventoryMaster` mengelola master inventor
 - Field yang dikelola: `stock_item_name`, `category`, `unit`, `min_stock`, `status`.
 - `stock_qty` untuk item baru dibuat `0`.
 - Perubahan stok berjalan tetap melalui POST `adjustInventoryStock` agar `StockMovements` tetap konsisten.
+- Fase 6B: POST `deleteInventoryMaster` menghapus permanen hanya jika item tidak dipakai oleh `Menu` dan belum punya `StockMovements`.
 
 ## Menu
 
@@ -310,6 +312,35 @@ POST `saveMenuMaster` dan `updateMenuMaster` mengelola master menu.
 - Field yang dikelola: `menu_name`, `category`, `price`, `stock_item_id`, `stock_qty_per_unit`, `status`.
 - Menu `inactive` tidak boleh dipakai dalam order F&B.
 - Jika `stock_item_id` kosong, backend menyimpan `stock_tracking = no`.
+- Fase 6B: POST `deleteMenuMaster` menghapus permanen hanya jika menu belum pernah muncul di `FnbOrderItems`.
+
+## MasterDataAuditLogs
+
+Mencatat perubahan master data Room, Menu F&B, dan Inventory.
+
+| Column | Description |
+| --- | --- |
+| `log_id` | ID audit, contoh `AUDIT-000001`. |
+| `created_at` | Timestamp audit dibuat. |
+| `entity_type` | `room`, `menu`, atau `inventory`. |
+| `entity_id` | ID data master terkait. |
+| `entity_name` | Nama data master saat audit dibuat. |
+| `action_type` | `create`, `update`, `activate`, `deactivate`, `maintenance`, `delete_permanent`, atau `delete_blocked`. |
+| `old_value_json` | JSON data sebelum perubahan. |
+| `new_value_json` | JSON data setelah perubahan. |
+| `changed_by` | User/admin yang melakukan perubahan. |
+| `note` | Catatan opsional. |
+| `result` | `success`, `blocked`, atau `failed`. |
+| `block_reason` | Alasan jika delete permanen ditolak. |
+
+GET `getMasterDataAuditLogs` membaca 100 log terbaru secara default.
+
+Query parameter opsional:
+
+- `entity_type` — `room`, `menu`, `inventory`, atau `all`
+- `action_type` — filter jenis aksi
+- `limit` — default `100`, maksimum `500`
+- `period` — `today`, `last7days`, atau `all`
 
 ## StockMovements
 

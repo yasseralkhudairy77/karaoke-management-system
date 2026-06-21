@@ -160,6 +160,20 @@ var MENU_MASTER_HEADERS = [
   "stock_item_id",
   "stock_qty_per_unit",
 ];
+var MASTER_DATA_AUDIT_LOG_HEADERS = [
+  "log_id",
+  "created_at",
+  "entity_type",
+  "entity_id",
+  "entity_name",
+  "action_type",
+  "old_value_json",
+  "new_value_json",
+  "changed_by",
+  "note",
+  "result",
+  "block_reason",
+];
 
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
@@ -258,6 +272,15 @@ function doGet(e) {
       });
     }
 
+    if (action === "getMasterDataAuditLogs") {
+      return jsonResponse(getMasterDataAuditLogs_(
+        e.parameter.entity_type,
+        e.parameter.action_type,
+        e.parameter.limit,
+        e.parameter.period
+      ));
+    }
+
     return jsonResponse({
       ok: false,
       success: false,
@@ -343,6 +366,18 @@ function doPost(e) {
 
     if (action === "updateInventoryMaster") {
       return jsonResponse(updateInventoryMaster_(payload));
+    }
+
+    if (action === "deleteRoomMaster") {
+      return jsonResponse(deleteRoomMaster_(payload));
+    }
+
+    if (action === "deleteMenuMaster") {
+      return jsonResponse(deleteMenuMaster_(payload));
+    }
+
+    if (action === "deleteInventoryMaster") {
+      return jsonResponse(deleteInventoryMaster_(payload));
     }
 
     return jsonResponse({
@@ -780,6 +815,17 @@ function masterSuccessResponse_(message, data) {
   };
 }
 
+function masterBlockedResponse_(message, blockReason, data) {
+  return {
+    ok: false,
+    success: false,
+    message: message,
+    error: message,
+    block_reason: blockReason,
+    data: data || null,
+  };
+}
+
 function masterError_(message) {
   throw new Error(message);
 }
@@ -825,6 +871,155 @@ function ensureMenuMasterColumns_() {
   ensureColumns_(sheet, MENU_MASTER_HEADERS);
   ensureColumns_(sheet, MENU_STOCK_HEADERS);
   return sheet;
+}
+
+function ensureMasterDataAuditLogsSheet_() {
+  var sheet = ensureSheetWithHeaders_("MasterDataAuditLogs", MASTER_DATA_AUDIT_LOG_HEADERS);
+  ensureColumns_(sheet, MASTER_DATA_AUDIT_LOG_HEADERS);
+  return sheet;
+}
+
+function stringifySafeJson_(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return JSON.stringify({ error: "JSON stringify failed" });
+  }
+}
+
+function getNextAuditLogId_() {
+  var sheet = ensureMasterDataAuditLogsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var column = headerMap.log_id;
+  var maxNumber = 0;
+
+  if (column && sheet.getLastRow() >= 2) {
+    sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getValues().forEach(function (row) {
+      var value = String(row[0] || "").trim();
+      var match = value.match(/^AUDIT-(\d+)$/);
+
+      if (match) {
+        maxNumber = Math.max(maxNumber, Number(match[1]) || 0);
+      }
+    });
+  }
+
+  return "AUDIT-" + String(maxNumber + 1).padStart(6, "0");
+}
+
+function appendMasterDataAuditLog_(entry) {
+  var sheet = ensureMasterDataAuditLogsSheet_();
+  var log = {
+    log_id: getNextAuditLogId_(),
+    created_at: toJakartaIsoString_(new Date()),
+    entity_type: entry.entity_type || "",
+    entity_id: entry.entity_id || "",
+    entity_name: entry.entity_name || "",
+    action_type: entry.action_type || "",
+    old_value_json: stringifySafeJson_(entry.old_value),
+    new_value_json: stringifySafeJson_(entry.new_value),
+    changed_by: entry.changed_by || "Admin",
+    note: entry.note || "",
+    result: entry.result || "success",
+    block_reason: entry.block_reason || "",
+  };
+
+  appendObjectRow_(sheet, log);
+  return log;
+}
+
+function getMasterDataAuditLogs_(entityType, actionType, limit, period) {
+  ensureMasterDataAuditLogsSheet_();
+  var normalizedEntityType = String(entityType || "all").trim().toLowerCase();
+  var normalizedActionType = String(actionType || "").trim().toLowerCase();
+  var normalizedPeriod = String(period || "all").trim().toLowerCase();
+  var safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+  var today = getJakartaDateString_(new Date());
+
+  var logs = readSheetAsObjects_("MasterDataAuditLogs")
+    .filter(function (log) {
+      if (normalizedEntityType !== "all" && normalizedEntityType && String(log.entity_type || "").trim().toLowerCase() !== normalizedEntityType) {
+        return false;
+      }
+
+      if (normalizedActionType && String(log.action_type || "").trim().toLowerCase() !== normalizedActionType) {
+        return false;
+      }
+
+      if (normalizedPeriod === "today") {
+        return getOperationalDateString_(log.created_at) === today;
+      }
+
+      if (normalizedPeriod === "last7days") {
+        var logDate = getOperationalDateString_(log.created_at);
+        var startDate = new Date(today + "T00:00:00");
+        startDate.setDate(startDate.getDate() - 6);
+        var start = Utilities.formatDate(startDate, "Asia/Jakarta", "yyyy-MM-dd");
+        return logDate >= start && logDate <= today;
+      }
+
+      return true;
+    })
+    .map(function (log) {
+      return {
+        log_id: log.log_id || "",
+        created_at: log.created_at || "",
+        entity_type: log.entity_type || "",
+        entity_id: log.entity_id || "",
+        entity_name: log.entity_name || "",
+        action_type: log.action_type || "",
+        old_value_json: log.old_value_json || "",
+        new_value_json: log.new_value_json || "",
+        changed_by: log.changed_by || "",
+        note: log.note || "",
+        result: log.result || "",
+        block_reason: log.block_reason || "",
+      };
+    })
+    .sort(function (a, b) {
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    })
+    .slice(0, safeLimit);
+
+  return {
+    ok: true,
+    success: true,
+    data: logs,
+    logs: logs,
+  };
+}
+
+function getMasterChangedBy_(payload) {
+  return String(payload.changed_by || payload.cashier_name || "Admin").trim() || "Admin";
+}
+
+function getMasterNote_(payload) {
+  return String(payload.note || "").trim();
+}
+
+function getMasterActionType_(entityType, oldValue, newValue) {
+  var oldStatus = String(oldValue && oldValue.status || "").trim().toLowerCase();
+  var newStatus = String(newValue && newValue.status || "").trim().toLowerCase();
+
+  if (entityType === "room" && oldStatus !== newStatus && newStatus === "maintenance") {
+    return "maintenance";
+  }
+
+  if ((entityType === "menu" || entityType === "inventory") && oldStatus !== newStatus) {
+    if (newStatus === "active") {
+      return "activate";
+    }
+
+    if (newStatus === "inactive") {
+      return "deactivate";
+    }
+  }
+
+  return "update";
 }
 
 function generateSequentialId_(sheet, headerMap, columnName, prefix) {
@@ -906,8 +1101,21 @@ function saveRoomMaster_(payload) {
   };
 
   appendObjectRow_(sheet, room);
+  var savedRoom = getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
 
-  return masterSuccessResponse_("Data room berhasil disimpan.", getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+  appendMasterDataAuditLog_({
+    entity_type: "room",
+    entity_id: savedRoom.room_id,
+    entity_name: savedRoom.room_name,
+    action_type: "create",
+    old_value: "",
+    new_value: savedRoom,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data room berhasil disimpan.", savedRoom);
 }
 
 function updateRoomMaster_(payload) {
@@ -934,8 +1142,21 @@ function updateRoomMaster_(payload) {
     status: data.status,
     updated_at: toJakartaIsoString_(new Date()),
   });
+  var updatedRoom = getRoomFromRow_(sheet, headerMap, rowNumber);
 
-  return masterSuccessResponse_("Data room berhasil diperbarui.", getRoomFromRow_(sheet, headerMap, rowNumber));
+  appendMasterDataAuditLog_({
+    entity_type: "room",
+    entity_id: updatedRoom.room_id,
+    entity_name: updatedRoom.room_name,
+    action_type: getMasterActionType_("room", currentRoom, updatedRoom),
+    old_value: currentRoom,
+    new_value: updatedRoom,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data room berhasil diperbarui.", updatedRoom);
 }
 
 function validateMenuMasterPayload_(payload, isUpdate) {
@@ -1011,8 +1232,21 @@ function saveMenuMaster_(payload) {
   };
 
   appendObjectRow_(sheet, menu);
+  var savedMenu = getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
 
-  return masterSuccessResponse_("Data menu berhasil disimpan.", getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+  appendMasterDataAuditLog_({
+    entity_type: "menu",
+    entity_id: savedMenu.menu_id,
+    entity_name: savedMenu.menu_name,
+    action_type: "create",
+    old_value: "",
+    new_value: savedMenu,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data menu berhasil disimpan.", savedMenu);
 }
 
 function updateMenuMaster_(payload) {
@@ -1025,6 +1259,7 @@ function updateMenuMaster_(payload) {
   if (!rowNumber) {
     masterError_("Menu tidak ditemukan.");
   }
+  var currentMenu = getMenuMasterRow_(sheet, headerMap, rowNumber);
 
   setRowValues_(sheet, headerMap, rowNumber, {
     menu_name: data.menu_name,
@@ -1036,8 +1271,21 @@ function updateMenuMaster_(payload) {
     stock_item_id: data.stock_item_id,
     stock_qty_per_unit: data.stock_qty_per_unit,
   });
+  var updatedMenu = getMenuMasterRow_(sheet, headerMap, rowNumber);
 
-  return masterSuccessResponse_("Data menu berhasil diperbarui.", getMenuMasterRow_(sheet, headerMap, rowNumber));
+  appendMasterDataAuditLog_({
+    entity_type: "menu",
+    entity_id: updatedMenu.menu_id,
+    entity_name: updatedMenu.menu_name,
+    action_type: getMasterActionType_("menu", currentMenu, updatedMenu),
+    old_value: currentMenu,
+    new_value: updatedMenu,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data menu berhasil diperbarui.", updatedMenu);
 }
 
 function validateInventoryMasterPayload_(payload, isUpdate) {
@@ -1093,8 +1341,21 @@ function saveInventoryMaster_(payload) {
   };
 
   appendObjectRow_(sheet, item);
+  var savedItem = buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
 
-  return masterSuccessResponse_("Data inventory berhasil disimpan.", buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+  appendMasterDataAuditLog_({
+    entity_type: "inventory",
+    entity_id: savedItem.stock_item_id,
+    entity_name: savedItem.stock_item_name,
+    action_type: "create",
+    old_value: "",
+    new_value: savedItem,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data inventory berhasil disimpan.", savedItem);
 }
 
 function updateInventoryMaster_(payload) {
@@ -1107,6 +1368,7 @@ function updateInventoryMaster_(payload) {
   if (!rowNumber) {
     masterError_("Inventory item tidak ditemukan.");
   }
+  var currentItem = buildInventoryItemFromRow_(sheet, headerMap, rowNumber);
 
   setRowValues_(sheet, headerMap, rowNumber, {
     stock_item_name: data.stock_item_name,
@@ -1116,8 +1378,206 @@ function updateInventoryMaster_(payload) {
     status: data.status,
     updated_at: toJakartaIsoString_(new Date()),
   });
+  var updatedItem = buildInventoryItemFromRow_(sheet, headerMap, rowNumber);
 
-  return masterSuccessResponse_("Data inventory berhasil diperbarui.", buildInventoryItemFromRow_(sheet, headerMap, rowNumber));
+  appendMasterDataAuditLog_({
+    entity_type: "inventory",
+    entity_id: updatedItem.stock_item_id,
+    entity_name: updatedItem.stock_item_name,
+    action_type: getMasterActionType_("inventory", currentItem, updatedItem),
+    old_value: currentItem,
+    new_value: updatedItem,
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data inventory berhasil diperbarui.", updatedItem);
+}
+
+function hasSheetReference_(sheetName, columnName, value) {
+  var rows = readSheetAsObjectsOrEmpty_(sheetName);
+  var target = String(value || "").trim();
+
+  return rows.some(function (row) {
+    return String(row[columnName] || "").trim() === target;
+  });
+}
+
+function hasInventoryMenuReference_(stockItemId) {
+  var target = String(stockItemId || "").trim();
+
+  return readSheetAsObjectsOrEmpty_("Menu").some(function (menuItem) {
+    return String(menuItem.stock_item_id || "").trim() === target;
+  });
+}
+
+function auditDeleteBlocked_(entityType, entityId, entityName, oldValue, blockReason, payload) {
+  appendMasterDataAuditLog_({
+    entity_type: entityType,
+    entity_id: entityId,
+    entity_name: entityName,
+    action_type: "delete_blocked",
+    old_value: oldValue || "",
+    new_value: "",
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "blocked",
+    block_reason: blockReason,
+  });
+}
+
+function deleteBlockedResponse_(entityType, entityId, blockReason, message) {
+  return masterBlockedResponse_(message, blockReason, {
+    entity_type: entityType,
+    entity_id: entityId,
+  });
+}
+
+function deleteRoomMaster_(payload) {
+  var roomId = String(payload.room_id || "").trim();
+
+  if (!roomId) {
+    masterError_("room_id wajib diisi.");
+  }
+
+  var sheet = ensureRoomsMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", roomId);
+
+  if (!rowNumber) {
+    auditDeleteBlocked_("room", roomId, roomId, "", "ROOM_NOT_FOUND", payload);
+    return deleteBlockedResponse_("room", roomId, "ROOM_NOT_FOUND", "Room tidak ditemukan.");
+  }
+
+  var room = getRoomFromRow_(sheet, headerMap, rowNumber);
+
+  if (String(room.status || "").trim().toLowerCase() === "occupied") {
+    auditDeleteBlocked_("room", room.room_id, room.room_name, room, "ROOM_OCCUPIED", payload);
+    return deleteBlockedResponse_("room", room.room_id, "ROOM_OCCUPIED", "Room sedang occupied. Selesaikan sesi atau gunakan maintenance saat room kosong.");
+  }
+
+  if (hasSheetReference_("Transactions", "room_id", roomId)) {
+    auditDeleteBlocked_("room", room.room_id, room.room_name, room, "ROOM_HAS_TRANSACTIONS", payload);
+    return deleteBlockedResponse_("room", room.room_id, "ROOM_HAS_TRANSACTIONS", "Data tidak bisa dihapus permanen karena sudah memiliki histori transaksi. Gunakan status maintenance.");
+  }
+
+  if (hasSheetReference_("FnbOrders", "room_id", roomId)) {
+    auditDeleteBlocked_("room", room.room_id, room.room_name, room, "ROOM_HAS_FNB_ORDERS", payload);
+    return deleteBlockedResponse_("room", room.room_id, "ROOM_HAS_FNB_ORDERS", "Data tidak bisa dihapus permanen karena sudah memiliki histori F&B order. Gunakan status maintenance.");
+  }
+
+  if (hasSheetReference_("RoomTimeLogs", "room_id", roomId)) {
+    auditDeleteBlocked_("room", room.room_id, room.room_name, room, "ROOM_HAS_TIME_LOGS", payload);
+    return deleteBlockedResponse_("room", room.room_id, "ROOM_HAS_TIME_LOGS", "Data tidak bisa dihapus permanen karena sudah memiliki audit tambah waktu. Gunakan status maintenance.");
+  }
+
+  sheet.deleteRow(rowNumber);
+  appendMasterDataAuditLog_({
+    entity_type: "room",
+    entity_id: room.room_id,
+    entity_name: room.room_name,
+    action_type: "delete_permanent",
+    old_value: room,
+    new_value: "",
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data berhasil dihapus permanen.", {
+    entity_type: "room",
+    entity_id: room.room_id,
+  });
+}
+
+function deleteMenuMaster_(payload) {
+  var menuId = String(payload.menu_id || "").trim();
+
+  if (!menuId) {
+    masterError_("menu_id wajib diisi.");
+  }
+
+  var sheet = ensureMenuMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "menu_id", menuId);
+
+  if (!rowNumber) {
+    auditDeleteBlocked_("menu", menuId, menuId, "", "MENU_NOT_FOUND", payload);
+    return deleteBlockedResponse_("menu", menuId, "MENU_NOT_FOUND", "Menu tidak ditemukan.");
+  }
+
+  var menu = getMenuMasterRow_(sheet, headerMap, rowNumber);
+
+  if (hasSheetReference_("FnbOrderItems", "menu_id", menuId)) {
+    auditDeleteBlocked_("menu", menu.menu_id, menu.menu_name, menu, "MENU_HAS_ORDER_ITEMS", payload);
+    return deleteBlockedResponse_("menu", menu.menu_id, "MENU_HAS_ORDER_ITEMS", "Data tidak bisa dihapus permanen karena sudah pernah masuk order F&B. Gunakan status inactive.");
+  }
+
+  sheet.deleteRow(rowNumber);
+  appendMasterDataAuditLog_({
+    entity_type: "menu",
+    entity_id: menu.menu_id,
+    entity_name: menu.menu_name,
+    action_type: "delete_permanent",
+    old_value: menu,
+    new_value: "",
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data berhasil dihapus permanen.", {
+    entity_type: "menu",
+    entity_id: menu.menu_id,
+  });
+}
+
+function deleteInventoryMaster_(payload) {
+  var stockItemId = String(payload.stock_item_id || "").trim();
+
+  if (!stockItemId) {
+    masterError_("stock_item_id wajib diisi.");
+  }
+
+  var sheet = ensureInventorySheetColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findInventoryRowByStockItemId_(stockItemId, sheet, headerMap);
+
+  if (!rowNumber) {
+    auditDeleteBlocked_("inventory", stockItemId, stockItemId, "", "INVENTORY_NOT_FOUND", payload);
+    return deleteBlockedResponse_("inventory", stockItemId, "INVENTORY_NOT_FOUND", "Inventory item tidak ditemukan.");
+  }
+
+  var item = buildInventoryItemFromRow_(sheet, headerMap, rowNumber);
+
+  if (hasInventoryMenuReference_(stockItemId)) {
+    auditDeleteBlocked_("inventory", item.stock_item_id, item.stock_item_name, item, "INVENTORY_USED_BY_MENU", payload);
+    return deleteBlockedResponse_("inventory", item.stock_item_id, "INVENTORY_USED_BY_MENU", "Data tidak bisa dihapus permanen karena masih dipakai oleh Menu. Gunakan status inactive.");
+  }
+
+  if (hasSheetReference_("StockMovements", "stock_item_id", stockItemId)) {
+    auditDeleteBlocked_("inventory", item.stock_item_id, item.stock_item_name, item, "INVENTORY_HAS_STOCK_MOVEMENTS", payload);
+    return deleteBlockedResponse_("inventory", item.stock_item_id, "INVENTORY_HAS_STOCK_MOVEMENTS", "Data tidak bisa dihapus permanen karena sudah memiliki mutasi stok. Gunakan status inactive.");
+  }
+
+  sheet.deleteRow(rowNumber);
+  appendMasterDataAuditLog_({
+    entity_type: "inventory",
+    entity_id: item.stock_item_id,
+    entity_name: item.stock_item_name,
+    action_type: "delete_permanent",
+    old_value: item,
+    new_value: "",
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data berhasil dihapus permanen.", {
+    entity_type: "inventory",
+    entity_id: item.stock_item_id,
+  });
 }
 
 function getTodayTransactions_() {

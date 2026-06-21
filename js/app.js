@@ -180,6 +180,12 @@ let isLoadingInventory = false;
 let isLoadingSettingsData = false;
 let isSavingMasterData = false;
 let masterDataForm = null;
+let masterAuditLogs = [];
+let isLoadingMasterAuditLogs = false;
+let masterAuditEntityFilter = "all";
+let masterAuditActionFilter = "all";
+let deleteMasterConfirmation = null;
+let isDeletingMasterData = false;
 let stockWarningMessages = [];
 let stockAdjustmentForm = {
   stock_item_id: "",
@@ -556,6 +562,63 @@ async function loadSettingsData() {
     isLoadingSettingsData = false;
     renderRooms();
   }
+}
+
+function buildMasterAuditQueryParams() {
+  const params = new URLSearchParams();
+  params.set("action", "getMasterDataAuditLogs");
+  params.set("limit", "100");
+
+  if (masterAuditEntityFilter && masterAuditEntityFilter !== "all") {
+    params.set("entity_type", masterAuditEntityFilter);
+  }
+
+  if (masterAuditActionFilter && masterAuditActionFilter !== "all") {
+    params.set("action_type", masterAuditActionFilter);
+  }
+
+  return params;
+}
+
+async function loadMasterDataAuditLogs() {
+  if (!API_BASE_URL.trim()) {
+    masterAuditLogs = [];
+    return;
+  }
+
+  isLoadingMasterAuditLogs = true;
+  renderRooms();
+
+  try {
+    const params = buildMasterAuditQueryParams();
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal memuat audit log master data.");
+    }
+
+    masterAuditLogs = Array.isArray(data.data) ? data.data : Array.isArray(data.logs) ? data.logs : [];
+  } catch (error) {
+    console.warn("Gagal memuat audit log master data.", error);
+    masterAuditLogs = [];
+    showInlineNotice(error.message || "Gagal memuat audit log master data.", "error");
+  } finally {
+    isLoadingMasterAuditLogs = false;
+    renderRooms();
+  }
+}
+
+async function loadSettingsTabData() {
+  await Promise.all([
+    loadSettingsData(),
+    loadMasterDataAuditLogs(),
+  ]);
 }
 
 function updateStockAdjustmentForm(field, value) {
@@ -7097,6 +7160,9 @@ function createMasterTable(headers, rows, emptyText) {
 }
 
 function createMasterActionButton(type, item) {
+  const actions = document.createElement("div");
+  actions.className = "master-row-actions";
+
   const button = document.createElement("button");
   button.className = "master-button";
   button.type = "button";
@@ -7104,7 +7170,18 @@ function createMasterActionButton(type, item) {
   button.dataset.masterType = type;
   button.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || "";
   button.textContent = "Edit";
-  return button;
+
+  const deleteButton = document.createElement("button");
+  deleteButton.className = "master-button danger";
+  deleteButton.type = "button";
+  deleteButton.dataset.action = "confirm-delete-master-data";
+  deleteButton.dataset.masterType = type;
+  deleteButton.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || "";
+  deleteButton.textContent = "Delete Permanen";
+
+  actions.append(button, deleteButton);
+
+  return actions;
 }
 
 function createSettingsSection(titleText, subtitleText, addType, tableElement) {
@@ -7193,6 +7270,143 @@ function createInventorySettingsSection() {
   );
 }
 
+function getAuditBadgeTone(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (normalized === "success" || normalized === "create" || normalized === "activate") {
+    return "success";
+  }
+
+  if (normalized === "blocked" || normalized === "delete_blocked" || normalized === "maintenance") {
+    return "warning";
+  }
+
+  if (normalized === "failed" || normalized === "delete_permanent" || normalized === "deactivate") {
+    return "danger";
+  }
+
+  return "neutral";
+}
+
+function createAuditBadge(value) {
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge("master-audit-badge", getAuditBadgeTone(value));
+  badge.textContent = value || "-";
+  return badge;
+}
+
+function createMasterAuditFiltersElement() {
+  const filters = document.createElement("div");
+  filters.className = "master-audit-filters";
+
+  const entitySelect = createMasterAuditSelect(
+    "Entity",
+    "filter-master-audit-entity",
+    masterAuditEntityFilter,
+    [
+      ["all", "Semua"],
+      ["room", "Room"],
+      ["menu", "Menu"],
+      ["inventory", "Inventory"],
+    ]
+  );
+
+  const actionSelect = createMasterAuditSelect(
+    "Action",
+    "filter-master-audit-action",
+    masterAuditActionFilter,
+    [
+      ["all", "Semua"],
+      ["create", "Create"],
+      ["update", "Update"],
+      ["activate", "Activate"],
+      ["deactivate", "Deactivate"],
+      ["maintenance", "Maintenance"],
+      ["delete_permanent", "Delete Permanen"],
+      ["delete_blocked", "Delete Ditolak"],
+    ]
+  );
+
+  filters.append(entitySelect, actionSelect);
+  return filters;
+}
+
+function createMasterAuditSelect(labelText, action, value, options) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+  select.dataset.action = action;
+  select.value = value;
+
+  options.forEach(([optionValue, text]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+function createMasterAuditLogSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section master-audit-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Audit Log Master Data";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "100 log terbaru perubahan master data.";
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-master-audit-logs";
+  refreshButton.disabled = isLoadingMasterAuditLogs || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingMasterAuditLogs ? "Memuat..." : "Refresh Audit";
+
+  header.append(titleGroup, refreshButton);
+
+  const rows = masterAuditLogs.map((log) => [
+    log.created_at || "-",
+    log.entity_type || "-",
+    log.entity_id || "-",
+    log.entity_name || "-",
+    createAuditBadge(log.action_type),
+    log.changed_by || "-",
+    createAuditBadge(log.result),
+    log.block_reason || "-",
+    log.note || "-",
+  ]);
+
+  section.append(
+    header,
+    createMasterAuditFiltersElement(),
+    isLoadingMasterAuditLogs
+      ? createStateMessage("Memuat audit log master data...")
+      : createMasterTable(
+        ["Waktu", "Entity", "ID", "Nama", "Action", "Changed By", "Result", "Alasan Blokir", "Note"],
+        rows,
+        "Belum ada audit log master data."
+      )
+  );
+
+  return section;
+}
+
 function createSettingsPanelElement() {
   const panel = document.createElement("section");
   panel.className = "settings-panel";
@@ -7226,12 +7440,19 @@ function createSettingsPanelElement() {
     panel.appendChild(form);
   }
 
+  panel.appendChild(createDeleteMasterConfirmationElement());
+
   if (isLoadingSettingsData) {
     panel.appendChild(createStateMessage("Memuat data pengaturan..."));
     return panel;
   }
 
-  panel.append(createRoomSettingsSection(), createMenuSettingsSection(), createInventorySettingsSection());
+  panel.append(
+    createRoomSettingsSection(),
+    createMenuSettingsSection(),
+    createInventorySettingsSection(),
+    createMasterAuditLogSection()
+  );
 
   return panel;
 }
@@ -7250,6 +7471,212 @@ function findMasterItem(type, id) {
   }
 
   return null;
+}
+
+function getMasterEntityName(type, item) {
+  if (type === "room") {
+    return item?.room_name || item?.room_id || "-";
+  }
+
+  if (type === "menu") {
+    return item?.menu_name || item?.menu_id || "-";
+  }
+
+  if (type === "inventory") {
+    return item?.stock_item_name || item?.stock_item_id || "-";
+  }
+
+  return "-";
+}
+
+function getMasterEntityId(type, item) {
+  if (type === "room") {
+    return item?.room_id || "";
+  }
+
+  if (type === "menu") {
+    return item?.menu_id || "";
+  }
+
+  if (type === "inventory") {
+    return item?.stock_item_id || "";
+  }
+
+  return "";
+}
+
+function openDeleteMasterConfirmation(type, item) {
+  deleteMasterConfirmation = {
+    type,
+    id: getMasterEntityId(type, item),
+    name: getMasterEntityName(type, item),
+    typedText: "",
+    note: "",
+  };
+  renderRooms();
+}
+
+function closeDeleteMasterConfirmation() {
+  deleteMasterConfirmation = null;
+  renderRooms();
+}
+
+function updateDeleteMasterConfirmation(field, value) {
+  if (!deleteMasterConfirmation) {
+    return;
+  }
+
+  deleteMasterConfirmation = {
+    ...deleteMasterConfirmation,
+    [field]: value,
+  };
+}
+
+function buildDeleteMasterPayload() {
+  const confirmation = deleteMasterConfirmation || {};
+  const basePayload = {
+    changed_by: "Admin",
+    note: confirmation.note || "",
+  };
+
+  if (confirmation.type === "room") {
+    return {
+      ...basePayload,
+      action: "deleteRoomMaster",
+      room_id: confirmation.id,
+    };
+  }
+
+  if (confirmation.type === "menu") {
+    return {
+      ...basePayload,
+      action: "deleteMenuMaster",
+      menu_id: confirmation.id,
+    };
+  }
+
+  return {
+    ...basePayload,
+    action: "deleteInventoryMaster",
+    stock_item_id: confirmation.id,
+  };
+}
+
+async function submitDeleteMasterData() {
+  if (!deleteMasterConfirmation || isDeletingMasterData) {
+    return;
+  }
+
+  if (deleteMasterConfirmation.typedText !== "HAPUS") {
+    showInlineNotice("Ketik HAPUS untuk mengaktifkan delete permanen.", "error");
+    return;
+  }
+
+  isDeletingMasterData = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction(buildDeleteMasterPayload());
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Delete permanen ditolak.");
+    }
+
+    showInlineNotice(data.message || "Data berhasil dihapus permanen.");
+    deleteMasterConfirmation = null;
+    await loadSettingsTabData();
+  } catch (error) {
+    showInlineNotice(error.message || "Delete permanen ditolak.", "error");
+    await loadMasterDataAuditLogs();
+  } finally {
+    isDeletingMasterData = false;
+    renderRooms();
+  }
+}
+
+function createDeleteMasterConfirmationElement() {
+  if (!deleteMasterConfirmation) {
+    return document.createDocumentFragment();
+  }
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal";
+  overlay.setAttribute("aria-labelledby", "master-delete-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "master-delete-title";
+  title.textContent = "Konfirmasi Delete Permanen";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Data akan dihapus permanen jika belum pernah dipakai transaksi. Jika sudah memiliki histori, sistem akan menolak penghapusan.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+
+  [
+    ["Tipe", deleteMasterConfirmation.type],
+    ["ID", deleteMasterConfirmation.id],
+    ["Nama", deleteMasterConfirmation.name],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const typedField = createDeleteField("Ketik HAPUS", "typedText", deleteMasterConfirmation.typedText);
+  const noteField = createDeleteField("Catatan", "note", deleteMasterConfirmation.note);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-delete-master-confirmation";
+  cancelButton.textContent = "Batal";
+
+  const deleteButton = document.createElement("button");
+  deleteButton.className = "master-button danger";
+  deleteButton.type = "button";
+  deleteButton.dataset.action = "submit-delete-master-data";
+  deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== "HAPUS";
+  deleteButton.textContent = isDeletingMasterData ? "Menghapus..." : "Delete Permanen";
+
+  actions.append(cancelButton, deleteButton);
+  dialog.append(title, warning, details, typedField, noteField, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+function createDeleteField(labelText, field, value) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const input = document.createElement("input");
+  input.className = "master-form-input";
+  input.type = "text";
+  input.dataset.action = "update-delete-master-confirmation";
+  input.dataset.field = field;
+  input.value = value || "";
+
+  wrapper.append(label, input);
+  return wrapper;
 }
 
 function buildMasterPayload() {
@@ -7313,7 +7740,7 @@ async function submitMasterDataForm() {
 
     showInlineNotice(data.message || "Master data berhasil disimpan.");
     masterDataForm = null;
-    await loadSettingsData();
+    await loadSettingsTabData();
     await Promise.all([
       loadMenuItems(),
       loadInventoryItems(),
@@ -7394,7 +7821,7 @@ function refreshActiveTabData() {
       loadTodayRoomTimeLogs();
       break;
     case "settings":
-      loadSettingsData();
+      loadSettingsTabData();
       break;
     default:
       break;
@@ -8207,7 +8634,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "refresh-settings-data") {
-    await loadSettingsData();
+    await loadSettingsTabData();
     return;
   }
 
@@ -8225,6 +8652,33 @@ async function handleRoomAction(event) {
     }
 
     openMasterDataForm(button.dataset.masterType, "edit", item);
+    return;
+  }
+
+  if (action === "confirm-delete-master-data") {
+    const item = findMasterItem(button.dataset.masterType, button.dataset.masterId);
+
+    if (!item) {
+      showInlineNotice("Data master tidak ditemukan.", "error");
+      return;
+    }
+
+    openDeleteMasterConfirmation(button.dataset.masterType, item);
+    return;
+  }
+
+  if (action === "close-delete-master-confirmation") {
+    closeDeleteMasterConfirmation();
+    return;
+  }
+
+  if (action === "submit-delete-master-data") {
+    await submitDeleteMasterData();
+    return;
+  }
+
+  if (action === "refresh-master-audit-logs") {
+    await loadMasterDataAuditLogs();
     return;
   }
 
@@ -8617,6 +9071,12 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-delete-master-confirmation") {
+    updateDeleteMasterConfirmation(field.dataset.field, field.value);
+    renderRooms();
+    return;
+  }
+
   if (action === "update-stock-adjustment-quantity") {
     updateStockAdjustmentForm("quantity", field.value);
     focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -8634,6 +9094,30 @@ function handleDashboardChange(event) {
 
   if (masterField) {
     updateMasterDataForm(masterField.dataset.field, masterField.value);
+    return;
+  }
+
+  const deleteConfirmationField = event.target.closest("[data-action='update-delete-master-confirmation']");
+
+  if (deleteConfirmationField) {
+    updateDeleteMasterConfirmation(deleteConfirmationField.dataset.field, deleteConfirmationField.value);
+    renderRooms();
+    return;
+  }
+
+  const auditEntityFilter = event.target.closest("[data-action='filter-master-audit-entity']");
+
+  if (auditEntityFilter) {
+    masterAuditEntityFilter = auditEntityFilter.value || "all";
+    loadMasterDataAuditLogs();
+    return;
+  }
+
+  const auditActionFilter = event.target.closest("[data-action='filter-master-audit-action']");
+
+  if (auditActionFilter) {
+    masterAuditActionFilter = auditActionFilter.value || "all";
+    loadMasterDataAuditLogs();
     return;
   }
 
@@ -8702,6 +9186,6 @@ async function initializeDashboard() {
     loadTodayRoomTimeLogs(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
-    activeDashboardTab === "settings" ? loadSettingsData() : Promise.resolve(),
+    activeDashboardTab === "settings" ? loadSettingsTabData() : Promise.resolve(),
   ]);
 }

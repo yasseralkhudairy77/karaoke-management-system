@@ -2,6 +2,27 @@
 
 ## Status Terakhir
 
+### Fase 6B - Audit Log Master Data dan Delete Permanen
+Status: PASS LOKAL + DEPLOYED
+
+Hasil:
+- Sheet baru `MasterDataAuditLogs` ditambahkan via backend helper.
+- Endpoint GET baru: `getMasterDataAuditLogs`.
+- Endpoint POST baru: `deleteRoomMaster`, `deleteMenuMaster`, `deleteInventoryMaster`.
+- Endpoint 6A (`save/update` room/menu/inventory) kini mencatat audit create/update/status change.
+- Delete permanen menolak data yang punya histori transaksi/order/mutasi/log dan mencatat `delete_blocked`.
+- UI tab Pengaturan menambahkan tombol `Delete Permanen`, modal konfirmasi wajib ketik `HAPUS`, dan section `Audit Log Master Data`.
+- Audit log UI menampilkan 100 log terbaru dengan filter entity/action dan badge action/result.
+
+Catatan:
+- `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
+- Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
+- Deploy Apps Script version 36.
+- Smoke test production: health OK, get audit OK, create/delete room test OK, create/delete menu test OK, delete inventory blocked saat dipakai menu OK.
+- PASS FINAL menunggu validasi browser UI dan cleanup/tinjauan data test inventory `ITEM-002` jika diperlukan.
+
+---
+
 ### Fase 6A - Master Data Management
 Status: PASS LOKAL + DEPLOYED
 

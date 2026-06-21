@@ -1147,9 +1147,21 @@ body {
   color: #d6deea;
 }
 
+.master-button.danger {
+  border-color: rgba(255, 61, 104, 0.5);
+  background: rgba(255, 61, 104, 0.14);
+  color: #ffd7df;
+}
+
 .master-button:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+
+.master-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .master-form-grid {
@@ -1199,6 +1211,63 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+.master-delete-modal {
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  border: 1px solid rgba(255, 61, 104, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.master-delete-dialog {
+  display: grid;
+  gap: var(--space-3);
+  width: min(100%, 720px);
+  padding: var(--space-4);
+  border: 1px solid rgba(255, 61, 104, 0.4);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+  box-shadow: var(--shadow-soft);
+}
+
+.master-delete-title {
+  margin: 0;
+  color: #ffd7df;
+  font-size: 1.08rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.master-delete-warning {
+  margin: 0;
+  color: #ffd7df;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.master-delete-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.master-delete-actions,
+.master-audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.master-delete-actions {
+  justify-content: flex-end;
+}
+
+.master-audit-filters .master-form-field {
+  flex: 1 1 180px;
 }
 
 .master-table-wrap {
@@ -1275,8 +1344,17 @@ body {
   }
 
   .master-form-actions,
+  .master-delete-actions,
   .master-button {
     width: 100%;
+  }
+
+  .master-delete-details {
+    grid-template-columns: 1fr;
+  }
+
+  .master-row-actions {
+    flex-direction: column;
   }
 }
 

@@ -96,6 +96,21 @@ Dashboard menambahkan tab **Pengaturan** untuk mengelola master data langsung da
 
 Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
 
+## Fase 6B - Audit Log Master Data dan Delete Permanen
+
+Tab **Pengaturan** menambahkan audit log dan delete permanen aman untuk master data.
+
+- Sheet baru `MasterDataAuditLogs` mencatat create, update, activate/deactivate, maintenance, delete sukses, dan delete ditolak.
+- Endpoint audit: `getMasterDataAuditLogs`.
+- Endpoint delete permanen: `deleteRoomMaster`, `deleteMenuMaster`, `deleteInventoryMaster`.
+- Delete room ditolak jika room `occupied` atau sudah punya histori `Transactions`, `FnbOrders`, atau `RoomTimeLogs`.
+- Delete menu ditolak jika sudah pernah masuk `FnbOrderItems`.
+- Delete inventory ditolak jika masih dipakai `Menu` atau sudah punya `StockMovements`.
+- UI delete memakai konfirmasi berlapis dan user wajib mengetik `HAPUS`.
+- Audit log tampil di bawah section master data dengan filter entity/action.
+
+Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
+
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 
 Laporan dan filter periode kini memakai **tanggal operasional karaoke**, bukan tanggal kalender 00:00–23:59.
