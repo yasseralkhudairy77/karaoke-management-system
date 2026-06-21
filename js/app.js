@@ -7532,6 +7532,20 @@ function updateDeleteMasterConfirmation(field, value) {
   };
 }
 
+function syncDeleteMasterConfirmationControls() {
+  const modal = queryDashboard(".master-delete-modal");
+
+  if (!modal || !deleteMasterConfirmation) {
+    return;
+  }
+
+  const deleteButton = modal.querySelector("[data-action='submit-delete-master-data']");
+
+  if (deleteButton) {
+    deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== "HAPUS";
+  }
+}
+
 function buildDeleteMasterPayload() {
   const confirmation = deleteMasterConfirmation || {};
   const basePayload = {
@@ -7650,6 +7664,7 @@ function createDeleteMasterConfirmationElement() {
   deleteButton.className = "master-button danger";
   deleteButton.type = "button";
   deleteButton.dataset.action = "submit-delete-master-data";
+  deleteButton.dataset.role = "delete-master-submit";
   deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== "HAPUS";
   deleteButton.textContent = isDeletingMasterData ? "Menghapus..." : "Delete Permanen";
 
@@ -7673,6 +7688,7 @@ function createDeleteField(labelText, field, value) {
   input.type = "text";
   input.dataset.action = "update-delete-master-confirmation";
   input.dataset.field = field;
+  input.dataset.role = field === "typedText" ? "delete-confirmation-input" : "delete-note-input";
   input.value = value || "";
 
   wrapper.append(label, input);
@@ -9073,7 +9089,7 @@ function handleDashboardInput(event) {
 
   if (action === "update-delete-master-confirmation") {
     updateDeleteMasterConfirmation(field.dataset.field, field.value);
-    renderRooms();
+    syncDeleteMasterConfirmationControls();
     return;
   }
 
@@ -9101,7 +9117,7 @@ function handleDashboardChange(event) {
 
   if (deleteConfirmationField) {
     updateDeleteMasterConfirmation(deleteConfirmationField.dataset.field, deleteConfirmationField.value);
-    renderRooms();
+    syncDeleteMasterConfirmationControls();
     return;
   }
 

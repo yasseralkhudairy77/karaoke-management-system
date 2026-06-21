@@ -13,6 +13,7 @@ Hasil:
 - Delete permanen menolak data yang punya histori transaksi/order/mutasi/log dan mencatat `delete_blocked`.
 - UI tab Pengaturan menambahkan tombol `Delete Permanen`, modal konfirmasi wajib ketik `HAPUS`, dan section `Audit Log Master Data`.
 - Audit log UI menampilkan 100 log terbaru dengan filter entity/action dan badge action/result.
+- Fix frontend: input konfirmasi `HAPUS` tidak lagi memicu render ulang modal setiap keypress; tombol delete ditoggle langsung via DOM ringan.
 
 Catatan:
 - `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
