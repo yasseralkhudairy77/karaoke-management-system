@@ -8092,6 +8092,37 @@ function buildDeleteMasterPayload(adminPin = "", authData = null) {
   };
 }
 
+function getDeleteMasterEntityLabel(type) {
+  const labels = {
+    room: "Room",
+    menu: "Menu",
+    inventory: "Inventory",
+  };
+
+  return labels[type] || "Data";
+}
+
+function getDeleteMasterSuccessMessage(type) {
+  return `${getDeleteMasterEntityLabel(type)} berhasil dihapus permanen.`;
+}
+
+function isAdminPinDeleteError(data) {
+  const blockReason = String(data?.block_reason || "").trim().toUpperCase();
+
+  return blockReason === "INVALID_ADMIN_PIN" || blockReason === "INVALID_PIN" || blockReason === "INSUFFICIENT_ROLE" || blockReason === "EMPTY_PIN";
+}
+
+function formatDeleteMasterErrorMessage(data) {
+  if (isAdminPinDeleteError(data)) {
+    return "PIN tidak valid atau akses tidak cukup.";
+  }
+
+  const message = data?.message || data?.error || "Delete permanen ditolak.";
+  const blockReason = data?.block_reason ? ` (${data.block_reason})` : "";
+
+  return `Data gagal dihapus: ${message}${blockReason}`;
+}
+
 async function submitDeleteMasterData() {
   if (!deleteMasterConfirmation || isDeletingMasterData) {
     return;
@@ -8114,9 +8145,10 @@ async function submitDeleteMasterData() {
 
 async function executeDeleteMasterData(adminPin, authData) {
   if (!deleteMasterConfirmation || isDeletingMasterData) {
-    return;
+    return { success: false };
   }
 
+  const deleteType = deleteMasterConfirmation.type;
   isDeletingMasterData = true;
   renderRooms();
 
@@ -8124,15 +8156,40 @@ async function executeDeleteMasterData(adminPin, authData) {
     const data = await postApiAction(buildDeleteMasterPayload(adminPin, authData));
 
     if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "Delete permanen ditolak.");
+      const message = formatDeleteMasterErrorMessage(data);
+      showInlineNotice(message, "error");
+
+      if (adminPinModal) {
+        adminPinModal = {
+          ...adminPinModal,
+          pin: "",
+          error: isAdminPinDeleteError(data) ? "PIN tidak valid atau akses tidak cukup." : message,
+        };
+      }
+
+      return { success: false, message };
     }
 
-    showInlineNotice(data.message || "Data berhasil dihapus permanen.");
+    const message = getDeleteMasterSuccessMessage(deleteType);
+    adminPinModal = null;
     deleteMasterConfirmation = null;
+    showInlineNotice(message);
     await loadSettingsTabData();
+    return { success: true, message };
   } catch (error) {
-    showInlineNotice(error.message || "Delete permanen ditolak.", "error");
-    await loadMasterDataAuditLogs();
+    console.error("Gagal delete permanen.", error);
+    const message = "Terjadi kendala saat menghapus data. Silakan coba lagi.";
+    showInlineNotice(message, "error");
+
+    if (adminPinModal) {
+      adminPinModal = {
+        ...adminPinModal,
+        pin: "",
+        error: message,
+      };
+    }
+
+    return { success: false, message };
   } finally {
     isDeletingMasterData = false;
     renderRooms();
@@ -8294,11 +8351,28 @@ async function submitAdminPinModal() {
   const pendingAction = adminPinModal.onSuccess;
 
   if (adminPinModal.validatePin === false) {
-    adminPinModal = null;
+    isValidatingAdminPin = true;
     renderRooms();
 
-    if (typeof pendingAction === "function") {
-      await pendingAction({}, adminPin);
+    try {
+      const result = typeof pendingAction === "function"
+        ? await pendingAction({}, adminPin)
+        : { success: true };
+
+      if (result?.success !== false) {
+        adminPinModal = null;
+      }
+    } catch (error) {
+      console.error("Gagal menjalankan aksi setelah PIN.", error);
+      adminPinModal = {
+        ...adminPinModal,
+        pin: "",
+        error: "Terjadi kendala saat menghapus data. Silakan coba lagi.",
+      };
+      showInlineNotice("Terjadi kendala saat menghapus data. Silakan coba lagi.", "error");
+    } finally {
+      isValidatingAdminPin = false;
+      renderRooms();
     }
 
     return;

@@ -3,7 +3,7 @@
 ## Status Terakhir
 
 ### Fase 6D - User Role dan Admin PIN Protection
-Status: PASS LOKAL
+Status: PASS LOKAL + DEPLOYED / BELUM PASS FINAL
 
 Hasil:
 - Sheet `Employees` distandarkan dengan kolom `employee_id`, `employee_name`, `role`, `pin`, `status`, `created_at`, `updated_at`.
@@ -14,6 +14,10 @@ Hasil:
 - UI tab Pengaturan menambahkan section `Pengaturan Akses`.
 - Modal PIN admin reusable memakai input password stabil dan tidak me-render ulang modal setiap keypress.
 - Aksi sensitif edit tarif room, edit harga menu, dan status maintenance room meminta PIN owner/admin sebelum simpan.
+- Fix feedback delete permanen: pesan sukses/gagal kini eksplisit untuk Room, Menu F&B, dan Inventory.
+- Jika PIN salah atau akses kurang, modal PIN tetap terbuka, input PIN dikosongkan, dan tombol bisa dipakai ulang.
+- Jika backend menolak delete, UI menampilkan message dan `block_reason` tanpa reload data sembarangan.
+- Jika network/backend error, UI menampilkan pesan kendala umum dan tombol tidak stuck loading.
 
 Catatan:
 - `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
@@ -21,6 +25,7 @@ Catatan:
 - Deploy Apps Script version 39.
 - Smoke test production: health OK, getEmployees OK tanpa PIN, status employee kosong ternormalisasi `active`, PIN contoh ditolak `INVALID_PIN`, delete tanpa PIN ditolak `INVALID_ADMIN_PIN`, audit akses tercatat tanpa PIN.
 - Audit log append memakai `LockService` agar `log_id` tidak tabrakan saat request paralel.
+- Fix notifikasi delete permanen hanya mengubah frontend; tidak ada `clasp push`/deploy tambahan.
 - PIN masih plain text di sheet untuk fase ini; perlu hashing/salting di fase security hardening berikutnya.
 - PASS FINAL menunggu validasi browser UI dan test PIN valid dengan data employee production.
 
