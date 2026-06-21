@@ -138,6 +138,28 @@ var ROOM_TIME_LOGS_HEADERS = [
   "cashier_name",
   "note",
 ];
+var ROOMS_MASTER_HEADERS = [
+  "room_id",
+  "room_name",
+  "status",
+  "start_time",
+  "booked_duration_minutes",
+  "scheduled_end_time",
+  "rate_per_hour",
+  "tv_device_id",
+  "updated_at",
+];
+var MENU_MASTER_HEADERS = [
+  "menu_id",
+  "menu_name",
+  "category",
+  "price",
+  "status",
+  "updated_at",
+  "stock_tracking",
+  "stock_item_id",
+  "stock_qty_per_unit",
+];
 
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
@@ -238,6 +260,10 @@ function doGet(e) {
 
     return jsonResponse({
       ok: false,
+      success: false,
+      message: action
+        ? "Aksi tidak dikenal: " + action
+        : "Parameter action wajib diisi.",
       error: action
         ? "Aksi tidak dikenal: " + action
         : "Parameter action wajib diisi.",
@@ -245,6 +271,8 @@ function doGet(e) {
   } catch (error) {
     return jsonResponse({
       ok: false,
+      success: false,
+      message: error.message,
       error: error.message,
     });
   }
@@ -293,8 +321,36 @@ function doPost(e) {
       ));
     }
 
+    if (action === "saveRoomMaster") {
+      return jsonResponse(saveRoomMaster_(payload));
+    }
+
+    if (action === "updateRoomMaster") {
+      return jsonResponse(updateRoomMaster_(payload));
+    }
+
+    if (action === "saveMenuMaster") {
+      return jsonResponse(saveMenuMaster_(payload));
+    }
+
+    if (action === "updateMenuMaster") {
+      return jsonResponse(updateMenuMaster_(payload));
+    }
+
+    if (action === "saveInventoryMaster") {
+      return jsonResponse(saveInventoryMaster_(payload));
+    }
+
+    if (action === "updateInventoryMaster") {
+      return jsonResponse(updateInventoryMaster_(payload));
+    }
+
     return jsonResponse({
       ok: false,
+      success: false,
+      message: action
+        ? "Aksi tidak dikenal: " + action
+        : "Parameter action wajib diisi.",
       error: action
         ? "Aksi tidak dikenal: " + action
         : "Parameter action wajib diisi.",
@@ -302,6 +358,8 @@ function doPost(e) {
   } catch (error) {
     return jsonResponse({
       ok: false,
+      success: false,
+      message: error.message,
       error: error.message,
     });
   }
@@ -711,6 +769,355 @@ function toNonNegativeStockQuantity_(value) {
   }
 
   return numberValue;
+}
+
+function masterSuccessResponse_(message, data) {
+  return {
+    ok: true,
+    success: true,
+    message: message,
+    data: data,
+  };
+}
+
+function masterError_(message) {
+  throw new Error(message);
+}
+
+function normalizeMasterStatus_(status, allowedStatuses, fallback) {
+  var normalizedStatus = String(status || fallback || "").trim().toLowerCase();
+
+  if (allowedStatuses.indexOf(normalizedStatus) === -1) {
+    masterError_("Status tidak valid.");
+  }
+
+  return normalizedStatus;
+}
+
+function getSheetHeaders_(sheet) {
+  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+}
+
+function ensureColumns_(sheet, headers) {
+  var existingHeaders = getSheetHeaders_(sheet);
+
+  headers.forEach(function (header) {
+    if (existingHeaders.indexOf(header) === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      existingHeaders.push(header);
+    }
+  });
+
+  return sheet;
+}
+
+function ensureRoomsMasterColumns_() {
+  var sheet = ensureSheetWithHeaders_("Rooms", ROOMS_MASTER_HEADERS);
+  ensureColumns_(sheet, ROOMS_MASTER_HEADERS);
+  ensureColumns_(sheet, ROOMS_BOOKING_HEADERS);
+  return sheet;
+}
+
+function ensureMenuMasterColumns_() {
+  var sheet = ensureSheetWithHeaders_("Menu", MENU_MASTER_HEADERS);
+  ensureColumns_(sheet, MENU_MASTER_HEADERS);
+  ensureColumns_(sheet, MENU_STOCK_HEADERS);
+  return sheet;
+}
+
+function generateSequentialId_(sheet, headerMap, columnName, prefix) {
+  var column = headerMap[columnName];
+  var maxNumber = 0;
+
+  if (!column || sheet.getLastRow() < 2) {
+    return prefix + "-001";
+  }
+
+  sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getValues().forEach(function (row) {
+    var value = String(row[0] || "").trim();
+    var match = value.match(new RegExp("^" + prefix + "-(\\d+)$"));
+
+    if (match) {
+      maxNumber = Math.max(maxNumber, Number(match[1]) || 0);
+    }
+  });
+
+  return prefix + "-" + String(maxNumber + 1).padStart(3, "0");
+}
+
+function appendObjectRow_(sheet, objectData) {
+  var rowValues = getSheetHeaders_(sheet).map(function (header) {
+    return objectData[header] !== undefined ? objectData[header] : "";
+  });
+
+  sheet.appendRow(rowValues);
+}
+
+function setRowValues_(sheet, headerMap, rowNumber, objectData) {
+  Object.keys(objectData).forEach(function (key) {
+    if (headerMap[key]) {
+      sheet.getRange(rowNumber, headerMap[key]).setValue(objectData[key]);
+    }
+  });
+}
+
+function validateRoomMasterPayload_(payload, isUpdate) {
+  var roomName = String(payload.room_name || "").trim();
+  var ratePerHour = Number(payload.rate_per_hour);
+  var status = normalizeMasterStatus_(payload.status, ["available", "occupied", "maintenance"], "available");
+
+  if (isUpdate && !String(payload.room_id || "").trim()) {
+    masterError_("room_id wajib diisi.");
+  }
+
+  if (!roomName) {
+    masterError_("Nama room wajib diisi.");
+  }
+
+  if (!isFinite(ratePerHour) || ratePerHour <= 0) {
+    masterError_("Tarif room wajib angka lebih dari 0.");
+  }
+
+  return {
+    room_name: roomName,
+    rate_per_hour: ratePerHour,
+    tv_device_id: String(payload.tv_device_id || "").trim(),
+    status: status,
+  };
+}
+
+function saveRoomMaster_(payload) {
+  var data = validateRoomMasterPayload_(payload, false);
+  var sheet = ensureRoomsMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var roomId = generateSequentialId_(sheet, headerMap, "room_id", "ROOM");
+  var room = {
+    room_id: roomId,
+    room_name: data.room_name,
+    status: data.status,
+    start_time: "",
+    booked_duration_minutes: "",
+    scheduled_end_time: "",
+    rate_per_hour: data.rate_per_hour,
+    tv_device_id: data.tv_device_id,
+    updated_at: toJakartaIsoString_(new Date()),
+  };
+
+  appendObjectRow_(sheet, room);
+
+  return masterSuccessResponse_("Data room berhasil disimpan.", getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+}
+
+function updateRoomMaster_(payload) {
+  var roomId = String(payload.room_id || "").trim();
+  var data = validateRoomMasterPayload_(payload, true);
+  var sheet = ensureRoomsMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", roomId);
+
+  if (!rowNumber) {
+    masterError_("Room tidak ditemukan.");
+  }
+
+  var currentRoom = getRoomFromRow_(sheet, headerMap, rowNumber);
+
+  if (String(currentRoom.status || "").trim().toLowerCase() === "occupied" && data.status !== "occupied") {
+    masterError_("Room occupied tidak boleh diubah statusnya dari menu pengaturan.");
+  }
+
+  setRowValues_(sheet, headerMap, rowNumber, {
+    room_name: data.room_name,
+    rate_per_hour: data.rate_per_hour,
+    tv_device_id: data.tv_device_id,
+    status: data.status,
+    updated_at: toJakartaIsoString_(new Date()),
+  });
+
+  return masterSuccessResponse_("Data room berhasil diperbarui.", getRoomFromRow_(sheet, headerMap, rowNumber));
+}
+
+function validateMenuMasterPayload_(payload, isUpdate) {
+  var menuName = String(payload.menu_name || "").trim();
+  var category = String(payload.category || "").trim();
+  var price = Number(payload.price);
+  var stockItemId = String(payload.stock_item_id || "").trim();
+  var qtyPerUnit = Number(payload.qty_per_unit || payload.stock_qty_per_unit || 0);
+  var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
+
+  if (isUpdate && !String(payload.menu_id || "").trim()) {
+    masterError_("menu_id wajib diisi.");
+  }
+
+  if (!menuName) {
+    masterError_("Nama menu wajib diisi.");
+  }
+
+  if (!category) {
+    masterError_("Kategori menu wajib diisi.");
+  }
+
+  if (!isFinite(price) || price < 0) {
+    masterError_("Harga menu wajib angka 0 atau lebih.");
+  }
+
+  if (stockItemId && (!isFinite(qtyPerUnit) || qtyPerUnit < 0)) {
+    masterError_("Qty stok per unit wajib angka 0 atau lebih jika stock item diisi.");
+  }
+
+  return {
+    menu_name: menuName,
+    category: category,
+    price: price,
+    stock_item_id: stockItemId,
+    stock_qty_per_unit: stockItemId ? qtyPerUnit : 0,
+    stock_tracking: stockItemId ? "yes" : "no",
+    status: status,
+  };
+}
+
+function getMenuMasterRow_(sheet, headerMap, rowNumber) {
+  var row = getRowObject_(sheet, headerMap, rowNumber);
+
+  return {
+    menu_id: row.menu_id || "",
+    menu_name: row.menu_name || "",
+    category: row.category || "",
+    price: Number(row.price) || 0,
+    status: row.status || "",
+    updated_at: row.updated_at || "",
+    stock_tracking: row.stock_tracking || "",
+    stock_item_id: row.stock_item_id || "",
+    stock_qty_per_unit: Number(row.stock_qty_per_unit) || 0,
+  };
+}
+
+function saveMenuMaster_(payload) {
+  var data = validateMenuMasterPayload_(payload, false);
+  var sheet = ensureMenuMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var menuId = generateSequentialId_(sheet, headerMap, "menu_id", "MENU");
+  var menu = {
+    menu_id: menuId,
+    menu_name: data.menu_name,
+    category: data.category,
+    price: data.price,
+    status: data.status,
+    updated_at: toJakartaIsoString_(new Date()),
+    stock_tracking: data.stock_tracking,
+    stock_item_id: data.stock_item_id,
+    stock_qty_per_unit: data.stock_qty_per_unit,
+  };
+
+  appendObjectRow_(sheet, menu);
+
+  return masterSuccessResponse_("Data menu berhasil disimpan.", getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+}
+
+function updateMenuMaster_(payload) {
+  var menuId = String(payload.menu_id || "").trim();
+  var data = validateMenuMasterPayload_(payload, true);
+  var sheet = ensureMenuMasterColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "menu_id", menuId);
+
+  if (!rowNumber) {
+    masterError_("Menu tidak ditemukan.");
+  }
+
+  setRowValues_(sheet, headerMap, rowNumber, {
+    menu_name: data.menu_name,
+    category: data.category,
+    price: data.price,
+    status: data.status,
+    updated_at: toJakartaIsoString_(new Date()),
+    stock_tracking: data.stock_tracking,
+    stock_item_id: data.stock_item_id,
+    stock_qty_per_unit: data.stock_qty_per_unit,
+  });
+
+  return masterSuccessResponse_("Data menu berhasil diperbarui.", getMenuMasterRow_(sheet, headerMap, rowNumber));
+}
+
+function validateInventoryMasterPayload_(payload, isUpdate) {
+  var stockItemName = String(payload.stock_item_name || "").trim();
+  var category = String(payload.category || "").trim();
+  var unit = String(payload.unit || "").trim();
+  var minStock = Number(payload.min_stock);
+  var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
+
+  if (isUpdate && !String(payload.stock_item_id || "").trim()) {
+    masterError_("stock_item_id wajib diisi.");
+  }
+
+  if (!stockItemName) {
+    masterError_("Nama item inventory wajib diisi.");
+  }
+
+  if (!category) {
+    masterError_("Kategori inventory wajib diisi.");
+  }
+
+  if (!unit) {
+    masterError_("Unit inventory wajib diisi.");
+  }
+
+  if (!isFinite(minStock) || minStock < 0) {
+    masterError_("Min stok wajib angka 0 atau lebih.");
+  }
+
+  return {
+    stock_item_name: stockItemName,
+    category: category,
+    unit: unit,
+    min_stock: minStock,
+    status: status,
+  };
+}
+
+function saveInventoryMaster_(payload) {
+  var data = validateInventoryMasterPayload_(payload, false);
+  var sheet = ensureInventorySheetColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var stockItemId = generateSequentialId_(sheet, headerMap, "stock_item_id", "ITEM");
+  var item = {
+    stock_item_id: stockItemId,
+    stock_item_name: data.stock_item_name,
+    category: data.category,
+    unit: data.unit,
+    stock_qty: 0,
+    min_stock: data.min_stock,
+    status: data.status,
+    updated_at: toJakartaIsoString_(new Date()),
+  };
+
+  appendObjectRow_(sheet, item);
+
+  return masterSuccessResponse_("Data inventory berhasil disimpan.", buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow()));
+}
+
+function updateInventoryMaster_(payload) {
+  var stockItemId = String(payload.stock_item_id || "").trim();
+  var data = validateInventoryMasterPayload_(payload, true);
+  var sheet = ensureInventorySheetColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "stock_item_id", stockItemId);
+
+  if (!rowNumber) {
+    masterError_("Inventory item tidak ditemukan.");
+  }
+
+  setRowValues_(sheet, headerMap, rowNumber, {
+    stock_item_name: data.stock_item_name,
+    category: data.category,
+    unit: data.unit,
+    min_stock: data.min_stock,
+    status: data.status,
+    updated_at: toJakartaIsoString_(new Date()),
+  });
+
+  return masterSuccessResponse_("Data inventory berhasil diperbarui.", buildInventoryItemFromRow_(sheet, headerMap, rowNumber));
 }
 
 function getTodayTransactions_() {

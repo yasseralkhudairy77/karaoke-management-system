@@ -21,6 +21,7 @@ const DASHBOARD_TABS = [
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
   { key: "audit", label: "Audit" },
+  { key: "settings", label: "Pengaturan" },
 ];
 const dataSourceBadge = document.querySelector("#dataSourceBadge");
 const currencyFormatter = new Intl.NumberFormat("id-ID", {
@@ -176,6 +177,9 @@ let menuErrorMessage = "";
 let inventoryItems = [];
 let inventorySummary = null;
 let isLoadingInventory = false;
+let isLoadingSettingsData = false;
+let isSavingMasterData = false;
+let masterDataForm = null;
 let stockWarningMessages = [];
 let stockAdjustmentForm = {
   stock_item_id: "",
@@ -523,6 +527,35 @@ async function fetchInventoryItemsFromApi() {
     items: data.items,
     summary: data.summary || null,
   };
+}
+
+async function loadSettingsData() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  isLoadingSettingsData = true;
+  renderRooms();
+
+  try {
+    const [latestRooms, menuData, inventoryData] = await Promise.all([
+      fetchRoomsFromApi(),
+      fetchMenuItemsFromApi(),
+      fetchInventoryItemsFromApi(),
+    ]);
+
+    rooms = normalizeRooms(latestRooms);
+    menuItems = Array.isArray(menuData.menu_items) ? menuData.menu_items : [];
+    inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
+    inventorySummary = inventoryData.summary || null;
+    syncSelectedFbRoomWithRooms();
+  } catch (error) {
+    console.warn("Gagal memuat data pengaturan.", error);
+    showInlineNotice(error.message || "Gagal memuat data pengaturan.", "error");
+  } finally {
+    isLoadingSettingsData = false;
+    renderRooms();
+  }
 }
 
 function updateStockAdjustmentForm(field, value) {
@@ -1499,13 +1532,14 @@ function getFilteredMenuItems() {
 
   return menuItems.filter((menuItem) => {
     const category = menuItem.category || "";
+    const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
     const matchesCategory =
       menuCategoryFilter === "all" || category === menuCategoryFilter;
     const matchesSearch =
       !normalizedSearch ||
       `${menuItem.menu_name || ""} ${category}`.toLowerCase().includes(normalizedSearch);
 
-    return matchesCategory && matchesSearch;
+    return isActive && matchesCategory && matchesSearch;
   });
 }
 
@@ -1532,7 +1566,10 @@ function setMenuCategoryFilter(category) {
 }
 
 function getMenuCategories() {
-  return [...new Set(menuItems.map((menuItem) => menuItem.category).filter(Boolean))].sort();
+  return [...new Set(menuItems
+    .filter((menuItem) => String(menuItem.status || "").trim().toLowerCase() === "active")
+    .map((menuItem) => menuItem.category)
+    .filter(Boolean))].sort();
 }
 
 function setSelectedFbRoom(roomId) {
@@ -6773,6 +6810,523 @@ function createPaginationControlsElement(key, totalItems) {
   return wrapper;
 }
 
+function openMasterDataForm(type, mode, item = null) {
+  const defaults = {
+    room: {
+      room_id: "",
+      room_name: "",
+      rate_per_hour: "",
+      tv_device_id: "",
+      status: "available",
+    },
+    menu: {
+      menu_id: "",
+      menu_name: "",
+      category: "",
+      price: "",
+      stock_item_id: "",
+      qty_per_unit: "",
+      status: "active",
+    },
+    inventory: {
+      stock_item_id: "",
+      stock_item_name: "",
+      category: "",
+      unit: "",
+      min_stock: "",
+      status: "active",
+    },
+  };
+
+  masterDataForm = {
+    type,
+    mode,
+    values: {
+      ...defaults[type],
+      ...(item || {}),
+      qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
+    },
+  };
+  renderRooms();
+}
+
+function closeMasterDataForm() {
+  masterDataForm = null;
+  renderRooms();
+}
+
+function updateMasterDataForm(field, value) {
+  if (!masterDataForm) {
+    return;
+  }
+
+  masterDataForm = {
+    ...masterDataForm,
+    values: {
+      ...masterDataForm.values,
+      [field]: value,
+    },
+  };
+}
+
+function getMasterDataFormTitle() {
+  if (!masterDataForm) {
+    return "";
+  }
+
+  const labels = {
+    room: "Ruangan",
+    menu: "Menu F&B",
+    inventory: "Inventory",
+  };
+
+  return `${masterDataForm.mode === "edit" ? "Edit" : "Tambah"} ${labels[masterDataForm.type]}`;
+}
+
+function createMasterField({ label, field, type = "text", options = null, disabled = false, helper = "" }) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "master-form-label";
+  labelElement.textContent = label;
+
+  let input;
+
+  if (options) {
+    input = document.createElement("select");
+    options.forEach(([value, text]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      input.appendChild(option);
+    });
+  } else {
+    input = document.createElement("input");
+    input.type = type;
+  }
+
+  input.className = "master-form-input";
+  input.dataset.action = "update-master-form";
+  input.dataset.field = field;
+  input.disabled = disabled;
+  input.value = masterDataForm?.values?.[field] ?? "";
+
+  wrapper.append(labelElement, input);
+
+  if (helper) {
+    const helperElement = document.createElement("span");
+    helperElement.className = "master-form-helper";
+    helperElement.textContent = helper;
+    wrapper.appendChild(helperElement);
+  }
+
+  return wrapper;
+}
+
+function createMasterDataFormElement() {
+  if (!masterDataForm) {
+    return null;
+  }
+
+  const form = document.createElement("section");
+  form.className = "master-form";
+  form.setAttribute("aria-labelledby", "master-form-title");
+
+  const title = document.createElement("h3");
+  title.className = "master-form-title";
+  title.id = "master-form-title";
+  title.textContent = getMasterDataFormTitle();
+
+  const grid = document.createElement("div");
+  grid.className = "master-form-grid";
+
+  if (masterDataForm.type === "room") {
+    if (masterDataForm.mode === "edit") {
+      grid.appendChild(createMasterField({ label: "Room ID", field: "room_id", disabled: true }));
+    }
+
+    const currentRoomStatus = String(masterDataForm.values.status || "").toLowerCase();
+    const isOccupied = currentRoomStatus === "occupied";
+
+    grid.append(
+      createMasterField({ label: "Nama Room", field: "room_name" }),
+      createMasterField({ label: "Tarif per Jam", field: "rate_per_hour", type: "number" }),
+      createMasterField({ label: "TV Device ID", field: "tv_device_id" }),
+      createMasterField({
+        label: "Status",
+        field: "status",
+        disabled: isOccupied,
+        helper: isOccupied ? "Room occupied tidak bisa diubah dari Pengaturan." : "",
+        options: [
+          ["available", "Available"],
+          ["occupied", "Occupied"],
+          ["maintenance", "Maintenance"],
+        ],
+      })
+    );
+  }
+
+  if (masterDataForm.type === "menu") {
+    if (masterDataForm.mode === "edit") {
+      grid.appendChild(createMasterField({ label: "Menu ID", field: "menu_id", disabled: true }));
+    }
+
+    grid.append(
+      createMasterField({ label: "Nama Menu", field: "menu_name" }),
+      createMasterField({ label: "Kategori", field: "category" }),
+      createMasterField({ label: "Harga", field: "price", type: "number" }),
+      createMasterField({ label: "Stock Item ID", field: "stock_item_id", helper: "Kosongkan jika stok tidak otomatis berkurang." }),
+      createMasterField({ label: "Qty per Unit", field: "qty_per_unit", type: "number" }),
+      createMasterField({
+        label: "Status",
+        field: "status",
+        options: [
+          ["active", "Active"],
+          ["inactive", "Inactive"],
+        ],
+      })
+    );
+  }
+
+  if (masterDataForm.type === "inventory") {
+    if (masterDataForm.mode === "edit") {
+      grid.appendChild(createMasterField({ label: "Item ID", field: "stock_item_id", disabled: true }));
+    }
+
+    grid.append(
+      createMasterField({ label: "Nama Item", field: "stock_item_name" }),
+      createMasterField({ label: "Kategori", field: "category" }),
+      createMasterField({ label: "Unit", field: "unit" }),
+      createMasterField({ label: "Min Stok", field: "min_stock", type: "number" }),
+      createMasterField({
+        label: "Status",
+        field: "status",
+        options: [
+          ["active", "Active"],
+          ["inactive", "Inactive"],
+        ],
+      })
+    );
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "master-form-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-master-form";
+  cancelButton.textContent = "Batal";
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "master-button primary";
+  saveButton.type = "button";
+  saveButton.dataset.action = "submit-master-form";
+  saveButton.disabled = isSavingMasterData;
+  saveButton.textContent = isSavingMasterData ? "Menyimpan..." : "Simpan";
+
+  actions.append(cancelButton, saveButton);
+  form.append(title, grid, actions);
+
+  return form;
+}
+
+function getMasterStatusBadge(status) {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const tone = normalizedStatus === "active" || normalizedStatus === "available"
+    ? "success"
+    : normalizedStatus === "maintenance"
+      ? "warning"
+      : normalizedStatus === "occupied"
+        ? "danger"
+        : normalizedStatus === "inactive"
+          ? "neutral"
+          : "neutral";
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge("master-status-badge", tone);
+  badge.textContent = normalizedStatus || "unknown";
+  return badge;
+}
+
+function createMasterTable(headers, rows, emptyText) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "master-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "master-table";
+
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  headers.forEach((header) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = header;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+
+  const tbody = document.createElement("tbody");
+
+  if (rows.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = headers.length;
+    td.textContent = emptyText;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  } else {
+    rows.forEach((cells) => {
+      const tr = document.createElement("tr");
+      cells.forEach((cell) => {
+        const td = document.createElement("td");
+        if (cell instanceof Node) {
+          td.appendChild(cell);
+        } else {
+          td.textContent = cell;
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function createMasterActionButton(type, item) {
+  const button = document.createElement("button");
+  button.className = "master-button";
+  button.type = "button";
+  button.dataset.action = "edit-master-data";
+  button.dataset.masterType = type;
+  button.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || "";
+  button.textContent = "Edit";
+  return button;
+}
+
+function createSettingsSection(titleText, subtitleText, addType, tableElement) {
+  const section = document.createElement("section");
+  section.className = "settings-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = titleText;
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = subtitleText;
+  titleGroup.append(title, subtitle);
+
+  const addButton = document.createElement("button");
+  addButton.className = "master-button primary";
+  addButton.type = "button";
+  addButton.dataset.action = "add-master-data";
+  addButton.dataset.masterType = addType;
+  addButton.textContent = "Tambah";
+
+  header.append(titleGroup, addButton);
+  section.append(header, tableElement);
+  return section;
+}
+
+function createRoomSettingsSection() {
+  const rows = rooms.map((room) => [
+    room.room_id || "-",
+    room.room_name || "-",
+    formatCurrency(room.rate_per_hour),
+    room.tv_device_id || "-",
+    getMasterStatusBadge(room.status),
+    createMasterActionButton("room", room),
+  ]);
+
+  return createSettingsSection(
+    "Pengaturan Ruangan",
+    "Kelola data master room tanpa mengubah waktu sesi aktif.",
+    "room",
+    createMasterTable(["ID", "Room", "Tarif/Jam", "TV", "Status", "Aksi"], rows, "Belum ada room.")
+  );
+}
+
+function createMenuSettingsSection() {
+  const rows = menuItems.map((menuItem) => [
+    menuItem.menu_id || "-",
+    menuItem.menu_name || "-",
+    menuItem.category || "-",
+    formatCurrency(menuItem.price),
+    menuItem.stock_item_id || "-",
+    Number(menuItem.stock_qty_per_unit) || 0,
+    getMasterStatusBadge(menuItem.status),
+    createMasterActionButton("menu", menuItem),
+  ]);
+
+  return createSettingsSection(
+    "Pengaturan Menu F&B",
+    "Kelola menu aktif/inaktif dan mapping stok.",
+    "menu",
+    createMasterTable(["ID", "Menu", "Kategori", "Harga", "Stock Item", "Qty/Unit", "Status", "Aksi"], rows, "Belum ada menu.")
+  );
+}
+
+function createInventorySettingsSection() {
+  const rows = inventoryItems.map((item) => [
+    item.stock_item_id || "-",
+    item.stock_item_name || "-",
+    item.category || "-",
+    item.unit || "-",
+    `${Number(item.stock_qty) || 0}`,
+    `${Number(item.min_stock) || 0}`,
+    getMasterStatusBadge(item.status),
+    createMasterActionButton("inventory", item),
+  ]);
+
+  return createSettingsSection(
+    "Pengaturan Inventory",
+    "Kelola master item dan min stok. Restock tetap melalui fitur Stok.",
+    "inventory",
+    createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Belum ada inventory.")
+  );
+}
+
+function createSettingsPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "settings-panel";
+  panel.setAttribute("aria-labelledby", "settings-title");
+
+  const header = document.createElement("div");
+  header.className = "settings-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h2");
+  title.className = "settings-title";
+  title.id = "settings-title";
+  title.textContent = "Pengaturan";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-subtitle";
+  subtitle.textContent = "Kelola master data ruangan, menu F&B, dan inventory.";
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-settings-data";
+  refreshButton.disabled = isLoadingSettingsData || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingSettingsData ? "Memuat..." : "Refresh";
+
+  header.append(titleGroup, refreshButton);
+  panel.appendChild(header);
+
+  const form = createMasterDataFormElement();
+  if (form) {
+    panel.appendChild(form);
+  }
+
+  if (isLoadingSettingsData) {
+    panel.appendChild(createStateMessage("Memuat data pengaturan..."));
+    return panel;
+  }
+
+  panel.append(createRoomSettingsSection(), createMenuSettingsSection(), createInventorySettingsSection());
+
+  return panel;
+}
+
+function findMasterItem(type, id) {
+  if (type === "room") {
+    return rooms.find((room) => room.room_id === id) || null;
+  }
+
+  if (type === "menu") {
+    return menuItems.find((menuItem) => menuItem.menu_id === id) || null;
+  }
+
+  if (type === "inventory") {
+    return inventoryItems.find((item) => item.stock_item_id === id) || null;
+  }
+
+  return null;
+}
+
+function buildMasterPayload() {
+  const values = masterDataForm?.values || {};
+  const isEdit = masterDataForm?.mode === "edit";
+
+  if (masterDataForm.type === "room") {
+    return {
+      action: isEdit ? "updateRoomMaster" : "saveRoomMaster",
+      room_id: values.room_id || "",
+      room_name: values.room_name || "",
+      rate_per_hour: Number(values.rate_per_hour),
+      tv_device_id: values.tv_device_id || "",
+      status: values.status || "available",
+    };
+  }
+
+  if (masterDataForm.type === "menu") {
+    return {
+      action: isEdit ? "updateMenuMaster" : "saveMenuMaster",
+      menu_id: values.menu_id || "",
+      menu_name: values.menu_name || "",
+      category: values.category || "",
+      price: Number(values.price),
+      stock_item_id: values.stock_item_id || "",
+      qty_per_unit: Number(values.qty_per_unit || values.stock_qty_per_unit || 0),
+      status: values.status || "active",
+    };
+  }
+
+  return {
+    action: isEdit ? "updateInventoryMaster" : "saveInventoryMaster",
+    stock_item_id: values.stock_item_id || "",
+    stock_item_name: values.stock_item_name || "",
+    category: values.category || "",
+    unit: values.unit || "",
+    min_stock: Number(values.min_stock),
+    status: values.status || "active",
+  };
+}
+
+async function submitMasterDataForm() {
+  if (!masterDataForm || isSavingMasterData) {
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  isSavingMasterData = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction(buildMasterPayload());
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal menyimpan master data.");
+    }
+
+    showInlineNotice(data.message || "Master data berhasil disimpan.");
+    masterDataForm = null;
+    await loadSettingsData();
+    await Promise.all([
+      loadMenuItems(),
+      loadInventoryItems(),
+      loadRooms(),
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyimpan master data.", "error");
+  } finally {
+    isSavingMasterData = false;
+    renderRooms();
+  }
+}
+
 function loadActiveDashboardTab() {
   try {
     const savedTab = localStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
@@ -6838,6 +7392,9 @@ function refreshActiveTabData() {
       break;
     case "audit":
       loadTodayRoomTimeLogs();
+      break;
+    case "settings":
+      loadSettingsData();
       break;
     default:
       break;
@@ -6947,6 +7504,9 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "audit":
       panel.appendChild(createTodayRoomTimeLogsPanelElement());
+      break;
+    case "settings":
+      panel.appendChild(createSettingsPanelElement());
       break;
     default:
       break;
@@ -7646,6 +8206,38 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-settings-data") {
+    await loadSettingsData();
+    return;
+  }
+
+  if (action === "add-master-data") {
+    openMasterDataForm(button.dataset.masterType, "create");
+    return;
+  }
+
+  if (action === "edit-master-data") {
+    const item = findMasterItem(button.dataset.masterType, button.dataset.masterId);
+
+    if (!item) {
+      showInlineNotice("Data master tidak ditemukan.", "error");
+      return;
+    }
+
+    openMasterDataForm(button.dataset.masterType, "edit", item);
+    return;
+  }
+
+  if (action === "close-master-form") {
+    closeMasterDataForm();
+    return;
+  }
+
+  if (action === "submit-master-form") {
+    await submitMasterDataForm();
+    return;
+  }
+
   if (action === "pagination-prev") {
     const paginationKey = button.dataset.paginationKey || "";
     const state = getPaginationState(paginationKey);
@@ -8020,6 +8612,11 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-master-form") {
+    updateMasterDataForm(field.dataset.field, field.value);
+    return;
+  }
+
   if (action === "update-stock-adjustment-quantity") {
     updateStockAdjustmentForm("quantity", field.value);
     focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -8033,6 +8630,13 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const masterField = event.target.closest("[data-action='update-master-form']");
+
+  if (masterField) {
+    updateMasterDataForm(masterField.dataset.field, masterField.value);
+    return;
+  }
+
   const roomSelect = event.target.closest(".fb-room-select");
 
   if (roomSelect) {
@@ -8098,5 +8702,6 @@ async function initializeDashboard() {
     loadTodayRoomTimeLogs(),
     loadTodayTransactions(),
     loadTodayCashierClosings(),
+    activeDashboardTab === "settings" ? loadSettingsData() : Promise.resolve(),
   ]);
 }

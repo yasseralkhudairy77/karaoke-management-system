@@ -26,6 +26,15 @@ Contoh `status`:
 
 `start_time` adalah jangkar sesi dan tidak boleh diubah saat tambah waktu (extend). Hanya `booked_duration_minutes` dan `scheduled_end_time` yang bertambah.
 
+### Fase 6A - Master Room
+
+POST `saveRoomMaster` dan `updateRoomMaster` mengelola data master room.
+
+- ID baru memakai format `ROOM-001`, `ROOM-002`, dst.
+- Field yang boleh diubah dari Pengaturan: `room_name`, `rate_per_hour`, `tv_device_id`, `status`.
+- Field sesi tidak diubah dari Pengaturan: `start_time`, `booked_duration_minutes`, `scheduled_end_time`.
+- Room `occupied` tidak boleh diubah paksa ke `available` atau `maintenance` dari Pengaturan.
+
 ## RoomTimeLogs
 
 Menyimpan audit log perubahan durasi booking room.
@@ -266,6 +275,15 @@ Menyimpan stok bahan atau item operasional.
 
 Catatan backward compatibility: data lama dengan header `item_id` atau `item_name` tidak dihapus. Fase stok dasar memakai standar baru `stock_item_id` dan `stock_item_name`.
 
+### Fase 6A - Master Inventory
+
+POST `saveInventoryMaster` dan `updateInventoryMaster` mengelola master inventory.
+
+- ID baru memakai format `ITEM-001`, `ITEM-002`, dst.
+- Field yang dikelola: `stock_item_name`, `category`, `unit`, `min_stock`, `status`.
+- `stock_qty` untuk item baru dibuat `0`.
+- Perubahan stok berjalan tetap melalui POST `adjustInventoryStock` agar `StockMovements` tetap konsisten.
+
 ## Menu
 
 Menyimpan daftar menu yang bisa dijual.
@@ -283,6 +301,15 @@ Menyimpan daftar menu yang bisa dijual.
 | `stock_qty_per_unit` | Jumlah stok yang berkurang setiap 1 menu terjual. |
 
 Fase stok dasar hanya mendukung stok item langsung. Recipe/BOM belum dipakai.
+
+### Fase 6A - Master Menu
+
+POST `saveMenuMaster` dan `updateMenuMaster` mengelola master menu.
+
+- ID baru memakai format `MENU-001`, `MENU-002`, dst.
+- Field yang dikelola: `menu_name`, `category`, `price`, `stock_item_id`, `stock_qty_per_unit`, `status`.
+- Menu `inactive` tidak boleh dipakai dalam order F&B.
+- Jika `stock_item_id` kosong, backend menyimpan `stock_tracking = no`.
 
 ## StockMovements
 

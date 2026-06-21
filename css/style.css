@@ -1058,9 +1058,192 @@ body {
   white-space: normal;
 }
 
+.settings-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--panel-gap);
+  padding: var(--panel-padding);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+  box-shadow: var(--shadow-soft);
+}
+
+.settings-header,
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-header {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-title,
+.settings-section-title,
+.master-form-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.settings-title {
+  font-size: clamp(1.12rem, 2vw, 1.34rem);
+}
+
+.settings-section-title,
+.master-form-title {
+  font-size: 1.05rem;
+}
+
+.settings-subtitle,
+.settings-section-subtitle,
+.master-form-helper {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.settings-section,
+.master-form {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.master-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(139, 150, 168, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(139, 150, 168, 0.08);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.master-button.primary {
+  border-color: rgba(24, 199, 135, 0.45);
+  background: var(--available);
+  color: #062217;
+}
+
+.master-button.secondary {
+  color: #d6deea;
+}
+
+.master-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.master-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.master-form-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.master-form-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-form-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+}
+
+.master-form-input:focus {
+  border-color: rgba(120, 247, 198, 0.75);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.master-form-input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.master-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.master-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.master-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+}
+
+.master-table th,
+.master-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.master-table th {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 @media (max-width: 767px) {
   .owner-dashboard-header,
   .room-occupancy-header,
+  .settings-header,
+  .settings-section-header,
   .room-usage-report-header {
     flex-direction: column;
     align-items: stretch;
@@ -1085,6 +1268,15 @@ body {
 
   .owner-dashboard-mini-meta {
     text-align: left;
+  }
+
+  .master-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .master-form-actions,
+  .master-button {
+    width: 100%;
   }
 }
 

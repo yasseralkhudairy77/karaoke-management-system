@@ -21,6 +21,7 @@ Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab ter
 | Laporan | Dashboard Owner, room occupancy, laporan penjualan F&B & stok rendah, laporan pemakaian room |
 | Transaksi | Riwayat transaksi, payment, cashier closing, struk |
 | Audit | Riwayat tambah waktu room hari ini |
+| Pengaturan | Master data ruangan, menu F&B, dan inventory |
 
 Fase ini **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga tidak perlu deploy Apps Script setelah update UI ini.
 
@@ -82,6 +83,18 @@ Tab **Laporan** kini menampilkan section **Dashboard Owner** di bagian atas agar
 - Tetap mengikuti tanggal operasional karaoke dengan cutoff jam 10:00 pagi
 
 Fase **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga **tidak perlu `clasp push` dan tidak perlu deploy Apps Script**.
+
+## Fase 6A - Master Data Management
+
+Dashboard menambahkan tab **Pengaturan** untuk mengelola master data langsung dari UI.
+
+- Pengaturan Ruangan: tambah room, edit room, ubah status aman tanpa mengubah `start_time`, `booked_duration_minutes`, atau `scheduled_end_time`.
+- Pengaturan Menu F&B: tambah/edit menu, aktif/nonaktif menu, mapping `stock_item_id` dan `qty_per_unit`.
+- Pengaturan Inventory: tambah/edit item inventory, aktif/nonaktif item, edit `min_stock`; restock tetap lewat fitur Stok.
+- Backend POST baru: `saveRoomMaster`, `updateRoomMaster`, `saveMenuMaster`, `updateMenuMaster`, `saveInventoryMaster`, `updateInventoryMaster`.
+- POST frontend tetap memakai `Content-Type: text/plain;charset=utf-8`.
+
+Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
 
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 

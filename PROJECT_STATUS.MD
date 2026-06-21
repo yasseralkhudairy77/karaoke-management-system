@@ -2,6 +2,27 @@
 
 ## Status Terakhir
 
+### Fase 6A - Master Data Management
+Status: PASS LOKAL + DEPLOYED
+
+Hasil:
+- Tab baru `Pengaturan` ditambahkan ke dashboard.
+- Section: Pengaturan Ruangan, Pengaturan Menu F&B, Pengaturan Inventory.
+- UI tambah/edit master data dengan form inline, tabel responsive, badge status, dan reload data setelah save.
+- Backend POST baru: `saveRoomMaster`, `updateRoomMaster`, `saveMenuMaster`, `updateMenuMaster`, `saveInventoryMaster`, `updateInventoryMaster`.
+- ID generation berurutan: `ROOM-###`, `MENU-###`, `ITEM-###`.
+- Validasi dasar backend untuk room, menu, dan inventory.
+- Guard room occupied: status room occupied tidak bisa diubah dari menu Pengaturan.
+- POST frontend tetap `Content-Type: text/plain;charset=utf-8`.
+
+Catatan:
+- `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
+- Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
+- Deploy Apps Script version 35.
+- PASS FINAL menunggu validasi browser UI dan tes tambah/edit data riil.
+
+---
+
 ### Fase 5G - Room Occupancy & Utilization
 Status: PASS LOKAL
 
