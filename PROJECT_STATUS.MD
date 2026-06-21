@@ -2,6 +2,26 @@
 
 ## Status Terakhir
 
+### Fase UI-4 - Dashboard Summary Owner
+Status: PASS LOKAL
+
+Hasil:
+- Section `Dashboard Owner` ditambahkan di tab Laporan.
+- Summary shift aktif memakai `getRoomUsageReport?period=today`.
+- Card: total revenue, revenue room, revenue F&B, paid/unpaid, total session, room terlaris, total durasi.
+- Stok rendah dihitung dari `getInventoryItems` dengan filter `stock_qty <= min_stock` dan status bukan inactive.
+- Sesi aktif dihitung dari `getRooms` dengan status `occupied`.
+- Badge status untuk Paid, Unpaid, Stok Rendah, Room Occupied, dan Room Available.
+- UI responsive desktop, tablet, dan mobile.
+- `node --check js/app.js` PASS.
+
+Catatan:
+- Fase frontend-only; `Code.gs` tidak berubah.
+- Tidak perlu `clasp push` dan tidak perlu deploy Apps Script.
+- PASS FINAL menunggu validasi browser lokal/production oleh user.
+
+---
+
 ### Fase 5F - Laporan Pemakaian Room & Revenue Shift
 Status: PASS LOKAL
 

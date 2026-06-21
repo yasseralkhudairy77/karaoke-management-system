@@ -806,19 +806,187 @@ body {
   min-width: 0;
 }
 
+.owner-dashboard {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--panel-gap);
+  padding: var(--panel-padding);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(23, 27, 38, 0.98), var(--surface));
+  box-shadow: var(--shadow-soft);
+}
+
+.owner-dashboard-header,
+.owner-dashboard-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.owner-dashboard-header {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.owner-dashboard-title {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.12rem, 2vw, 1.34rem);
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.owner-dashboard-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.owner-dashboard-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(92, 213, 155, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(92, 213, 155, 0.12);
+  color: #5cd59b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.owner-dashboard-button:hover,
+.owner-dashboard-button:focus-visible {
+  background: rgba(92, 213, 155, 0.2);
+  outline: 3px solid rgba(92, 213, 155, 0.2);
+  outline-offset: 2px;
+}
+
+.owner-dashboard-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+  cursor: wait;
+}
+
+.owner-dashboard-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.08);
+  color: #bfdbfe;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.owner-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.owner-dashboard-card {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 128px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.owner-dashboard-label,
+.owner-dashboard-detail,
+.owner-dashboard-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.owner-dashboard-label {
+  text-transform: uppercase;
+}
+
+.owner-dashboard-value {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: clamp(1.05rem, 2vw, 1.42rem);
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.owner-dashboard-mini-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.owner-dashboard-mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.owner-dashboard-mini-name,
+.owner-dashboard-mini-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.owner-dashboard-mini-name {
+  color: var(--text);
+}
+
+.owner-dashboard-mini-meta {
+  color: var(--muted);
+  text-align: right;
+}
+
 @media (max-width: 767px) {
+  .owner-dashboard-header,
   .room-usage-report-header {
     flex-direction: column;
     align-items: stretch;
   }
 
+  .owner-dashboard-button,
   .room-usage-report-button {
     width: 100%;
   }
 
+  .owner-dashboard-grid,
   .room-usage-row,
   .room-usage-transaction-row {
     grid-template-columns: 1fr;
+  }
+
+  .owner-dashboard-mini-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .owner-dashboard-mini-meta {
+    text-align: left;
   }
 }
 
@@ -5037,6 +5205,7 @@ body {
 .inventory-panel,
 .stock-adjustment-panel,
 .stock-movements-panel,
+.owner-dashboard,
 .fnb-sales-report-panel,
 .transaction-history,
 .room-time-logs-panel,
@@ -5055,6 +5224,7 @@ body {
 .today-fnb-summary,
 .inventory-summary,
 .stock-movements-summary,
+.owner-dashboard-grid,
 .fnb-sales-report-summary,
 .room-time-logs-summary,
 .cashier-revenue-grid,
@@ -5068,6 +5238,7 @@ body {
 .today-fnb-summary-card,
 .inventory-summary-card,
 .stock-movements-summary-card,
+.owner-dashboard-card,
 .fnb-sales-report-summary-card,
 .room-time-logs-summary-card,
 .cashier-revenue-card,
@@ -5234,6 +5405,7 @@ body {
   .inventory-panel,
   .stock-adjustment-panel,
   .stock-movements-panel,
+  .owner-dashboard,
   .fnb-sales-report-panel,
   .transaction-history,
   .room-time-logs-panel,
@@ -5248,6 +5420,7 @@ body {
   .today-fnb-header,
   .inventory-header,
   .stock-movements-header,
+  .owner-dashboard-header,
   .fnb-sales-report-header,
   .transaction-history-header,
   .room-time-logs-header {

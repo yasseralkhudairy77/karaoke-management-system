@@ -236,6 +236,8 @@ let roomUsageSummary = null;
 let roomUsageItems = [];
 let roomUsageTransactions = [];
 let isLoadingRoomUsageReport = false;
+let isLoadingOwnerDashboard = false;
+let ownerRoomUsageSummary = null;
 const ROOM_USAGE_PERIOD_OPTIONS = [
   ["today", "Shift Aktif"],
   ["yesterday", "Shift Kemarin"],
@@ -808,6 +810,76 @@ async function fetchRoomUsageReportFromApi() {
     room_usage: Array.isArray(data.room_usage) ? data.room_usage : [],
     transactions: Array.isArray(data.transactions) ? data.transactions : [],
   };
+}
+
+async function fetchActiveShiftRoomUsageReportFromApi() {
+  if (!API_BASE_URL.trim()) {
+    return {
+      summary: null,
+      room_usage: [],
+      transactions: [],
+    };
+  }
+
+  const params = buildActiveShiftQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return {
+    summary: data.summary || null,
+    room_usage: Array.isArray(data.room_usage) ? data.room_usage : [],
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+  };
+}
+
+function getOwnerLowStockItems() {
+  return inventoryItems.filter((item) => {
+    const status = String(item?.status || "").trim().toLowerCase();
+    const stockQty = Number(item?.stock_qty) || 0;
+    const minStock = Number(item?.min_stock) || 0;
+
+    return stockQty <= minStock && status !== "inactive";
+  });
+}
+
+function getOwnerActiveSessions() {
+  return rooms.filter((room) => normalizeRoomStatus(room?.status) === "occupied");
+}
+
+async function loadOwnerDashboardSummary() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  isLoadingOwnerDashboard = true;
+  renderRooms();
+
+  try {
+    const roomUsageData = await fetchActiveShiftRoomUsageReportFromApi();
+    const inventoryData = await fetchInventoryItemsFromApi();
+    const latestRooms = await fetchRoomsFromApi();
+
+    ownerRoomUsageSummary = roomUsageData.summary || null;
+    inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
+    inventorySummary = inventoryData.summary || null;
+    rooms = normalizeRooms(latestRooms);
+    syncSelectedFbRoomWithRooms();
+  } catch (error) {
+    console.warn("Gagal memuat dashboard owner.", error);
+    showInlineNotice(error.message || "Gagal memuat dashboard owner.", "error");
+  } finally {
+    isLoadingOwnerDashboard = false;
+    renderRooms();
+  }
 }
 
 async function loadTodayFnbSalesReport() {
@@ -5246,6 +5318,211 @@ function createRoomUsageReportPanelElement() {
   return panel;
 }
 
+function formatOwnerDurationSummary(summary) {
+  const totalMinutes = Number(summary?.total_duration_minutes) || 0;
+  const totalHours = Number(summary?.total_duration_hours) || totalMinutes / 60;
+  const formattedHours = totalHours.toLocaleString("id-ID", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  });
+
+  return `${totalMinutes} menit / ${formattedHours} jam`;
+}
+
+function createOwnerDashboardMetricCard({ label, value, badgeText, badgeTone, detail }) {
+  const card = document.createElement("article");
+  card.className = "owner-dashboard-card";
+
+  const header = document.createElement("div");
+  header.className = "owner-dashboard-card-header";
+
+  const labelElement = document.createElement("p");
+  labelElement.className = "owner-dashboard-label";
+  labelElement.textContent = label;
+
+  header.appendChild(labelElement);
+
+  if (badgeText) {
+    const badge = document.createElement("span");
+    badge.className = withStatusBadge("owner-dashboard-badge", badgeTone);
+    badge.textContent = badgeText;
+    header.appendChild(badge);
+  }
+
+  const valueElement = document.createElement("p");
+  valueElement.className = "owner-dashboard-value";
+  valueElement.textContent = value;
+
+  card.append(header, valueElement);
+
+  if (detail) {
+    const detailElement = document.createElement("p");
+    detailElement.className = "owner-dashboard-detail";
+    detailElement.textContent = detail;
+    card.appendChild(detailElement);
+  }
+
+  return card;
+}
+
+function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, items, emptyText, detailBuilder }) {
+  const card = createOwnerDashboardMetricCard({ label, value, badgeText, badgeTone });
+  const list = document.createElement("div");
+  list.className = "owner-dashboard-mini-list";
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "owner-dashboard-empty";
+    empty.textContent = emptyText;
+    list.appendChild(empty);
+  } else {
+    items.slice(0, 3).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "owner-dashboard-mini-row";
+
+      const name = document.createElement("span");
+      name.className = "owner-dashboard-mini-name";
+      name.textContent = detailBuilder(item).name;
+
+      const meta = document.createElement("span");
+      meta.className = "owner-dashboard-mini-meta";
+      meta.textContent = detailBuilder(item).meta;
+
+      row.append(name, meta);
+      list.appendChild(row);
+    });
+  }
+
+  card.appendChild(list);
+  return card;
+}
+
+function createOwnerDashboardElement() {
+  const section = document.createElement("section");
+  section.className = "owner-dashboard";
+  section.setAttribute("aria-labelledby", "owner-dashboard-title");
+
+  const header = document.createElement("div");
+  header.className = "owner-dashboard-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "owner-dashboard-title";
+  title.id = "owner-dashboard-title";
+  title.textContent = "Dashboard Owner";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "owner-dashboard-subtitle";
+  subtitle.textContent = "Ringkasan cepat shift aktif berdasarkan tanggal operasional karaoke.";
+
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "owner-dashboard-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-owner-dashboard";
+  refreshButton.disabled = isLoadingOwnerDashboard || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingOwnerDashboard ? "Memuat..." : "Refresh Dashboard";
+
+  header.append(titleGroup, refreshButton);
+
+  const summary = ownerRoomUsageSummary || {
+    total_sessions: 0,
+    total_duration_minutes: 0,
+    total_duration_hours: 0,
+    total_room_revenue: 0,
+    total_fnb_revenue: 0,
+    total_grand_revenue: 0,
+    paid_revenue: 0,
+    unpaid_revenue: 0,
+    top_room_name: "",
+    top_room_duration_minutes: 0,
+  };
+  const lowStockItems = getOwnerLowStockItems();
+  const activeSessions = getOwnerActiveSessions();
+  const topRoomName = summary.top_room_name || "-";
+  const topRoomDetail = summary.top_room_duration_minutes
+    ? `Durasi ${formatDurationMinutes(summary.top_room_duration_minutes)}`
+    : "Belum ada room terlaris di shift ini.";
+
+  const grid = document.createElement("div");
+  grid.className = "owner-dashboard-grid";
+
+  [
+    {
+      label: "Total Revenue Shift Aktif",
+      value: formatCurrency(summary.total_grand_revenue),
+      detail: `${Number(summary.total_sessions) || 0} sesi tercatat`,
+    },
+    {
+      label: "Paid Revenue",
+      value: formatCurrency(summary.paid_revenue),
+      badgeText: "Paid",
+      badgeTone: "success",
+    },
+    {
+      label: "Revenue Room",
+      value: formatCurrency(summary.total_room_revenue),
+    },
+    {
+      label: "Revenue F&B",
+      value: formatCurrency(summary.total_fnb_revenue),
+    },
+    {
+      label: "Unpaid Revenue",
+      value: formatCurrency(summary.unpaid_revenue),
+      badgeText: "Unpaid",
+      badgeTone: Number(summary.unpaid_revenue) > 0 ? "warning" : "success",
+    },
+    {
+      label: "Total Session",
+      value: `${Number(summary.total_sessions) || 0} sesi`,
+    },
+    {
+      label: "Room Terlaris",
+      value: topRoomName,
+      detail: topRoomDetail,
+    },
+    {
+      label: "Total Durasi Room",
+      value: formatOwnerDurationSummary(summary),
+    },
+  ].forEach((item) => {
+    grid.appendChild(createOwnerDashboardMetricCard(item));
+  });
+
+  grid.appendChild(createOwnerDashboardListCard({
+    label: "Stok Rendah",
+    value: `${lowStockItems.length} item`,
+    badgeText: "Stok Rendah",
+    badgeTone: lowStockItems.length > 0 ? "warning" : "success",
+    items: lowStockItems,
+    emptyText: "Tidak ada stok rendah.",
+    detailBuilder: (item) => ({
+      name: item.stock_item_name || item.stock_item_id || "-",
+      meta: `${Number(item.stock_qty) || 0}/${Number(item.min_stock) || 0} ${item.unit || ""}`.trim(),
+    }),
+  }));
+
+  grid.appendChild(createOwnerDashboardListCard({
+    label: "Sesi Aktif",
+    value: `${activeSessions.length} room`,
+    badgeText: activeSessions.length > 0 ? "Room Occupied" : "Room Available",
+    badgeTone: activeSessions.length > 0 ? "danger" : "success",
+    items: activeSessions,
+    emptyText: "Semua room available.",
+    detailBuilder: (room) => ({
+      name: room.room_name || room.room_id || "-",
+      meta: room.scheduled_end_time ? `Sampai ${room.scheduled_end_time}` : "Sedang occupied",
+    }),
+  }));
+
+  section.append(header, createOperationalShiftNoteElement("owner-dashboard-note"), grid);
+
+  return section;
+}
+
 function createTodayFnbSalesReportPanelElement() {
   const panel = document.createElement("section");
   panel.className = "fnb-sales-report-panel";
@@ -6201,6 +6478,7 @@ function refreshActiveTabData() {
       loadTodayStockMovements();
       break;
     case "reports":
+      loadOwnerDashboardSummary();
       loadTodayFnbSalesReport();
       loadRoomUsageReport();
       break;
@@ -6303,6 +6581,7 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "reports":
       panel.append(
+        createOwnerDashboardElement(),
         createTodayFnbSalesReportPanelElement(),
         createRoomUsageReportPanelElement()
       );
@@ -7164,6 +7443,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-owner-dashboard") {
+    await loadOwnerDashboardSummary();
+    return;
+  }
+
   if (action === "refresh-room-usage-report") {
     await loadRoomUsageReport();
     return;
@@ -7457,6 +7741,7 @@ async function initializeDashboard() {
   await Promise.all([
     loadTodayFnbOrders(),
     loadTodayStockMovements(),
+    loadOwnerDashboardSummary(),
     loadTodayFnbSalesReport(),
     loadRoomUsageReport(),
     loadTodayRoomTimeLogs(),

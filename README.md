@@ -18,7 +18,7 @@ Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab ter
 | Ruangan | Kartu room, mulai sesi, countdown, tambah waktu, selesaikan sesi |
 | F&B | Menu, keranjang, order, open order, riwayat order hari ini |
 | Stok | Inventory, restock/koreksi, riwayat mutasi stok |
-| Laporan | Laporan penjualan F&B & stok rendah |
+| Laporan | Dashboard Owner, laporan penjualan F&B & stok rendah, laporan pemakaian room |
 | Transaksi | Riwayat transaksi, payment, cashier closing, struk |
 | Audit | Riwayat tambah waktu room hari ini |
 
@@ -68,6 +68,20 @@ Fase ini merapikan tampilan dashboard secara visual tanpa mengubah logic bisnis 
 - Responsive diperhalus untuk desktop, tablet (768–1024px), dan mobile (<768px)
 
 Fase **frontend-only**; `apps-script/Code.gs` tidak berubah — **tidak perlu deploy Apps Script**.
+
+## Fase UI-4 - Dashboard Summary Owner
+
+Tab **Laporan** kini menampilkan section **Dashboard Owner** di bagian atas agar owner bisa membaca kondisi shift aktif tanpa membuka tabel panjang.
+
+- Total Revenue Shift Aktif, Revenue Room, Revenue F&B
+- Paid Revenue dan Unpaid Revenue dengan badge status
+- Total Session, Room Terlaris, Total Durasi Room
+- Stok Rendah dari `getInventoryItems`
+- Sesi Aktif dari `getRooms`
+- Summary utama dari `getRoomUsageReport?period=today`
+- Tetap mengikuti tanggal operasional karaoke dengan cutoff jam 10:00 pagi
+
+Fase **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga **tidak perlu `clasp push` dan tidak perlu deploy Apps Script**.
 
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 
