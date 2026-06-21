@@ -962,8 +962,105 @@ body {
   text-align: right;
 }
 
+.room-occupancy {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--panel-gap);
+  padding: var(--panel-padding);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(23, 27, 38, 0.98), var(--surface));
+  box-shadow: var(--shadow-soft);
+}
+
+.room-occupancy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.room-occupancy-title {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.12rem, 2vw, 1.34rem);
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.room-occupancy-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.room-occupancy-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.room-occupancy-summary-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  min-height: 104px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.room-occupancy-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.room-occupancy-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+}
+
+.room-occupancy-table th,
+.room-occupancy-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.room-occupancy-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.room-occupancy-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.room-occupancy-table td:first-child {
+  min-width: 180px;
+  white-space: normal;
+}
+
 @media (max-width: 767px) {
   .owner-dashboard-header,
+  .room-occupancy-header,
   .room-usage-report-header {
     flex-direction: column;
     align-items: stretch;
@@ -975,6 +1072,7 @@ body {
   }
 
   .owner-dashboard-grid,
+  .room-occupancy-summary,
   .room-usage-row,
   .room-usage-transaction-row {
     grid-template-columns: 1fr;
@@ -5206,6 +5304,7 @@ body {
 .stock-adjustment-panel,
 .stock-movements-panel,
 .owner-dashboard,
+.room-occupancy,
 .fnb-sales-report-panel,
 .transaction-history,
 .room-time-logs-panel,
@@ -5225,6 +5324,7 @@ body {
 .inventory-summary,
 .stock-movements-summary,
 .owner-dashboard-grid,
+.room-occupancy-summary,
 .fnb-sales-report-summary,
 .room-time-logs-summary,
 .cashier-revenue-grid,
@@ -5239,6 +5339,7 @@ body {
 .inventory-summary-card,
 .stock-movements-summary-card,
 .owner-dashboard-card,
+.room-occupancy-summary-card,
 .fnb-sales-report-summary-card,
 .room-time-logs-summary-card,
 .cashier-revenue-card,
@@ -5406,6 +5507,7 @@ body {
   .stock-adjustment-panel,
   .stock-movements-panel,
   .owner-dashboard,
+  .room-occupancy,
   .fnb-sales-report-panel,
   .transaction-history,
   .room-time-logs-panel,
@@ -5421,6 +5523,7 @@ body {
   .inventory-header,
   .stock-movements-header,
   .owner-dashboard-header,
+  .room-occupancy-header,
   .fnb-sales-report-header,
   .transaction-history-header,
   .room-time-logs-header {

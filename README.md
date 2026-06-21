@@ -18,7 +18,7 @@ Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab ter
 | Ruangan | Kartu room, mulai sesi, countdown, tambah waktu, selesaikan sesi |
 | F&B | Menu, keranjang, order, open order, riwayat order hari ini |
 | Stok | Inventory, restock/koreksi, riwayat mutasi stok |
-| Laporan | Dashboard Owner, laporan penjualan F&B & stok rendah, laporan pemakaian room |
+| Laporan | Dashboard Owner, room occupancy, laporan penjualan F&B & stok rendah, laporan pemakaian room |
 | Transaksi | Riwayat transaksi, payment, cashier closing, struk |
 | Audit | Riwayat tambah waktu room hari ini |
 
@@ -119,6 +119,20 @@ Tab **Laporan** menambahkan panel **Laporan Pemakaian Room** dengan filter shift
 cd "F:\KARAOKE MANAGEMENT SYSTEM\apps-script"
 .\deploy.ps1 "Fase 5F - Laporan Pemakaian Room"
 ```
+
+## Fase 5G - Room Occupancy & Utilization
+
+Tab **Laporan** menambahkan section **Room Occupancy & Utilization** setelah Dashboard Owner.
+
+- Mengikuti filter periode laporan room: Shift Aktif, Shift Kemarin, 7 Shift, Bulan Ini, Semua, dan Custom.
+- Jam operasional default: 17:00 sampai 10:00 pagi berikutnya (`1020` menit).
+- Total room aktif dihitung dari `getRooms`, dengan status `maintenance` tidak dihitung.
+- Occupancy rate: `total_used_minutes / total_available_minutes * 100`.
+- Revenue per jam: `total_room_revenue / total_used_hours`.
+- Tabel per room menampilkan session, durasi, revenue, utilization, revenue per jam, dan status analisis.
+- Status analisis: Tinggi, Sedang, Rendah, Belum Terpakai.
+
+Fase **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga **tidak perlu `clasp push` dan tidak perlu deploy Apps Script**.
 
 ## Cara Menjalankan
 

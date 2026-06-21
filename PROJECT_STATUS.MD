@@ -2,6 +2,26 @@
 
 ## Status Terakhir
 
+### Fase 5G - Room Occupancy & Utilization
+Status: PASS LOKAL
+
+Hasil:
+- Section `Room Occupancy & Utilization` ditambahkan setelah Dashboard Owner di tab Laporan.
+- Mengikuti filter periode laporan room (`roomUsagePeriodFilter`) sehingga data occupancy sinkron dengan laporan pemakaian room.
+- Konstanta frontend: `OPERATIONAL_OPEN_HOUR = 17`, `OPERATIONAL_CLOSE_HOUR = 10`, `OPERATIONAL_WINDOW_MINUTES = 1020`.
+- Card summary: total room aktif, total jam tersedia, total jam terpakai, occupancy rate, room terproduktif, room terendah pemakaian, revenue per jam, total session.
+- Tabel per room: room, session, durasi, revenue room, utilization, revenue per jam, status analisis.
+- Status analisis memakai badge: Tinggi, Sedang, Rendah, Belum Terpakai.
+- Fallback angka aman agar tidak tampil NaN, undefined, null, atau RpNaN.
+- `node --check js/app.js` PASS.
+
+Catatan:
+- Fase frontend-only; `Code.gs` tidak berubah.
+- Tidak perlu `clasp push` dan tidak perlu deploy Apps Script.
+- PASS FINAL menunggu validasi browser lokal/production oleh user.
+
+---
+
 ### Fase UI-4 - Dashboard Summary Owner
 Status: PASS LOKAL
 

@@ -224,6 +224,9 @@ let isExtendingSession = false;
 let activeDashboardTab = loadActiveDashboardTab();
 const PAGINATION_PAGE_SIZE = 15;
 const paginationState = {};
+const OPERATIONAL_OPEN_HOUR = 17;
+const OPERATIONAL_CLOSE_HOUR = 10;
+const OPERATIONAL_WINDOW_MINUTES = 1020;
 let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
@@ -5318,6 +5321,353 @@ function createRoomUsageReportPanelElement() {
   return panel;
 }
 
+function formatDecimal(value, maximumFractionDigits = 1) {
+  const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+
+  return safeValue.toLocaleString("id-ID", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  });
+}
+
+function formatHours(value) {
+  return `${formatDecimal(value)} jam`;
+}
+
+function formatPercent(value) {
+  return `${formatDecimal(value)}%`;
+}
+
+function formatDurationMinutesAndHours(minutes) {
+  const safeMinutes = Number(minutes) || 0;
+  const safeHours = safeMinutes / 60;
+
+  return `${safeMinutes} menit / ${formatDecimal(safeHours)} jam`;
+}
+
+function getActiveRoomsForOccupancy() {
+  return rooms.filter((room) => normalizeRoomStatus(room?.status) !== "maintenance");
+}
+
+function getRoomUsagePeriodDayCount() {
+  if (roomUsagePeriodFilter === "last7days") {
+    return 7;
+  }
+
+  if (roomUsagePeriodFilter === "custom" && roomUsageCustomStartDate && roomUsageCustomEndDate) {
+    const startDate = new Date(`${roomUsageCustomStartDate}T00:00:00`);
+    const endDate = new Date(`${roomUsageCustomEndDate}T00:00:00`);
+    const diffMs = endDate.getTime() - startDate.getTime();
+
+    if (Number.isFinite(diffMs) && diffMs >= 0) {
+      return Math.floor(diffMs / 86400000) + 1;
+    }
+  }
+
+  if (roomUsagePeriodFilter === "thisMonth") {
+    return new Date().getDate();
+  }
+
+  if (roomUsagePeriodFilter === "all") {
+    const operationalDates = new Set(
+      roomUsageTransactions
+        .map((transaction) => transaction?.operational_date)
+        .filter(Boolean)
+    );
+
+    return Math.max(operationalDates.size, 1);
+  }
+
+  return 1;
+}
+
+function getOccupancyStatus(utilization) {
+  if (utilization <= 0) {
+    return {
+      label: "Belum Terpakai",
+      tone: "neutral",
+    };
+  }
+
+  if (utilization >= 70) {
+    return {
+      label: "Tinggi",
+      tone: "danger",
+    };
+  }
+
+  if (utilization >= 40) {
+    return {
+      label: "Sedang",
+      tone: "warning",
+    };
+  }
+
+  return {
+    label: "Rendah",
+    tone: "info",
+  };
+}
+
+function buildRoomOccupancyRows() {
+  const activeRooms = getActiveRoomsForOccupancy();
+  const usageByRoomId = new Map();
+  const usageByRoomName = new Map();
+
+  roomUsageItems.forEach((item) => {
+    if (item?.room_id) {
+      usageByRoomId.set(String(item.room_id), item);
+    }
+
+    if (item?.room_name) {
+      usageByRoomName.set(String(item.room_name), item);
+    }
+  });
+
+  const rows = activeRooms.map((room) => {
+    const usage = usageByRoomId.get(String(room.room_id)) || usageByRoomName.get(String(room.room_name)) || {};
+    const durationMinutes = Number(usage.duration_minutes) || Number(usage.total_duration_minutes) || 0;
+    const usedHours = durationMinutes / 60;
+    const roomRevenue = Number(usage.room_revenue) || Number(usage.total_room_revenue) || 0;
+    const utilization = OPERATIONAL_WINDOW_MINUTES > 0
+      ? (durationMinutes / OPERATIONAL_WINDOW_MINUTES) * 100
+      : 0;
+    const revenuePerHour = usedHours > 0 ? roomRevenue / usedHours : 0;
+
+    return {
+      room_id: room.room_id || usage.room_id || "",
+      room_name: room.room_name || usage.room_name || "Belum ada data",
+      session_count: Number(usage.session_count) || Number(usage.total_sessions) || 0,
+      duration_minutes: durationMinutes,
+      room_revenue: roomRevenue,
+      utilization,
+      revenue_per_hour: revenuePerHour,
+      status: getOccupancyStatus(utilization),
+    };
+  });
+
+  roomUsageItems.forEach((item) => {
+    const roomId = String(item?.room_id || "");
+    const roomName = String(item?.room_name || "");
+    const alreadyExists = rows.some((row) => (
+      (roomId && row.room_id === roomId) ||
+      (roomName && row.room_name === roomName)
+    ));
+
+    if (alreadyExists) {
+      return;
+    }
+
+    const durationMinutes = Number(item.duration_minutes) || Number(item.total_duration_minutes) || 0;
+    const usedHours = durationMinutes / 60;
+    const roomRevenue = Number(item.room_revenue) || Number(item.total_room_revenue) || 0;
+    const utilization = OPERATIONAL_WINDOW_MINUTES > 0
+      ? (durationMinutes / OPERATIONAL_WINDOW_MINUTES) * 100
+      : 0;
+
+    rows.push({
+      room_id: roomId,
+      room_name: item.room_name || item.room_id || "Belum ada data",
+      session_count: Number(item.session_count) || Number(item.total_sessions) || 0,
+      duration_minutes: durationMinutes,
+      room_revenue: roomRevenue,
+      utilization,
+      revenue_per_hour: usedHours > 0 ? roomRevenue / usedHours : 0,
+      status: getOccupancyStatus(utilization),
+    });
+  });
+
+  return rows.sort((a, b) => b.duration_minutes - a.duration_minutes || b.room_revenue - a.room_revenue);
+}
+
+function buildRoomOccupancySummary(rows) {
+  const activeRoomCount = getActiveRoomsForOccupancy().length;
+  const periodDayCount = getRoomUsagePeriodDayCount();
+  const totalAvailableMinutes = activeRoomCount * OPERATIONAL_WINDOW_MINUTES * periodDayCount;
+  const totalUsedMinutes = Number(roomUsageSummary?.total_duration_minutes) || 0;
+  const totalUsedHours = Number(roomUsageSummary?.total_duration_hours) || totalUsedMinutes / 60;
+  const totalRoomRevenue = Number(roomUsageSummary?.total_room_revenue) || 0;
+  const occupancyRate = totalAvailableMinutes > 0
+    ? (totalUsedMinutes / totalAvailableMinutes) * 100
+    : 0;
+  const revenuePerUsedHour = totalUsedHours > 0 ? totalRoomRevenue / totalUsedHours : 0;
+  const productiveRoom = rows.reduce((best, row) => {
+    if (!best || row.room_revenue > best.room_revenue) {
+      return row;
+    }
+
+    if (row.room_revenue === best.room_revenue && row.duration_minutes > best.duration_minutes) {
+      return row;
+    }
+
+    return best;
+  }, null);
+  const lowestUsageRoom = rows.reduce((lowest, row) => {
+    if (!lowest || row.duration_minutes < lowest.duration_minutes) {
+      return row;
+    }
+
+    if (row.duration_minutes === lowest.duration_minutes && row.room_revenue < lowest.room_revenue) {
+      return row;
+    }
+
+    return lowest;
+  }, null);
+
+  return {
+    activeRoomCount,
+    periodDayCount,
+    totalAvailableMinutes,
+    totalAvailableHours: totalAvailableMinutes / 60,
+    totalUsedMinutes,
+    totalUsedHours,
+    occupancyRate,
+    productiveRoom,
+    lowestUsageRoom,
+    revenuePerUsedHour,
+    totalSessions: Number(roomUsageSummary?.total_sessions) || 0,
+  };
+}
+
+function createRoomOccupancySummaryElement(summary) {
+  const grid = document.createElement("div");
+  grid.className = "room-occupancy-summary";
+
+  const productiveLabel = summary.productiveRoom
+    ? `${summary.productiveRoom.room_name} (${formatCurrency(summary.productiveRoom.room_revenue)})`
+    : "Belum ada data";
+  const lowestLabel = summary.lowestUsageRoom
+    ? `${summary.lowestUsageRoom.room_name} (${formatDurationMinutesAndHours(summary.lowestUsageRoom.duration_minutes)})`
+    : "Belum ada data";
+
+  [
+    ["Total Room Aktif", `${summary.activeRoomCount} room`],
+    ["Total Jam Tersedia", formatHours(summary.totalAvailableHours)],
+    ["Total Jam Terpakai", formatDurationMinutesAndHours(summary.totalUsedMinutes)],
+    ["Occupancy Rate", formatPercent(summary.occupancyRate)],
+    ["Room Terproduktif", productiveLabel],
+    ["Room Terendah Pemakaian", lowestLabel],
+    ["Revenue per Jam", formatCurrency(summary.revenuePerUsedHour)],
+    ["Total Session", `${summary.totalSessions} sesi`],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("article");
+    card.className = "room-occupancy-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createRoomOccupancyTableElement(rows) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "room-occupancy-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "room-occupancy-table";
+
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+
+  ["Room", "Session", "Durasi", "Revenue", "Utilization", "Revenue/Jam", "Status"].forEach((labelText) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = labelText;
+    headerRow.appendChild(th);
+  });
+
+  thead.appendChild(headerRow);
+
+  const tbody = document.createElement("tbody");
+
+  if (rows.length === 0) {
+    const emptyRow = document.createElement("tr");
+    const emptyCell = document.createElement("td");
+    emptyCell.colSpan = 7;
+    emptyCell.textContent = "Belum ada data";
+    emptyRow.appendChild(emptyCell);
+    tbody.appendChild(emptyRow);
+  } else {
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+
+      [
+        row.room_name || "Belum ada data",
+        `${row.session_count} sesi`,
+        formatDurationMinutesAndHours(row.duration_minutes),
+        formatCurrency(row.room_revenue),
+        formatPercent(row.utilization),
+        formatCurrency(row.revenue_per_hour),
+      ].forEach((valueText) => {
+        const td = document.createElement("td");
+        td.textContent = valueText;
+        tr.appendChild(td);
+      });
+
+      const statusCell = document.createElement("td");
+      const badge = document.createElement("span");
+      badge.className = withStatusBadge("room-occupancy-badge", row.status.tone);
+      badge.textContent = row.status.label;
+      statusCell.appendChild(badge);
+      tr.appendChild(statusCell);
+      tbody.appendChild(tr);
+    });
+  }
+
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+
+  return wrapper;
+}
+
+function createRoomOccupancyElement() {
+  const section = document.createElement("section");
+  section.className = "room-occupancy";
+  section.setAttribute("aria-labelledby", "room-occupancy-title");
+
+  const header = document.createElement("div");
+  header.className = "room-occupancy-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "room-occupancy-title";
+  title.id = "room-occupancy-title";
+  title.textContent = "Room Occupancy & Utilization";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "room-occupancy-subtitle";
+  subtitle.textContent = `Mengikuti filter laporan room: ${getRoomUsagePeriodTitleSuffix()}. Jam operasional ${String(OPERATIONAL_OPEN_HOUR).padStart(2, "0")}:00-${String(OPERATIONAL_CLOSE_HOUR).padStart(2, "0")}:00.`;
+
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const rows = buildRoomOccupancyRows();
+  const summary = buildRoomOccupancySummary(rows);
+
+  if (isLoadingRoomUsageReport) {
+    section.append(header, createStateMessage("Memuat occupancy room..."));
+    return section;
+  }
+
+  section.append(
+    header,
+    createRoomOccupancySummaryElement(summary),
+    createRoomOccupancyTableElement(rows)
+  );
+
+  return section;
+}
+
 function formatOwnerDurationSummary(summary) {
   const totalMinutes = Number(summary?.total_duration_minutes) || 0;
   const totalHours = Number(summary?.total_duration_hours) || totalMinutes / 60;
@@ -6582,6 +6932,7 @@ function appendDashboardTabContent(panel, tabKey) {
     case "reports":
       panel.append(
         createOwnerDashboardElement(),
+        createRoomOccupancyElement(),
         createTodayFnbSalesReportPanelElement(),
         createRoomUsageReportPanelElement()
       );
