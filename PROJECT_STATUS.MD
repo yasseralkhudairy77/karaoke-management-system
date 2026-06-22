@@ -2,8 +2,32 @@
 
 ## Status Terakhir
 
+### Fase 7A-3 - Middleware URL Integration
+Status: PASS LOKAL + DEPLOYED / BELUM PASS FINAL
+
+Hasil:
+- `sendTvCommand` mendukung `control_type=middleware` via `UrlFetchApp.fetch` POST JSON ke `middleware_url`.
+- `control_type` valid di TVDevices: `mock`, `middleware`, `home_assistant`, `manual`.
+- `middleware_url` wajib saat save/update device dengan `control_type=middleware`.
+- Block reason baru: `MIDDLEWARE_URL_EMPTY`, `INVALID_MIDDLEWARE_URL`, `MIDDLEWARE_ERROR`, `MIDDLEWARE_TIMEOUT`.
+- TVControlLogs kolom baru `raw_response` untuk respons middleware.
+- Perilaku `mock` tetap (termasuk `TV-FAIL`, `TV-TIMEOUT`).
+- Frontend TV Integration: dropdown `middleware`, validasi `middleware_url`, log panel menampilkan block_reason dan raw_response.
+- Card room tidak menampilkan `middleware_url`.
+
+Catatan:
+- `Code.gs` dan `appsscript.json` berubah; `clasp push` dan deploy production existing sudah dilakukan.
+- Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
+- Deploy Apps Script version 43 (termasuk scope `script.external_request`).
+- Smoke test production: mock `TV-002` OK, validasi `middleware_url` wajib OK, `localhost` middleware → `MIDDLEWARE_ERROR` (expected).
+- **Re-authorization wajib:** setelah scope baru, buka Apps Script editor → jalankan fungsi apa pun / approve authorization → ulangi test middleware via ngrok.
+- Apps Script production tidak bisa mengakses `localhost`; test end-to-end middleware butuh URL publik (ngrok/cloudflared).
+- PASS FINAL menunggu re-authorization Apps Script + validasi browser + test tunnel publik.
+
+---
+
 ### Fase 7A-2 - Local TV Middleware Bridge
-Status: PASS LOKAL
+Status: PASS FINAL
 
 Hasil:
 - Folder `middleware/tv-control-bridge/` berisi `package.json`, `server.js`, dan `README.md`.
@@ -497,4 +521,4 @@ Hasil:
 
 ## Next Phase
 
-Fase 7A-3: hubungkan Apps Script `sendTvCommand` ke `middleware_url`, atau integrasi Home Assistant — belum ditetapkan.
+Fase 7A-4: Home Assistant integration atau hardware fisik — belum ditetapkan.

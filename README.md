@@ -164,7 +164,7 @@ Tab **Pengaturan** menambahkan section **TV Integration** untuk mengelola mappin
 - Tabel TV Devices: Room, Device Name, Control Type, Status, Last Command, Last Result, Updated At, Aksi
 - Tombol Tambah Mapping TV, modal tambah/edit mapping
 - Field: `tv_device_id`, `room_id`, `device_name`, `control_type`, `status`, `middleware_url`, `device_identifier`
-- `control_type` valid: `mock`, `home_assistant`, `manual`
+- `control_type` valid: `mock`, `middleware`, `home_assistant`, `manual`
 - `status` valid: `active`, `inactive`
 - Tombol Aktifkan / Nonaktifkan device
 - Tombol Test command dari Pengaturan (owner/admin)
@@ -192,6 +192,40 @@ Simulator perangkat TV controller di [Wokwi](https://wokwi.com) sebelum integras
 - **Bukan** bukti TV fisik nyala/mati — hanya simulasi LED
 
 Fase **hardware-only**; tidak perlu deploy Apps Script. Panduan lengkap: `hardware-sim/wokwi-tv-controller/README.md`.
+
+## Fase 7A-2 - Local TV Middleware Bridge
+
+Middleware lokal Node.js + Express di `middleware/tv-control-bridge/`.
+
+- URL lokal: `http://localhost:3030`
+- Endpoint: GET `/health`, POST `/tv-command`
+- Simulasi `TV-FAIL`, `TV-TIMEOUT`, validasi payload
+
+Fase middleware-only; tidak perlu deploy Apps Script. Panduan: `middleware/tv-control-bridge/README.md`.
+
+## Fase 7A-3 - Middleware URL Integration
+
+`sendTvCommand` di Apps Script kini mendukung `control_type = middleware` dengan POST ke `middleware_url` per device.
+
+- `mock` — perilaku lama tetap
+- `middleware` — `UrlFetchApp.fetch` POST JSON ke `middleware_url`
+- `home_assistant`, `manual` — masih ditolak saat kirim command
+- `middleware_url` wajib di Pengaturan jika `control_type=middleware`
+- TVControlLogs mencatat `raw_response` dari middleware
+- Apps Script production **tidak bisa** mengakses `localhost`; gunakan tunnel publik (ngrok/cloudflared) untuk test end-to-end
+
+Contoh test tunnel:
+
+```powershell
+cd "F:\karaoke management system\middleware\tv-control-bridge"
+npm start
+# Terminal lain: ngrok http 3030
+# Set middleware_url = https://xxxx.ngrok-free.app/tv-command
+```
+
+Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs` dan `appsscript.json` (scope `script.external_request`).
+
+Setelah deploy pertama dengan scope baru, buka **Apps Script editor** → approve authorization baru agar `UrlFetchApp.fetch` ke middleware berfungsi.
 
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 

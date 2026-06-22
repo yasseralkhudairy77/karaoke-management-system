@@ -701,6 +701,30 @@ function getTvDeviceFormTitle() {
   return `${tvDeviceForm.mode === "edit" ? "Edit" : "Tambah"} Mapping TV`;
 }
 
+function getTvMiddlewareUrlHelper() {
+  const controlType = String(tvDeviceForm?.values?.control_type || "").trim().toLowerCase();
+
+  if (controlType === "middleware") {
+    return "Wajib untuk middleware. Gunakan URL publik (mis. ngrok/cloudflared) ke endpoint /tv-command. Apps Script production tidak bisa mengakses localhost.";
+  }
+
+  return "Opsional kecuali control_type middleware. Tidak ditampilkan di card room.";
+}
+
+function truncateTvLogRawResponse(value, maxLength = 120) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "-";
+  }
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}...`;
+}
+
 function openTvDeviceForm(mode, item = null) {
   if (!canManageTvMapping()) {
     showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
@@ -822,6 +846,7 @@ function createTvDeviceFormModalElement() {
       field: "control_type",
       options: [
         ["mock", "Mock"],
+        ["middleware", "Middleware"],
         ["home_assistant", "Home Assistant"],
         ["manual", "Manual"],
       ],
@@ -837,7 +862,7 @@ function createTvDeviceFormModalElement() {
     createTvDeviceField({
       label: "Middleware URL",
       field: "middleware_url",
-      helper: "Hanya untuk fase integrasi hardware berikutnya.",
+      helper: getTvMiddlewareUrlHelper(),
     }),
     createTvDeviceField({
       label: "Device Identifier",
@@ -989,17 +1014,20 @@ function createTvIntegrationSection() {
       getRoomNameById(log.room_id),
       log.tv_device_id || "-",
       getTvActionLabel(log.tv_action),
+      log.control_type || "-",
       log.trigger_source || "-",
       log.result || "-",
       log.success ? "true" : "false",
+      log.block_reason || "-",
       log.message || "-",
+      truncateTvLogRawResponse(log.raw_response),
     ]);
 
     logsPanel.append(
       logsTitle,
       logsSubtitle,
       createMasterTable(
-        ["Waktu", "Room", "Device", "Action", "Source", "Result", "Success", "Message"],
+        ["Waktu", "Room", "Device", "Action", "Type", "Source", "Result", "Success", "Block Reason", "Message", "Raw Response"],
         logRows,
         "Belum ada TV control log."
       ),
@@ -1037,6 +1065,13 @@ async function submitTvDeviceForm() {
 
   const values = tvDeviceForm.values || {};
   const isEdit = tvDeviceForm.mode === "edit";
+  const controlType = String(values.control_type || "").trim().toLowerCase();
+  const middlewareUrl = String(values.middleware_url || "").trim();
+
+  if (controlType === "middleware" && !middlewareUrl) {
+    showInlineNotice("middleware_url wajib diisi untuk control_type middleware.", "error");
+    return;
+  }
 
   isSavingTvDevice = true;
   renderRooms();
@@ -10262,7 +10297,7 @@ async function sendTvCommand(roomId, tvDeviceId, tvAction) {
       throw new Error(data?.message || "Perintah TV gagal dikirim.");
     }
 
-    showInlineNotice(getTvCommandSuccessMessage(tvAction));
+    showInlineNotice(data.message || "Perintah TV berhasil dikirim.");
     tvOffConfirmation = null;
     await loadRooms();
   } catch (error) {

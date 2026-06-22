@@ -161,6 +161,7 @@ var TV_CONTROL_LOGS_HEADERS = [
   "success",
   "block_reason",
   "message",
+  "raw_response",
 ];
 var ROOMS_MASTER_HEADERS = [
   "room_id",
@@ -697,6 +698,7 @@ function normalizeTvControlLog_(log) {
     success: String(log.success || "").trim().toLowerCase() === "true" || log.success === true,
     block_reason: log.block_reason || "",
     message: log.message || "",
+    raw_response: log.raw_response || "",
   };
 }
 
@@ -756,11 +758,21 @@ function sendTvCommand_(payload) {
     return response;
   }
 
-  if (device.control_type !== "mock") {
-    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_CONTROL_TYPE_UNSUPPORTED");
-    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
-    return response;
+  if (device.control_type === "mock") {
+    return sendTvCommandViaMock_(device, roomId, tvDeviceId, tvAction, triggerSource, cashierName);
   }
+
+  if (device.control_type === "middleware") {
+    return sendTvCommandViaMiddleware_(device, roomId, tvDeviceId, tvAction, triggerSource, cashierName);
+  }
+
+  response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_CONTROL_TYPE_UNSUPPORTED");
+  appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+  return response;
+}
+
+function sendTvCommandViaMock_(device, roomId, tvDeviceId, tvAction, triggerSource, cashierName) {
+  var response;
 
   if (device.tv_device_id === "TV-FAIL") {
     response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "TV_DEVICE_OFFLINE");
@@ -791,6 +803,169 @@ function sendTvCommand_(payload) {
   return response;
 }
 
+function isValidMiddlewareUrl_(middlewareUrl) {
+  var trimmedUrl = String(middlewareUrl || "").trim();
+
+  return /^https?:\/\/.+/i.test(trimmedUrl);
+}
+
+function truncateTvControlRawResponse_(value) {
+  var text = String(value || "").trim();
+
+  if (text.length <= 2000) {
+    return text;
+  }
+
+  return text.substring(0, 2000) + "...[truncated]";
+}
+
+function callTvMiddleware_(middlewareUrl, payload) {
+  var rawResponse = "";
+  var httpResponse;
+  var statusCode;
+  var parsedBody;
+  var result;
+  var blockReason;
+  var errorMessage;
+
+  try {
+    httpResponse = UrlFetchApp.fetch(middlewareUrl, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+    statusCode = httpResponse.getResponseCode();
+    rawResponse = httpResponse.getContentText() || "";
+
+    try {
+      parsedBody = JSON.parse(rawResponse);
+    } catch (parseError) {
+      return {
+        success: false,
+        result: "failed",
+        error: "MIDDLEWARE_ERROR",
+        raw_response: truncateTvControlRawResponse_(rawResponse),
+        message: "Middleware mengembalikan respons non-JSON.",
+      };
+    }
+
+    if (parsedBody && parsedBody.success === true) {
+      return {
+        success: true,
+        result: String(parsedBody.result || "sent").trim().toLowerCase() || "sent",
+        error: "",
+        raw_response: truncateTvControlRawResponse_(rawResponse),
+        message: String(parsedBody.message || "").trim(),
+      };
+    }
+
+    result = String(parsedBody && parsedBody.result ? parsedBody.result : "failed").trim().toLowerCase();
+    blockReason = String(parsedBody && parsedBody.block_reason ? parsedBody.block_reason : "MIDDLEWARE_ERROR").trim();
+
+    if (result === "timeout" || blockReason === "TV_DEVICE_TIMEOUT" || blockReason === "MIDDLEWARE_TIMEOUT") {
+      return {
+        success: false,
+        result: "timeout",
+        error: blockReason || "MIDDLEWARE_TIMEOUT",
+        raw_response: truncateTvControlRawResponse_(rawResponse),
+        message: String(parsedBody && parsedBody.message ? parsedBody.message : "Middleware timeout.").trim(),
+      };
+    }
+
+    return {
+      success: false,
+      result: result || "failed",
+      error: blockReason || "MIDDLEWARE_ERROR",
+      raw_response: truncateTvControlRawResponse_(rawResponse),
+      message: String(parsedBody && parsedBody.message ? parsedBody.message : "Middleware menolak command.").trim(),
+    };
+  } catch (fetchError) {
+    errorMessage = String(fetchError && fetchError.message ? fetchError.message : fetchError).toLowerCase();
+
+    if (errorMessage.indexOf("timeout") >= 0 || errorMessage.indexOf("timed out") >= 0) {
+      return {
+        success: false,
+        result: "timeout",
+        error: "MIDDLEWARE_TIMEOUT",
+        raw_response: truncateTvControlRawResponse_(rawResponse || errorMessage),
+        message: "Middleware timeout.",
+      };
+    }
+
+    return {
+      success: false,
+      result: "failed",
+      error: "MIDDLEWARE_ERROR",
+      raw_response: truncateTvControlRawResponse_(rawResponse || errorMessage),
+      message: "Gagal menghubungi middleware.",
+    };
+  }
+}
+
+function sendTvCommandViaMiddleware_(device, roomId, tvDeviceId, tvAction, triggerSource, cashierName) {
+  var middlewareUrl = String(device.middleware_url || "").trim();
+  var middlewarePayload;
+  var middlewareResult;
+  var response;
+
+  if (!middlewareUrl) {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "MIDDLEWARE_URL_EMPTY");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  if (!isValidMiddlewareUrl_(middlewareUrl)) {
+    response = createTvCommandFailedResponse_(roomId || device.room_id, device.tv_device_id, tvAction, triggerSource, cashierName, device.control_type, "failed", "INVALID_MIDDLEWARE_URL");
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction);
+    return response;
+  }
+
+  middlewarePayload = {
+    room_id: roomId || device.room_id,
+    tv_device_id: device.tv_device_id || tvDeviceId,
+    tv_action: tvAction,
+    trigger_source: triggerSource,
+    requested_by: cashierName,
+  };
+  middlewareResult = callTvMiddleware_(middlewareUrl, middlewarePayload);
+
+  if (middlewareResult.success === true) {
+    response = {
+      ok: true,
+      success: true,
+      message: "Perintah TV berhasil dikirim.",
+      data: {
+        room_id: roomId || device.room_id,
+        tv_device_id: device.tv_device_id,
+        result: middlewareResult.result || "sent",
+      },
+      tv_action: tvAction,
+      control_type: device.control_type,
+      raw_response: middlewareResult.raw_response || "",
+    };
+    appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction, middlewareResult.raw_response);
+    return response;
+  }
+
+  response = createTvCommandFailedResponse_(
+    roomId || device.room_id,
+    device.tv_device_id,
+    tvAction,
+    triggerSource,
+    cashierName,
+    device.control_type,
+    middlewareResult.result || "failed",
+    middlewareResult.error || "MIDDLEWARE_ERROR"
+  );
+  response.raw_response = middlewareResult.raw_response || "";
+  if (middlewareResult.message) {
+    response.message = "Perintah TV gagal dikirim.";
+  }
+  appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction, middlewareResult.raw_response);
+  return response;
+}
+
 function findTvDevice_(roomId, tvDeviceId) {
   ensureTvDevicesSheet_();
 
@@ -816,7 +991,7 @@ function validateTvDevicePayload_(payload, isUpdate) {
   var status = String(payload.status || "active").trim().toLowerCase();
   var middlewareUrl = String(payload.middleware_url || "").trim();
   var deviceIdentifier = String(payload.device_identifier || "").trim();
-  var validControlTypes = ["mock", "home_assistant", "manual"];
+  var validControlTypes = ["mock", "middleware", "home_assistant", "manual"];
   var validStatuses = ["active", "inactive"];
   var roomsSheet;
   var roomsHeaderMap;
@@ -851,6 +1026,14 @@ function validateTvDevicePayload_(payload, isUpdate) {
 
   if (!findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId)) {
     masterError_("room_id tidak ditemukan di sheet Rooms.");
+  }
+
+  if (controlType === "middleware" && !middlewareUrl) {
+    masterError_("middleware_url wajib diisi untuk control_type middleware.");
+  }
+
+  if (middlewareUrl && !isValidMiddlewareUrl_(middlewareUrl)) {
+    masterError_("middleware_url tidak valid.");
   }
 
   return {
@@ -997,7 +1180,7 @@ function createTvCommandFailedResponse_(roomId, tvDeviceId, tvAction, triggerSou
   };
 }
 
-function appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction) {
+function appendTvControlLogFromResponse_(response, triggerSource, cashierName, tvAction, rawResponse) {
   appendTvControlLog_({
     log_id: generateTvControlLogId_(),
     created_at: toJakartaIsoString_(new Date()),
@@ -1011,6 +1194,7 @@ function appendTvControlLogFromResponse_(response, triggerSource, cashierName, t
     success: response && response.success === true,
     block_reason: response.block_reason || "",
     message: response.message || "",
+    raw_response: truncateTvControlRawResponse_(rawResponse || (response ? response.raw_response : "") || ""),
   });
 }
 

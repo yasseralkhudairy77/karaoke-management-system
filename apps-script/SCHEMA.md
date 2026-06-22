@@ -95,9 +95,9 @@ Menyimpan mapping perangkat TV per room. Fase 7A-0 hanya memakai `control_type =
 | `tv_device_id` | ID unik perangkat TV/controller, contoh `TV-001`. |
 | `room_id` | ID room yang terhubung ke perangkat. |
 | `device_name` | Nama perangkat opsional untuk pengaturan. |
-| `control_type` | Tipe kontrol, untuk fase ini `mock`. |
+| `control_type` | Tipe kontrol: `mock`, `middleware`, `home_assistant`, `manual`. |
 | `status` | Status perangkat, `active` atau `inactive`. |
-| `middleware_url` | URL middleware untuk fase hardware berikutnya. Tidak ditampilkan di card room. |
+| `middleware_url` | URL endpoint middleware (mis. `https://tunnel.example/tv-command`). Wajib jika `control_type=middleware`. Tidak ditampilkan di card room. |
 | `device_identifier` | Identifier teknis perangkat. Tidak ditampilkan di card room. |
 | `updated_at` | Waktu terakhir metadata perangkat diperbarui. |
 
@@ -107,7 +107,8 @@ POST `saveTvDevice` membuat mapping TV baru. Validasi:
 
 - `tv_device_id`, `room_id`, dan `device_name` wajib diisi
 - `room_id` harus ada di sheet `Rooms`
-- `control_type` hanya `mock`, `home_assistant`, atau `manual`
+- `control_type` hanya `mock`, `middleware`, `home_assistant`, atau `manual`
+- `middleware_url` wajib jika `control_type=middleware`
 - `status` hanya `active` atau `inactive`
 - `tv_device_id` tidak boleh duplikat saat create
 - Jika status `active`, device aktif lain di room yang sama otomatis dinonaktifkan
@@ -132,8 +133,36 @@ Menyimpan audit log semua command TV, termasuk command yang gagal.
 | `success` | `true` jika command berhasil dikirim ke control layer. |
 | `block_reason` | Alasan gagal, contoh `TV_DEVICE_NOT_FOUND`. |
 | `message` | Pesan ringkas untuk UI. |
+| `raw_response` | Respons mentah dari middleware (jika ada), dipotong maks. 2000 karakter. |
 
 POST `sendTvCommand` menerima `room_id`, `tv_device_id`, `tv_action`, `trigger_source`, dan `cashier_name`.
+
+Perilaku `sendTvCommand` per `control_type`:
+
+- `mock` — simulasi lama (termasuk `TV-FAIL`, `TV-TIMEOUT`)
+- `middleware` — POST JSON ke `middleware_url` via `UrlFetchApp.fetch`
+- `home_assistant`, `manual` — ditolak `TV_CONTROL_TYPE_UNSUPPORTED`
+
+Block reason middleware (Fase 7A-3):
+
+| block_reason | Deskripsi |
+| --- | --- |
+| `MIDDLEWARE_URL_EMPTY` | `middleware_url` kosong |
+| `INVALID_MIDDLEWARE_URL` | URL tidak valid |
+| `MIDDLEWARE_ERROR` | Gagal fetch atau respons error |
+| `MIDDLEWARE_TIMEOUT` | Timeout fetch atau middleware mengembalikan timeout |
+
+Payload POST ke middleware:
+
+```json
+{
+  "room_id": "ROOM-001",
+  "tv_device_id": "TV-001",
+  "tv_action": "power_on",
+  "trigger_source": "room_card",
+  "requested_by": "Kasir"
+}
+```
 
 GET `getTvControlLogs` membaca log TV. Query opsional: `room_id`, `tv_device_id`, `limit`.
 
