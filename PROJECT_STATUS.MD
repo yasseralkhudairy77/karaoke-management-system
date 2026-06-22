@@ -2,6 +2,44 @@
 
 ## Status Terakhir
 
+### Fase 7A-1 - TV Mapping Management UI
+Status: PASS LOKAL + DEPLOYED / BELUM PASS FINAL
+
+Hasil:
+- Section `TV Integration` ditambahkan di tab Pengaturan.
+- Tabel TV Devices menampilkan Room, Device Name, Control Type, Status, Last Command, Last Result, Updated At, dan Aksi.
+- Modal tambah/edit mapping TV dengan field `tv_device_id`, `room_id`, `device_name`, `control_type`, `status`, `middleware_url`, `device_identifier`.
+- Tombol Aktifkan / Nonaktifkan device dan Test command dari Pengaturan (owner/admin).
+- Panel TV Control Logs read-only dengan pagination 15 data per halaman.
+- Endpoint POST baru: `saveTvDevice`, `updateTvDevice`.
+- Validasi backend: field wajib, `room_id` harus ada di Rooms, `control_type` dan `status` terbatas, duplikat `tv_device_id` ditolak saat create.
+- Satu room hanya satu device aktif; device aktif lain di room yang sama otomatis dinonaktifkan saat save/update (pendekatan minim risiko).
+- `getTvDevicesByRoomMap_` kini memprioritaskan device `active` saat membangun summary card room.
+- Role: owner/admin kelola mapping; cashier hanya TV ON/OFF/TEST dari card room; staff tidak bisa kontrol TV.
+- Card room Fase 7A-0 tetap aman; `middleware_url` dan `device_identifier` hanya di modal Pengaturan.
+
+Catatan:
+- `Code.gs` berubah; `clasp push` dan deploy production existing sudah dilakukan.
+- Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
+- Deploy Apps Script version 41.
+- Smoke test production: health OK, getTvDevices OK, saveTvDevice OK, updateTvDevice OK, validasi duplikat/room invalid OK, sendTvCommand test dari settings_page OK.
+- Commit: `7cc9ec1`. Tag `fase-7a1-pass` belum dibuat — menunggu PASS FINAL browser UI.
+
+---
+
+### Fase 7A-0 - TV Control Foundation
+Status: PASS FINAL
+
+Hasil:
+- Sheet `TVDevices` dan `TVControlLogs` dengan endpoint GET/POST TV control.
+- Card room: badge status TV, last command, tombol TEST / TV ON / TV OFF.
+- TV OFF memakai confirm modal; command dicatat ke `TVControlLogs`.
+- Room tanpa mapping menampilkan "TV belum disetting".
+- Mock control type berfungsi; hardware/HA belum diintegrasikan.
+- Tag: `fase-7a-pass`, commit `59052e8`.
+
+---
+
 ### Fase 6D - User Role dan Admin PIN Protection
 Status: PASS LOKAL + DEPLOYED / BELUM PASS FINAL
 
@@ -420,4 +458,4 @@ Hasil:
 
 ## Next Phase
 
-(TBD — fase berikutnya belum ditetapkan.)
+Fase 7A-2 atau integrasi hardware TV (Home Assistant / smart plug / IR) — belum ditetapkan.

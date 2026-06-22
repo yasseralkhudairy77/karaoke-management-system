@@ -236,6 +236,13 @@ let extendSessionNote = "";
 let isExtendingSession = false;
 let isSendingTvCommand = false;
 let tvOffConfirmation = null;
+let tvDevicesList = [];
+let tvControlLogs = [];
+let isLoadingTvDevices = false;
+let isLoadingTvControlLogs = false;
+let tvDeviceForm = null;
+let isSavingTvDevice = false;
+let isTogglingTvDeviceStatus = false;
 let activeDashboardTab = loadActiveDashboardTab();
 const PAGINATION_PAGE_SIZE = 15;
 const paginationState = {};
@@ -587,6 +594,579 @@ async function loadSettingsData() {
   }
 }
 
+async function loadTvDevices() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  isLoadingTvDevices = true;
+  renderRooms();
+
+  try {
+    const response = await fetch(`${API_BASE_URL}?action=getTvDevices`);
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal memuat daftar TV device.");
+    }
+
+    tvDevicesList = Array.isArray(data.tv_devices) ? data.tv_devices : [];
+  } catch (error) {
+    console.warn("Gagal memuat daftar TV device.", error);
+    tvDevicesList = [];
+    showInlineNotice(error.message || "Gagal memuat daftar TV device.", "error");
+  } finally {
+    isLoadingTvDevices = false;
+    renderRooms();
+  }
+}
+
+async function loadTvControlLogs() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  isLoadingTvControlLogs = true;
+  renderRooms();
+
+  try {
+    const params = new URLSearchParams();
+    params.set("action", "getTvControlLogs");
+    params.set("limit", "100");
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal memuat TV control logs.");
+    }
+
+    tvControlLogs = Array.isArray(data.tv_control_logs)
+      ? data.tv_control_logs
+      : Array.isArray(data.logs)
+        ? data.logs
+        : [];
+    resetPaginationPage("tvControlLogs");
+  } catch (error) {
+    console.warn("Gagal memuat TV control logs.", error);
+    tvControlLogs = [];
+    showInlineNotice(error.message || "Gagal memuat TV control logs.", "error");
+  } finally {
+    isLoadingTvControlLogs = false;
+    renderRooms();
+  }
+}
+
+function getRoomNameById(roomId) {
+  const room = rooms.find((item) => item.room_id === roomId);
+  return room?.room_name || roomId || "-";
+}
+
+function buildLatestTvLogByDeviceMap() {
+  return tvControlLogs.reduce((map, log) => {
+    const tvDeviceId = String(log.tv_device_id || "").trim();
+
+    if (!tvDeviceId) {
+      return map;
+    }
+
+    const currentLog = map[tvDeviceId];
+
+    if (!currentLog || String(log.created_at || "").localeCompare(String(currentLog.created_at || "")) > 0) {
+      map[tvDeviceId] = log;
+    }
+
+    return map;
+  }, {});
+}
+
+function findTvDeviceItem(tvDeviceId) {
+  return tvDevicesList.find((device) => device.tv_device_id === tvDeviceId) || null;
+}
+
+function getTvDeviceFormTitle() {
+  if (!tvDeviceForm) {
+    return "";
+  }
+
+  return `${tvDeviceForm.mode === "edit" ? "Edit" : "Tambah"} Mapping TV`;
+}
+
+function openTvDeviceForm(mode, item = null) {
+  if (!canManageTvMapping()) {
+    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    return;
+  }
+
+  tvDeviceForm = {
+    mode,
+    values: {
+      tv_device_id: item?.tv_device_id || "",
+      room_id: item?.room_id || "",
+      device_name: item?.device_name || "",
+      control_type: item?.control_type || "mock",
+      status: item?.status || "active",
+      middleware_url: item?.middleware_url || "",
+      device_identifier: item?.device_identifier || "",
+    },
+  };
+  renderRooms();
+}
+
+function closeTvDeviceForm() {
+  tvDeviceForm = null;
+  renderRooms();
+}
+
+function updateTvDeviceForm(field, value) {
+  if (!tvDeviceForm) {
+    return;
+  }
+
+  tvDeviceForm = {
+    ...tvDeviceForm,
+    values: {
+      ...tvDeviceForm.values,
+      [field]: value,
+    },
+  };
+}
+
+function createTvDeviceField({ label, field, type = "text", options = null, disabled = false, helper = "" }) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "master-form-label";
+  labelElement.textContent = label;
+
+  let input;
+
+  if (options) {
+    input = document.createElement("select");
+    options.forEach(([value, text]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      input.appendChild(option);
+    });
+  } else {
+    input = document.createElement("input");
+    input.type = type;
+  }
+
+  input.className = "master-form-input";
+  input.dataset.action = "update-tv-device-form";
+  input.dataset.field = field;
+  input.disabled = disabled;
+  input.value = tvDeviceForm?.values?.[field] ?? "";
+
+  wrapper.append(labelElement, input);
+
+  if (helper) {
+    const helperElement = document.createElement("span");
+    helperElement.className = "master-form-helper";
+    helperElement.textContent = helper;
+    wrapper.appendChild(helperElement);
+  }
+
+  return wrapper;
+}
+
+function createTvDeviceFormModalElement() {
+  if (!tvDeviceForm) {
+    return null;
+  }
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal tv-device-modal";
+  overlay.setAttribute("aria-labelledby", "tv-device-form-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog tv-device-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "tv-device-form-title";
+  title.textContent = getTvDeviceFormTitle();
+
+  const grid = document.createElement("div");
+  grid.className = "master-form-grid";
+
+  const roomOptions = rooms.map((room) => [room.room_id, `${room.room_id} - ${room.room_name}`]);
+
+  grid.append(
+    createTvDeviceField({
+      label: "TV Device ID",
+      field: "tv_device_id",
+      disabled: tvDeviceForm.mode === "edit",
+      helper: tvDeviceForm.mode === "edit" ? "ID device tidak bisa diubah." : "",
+    }),
+    createTvDeviceField({
+      label: "Room",
+      field: "room_id",
+      options: [["", "Pilih room"], ...roomOptions],
+    }),
+    createTvDeviceField({ label: "Device Name", field: "device_name" }),
+    createTvDeviceField({
+      label: "Control Type",
+      field: "control_type",
+      options: [
+        ["mock", "Mock"],
+        ["home_assistant", "Home Assistant"],
+        ["manual", "Manual"],
+      ],
+    }),
+    createTvDeviceField({
+      label: "Status",
+      field: "status",
+      options: [
+        ["active", "Active"],
+        ["inactive", "Inactive"],
+      ],
+    }),
+    createTvDeviceField({
+      label: "Middleware URL",
+      field: "middleware_url",
+      helper: "Hanya untuk fase integrasi hardware berikutnya.",
+    }),
+    createTvDeviceField({
+      label: "Device Identifier",
+      field: "device_identifier",
+      helper: "Identifier teknis perangkat, tidak ditampilkan di card room.",
+    })
+  );
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-tv-device-form";
+  cancelButton.textContent = "Batal";
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "master-button primary";
+  saveButton.type = "button";
+  saveButton.dataset.action = "submit-tv-device-form";
+  saveButton.disabled = isSavingTvDevice;
+  saveButton.textContent = isSavingTvDevice ? "Menyimpan..." : "Simpan";
+
+  actions.append(cancelButton, saveButton);
+  dialog.append(title, grid, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+function createTvDeviceActionButtons(device) {
+  const actions = document.createElement("div");
+  actions.className = "master-row-actions";
+
+  if (!canManageTvMapping()) {
+    const note = document.createElement("span");
+    note.className = "settings-section-subtitle";
+    note.textContent = "Hanya owner/admin";
+    actions.appendChild(note);
+    return actions;
+  }
+
+  const editButton = document.createElement("button");
+  editButton.className = "master-button";
+  editButton.type = "button";
+  editButton.dataset.action = "edit-tv-device-mapping";
+  editButton.dataset.tvDeviceId = device.tv_device_id || "";
+  editButton.textContent = "Edit";
+
+  const testButton = document.createElement("button");
+  testButton.className = "master-button";
+  testButton.type = "button";
+  testButton.dataset.action = "send-tv-test-from-settings";
+  testButton.dataset.roomId = device.room_id || "";
+  testButton.dataset.tvDeviceId = device.tv_device_id || "";
+  testButton.disabled = isSendingTvCommand || device.status !== "active" || !API_BASE_URL.trim();
+  testButton.textContent = isSendingTvCommand ? "Kirim..." : "Test";
+
+  const toggleButton = document.createElement("button");
+  toggleButton.className = "master-button";
+  toggleButton.type = "button";
+  toggleButton.dataset.action = "toggle-tv-device-status";
+  toggleButton.dataset.tvDeviceId = device.tv_device_id || "";
+  toggleButton.disabled = isTogglingTvDeviceStatus || !API_BASE_URL.trim();
+  toggleButton.textContent = device.status === "active" ? "Nonaktifkan" : "Aktifkan";
+
+  actions.append(editButton, testButton, toggleButton);
+  return actions;
+}
+
+function createTvIntegrationSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section tv-integration-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "TV Integration";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Kelola mapping TV per room dari dashboard. Satu room hanya boleh punya satu device aktif.";
+  titleGroup.append(title, subtitle);
+
+  const actions = document.createElement("div");
+  actions.className = "tv-integration-header-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-tv-integration";
+  refreshButton.disabled = isLoadingTvDevices || isLoadingTvControlLogs || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingTvDevices || isLoadingTvControlLogs ? "Memuat..." : "Refresh TV";
+
+  actions.appendChild(refreshButton);
+
+  if (canManageTvMapping()) {
+    const addButton = document.createElement("button");
+    addButton.className = "master-button primary";
+    addButton.type = "button";
+    addButton.dataset.action = "add-tv-device-mapping";
+    addButton.textContent = "Tambah Mapping TV";
+    actions.appendChild(addButton);
+  }
+
+  header.append(titleGroup, actions);
+
+  if (isLoadingTvDevices) {
+    section.append(header, createStateMessage("Memuat daftar TV device..."));
+    return section;
+  }
+
+  const latestLogByDevice = buildLatestTvLogByDeviceMap();
+  const deviceRows = tvDevicesList.map((device) => {
+    const latestLog = latestLogByDevice[device.tv_device_id] || null;
+
+    return [
+      getRoomNameById(device.room_id),
+      device.device_name || "-",
+      device.control_type || "-",
+      getMasterStatusBadge(device.status),
+      getTvActionLabel(latestLog?.tv_action),
+      latestLog?.result || "-",
+      device.updated_at || "-",
+      createTvDeviceActionButtons(device),
+    ];
+  });
+
+  const logsPanel = document.createElement("div");
+  logsPanel.className = "tv-control-logs-panel";
+
+  const logsTitle = document.createElement("h4");
+  logsTitle.className = "tv-control-logs-title";
+  logsTitle.textContent = "TV Control Logs";
+
+  const logsSubtitle = document.createElement("p");
+  logsSubtitle.className = "settings-section-subtitle";
+  logsSubtitle.textContent = "Riwayat command TV read-only. Data terbaru 100 log.";
+
+  if (isLoadingTvControlLogs) {
+    logsPanel.append(logsTitle, logsSubtitle, createStateMessage("Memuat TV control logs..."));
+  } else {
+    const paginatedLogs = getPaginatedSlice("tvControlLogs", tvControlLogs);
+    const logRows = paginatedLogs.items.map((log) => [
+      log.created_at || "-",
+      getRoomNameById(log.room_id),
+      log.tv_device_id || "-",
+      getTvActionLabel(log.tv_action),
+      log.trigger_source || "-",
+      log.result || "-",
+      log.success ? "true" : "false",
+      log.message || "-",
+    ]);
+
+    logsPanel.append(
+      logsTitle,
+      logsSubtitle,
+      createMasterTable(
+        ["Waktu", "Room", "Device", "Action", "Source", "Result", "Success", "Message"],
+        logRows,
+        "Belum ada TV control log."
+      ),
+      createPaginationControlsElement("tvControlLogs", paginatedLogs.totalItems)
+    );
+  }
+
+  section.append(
+    header,
+    createMasterTable(
+      ["Room", "Device Name", "Control Type", "Status", "Last Command", "Last Result", "Updated At", "Aksi"],
+      deviceRows,
+      "Belum ada mapping TV device."
+    ),
+    logsPanel
+  );
+
+  return section;
+}
+
+async function submitTvDeviceForm() {
+  if (!tvDeviceForm || isSavingTvDevice) {
+    return;
+  }
+
+  if (!canManageTvMapping()) {
+    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  const values = tvDeviceForm.values || {};
+  const isEdit = tvDeviceForm.mode === "edit";
+
+  isSavingTvDevice = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: isEdit ? "updateTvDevice" : "saveTvDevice",
+      tv_device_id: values.tv_device_id || "",
+      room_id: values.room_id || "",
+      device_name: values.device_name || "",
+      control_type: values.control_type || "mock",
+      status: values.status || "active",
+      middleware_url: values.middleware_url || "",
+      device_identifier: values.device_identifier || "",
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal menyimpan mapping TV.");
+    }
+
+    showInlineNotice(data.message || "Mapping TV berhasil disimpan.");
+    tvDeviceForm = null;
+    await loadTvDevices();
+    await loadTvControlLogs();
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyimpan mapping TV.", "error");
+  } finally {
+    isSavingTvDevice = false;
+    renderRooms();
+  }
+}
+
+async function toggleTvDeviceStatus(tvDeviceId) {
+  if (!canManageTvMapping()) {
+    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    return;
+  }
+
+  const device = findTvDeviceItem(tvDeviceId);
+
+  if (!device) {
+    showInlineNotice("TV device tidak ditemukan.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  const nextStatus = device.status === "active" ? "inactive" : "active";
+
+  isTogglingTvDeviceStatus = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "updateTvDevice",
+      tv_device_id: device.tv_device_id,
+      room_id: device.room_id,
+      device_name: device.device_name,
+      control_type: device.control_type,
+      status: nextStatus,
+      middleware_url: device.middleware_url || "",
+      device_identifier: device.device_identifier || "",
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal mengubah status TV device.");
+    }
+
+    showInlineNotice(data.message || `TV device berhasil di${nextStatus === "active" ? "aktifkan" : "nonaktifkan"}.`);
+    await loadTvDevices();
+    await loadTvControlLogs();
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mengubah status TV device.", "error");
+  } finally {
+    isTogglingTvDeviceStatus = false;
+    renderRooms();
+  }
+}
+
+async function sendTvCommandFromSettings(roomId, tvDeviceId) {
+  if (!canManageTvMapping()) {
+    showInlineNotice("Hanya owner/admin yang boleh test TV dari Pengaturan.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  if (!tvDeviceId) {
+    showInlineNotice("TV device tidak ditemukan.", "error");
+    return;
+  }
+
+  isSendingTvCommand = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "sendTvCommand",
+      room_id: roomId,
+      tv_device_id: tvDeviceId,
+      tv_action: "test",
+      trigger_source: "settings_page",
+      cashier_name: "Admin",
+    });
+
+    if (!data || data.success !== true) {
+      throw new Error(data?.message || "Perintah TV gagal dikirim.");
+    }
+
+    showInlineNotice("Perintah TV berhasil dikirim.");
+    await loadTvControlLogs();
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Perintah TV gagal dikirim.", "error");
+    await loadTvControlLogs();
+    await loadRooms();
+  } finally {
+    isSendingTvCommand = false;
+    renderRooms();
+  }
+}
+
 function buildMasterAuditQueryParams() {
   const params = new URLSearchParams();
   params.set("action", "getMasterDataAuditLogs");
@@ -641,6 +1221,8 @@ async function loadSettingsTabData() {
   await Promise.all([
     loadSettingsData(),
     loadMasterDataAuditLogs(),
+    loadTvDevices(),
+    loadTvControlLogs(),
   ]);
 }
 
@@ -2302,6 +2884,10 @@ function getCurrentOperatorRole() {
 
 function canControlTv() {
   return ["owner", "admin", "cashier"].includes(getCurrentOperatorRole());
+}
+
+function canManageTvMapping() {
+  return ["owner", "admin"].includes(getCurrentOperatorRole());
 }
 
 function getTvStatusLabel(status) {
@@ -8104,7 +8690,7 @@ function createSettingsPanelElement() {
   title.textContent = "Pengaturan";
   const subtitle = document.createElement("p");
   subtitle.className = "settings-subtitle";
-  subtitle.textContent = "Kelola master data ruangan, menu F&B, dan inventory.";
+  subtitle.textContent = "Kelola master data ruangan, menu F&B, inventory, dan mapping TV.";
   titleGroup.append(title, subtitle);
 
   const refreshButton = document.createElement("button");
@@ -8125,6 +8711,11 @@ function createSettingsPanelElement() {
   panel.appendChild(createDeleteMasterConfirmationElement());
   panel.appendChild(createAdminPinModalElement());
 
+  const tvDeviceFormModal = createTvDeviceFormModalElement();
+  if (tvDeviceFormModal) {
+    panel.appendChild(tvDeviceFormModal);
+  }
+
   if (isLoadingSettingsData) {
     panel.appendChild(createStateMessage("Memuat data pengaturan..."));
     return panel;
@@ -8134,6 +8725,7 @@ function createSettingsPanelElement() {
     createRoomSettingsSection(),
     createMenuSettingsSection(),
     createInventorySettingsSection(),
+    createTvIntegrationSection(),
     createAccessSettingsSection(),
     createMasterAuditLogSection(),
     createMasterDataQualitySection()
@@ -9818,6 +10410,51 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-tv-integration") {
+    await Promise.all([loadTvDevices(), loadTvControlLogs()]);
+    return;
+  }
+
+  if (action === "add-tv-device-mapping") {
+    openTvDeviceForm("create");
+    return;
+  }
+
+  if (action === "edit-tv-device-mapping") {
+    const device = findTvDeviceItem(button.dataset.tvDeviceId || "");
+
+    if (!device) {
+      showInlineNotice("TV device tidak ditemukan.", "error");
+      return;
+    }
+
+    openTvDeviceForm("edit", device);
+    return;
+  }
+
+  if (action === "close-tv-device-form") {
+    closeTvDeviceForm();
+    return;
+  }
+
+  if (action === "submit-tv-device-form") {
+    await submitTvDeviceForm();
+    return;
+  }
+
+  if (action === "toggle-tv-device-status") {
+    await toggleTvDeviceStatus(button.dataset.tvDeviceId || "");
+    return;
+  }
+
+  if (action === "send-tv-test-from-settings") {
+    await sendTvCommandFromSettings(
+      button.dataset.roomId || "",
+      button.dataset.tvDeviceId || ""
+    );
+    return;
+  }
+
   if (action === "add-master-data") {
     openMasterDataForm(button.dataset.masterType, "create");
     return;
@@ -10291,6 +10928,11 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-tv-device-form") {
+    updateTvDeviceForm(field.dataset.field, field.value);
+    return;
+  }
+
   if (action === "update-delete-master-confirmation") {
     updateDeleteMasterConfirmation(field.dataset.field, field.value);
     syncDeleteMasterConfirmationControls();
@@ -10320,6 +10962,13 @@ function handleDashboardChange(event) {
 
   if (masterField) {
     updateMasterDataForm(masterField.dataset.field, masterField.value);
+    return;
+  }
+
+  const tvDeviceField = event.target.closest("[data-action='update-tv-device-form']");
+
+  if (tvDeviceField) {
+    updateTvDeviceForm(tvDeviceField.dataset.field, tvDeviceField.value);
     return;
   }
 

@@ -21,7 +21,7 @@ Dashboard kini memakai navigasi tab modular, bukan satu halaman panjang. Tab ter
 | Laporan | Dashboard Owner, room occupancy, laporan penjualan F&B & stok rendah, laporan pemakaian room |
 | Transaksi | Riwayat transaksi, payment, cashier closing, struk |
 | Audit | Riwayat tambah waktu room hari ini |
-| Pengaturan | Master data ruangan, menu F&B, dan inventory |
+| Pengaturan | Master data ruangan, menu F&B, inventory, dan TV Integration |
 
 Fase ini **frontend-only**. `apps-script/Code.gs` tidak berubah, sehingga tidak perlu deploy Apps Script setelah update UI ini.
 
@@ -140,6 +140,45 @@ Tab **Pengaturan** kini memiliki proteksi PIN owner/admin untuk aksi master data
 - Modal PIN memakai input password stabil, tidak menyimpan PIN di `localStorage`, dan tidak menulis PIN ke console.
 
 PIN masih disimpan plain text di sheet untuk fase ini. Fase security berikutnya perlu mengganti penyimpanan PIN menjadi hash + salt dan menambahkan prosedur reset PIN.
+
+Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
+
+## Fase 7A-0 - TV Control Foundation
+
+Card room menampilkan kontrol TV mock per mapping `TVDevices`:
+
+- Tombol TEST / TV ON / TV OFF di card room (owner, admin, cashier)
+- TV OFF memakai modal konfirmasi
+- Room tanpa mapping menampilkan "TV belum disetting"
+- `middleware_url` dan `device_identifier` tidak ditampilkan di card room
+- Command dicatat ke sheet `TVControlLogs`
+- Pesan sukses: "Perintah TV berhasil dikirim" (bukan "TV berhasil menyala/mati")
+- Tidak ada auto TV ON/OFF saat start/close session
+
+Endpoint: GET `getTvDevices`, GET `getTvControlLogs`, POST `sendTvCommand`.
+
+## Fase 7A-1 - TV Mapping Management UI
+
+Tab **Pengaturan** menambahkan section **TV Integration** untuk mengelola mapping TV tanpa edit manual di Google Sheet.
+
+- Tabel TV Devices: Room, Device Name, Control Type, Status, Last Command, Last Result, Updated At, Aksi
+- Tombol Tambah Mapping TV, modal tambah/edit mapping
+- Field: `tv_device_id`, `room_id`, `device_name`, `control_type`, `status`, `middleware_url`, `device_identifier`
+- `control_type` valid: `mock`, `home_assistant`, `manual`
+- `status` valid: `active`, `inactive`
+- Tombol Aktifkan / Nonaktifkan device
+- Tombol Test command dari Pengaturan (owner/admin)
+- Panel TV Control Logs read-only dengan pagination
+- Satu room hanya satu device aktif; device aktif lain di room yang sama otomatis dinonaktifkan saat save/update
+- Setelah save/update, daftar TV dan card room ikut refresh
+
+Role akses:
+
+- owner/admin: tambah, edit, aktifkan/nonaktifkan, test dari Pengaturan
+- cashier: TV ON/OFF/TEST dari card room saja
+- staff: tidak bisa akses kontrol TV
+
+Endpoint baru: POST `saveTvDevice`, POST `updateTvDevice`.
 
 Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
 

@@ -5027,6 +5027,43 @@ body {
   opacity: 0.62;
 }
 
+.tv-integration-section {
+  margin-top: 8px;
+}
+
+.tv-integration-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.tv-control-logs-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.tv-control-logs-title {
+  margin: 0;
+  color: var(--card-text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.tv-device-modal .tv-device-dialog {
+  width: min(100%, 720px);
+  max-height: min(90vh, 860px);
+  overflow-y: auto;
+}
+
+.tv-device-modal .master-form-grid {
+  margin-top: 14px;
+}
+
 .room-booking-row {
   display: flex;
   align-items: baseline;

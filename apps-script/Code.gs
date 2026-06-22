@@ -387,6 +387,14 @@ function doPost(e) {
       return jsonResponse(sendTvCommand_(payload));
     }
 
+    if (action === "saveTvDevice") {
+      return jsonResponse(saveTvDevice_(payload));
+    }
+
+    if (action === "updateTvDevice") {
+      return jsonResponse(updateTvDevice_(payload));
+    }
+
     if (action === "adjustInventoryStock") {
       return jsonResponse(adjustInventoryStock_(
         payload.stock_item_id,
@@ -571,8 +579,20 @@ function getTvDevicesByRoomMap_() {
   return readSheetAsObjectsOrEmpty_("TVDevices").reduce(function (map, device) {
     var normalizedDevice = normalizeTvDevice_(device);
     var roomId = String(normalizedDevice.room_id || "").trim();
+    var currentDevice;
 
-    if (roomId && !map[roomId]) {
+    if (!roomId) {
+      return map;
+    }
+
+    currentDevice = map[roomId];
+
+    if (!currentDevice) {
+      map[roomId] = normalizedDevice;
+      return map;
+    }
+
+    if (currentDevice.status !== "active" && normalizedDevice.status === "active") {
       map[roomId] = normalizedDevice;
     }
 
@@ -786,6 +806,177 @@ function findTvDevice_(roomId, tvDeviceId) {
 
       return normalizedRoomId && String(device.room_id || "").trim() === normalizedRoomId;
     })[0] || null;
+}
+
+function validateTvDevicePayload_(payload, isUpdate) {
+  var tvDeviceId = String(payload.tv_device_id || "").trim();
+  var roomId = String(payload.room_id || "").trim();
+  var deviceName = String(payload.device_name || "").trim();
+  var controlType = String(payload.control_type || "mock").trim().toLowerCase();
+  var status = String(payload.status || "active").trim().toLowerCase();
+  var middlewareUrl = String(payload.middleware_url || "").trim();
+  var deviceIdentifier = String(payload.device_identifier || "").trim();
+  var validControlTypes = ["mock", "home_assistant", "manual"];
+  var validStatuses = ["active", "inactive"];
+  var roomsSheet;
+  var roomsHeaderMap;
+
+  if (isUpdate && !tvDeviceId) {
+    masterError_("tv_device_id wajib diisi.");
+  }
+
+  if (!tvDeviceId) {
+    masterError_("tv_device_id wajib diisi.");
+  }
+
+  if (!roomId) {
+    masterError_("room_id wajib diisi.");
+  }
+
+  if (!deviceName) {
+    masterError_("device_name wajib diisi.");
+  }
+
+  if (validControlTypes.indexOf(controlType) === -1) {
+    masterError_("control_type tidak valid.");
+  }
+
+  if (validStatuses.indexOf(status) === -1) {
+    masterError_("status tidak valid.");
+  }
+
+  ensureRoomsMasterColumns_();
+  roomsSheet = getSheet_("Rooms");
+  roomsHeaderMap = getHeaderMap_(roomsSheet);
+
+  if (!findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId)) {
+    masterError_("room_id tidak ditemukan di sheet Rooms.");
+  }
+
+  return {
+    tv_device_id: tvDeviceId,
+    room_id: roomId,
+    device_name: deviceName,
+    control_type: controlType,
+    status: status,
+    middleware_url: middlewareUrl,
+    device_identifier: deviceIdentifier,
+  };
+}
+
+function deactivateOtherActiveTvDevicesInRoom_(sheet, headerMap, roomId, exceptTvDeviceId) {
+  var devices = readSheetAsObjects_("TVDevices");
+  var now = toJakartaIsoString_(new Date());
+  var deactivated = [];
+
+  devices.forEach(function (device) {
+    var normalizedDevice = normalizeTvDevice_(device);
+    var rowNumber;
+
+    if (
+      String(normalizedDevice.room_id || "").trim() !== String(roomId || "").trim() ||
+      String(normalizedDevice.tv_device_id || "").trim() === String(exceptTvDeviceId || "").trim() ||
+      normalizedDevice.status !== "active"
+    ) {
+      return;
+    }
+
+    rowNumber = findRowByValue_(sheet, headerMap, "tv_device_id", normalizedDevice.tv_device_id);
+
+    if (!rowNumber) {
+      return;
+    }
+
+    setRowValues_(sheet, headerMap, rowNumber, {
+      status: "inactive",
+      updated_at: now,
+    });
+    deactivated.push(normalizedDevice.tv_device_id);
+  });
+
+  return deactivated;
+}
+
+function saveTvDevice_(payload) {
+  var data = validateTvDevicePayload_(payload, false);
+  var sheet = ensureTvDevicesSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var now = toJakartaIsoString_(new Date());
+  var deactivatedIds = [];
+  var device;
+  var savedDevice;
+
+  if (findRowByValue_(sheet, headerMap, "tv_device_id", data.tv_device_id)) {
+    masterError_("tv_device_id sudah digunakan.");
+  }
+
+  if (data.status === "active") {
+    deactivatedIds = deactivateOtherActiveTvDevicesInRoom_(sheet, headerMap, data.room_id, data.tv_device_id);
+  }
+
+  device = {
+    tv_device_id: data.tv_device_id,
+    room_id: data.room_id,
+    device_name: data.device_name,
+    control_type: data.control_type,
+    status: data.status,
+    middleware_url: data.middleware_url,
+    device_identifier: data.device_identifier,
+    updated_at: now,
+  };
+
+  appendObjectRow_(sheet, device);
+  savedDevice = findTvDevice_(data.room_id, data.tv_device_id);
+
+  return {
+    ok: true,
+    success: true,
+    message: deactivatedIds.length > 0
+      ? "Mapping TV berhasil disimpan. Device aktif lain di room yang sama dinonaktifkan: " + deactivatedIds.join(", ") + "."
+      : "Mapping TV berhasil disimpan.",
+    data: savedDevice,
+    deactivated_tv_device_ids: deactivatedIds,
+  };
+}
+
+function updateTvDevice_(payload) {
+  var tvDeviceId = String(payload.tv_device_id || "").trim();
+  var data = validateTvDevicePayload_(payload, true);
+  var sheet = ensureTvDevicesSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "tv_device_id", tvDeviceId);
+  var now = toJakartaIsoString_(new Date());
+  var deactivatedIds = [];
+  var updatedDevice;
+
+  if (!rowNumber) {
+    masterError_("TV device tidak ditemukan.");
+  }
+
+  if (data.status === "active") {
+    deactivatedIds = deactivateOtherActiveTvDevicesInRoom_(sheet, headerMap, data.room_id, data.tv_device_id);
+  }
+
+  setRowValues_(sheet, headerMap, rowNumber, {
+    room_id: data.room_id,
+    device_name: data.device_name,
+    control_type: data.control_type,
+    status: data.status,
+    middleware_url: data.middleware_url,
+    device_identifier: data.device_identifier,
+    updated_at: now,
+  });
+  updatedDevice = findTvDevice_(data.room_id, data.tv_device_id);
+
+  return {
+    ok: true,
+    success: true,
+    message: deactivatedIds.length > 0
+      ? "Mapping TV berhasil diperbarui. Device aktif lain di room yang sama dinonaktifkan: " + deactivatedIds.join(", ") + "."
+      : "Mapping TV berhasil diperbarui.",
+    data: updatedDevice,
+    deactivated_tv_device_ids: deactivatedIds,
+  };
 }
 
 function createTvCommandFailedResponse_(roomId, tvDeviceId, tvAction, triggerSource, cashierName, controlType, result, blockReason) {

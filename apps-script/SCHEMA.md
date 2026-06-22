@@ -103,6 +103,17 @@ Menyimpan mapping perangkat TV per room. Fase 7A-0 hanya memakai `control_type =
 
 GET `getTvDevices` membaca data dari sheet `TVDevices`.
 
+POST `saveTvDevice` membuat mapping TV baru. Validasi:
+
+- `tv_device_id`, `room_id`, dan `device_name` wajib diisi
+- `room_id` harus ada di sheet `Rooms`
+- `control_type` hanya `mock`, `home_assistant`, atau `manual`
+- `status` hanya `active` atau `inactive`
+- `tv_device_id` tidak boleh duplikat saat create
+- Jika status `active`, device aktif lain di room yang sama otomatis dinonaktifkan
+
+POST `updateTvDevice` memperbarui mapping TV existing dengan validasi yang sama. `tv_device_id` tidak bisa diganti.
+
 ## TVControlLogs
 
 Menyimpan audit log semua command TV, termasuk command yang gagal.
@@ -125,6 +136,13 @@ Menyimpan audit log semua command TV, termasuk command yang gagal.
 POST `sendTvCommand` menerima `room_id`, `tv_device_id`, `tv_action`, `trigger_source`, dan `cashier_name`.
 
 GET `getTvControlLogs` membaca log TV. Query opsional: `room_id`, `tv_device_id`, `limit`.
+
+### Trigger Source TV (Fase 7A-1)
+
+| trigger_source | Deskripsi |
+| --- | --- |
+| `room_card` | Command dari tombol TEST / TV ON / TV OFF di card room |
+| `settings_page` | Command test dari tab Pengaturan (owner/admin) |
 
 ## Transactions
 
