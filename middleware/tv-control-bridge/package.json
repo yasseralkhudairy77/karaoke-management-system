@@ -1,0 +1,16 @@
+{
+  "name": "tv-control-bridge",
+  "version": "1.0.0",
+  "description": "Local TV middleware bridge simulator for Karaoke Management System (Fase 7A-2)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

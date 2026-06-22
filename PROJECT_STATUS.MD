@@ -2,8 +2,28 @@
 
 ## Status Terakhir
 
-### Fase 7A-1.5 - Wokwi ESP32 TV Device Simulator
+### Fase 7A-2 - Local TV Middleware Bridge
 Status: PASS LOKAL
+
+Hasil:
+- Folder `middleware/tv-control-bridge/` berisi `package.json`, `server.js`, dan `README.md`.
+- Server Express lokal di `http://localhost:3030`.
+- Endpoint GET `/health` dan POST `/tv-command`.
+- Simulasi device: normal (`sent`), `TV-FAIL` (`failed`), `TV-TIMEOUT` (delay ~5 detik lalu `timeout`).
+- Validasi: field wajib (`VALIDATION_ERROR`), `tv_action` invalid (`INVALID_TV_ACTION`).
+- CORS allowance untuk origin localhost/127.0.0.1 (GET/POST, header Content-Type).
+- Logging console: timestamp, room_id, tv_device_id, tv_action, result.
+- Wording sukses memakai "Perintah TV berhasil dikirim" — bukan "TV berhasil menyala/mati".
+
+Catatan:
+- Fase middleware-only; `apps-script/Code.gs` dan frontend utama tidak berubah.
+- Tidak perlu `clasp push` dan tidak perlu deploy Apps Script.
+- Middleware masih simulator lokal; belum Home Assistant, belum hardware, belum production.
+
+---
+
+### Fase 7A-1.5 - Wokwi ESP32 TV Device Simulator
+Status: PASS FINAL
 
 Hasil:
 - Folder `hardware-sim/wokwi-tv-controller/` berisi `sketch.ino`, `diagram.json`, dan `README.md`.
@@ -477,4 +497,4 @@ Hasil:
 
 ## Next Phase
 
-Fase 7A-2: koneksi simulator/device ke middleware, atau integrasi Home Assistant — belum ditetapkan.
+Fase 7A-3: hubungkan Apps Script `sendTvCommand` ke `middleware_url`, atau integrasi Home Assistant — belum ditetapkan.
