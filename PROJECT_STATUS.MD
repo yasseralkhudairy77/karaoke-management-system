@@ -2,8 +2,27 @@
 
 ## Status Terakhir
 
+### Fase 7A-1.5 - Wokwi ESP32 TV Device Simulator
+Status: PASS LOKAL
+
+Hasil:
+- Folder `hardware-sim/wokwi-tv-controller/` berisi `sketch.ino`, `diagram.json`, dan `README.md`.
+- ESP32 DevKit C v4 + LED status TV di Wokwi.
+- Command Serial: `power_on` (LED ON), `power_off` (LED OFF), `test` (LED blink).
+- Struktur command selaras backend: `tv_action`, `tv_device_id`, `room_id`.
+- Input mendukung perintah singkat, `tv_action=...`, dan format JSON.
+- Respons simulator memakai pola `ok` / `success` / `message` / `data.result=sent` seperti backend mock.
+- Wokwi hanya simulator device — bukan bukti TV fisik benar-benar nyala/mati.
+
+Catatan:
+- Fase hardware-only; `apps-script/Code.gs` dan frontend utama tidak berubah.
+- Tidak perlu `clasp push` dan tidak perlu deploy Apps Script.
+- Integrasi HTTP/MQTT ke middleware masuk fase hardware berikutnya.
+
+---
+
 ### Fase 7A-1 - TV Mapping Management UI
-Status: PASS LOKAL + DEPLOYED / BELUM PASS FINAL
+Status: PASS FINAL
 
 Hasil:
 - Section `TV Integration` ditambahkan di tab Pengaturan.
@@ -23,7 +42,7 @@ Catatan:
 - Deployment ID tetap `AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1`.
 - Deploy Apps Script version 41.
 - Smoke test production: health OK, getTvDevices OK, saveTvDevice OK, updateTvDevice OK, validasi duplikat/room invalid OK, sendTvCommand test dari settings_page OK.
-- Commit: `7cc9ec1`. Tag `fase-7a1-pass` belum dibuat — menunggu PASS FINAL browser UI.
+- Commit: `d171e63`. Tag: `fase-7a1-pass`. Deploy Apps Script version 41.
 
 ---
 
@@ -458,4 +477,4 @@ Hasil:
 
 ## Next Phase
 
-Fase 7A-2 atau integrasi hardware TV (Home Assistant / smart plug / IR) — belum ditetapkan.
+Fase 7A-2: koneksi simulator/device ke middleware, atau integrasi Home Assistant — belum ditetapkan.

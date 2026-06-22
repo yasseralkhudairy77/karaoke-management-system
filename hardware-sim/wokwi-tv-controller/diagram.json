@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "author": "Karaoke Management System",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "tvLed",
+      "top": 96,
+      "left": 220,
+      "attrs": {
+        "color": "red",
+        "label": "TV Status"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 144,
+      "left": 196,
+      "attrs": {
+        "value": "220"
+      }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "tvLed:A", "esp:D2", "green", [ "v0" ] ],
+    [ "tvLed:C", "esp:GND.1", "black", [ "v0" ] ]
+  ]
+}

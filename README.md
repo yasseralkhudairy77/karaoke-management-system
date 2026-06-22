@@ -182,6 +182,17 @@ Endpoint baru: POST `saveTvDevice`, POST `updateTvDevice`.
 
 Perlu `clasp push` dan deploy Apps Script production existing setelah perubahan `apps-script/Code.gs`.
 
+## Fase 7A-1.5 - Wokwi ESP32 TV Device Simulator
+
+Simulator perangkat TV controller di [Wokwi](https://wokwi.com) sebelum integrasi hardware asli atau Home Assistant.
+
+- Folder: `hardware-sim/wokwi-tv-controller/`
+- ESP32 + LED sebagai status TV (`power_on` = ON, `power_off` = OFF, `test` = blink)
+- Command via Serial Monitor Wokwi; struktur `tv_action` / `tv_device_id` / `room_id` selaras backend
+- **Bukan** bukti TV fisik nyala/mati — hanya simulasi LED
+
+Fase **hardware-only**; tidak perlu deploy Apps Script. Panduan lengkap: `hardware-sim/wokwi-tv-controller/README.md`.
+
 ## Fase UI-2B - Tanggal Operasional / Shift Karaoke
 
 Laporan dan filter periode kini memakai **tanggal operasional karaoke**, bukan tanggal kalender 00:00–23:59.
