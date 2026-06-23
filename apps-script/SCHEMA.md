@@ -140,6 +140,37 @@ POST `seedPilotTvDisplay` membuat atau memperbarui row pilot untuk `ROOM-002 / R
 - Token existing tidak dioverwrite jika row sudah ada.
 - Response seed boleh menyertakan `token` dan `display_url_hint` untuk admin/dev manual test.
 
+POST `seedTvDisplaysForAllRooms` membuat foundation display untuk semua room valid di sheet `Rooms`.
+
+- Room valid minimal punya `room_id` dan `room_name`.
+- Jika display room belum ada, backend membuat row baru di `TVDisplays`.
+- Jika display sudah ada, token existing tidak dioverwrite.
+- `display_id` memakai format `DISPLAY-{ROOM_ID}`, contoh `DISPLAY-ROOM-001`.
+- `display_name` memakai format `Display {room_name}`.
+- Response setup admin menyertakan summary `total_rooms_checked`, `created_count`, `existing_count`, `skipped_count`, dan `displays`.
+
+POST `rotateTvDisplayToken` mengganti token display satu room.
+
+Contoh payload:
+
+```json
+{
+  "action": "rotateTvDisplayToken",
+  "room_id": "ROOM-002",
+  "confirm": "ROTATE"
+}
+```
+
+- Token hanya dirotasi jika `confirm` persis `ROTATE`.
+- Metadata display existing seperti `display_id`, `room_id`, dan `display_name` tidak diubah kecuali kosong/rusak.
+- Response setup admin menyertakan token baru dan `display_url_hint`.
+
+POST `getTvDisplaySetupList` membaca daftar setup display yang sudah ada di `TVDisplays`.
+
+- Action ini ditujukan untuk admin/setup TV dan boleh mengirim `token` serta `display_url_hint`.
+- Action ini tidak dipakai oleh halaman Customer TV Display.
+- Token setup admin harus tetap diperlakukan sebagai rahasia operasional.
+
 POST `getCustomerDisplayState` membaca state display pelanggan berdasarkan `room_id` dan `token`.
 
 Contoh payload:
@@ -156,6 +187,7 @@ Response sukses berisi `server_time`, `operational_date`, ringkasan `room`, coun
 
 Endpoint ini sengaja aman untuk pelanggan:
 
+- Tidak mengirim `token`.
 - Tidak mengirim `display_token`.
 - Tidak mengirim `payment_status`, `payment_method`, `room_total`, `fnb_total`, atau `grand_total`.
 - Tidak mengirim `cashier_name` atau data customer sensitif.

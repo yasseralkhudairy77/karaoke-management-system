@@ -411,6 +411,18 @@ function doPost(e) {
       return jsonResponse(seedPilotTvDisplay_());
     }
 
+    if (action === "seedTvDisplaysForAllRooms") {
+      return jsonResponse(seedTvDisplaysForAllRooms_());
+    }
+
+    if (action === "rotateTvDisplayToken") {
+      return jsonResponse(rotateTvDisplayToken_(payload));
+    }
+
+    if (action === "getTvDisplaySetupList") {
+      return jsonResponse(getTvDisplaySetupList_());
+    }
+
     if (action === "getCustomerDisplayState") {
       return jsonResponse(getCustomerDisplayState_(payload.room_id, payload.token));
     }
@@ -853,46 +865,157 @@ function createCustomerDisplayError_(code, message) {
   };
 }
 
+function getRoomMasterByRoomId_(roomId) {
+  ensureRoomsMasterColumns_();
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var rooms = readSheetAsObjects_("Rooms");
+
+  for (var index = 0; index < rooms.length; index++) {
+    if (String(rooms[index].room_id || "").trim() === normalizedRoomId) {
+      return rooms[index];
+    }
+  }
+
+  return null;
+}
+
+function isValidRoomForTvDisplay_(room) {
+  return !!(room && String(room.room_id || "").trim() && String(room.room_name || "").trim());
+}
+
+function buildTvDisplayId_(roomId) {
+  return "DISPLAY-" + String(roomId || "").trim().replace(/[^A-Za-z0-9_-]/g, "-").toUpperCase();
+}
+
+function buildTvDisplayUrlHint_(roomId, token) {
+  return "tv-display.html?room_id=" + encodeURIComponent(roomId) + "&token=" + encodeURIComponent(token);
+}
+
+function formatTvDisplaySetup_(display, room, status, fallback) {
+  var normalizedDisplay = normalizeTvDisplay_(display);
+  var safeFallback = fallback || {};
+  var safeRoomId = normalizedDisplay.room_id || safeFallback.room_id || "";
+  var safeToken = normalizedDisplay.display_token || safeFallback.token || "";
+
+  // Setup actions may return tokens; the customer display state endpoint must not.
+  return {
+    status: status || "",
+    display_id: normalizedDisplay.display_id || safeFallback.display_id || (safeRoomId ? buildTvDisplayId_(safeRoomId) : ""),
+    room_id: safeRoomId,
+    room_name: room ? room.room_name || "" : safeFallback.room_name || "",
+    display_name: normalizedDisplay.display_name || safeFallback.display_name || "",
+    display_enabled: normalizedDisplay.display_enabled,
+    refresh_interval_seconds: normalizePositiveInteger_(normalizedDisplay.refresh_interval_seconds, 30),
+    display_url_hint: buildTvDisplayUrlHint_(safeRoomId, safeToken),
+    token: safeToken,
+  };
+}
+
+function seedTvDisplayForRoom_(roomId, options) {
+  var room = getRoomMasterByRoomId_(roomId);
+  var settings = options || {};
+
+  if (!isValidRoomForTvDisplay_(room)) {
+    var skippedRoomId = String(roomId || "").trim();
+    var skippedDisplay = formatTvDisplaySetup_({}, null, "skipped", {
+      room_id: skippedRoomId,
+      display_id: skippedRoomId ? buildTvDisplayId_(skippedRoomId) : "",
+    });
+
+    return {
+      ok: false,
+      status: "skipped",
+      display_id: skippedDisplay.display_id,
+      room_id: skippedDisplay.room_id,
+      room_name: skippedDisplay.room_name,
+      display_name: skippedDisplay.display_name,
+      display_enabled: skippedDisplay.display_enabled,
+      refresh_interval_seconds: skippedDisplay.refresh_interval_seconds,
+      display_url_hint: skippedDisplay.display_url_hint,
+      token: skippedDisplay.token,
+      display: skippedDisplay,
+      reason: "INVALID_ROOM",
+    };
+  }
+
+  var sheet = ensureTvDisplaysSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var normalizedRoomId = String(room.room_id || "").trim();
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", normalizedRoomId);
+  var now = toJakartaIsoString_(new Date());
+  var displayId = buildTvDisplayId_(normalizedRoomId);
+  var displayName = String(settings.display_name || "").trim() || "Display " + String(room.room_name || "").trim();
+  var refreshIntervalSeconds = normalizePositiveInteger_(settings.refresh_interval_seconds, 30);
+  var notes = String(settings.notes || "").trim();
+  var status = "created";
+  var display;
+  var token;
+
+  if (rowNumber) {
+    display = getRowObject_(sheet, headerMap, rowNumber);
+    token = settings.rotate_token ? generateDisplayToken_() : display.display_token || generateDisplayToken_();
+    status = settings.rotate_token ? "rotated" : "existing";
+
+    setRowValues_(sheet, headerMap, rowNumber, {
+      display_id: settings.rotate_token ? display.display_id || displayId : displayId,
+      room_id: normalizedRoomId,
+      display_name: settings.rotate_token ? display.display_name || displayName : displayName,
+      display_token: token,
+      display_enabled: true,
+      refresh_interval_seconds: settings.rotate_token ? display.refresh_interval_seconds || refreshIntervalSeconds : refreshIntervalSeconds,
+      notes: settings.rotate_token ? display.notes || notes : notes,
+      created_at: display.created_at || now,
+      updated_at: now,
+    });
+    display = getRowObject_(sheet, headerMap, rowNumber);
+  } else {
+    token = generateDisplayToken_();
+    display = {
+      display_id: displayId,
+      room_id: normalizedRoomId,
+      display_name: displayName,
+      display_token: token,
+      display_enabled: true,
+      refresh_interval_seconds: refreshIntervalSeconds,
+      notes: notes,
+      created_at: now,
+      updated_at: now,
+    };
+    appendObjectRow_(sheet, display);
+  }
+
+  var setupDisplay = formatTvDisplaySetup_(display, room, status, {
+    display_id: displayId,
+    room_id: normalizedRoomId,
+    room_name: room.room_name || "",
+    display_name: displayName,
+    token: token,
+  });
+
+  return Object.assign({
+    ok: true,
+  }, setupDisplay, {
+    display: setupDisplay,
+  });
+}
+
 function seedPilotTvDisplay_() {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
 
   try {
-    var sheet = ensureTvDisplaysSheet_();
-    var headerMap = getHeaderMap_(sheet);
-    var rowNumber = findRowByValue_(sheet, headerMap, "display_id", "DISPLAY-ROOM-002")
-      || findRowByValue_(sheet, headerMap, "room_id", "ROOM-002");
-    var now = toJakartaIsoString_(new Date());
-    var token = generateDisplayToken_();
+    var result = seedTvDisplayForRoom_("ROOM-002", {
+      notes: "Polytron Google TV pilot room 2",
+    });
 
-    if (rowNumber) {
-      var existingDisplay = getRowObject_(sheet, headerMap, rowNumber);
-      token = existingDisplay.display_token || token;
-
-      sheet.getRange(rowNumber, headerMap.display_id).setValue("DISPLAY-ROOM-002");
-      sheet.getRange(rowNumber, headerMap.room_id).setValue("ROOM-002");
-      sheet.getRange(rowNumber, headerMap.display_name).setValue("Display Ruangan 2 - Melati");
-      sheet.getRange(rowNumber, headerMap.display_enabled).setValue(true);
-      sheet.getRange(rowNumber, headerMap.refresh_interval_seconds).setValue(30);
-      sheet.getRange(rowNumber, headerMap.notes).setValue("Polytron Google TV pilot room 2");
-      sheet.getRange(rowNumber, headerMap.display_token).setValue(token);
-      sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
-
-      if (!existingDisplay.created_at) {
-        sheet.getRange(rowNumber, headerMap.created_at).setValue(now);
-      }
-    } else {
-      appendTvDisplay_({
-        display_id: "DISPLAY-ROOM-002",
-        room_id: "ROOM-002",
-        display_name: "Display Ruangan 2 - Melati",
-        display_token: token,
-        display_enabled: true,
-        refresh_interval_seconds: 30,
-        notes: "Polytron Google TV pilot room 2",
-        created_at: now,
-        updated_at: now,
-      });
+    if (!result.ok) {
+      return {
+        ok: false,
+        success: false,
+        error: result.reason || "PILOT_ROOM_INVALID",
+        message: "Pilot TV display gagal disiapkan.",
+      };
     }
 
     return {
@@ -900,18 +1023,138 @@ function seedPilotTvDisplay_() {
       success: true,
       message: "Pilot TV display siap digunakan.",
       display: {
-        display_id: "DISPLAY-ROOM-002",
-        room_id: "ROOM-002",
-        display_name: "Display Ruangan 2 - Melati",
-        display_enabled: true,
-        refresh_interval_seconds: 30,
-        display_url_hint: "tv-display.html?room_id=ROOM-002&token=" + encodeURIComponent(token),
-        token: token,
+        display_id: result.display.display_id,
+        room_id: result.display.room_id,
+        display_name: result.display.display_name,
+        display_enabled: result.display.display_enabled,
+        refresh_interval_seconds: result.display.refresh_interval_seconds,
+        display_url_hint: result.display.display_url_hint,
+        token: result.display.token,
       },
     };
   } finally {
     lock.releaseLock();
   }
+}
+
+function seedTvDisplaysForAllRooms_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    ensureRoomsMasterColumns_();
+
+    var rooms = readSheetAsObjects_("Rooms");
+    var summary = {
+      total_rooms_checked: rooms.length,
+      created_count: 0,
+      existing_count: 0,
+      skipped_count: 0,
+      displays: [],
+    };
+
+    rooms.forEach(function (room) {
+      if (!isValidRoomForTvDisplay_(room)) {
+        var skippedResult = seedTvDisplayForRoom_(room ? room.room_id : "");
+
+        summary.skipped_count += 1;
+        summary.displays.push(skippedResult.display);
+        return;
+      }
+
+      var result = seedTvDisplayForRoom_(room.room_id);
+
+      if (!result.ok) {
+        summary.skipped_count += 1;
+        return;
+      }
+
+      if (result.status === "created") {
+        summary.created_count += 1;
+      } else {
+        summary.existing_count += 1;
+      }
+
+      summary.displays.push(result.display);
+    });
+
+    return Object.assign({
+      ok: true,
+      success: true,
+      message: "Setup TV display semua room selesai.",
+    }, summary);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function rotateTvDisplayToken_(payload) {
+  if (String(payload.confirm || "").trim() !== "ROTATE") {
+    return {
+      ok: false,
+      success: false,
+      error: "ROTATE_CONFIRM_REQUIRED",
+      message: "Konfirmasi rotate token wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var result = seedTvDisplayForRoom_(payload.room_id, {
+      rotate_token: true,
+    });
+
+    if (!result.ok) {
+      return {
+        ok: false,
+        success: false,
+        error: result.reason || "ROOM_NOT_FOUND",
+        message: "Room untuk display tidak ditemukan.",
+      };
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Token TV display berhasil dirotasi.",
+      display: result.display,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getTvDisplaySetupList_() {
+  ensureTvDisplaysSheet_();
+  ensureRoomsMasterColumns_();
+
+  var roomsById = readSheetAsObjects_("Rooms").reduce(function (map, room) {
+    var roomId = String(room.room_id || "").trim();
+
+    if (roomId) {
+      map[roomId] = room;
+    }
+
+    return map;
+  }, {});
+
+  var displays = readSheetAsObjects_("TVDisplays")
+    .map(function (display) {
+      var normalizedDisplay = normalizeTvDisplay_(display);
+      return formatTvDisplaySetup_(normalizedDisplay, roomsById[normalizedDisplay.room_id] || null, "setup");
+    })
+    .sort(function (first, second) {
+      return String(first.room_id || "").localeCompare(String(second.room_id || ""));
+    });
+
+  return {
+    ok: true,
+    success: true,
+    message: "Daftar setup TV display berhasil dibaca.",
+    displays: displays,
+  };
 }
 
 function getCustomerDisplayState_(roomId, token) {
