@@ -138,6 +138,19 @@ var ROOM_TIME_LOGS_HEADERS = [
   "cashier_name",
   "note",
 ];
+var ROOM_RECOVERY_LOGS_HEADERS = [
+  "log_id",
+  "timestamp",
+  "room_id",
+  "room_name",
+  "session_id",
+  "issue_type",
+  "expired_minutes",
+  "action",
+  "reason",
+  "actor",
+  "result",
+];
 var TV_DEVICES_HEADERS = [
   "tv_device_id",
   "room_id",
@@ -429,6 +442,10 @@ function doPost(e) {
 
     if (action === "getExpiredRoomRecoveryList") {
       return jsonResponse(getExpiredRoomRecoveryList_(payload));
+    }
+
+    if (action === "recoverExpiredRoomSession") {
+      return jsonResponse(recoverExpiredRoomSession_(payload));
     }
 
     if (action === "getCustomerDisplayState") {
@@ -1450,6 +1467,188 @@ function getExpiredRoomRecoveryReason_(issueType, safeToRecover, graceMinutes) {
   }
 
   return "Room occupied sudah expired tetapi masih dalam grace period " + graceMinutes + " menit.";
+}
+
+function recoverExpiredRoomSession_(payload) {
+  var request = payload || {};
+
+  if (String(request.confirm || "").trim() !== "RECOVER") {
+    return recoveryErrorResponse_("RECOVERY_CONFIRMATION_REQUIRED", "Konfirmasi recovery wajib diisi.");
+  }
+
+  var roomId = String(request.room_id || "").trim();
+  var requestedSessionId = String(request.session_id || "").trim();
+
+  if (!roomId) {
+    return recoveryErrorResponse_("ROOM_ID_REQUIRED", "room_id wajib diisi.");
+  }
+
+  var diagnostic = getExpiredRoomRecoveryCandidates_({
+    grace_minutes: request.grace_minutes || 5,
+    include_invalid_end_time: true,
+  });
+  var candidate = findRecoveryCandidate_(diagnostic.candidates, roomId, requestedSessionId);
+
+  if (requestedSessionId && candidate && candidate.session_id !== requestedSessionId) {
+    return recoveryErrorResponse_("RECOVERY_SESSION_MISMATCH", "Session room tidak cocok untuk recovery.");
+  }
+
+  if (!candidate) {
+    if (requestedSessionId && hasRecoveryCandidateForRoom_(diagnostic.candidates, roomId)) {
+      return recoveryErrorResponse_("RECOVERY_SESSION_MISMATCH", "Session room tidak cocok untuk recovery.");
+    }
+
+    return recoveryErrorResponse_("ROOM_NOT_ELIGIBLE_FOR_RECOVERY", "Room tidak memenuhi syarat recovery.");
+  }
+
+  if (
+    candidate.issue_type !== "expired_session" ||
+    candidate.safe_to_recover !== true ||
+    candidate.recommended_action !== "eligible_for_recovery"
+  ) {
+    return recoveryErrorResponse_("ROOM_NOT_ELIGIBLE_FOR_RECOVERY", "Room tidak memenuhi syarat recovery.");
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    return recoverExpiredRoomSessionWithLock_(request, candidate);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function recoverExpiredRoomSessionWithLock_(request, originalCandidate) {
+  var roomId = String(request.room_id || "").trim();
+  var requestedSessionId = String(request.session_id || "").trim();
+  var diagnostic = getExpiredRoomRecoveryCandidates_({
+    grace_minutes: request.grace_minutes || 5,
+    include_invalid_end_time: true,
+  });
+  var candidate = findRecoveryCandidate_(diagnostic.candidates, roomId, requestedSessionId);
+
+  if (!candidate || candidate.session_id !== originalCandidate.session_id) {
+    return recoveryErrorResponse_("ROOM_NOT_ELIGIBLE_FOR_RECOVERY", "Room tidak memenuhi syarat recovery.");
+  }
+
+  if (
+    candidate.issue_type !== "expired_session" ||
+    candidate.safe_to_recover !== true ||
+    candidate.recommended_action !== "eligible_for_recovery"
+  ) {
+    return recoveryErrorResponse_("ROOM_NOT_ELIGIBLE_FOR_RECOVERY", "Room tidak memenuhi syarat recovery.");
+  }
+
+  var roomsSheet = ensureRoomsBookingColumns_();
+  var headerMap = getHeaderMap_(roomsSheet);
+  var rowNumber = findRowByValue_(roomsSheet, headerMap, "room_id", roomId);
+
+  if (!rowNumber) {
+    return recoveryErrorResponse_("ROOM_NOT_ELIGIBLE_FOR_RECOVERY", "Room tidak memenuhi syarat recovery.");
+  }
+
+  var room = getRowObject_(roomsSheet, headerMap, rowNumber);
+  var previousStatus = String(room.status || "").trim();
+  var recoveredAt = toJakartaIsoString_(new Date());
+  var reason = String(request.reason || "").trim() || "Manual expired room recovery";
+  var actor = String(request.actor || "").trim() || "system";
+
+  setRowValues_(roomsSheet, headerMap, rowNumber, buildRoomRecoveryUpdate_(headerMap, recoveredAt));
+
+  appendRoomRecoveryLog_({
+    log_id: generateRoomRecoveryLogId_(),
+    timestamp: recoveredAt,
+    room_id: candidate.room_id,
+    room_name: candidate.room_name,
+    session_id: candidate.session_id,
+    issue_type: candidate.issue_type,
+    expired_minutes: candidate.expired_minutes,
+    action: "recover_expired_room_session",
+    reason: reason,
+    actor: actor,
+    result: "success",
+  });
+
+  return {
+    ok: true,
+    success: true,
+    code: "ROOM_RECOVERED",
+    message: "Room berhasil dipulihkan.",
+    server_time: recoveredAt,
+    operational_date: getOperationalDateString_(new Date(recoveredAt)),
+    recovery: {
+      room_id: candidate.room_id,
+      room_name: candidate.room_name,
+      previous_status: previousStatus,
+      new_status: "available",
+      session_id: candidate.session_id,
+      issue_type: candidate.issue_type,
+      expired_minutes: candidate.expired_minutes,
+      recovered_at: recoveredAt,
+      reason: reason,
+      actor: actor,
+    },
+  };
+}
+
+function buildRoomRecoveryUpdate_(headerMap, recoveredAt) {
+  var update = {
+    status: "available",
+    booked_duration_minutes: "",
+    scheduled_end_time: "",
+    updated_at: recoveredAt,
+  };
+  var optionalSessionFields = [
+    "current_session_id",
+    "session_id",
+    "scheduled_start_time",
+    "end_time",
+  ];
+
+  optionalSessionFields.forEach(function (field) {
+    if (headerMap[field]) {
+      update[field] = "";
+    }
+  });
+
+  return update;
+}
+
+function findRecoveryCandidate_(candidates, roomId, sessionId) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedSessionId = String(sessionId || "").trim();
+
+  for (var index = 0; index < candidates.length; index++) {
+    if (String(candidates[index].room_id || "").trim() !== normalizedRoomId) {
+      continue;
+    }
+
+    if (normalizedSessionId && String(candidates[index].session_id || "").trim() !== normalizedSessionId) {
+      continue;
+    }
+
+    return candidates[index];
+  }
+
+  return null;
+}
+
+function hasRecoveryCandidateForRoom_(candidates, roomId) {
+  var normalizedRoomId = String(roomId || "").trim();
+
+  return candidates.some(function (candidate) {
+    return String(candidate.room_id || "").trim() === normalizedRoomId;
+  });
+}
+
+function recoveryErrorResponse_(code, message) {
+  return {
+    ok: false,
+    success: false,
+    code: code,
+    message: message,
+  };
 }
 
 function getLatestTvControlLogByRoomId_(roomId) {
@@ -5826,6 +6025,12 @@ function ensureRoomTimeLogsSheet_() {
   return ensureSheetWithHeaders_("RoomTimeLogs", ROOM_TIME_LOGS_HEADERS);
 }
 
+function ensureRoomRecoveryLogsSheet_() {
+  var sheet = ensureSheetWithHeaders_("RoomRecoveryLogs", ROOM_RECOVERY_LOGS_HEADERS);
+  ensureColumns_(sheet, ROOM_RECOVERY_LOGS_HEADERS);
+  return sheet;
+}
+
 function ensureTvDevicesSheet_() {
   var sheet = ensureSheetWithHeaders_("TVDevices", TV_DEVICES_HEADERS);
   ensureColumns_(sheet, TV_DEVICES_HEADERS);
@@ -5868,6 +6073,10 @@ function appendTvDisplay_(display) {
   sheet.appendRow(rowValues);
 }
 
+function appendRoomRecoveryLog_(logEntry) {
+  appendObjectRow_(ensureRoomRecoveryLogsSheet_(), logEntry);
+}
+
 function appendTvControlLog_(logEntry) {
   var sheet = ensureTvControlLogsSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
@@ -5882,6 +6091,10 @@ function appendTvControlLog_(logEntry) {
 
 function generateRoomTimeLogId_() {
   return "RTL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function generateRoomRecoveryLogId_() {
+  return "RRL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
 function generateTvControlLogId_() {

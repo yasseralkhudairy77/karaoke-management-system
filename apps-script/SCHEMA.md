@@ -86,6 +86,86 @@ Field kandidat:
 
 Safety boundary: response diagnostic ini tidak mengirim `payment_status`, `payment_method`, `room_total`, `fnb_total`, `grand_total`, `cashier_name`, data customer, `display_token`, token display, atau detail transaksi sensitif.
 
+### Fase 7B-2C-B-A - Manual Expired Room Recovery
+
+POST `recoverExpiredRoomSession` memulihkan satu room expired yang sudah lolos diagnostic `getExpiredRoomRecoveryList`.
+
+Action ini manual-only:
+
+- Wajib memakai `confirm = RECOVER`.
+- Tidak melakukan auto-recovery semua room.
+- Tidak menghapus histori session, transaksi, F&B, payment, atau operational date.
+- Tidak mengubah `start_time`.
+- Tidak menyalakan atau mematikan TV.
+
+Payload:
+
+```json
+{
+  "action": "recoverExpiredRoomSession",
+  "room_id": "ROOM-001",
+  "session_id": "ROOM-001-202606221141540700",
+  "confirm": "RECOVER",
+  "reason": "Manual recovery after expired session diagnostic",
+  "actor": "system"
+}
+```
+
+Validasi:
+
+- Jika `confirm` bukan `RECOVER`, response error memakai `code = RECOVERY_CONFIRMATION_REQUIRED`.
+- Jika `room_id` kosong, response error memakai `code = ROOM_ID_REQUIRED`.
+- Jika `session_id` dikirim tetapi tidak cocok dengan candidate diagnostic, response error memakai `code = RECOVERY_SESSION_MISMATCH`.
+- Recovery hanya boleh untuk candidate dengan `issue_type = expired_session`, `safe_to_recover = true`, dan `recommended_action = eligible_for_recovery`.
+- Jika tidak eligible, response error memakai `code = ROOM_NOT_ELIGIBLE_FOR_RECOVERY`.
+
+Response sukses:
+
+```json
+{
+  "ok": true,
+  "success": true,
+  "code": "ROOM_RECOVERED",
+  "message": "Room berhasil dipulihkan.",
+  "server_time": "...",
+  "operational_date": "yyyy-MM-dd",
+  "recovery": {
+    "room_id": "ROOM-001",
+    "room_name": "Ruangan 1 - Sakura",
+    "previous_status": "occupied",
+    "new_status": "available",
+    "session_id": "ROOM-001-202606221141540700",
+    "issue_type": "expired_session",
+    "expired_minutes": 0,
+    "recovered_at": "...",
+    "reason": "Manual expired room recovery",
+    "actor": "system"
+  }
+}
+```
+
+Recovery menulis audit minimal ke sheet `RoomRecoveryLogs`.
+
+Safety boundary: response recovery ini tidak mengirim `payment_status`, `payment_method`, `room_total`, `fnb_total`, `grand_total`, `cashier_name`, data customer, token display, `display_token`, atau detail transaksi sensitif.
+
+## RoomRecoveryLogs
+
+Menyimpan audit manual recovery untuk room expired.
+
+| Column | Description |
+| --- | --- |
+| `log_id` | ID unik log recovery, contoh `RRL-20260623-120000-123`. |
+| `timestamp` | Timestamp recovery dibuat. |
+| `room_id` | ID room yang dipulihkan. |
+| `room_name` | Nama room saat recovery. |
+| `session_id` | ID sesi display/room yang divalidasi saat recovery. |
+| `issue_type` | Jenis issue, contoh `expired_session`. |
+| `expired_minutes` | Lama waktu expired dalam menit saat recovery. |
+| `action` | Aksi recovery, contoh `recover_expired_room_session`. |
+| `reason` | Alasan manual recovery. |
+| `actor` | Operator/sistem yang menjalankan recovery. |
+| `result` | Hasil aksi, contoh `success`. |
+
 ## RoomTimeLogs
 
 Menyimpan audit log perubahan durasi booking room.
