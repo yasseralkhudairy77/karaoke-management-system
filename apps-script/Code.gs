@@ -1201,6 +1201,7 @@ function getCustomerDisplayState_(roomId, token) {
   var nowIso = toJakartaIsoString_(nowDate);
   var session = buildCustomerDisplaySession_(room, nowDate);
   var latestTvLog = getLatestTvControlLogByRoomId_(normalizedRoomId);
+  var roomName = resolveCustomerDisplayRoomName_(room, normalizedRoomId);
 
   return {
     ok: true,
@@ -1209,7 +1210,7 @@ function getCustomerDisplayState_(roomId, token) {
     operational_date: getOperationalDateString_(nowDate),
     room: {
       room_id: room.room_id || "",
-      room_name: room.room_name || "",
+      room_name: roomName,
       status: room.status || "",
     },
     session: session,
@@ -1224,6 +1225,19 @@ function getCustomerDisplayState_(roomId, token) {
       last_command_at: latestTvLog ? latestTvLog.created_at || "" : "",
     },
   };
+}
+
+function resolveCustomerDisplayRoomName_(room, roomId) {
+  var roomName = String(room && room.room_name || "").trim();
+
+  if (roomName) {
+    return roomName;
+  }
+
+  var masterRoom = getRoomMasterByRoomId_(roomId);
+  roomName = String(masterRoom && masterRoom.room_name || "").trim();
+
+  return roomName || "Karaoke Room";
 }
 
 function selectCustomerDisplayRoom_(rooms, roomId) {
