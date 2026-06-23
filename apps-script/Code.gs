@@ -834,6 +834,9 @@ function callTvMiddleware_(middlewareUrl, payload) {
       contentType: "application/json",
       payload: JSON.stringify(payload),
       muteHttpExceptions: true,
+      headers: {
+        "ngrok-skip-browser-warning": "true",
+      },
     });
     statusCode = httpResponse.getResponseCode();
     rawResponse = httpResponse.getContentText() || "";
