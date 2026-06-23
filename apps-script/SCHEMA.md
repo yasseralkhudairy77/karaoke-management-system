@@ -115,6 +115,53 @@ POST `saveTvDevice` membuat mapping TV baru. Validasi:
 
 POST `updateTvDevice` memperbarui mapping TV existing dengan validasi yang sama. `tv_device_id` tidak bisa diganti.
 
+## TVDisplays
+
+Menyimpan akses display pelanggan per room. Display pelanggan memakai `room_id + display_token` dan tidak bergantung pada `TVDevices`.
+
+| Column | Description |
+| --- | --- |
+| `display_id` | ID unik display, contoh `DISPLAY-ROOM-002`. |
+| `room_id` | ID room terkait. |
+| `display_name` | Nama display yang tampil di response aman. |
+| `display_token` | Token rahasia panjang untuk akses display. Tidak dikirim balik oleh endpoint display pelanggan. |
+| `display_enabled` | `true` jika display boleh diakses. |
+| `refresh_interval_seconds` | Interval refresh yang disarankan untuk halaman display. |
+| `notes` | Catatan internal. |
+| `created_at` | Timestamp row dibuat. |
+| `updated_at` | Timestamp terakhir metadata display diperbarui. |
+
+POST `seedPilotTvDisplay` membuat atau memperbarui row pilot untuk `ROOM-002 / Ruangan 2 - Melati`.
+
+- `display_id`: `DISPLAY-ROOM-002`
+- `display_name`: `Display Ruangan 2 - Melati`
+- `display_enabled`: `true`
+- `refresh_interval_seconds`: `30`
+- Token existing tidak dioverwrite jika row sudah ada.
+- Response seed boleh menyertakan `token` dan `display_url_hint` untuk admin/dev manual test.
+
+POST `getCustomerDisplayState` membaca state display pelanggan berdasarkan `room_id` dan `token`.
+
+Contoh payload:
+
+```json
+{
+  "action": "getCustomerDisplayState",
+  "room_id": "ROOM-002",
+  "token": "TOKEN-PANJANG-DARI-TVDisplays"
+}
+```
+
+Response sukses berisi `server_time`, `operational_date`, ringkasan `room`, countdown `session`, metadata `display`, dan command TV terakhir jika ada.
+
+Endpoint ini sengaja aman untuk pelanggan:
+
+- Tidak mengirim `display_token`.
+- Tidak mengirim `payment_status`, `payment_method`, `room_total`, `fnb_total`, atau `grand_total`.
+- Tidak mengirim `cashier_name` atau data customer sensitif.
+- Jika room tidak punya sesi aktif, `session.has_active_session = false`, `remaining_seconds = 0`, dan `warning_level = idle`.
+- Jika room `occupied` tetapi `scheduled_end_time` invalid, response memakai pesan aman `Silakan hubungi kasir.`
+
 ## TVControlLogs
 
 Menyimpan audit log semua command TV, termasuk command yang gagal.

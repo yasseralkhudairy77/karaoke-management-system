@@ -163,6 +163,17 @@ var TV_CONTROL_LOGS_HEADERS = [
   "message",
   "raw_response",
 ];
+var TV_DISPLAYS_HEADERS = [
+  "display_id",
+  "room_id",
+  "display_name",
+  "display_token",
+  "display_enabled",
+  "refresh_interval_seconds",
+  "notes",
+  "created_at",
+  "updated_at",
+];
 var ROOMS_MASTER_HEADERS = [
   "room_id",
   "room_name",
@@ -394,6 +405,14 @@ function doPost(e) {
 
     if (action === "updateTvDevice") {
       return jsonResponse(updateTvDevice_(payload));
+    }
+
+    if (action === "seedPilotTvDisplay") {
+      return jsonResponse(seedPilotTvDisplay_());
+    }
+
+    if (action === "getCustomerDisplayState") {
+      return jsonResponse(getCustomerDisplayState_(payload.room_id, payload.token));
     }
 
     if (action === "adjustInventoryStock") {
@@ -727,6 +746,336 @@ function getTvControlLogs_(roomId, tvDeviceId, limit) {
     tv_control_logs: logs,
     logs: logs,
   };
+}
+
+function normalizeBoolean_(value) {
+  if (value === true) {
+    return true;
+  }
+
+  var normalizedValue = String(value || "").trim().toLowerCase();
+
+  return normalizedValue === "true"
+    || normalizedValue === "1"
+    || normalizedValue === "yes"
+    || normalizedValue === "active";
+}
+
+function normalizePositiveInteger_(value, fallback) {
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(numberValue);
+}
+
+function generateDisplayToken_() {
+  return [
+    Utilities.getUuid(),
+    Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss"),
+    Utilities.getUuid(),
+    Math.floor(Math.random() * 1000000000),
+  ].join("-");
+}
+
+function normalizeTvDisplay_(display) {
+  return {
+    display_id: display.display_id || "",
+    room_id: display.room_id || "",
+    display_name: display.display_name || "",
+    display_token: display.display_token || "",
+    display_enabled: normalizeBoolean_(display.display_enabled),
+    refresh_interval_seconds: normalizePositiveInteger_(display.refresh_interval_seconds, 30),
+    notes: display.notes || "",
+    created_at: normalizeFnbOrderDateTime_(display.created_at),
+    updated_at: normalizeFnbOrderDateTime_(display.updated_at),
+  };
+}
+
+function getTvDisplayByRoomId_(roomId) {
+  ensureTvDisplaysSheet_();
+
+  var normalizedRoomId = String(roomId || "").trim();
+
+  if (!normalizedRoomId) {
+    return null;
+  }
+
+  var displays = readSheetAsObjects_("TVDisplays");
+
+  for (var index = 0; index < displays.length; index++) {
+    if (String(displays[index].room_id || "").trim() === normalizedRoomId) {
+      return normalizeTvDisplay_(displays[index]);
+    }
+  }
+
+  return null;
+}
+
+function validateCustomerDisplayAccess_(roomId, token) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedToken = String(token || "").trim();
+
+  if (!normalizedRoomId) {
+    return createCustomerDisplayError_("INVALID_ROOM_ID", "Room display tidak valid.");
+  }
+
+  if (!normalizedToken) {
+    return createCustomerDisplayError_("INVALID_DISPLAY_TOKEN", "Token display tidak valid.");
+  }
+
+  var display = getTvDisplayByRoomId_(normalizedRoomId);
+
+  if (!display) {
+    return createCustomerDisplayError_("DISPLAY_NOT_FOUND", "Display room belum terdaftar.");
+  }
+
+  if (!display.display_enabled) {
+    return createCustomerDisplayError_("DISPLAY_DISABLED", "Display room sedang nonaktif.");
+  }
+
+  if (String(display.display_token || "") !== normalizedToken) {
+    return createCustomerDisplayError_("INVALID_DISPLAY_TOKEN", "Token display tidak valid.");
+  }
+
+  return display;
+}
+
+function createCustomerDisplayError_(code, message) {
+  return {
+    ok: false,
+    success: false,
+    error: code,
+    code: code,
+    message: message,
+  };
+}
+
+function seedPilotTvDisplay_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var sheet = ensureTvDisplaysSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var rowNumber = findRowByValue_(sheet, headerMap, "display_id", "DISPLAY-ROOM-002")
+      || findRowByValue_(sheet, headerMap, "room_id", "ROOM-002");
+    var now = toJakartaIsoString_(new Date());
+    var token = generateDisplayToken_();
+
+    if (rowNumber) {
+      var existingDisplay = getRowObject_(sheet, headerMap, rowNumber);
+      token = existingDisplay.display_token || token;
+
+      sheet.getRange(rowNumber, headerMap.display_id).setValue("DISPLAY-ROOM-002");
+      sheet.getRange(rowNumber, headerMap.room_id).setValue("ROOM-002");
+      sheet.getRange(rowNumber, headerMap.display_name).setValue("Display Ruangan 2 - Melati");
+      sheet.getRange(rowNumber, headerMap.display_enabled).setValue(true);
+      sheet.getRange(rowNumber, headerMap.refresh_interval_seconds).setValue(30);
+      sheet.getRange(rowNumber, headerMap.notes).setValue("Polytron Google TV pilot room 2");
+      sheet.getRange(rowNumber, headerMap.display_token).setValue(token);
+      sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
+
+      if (!existingDisplay.created_at) {
+        sheet.getRange(rowNumber, headerMap.created_at).setValue(now);
+      }
+    } else {
+      appendTvDisplay_({
+        display_id: "DISPLAY-ROOM-002",
+        room_id: "ROOM-002",
+        display_name: "Display Ruangan 2 - Melati",
+        display_token: token,
+        display_enabled: true,
+        refresh_interval_seconds: 30,
+        notes: "Polytron Google TV pilot room 2",
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Pilot TV display siap digunakan.",
+      display: {
+        display_id: "DISPLAY-ROOM-002",
+        room_id: "ROOM-002",
+        display_name: "Display Ruangan 2 - Melati",
+        display_enabled: true,
+        refresh_interval_seconds: 30,
+        display_url_hint: "tv-display.html?room_id=ROOM-002&token=" + encodeURIComponent(token),
+        token: token,
+      },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getCustomerDisplayState_(roomId, token) {
+  var access = validateCustomerDisplayAccess_(roomId, token);
+
+  if (access.ok === false) {
+    return access;
+  }
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var rooms = readSheetAsObjects_("Rooms");
+  var room = null;
+
+  for (var roomIndex = 0; roomIndex < rooms.length; roomIndex++) {
+    if (String(rooms[roomIndex].room_id || "").trim() === normalizedRoomId) {
+      room = rooms[roomIndex];
+      break;
+    }
+  }
+
+  if (!room) {
+    return createCustomerDisplayError_("INVALID_ROOM_ID", "Room display tidak valid.");
+  }
+
+  var nowDate = new Date();
+  var nowIso = toJakartaIsoString_(nowDate);
+  var session = buildCustomerDisplaySession_(room, nowDate);
+  var latestTvLog = getLatestTvControlLogByRoomId_(normalizedRoomId);
+
+  return {
+    ok: true,
+    success: true,
+    server_time: nowIso,
+    operational_date: getOperationalDateString_(nowDate),
+    room: {
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      status: room.status || "",
+    },
+    session: session,
+    display: {
+      display_id: access.display_id || "",
+      display_name: access.display_name || "",
+      refresh_interval_seconds: normalizePositiveInteger_(access.refresh_interval_seconds, 30),
+      message: session.message,
+    },
+    tv: {
+      last_command: latestTvLog ? latestTvLog.tv_action || "" : "",
+      last_command_at: latestTvLog ? latestTvLog.created_at || "" : "",
+    },
+  };
+}
+
+function buildCustomerDisplaySession_(room, nowDate) {
+  var status = String(room.status || "").trim().toLowerCase();
+  var startTime = normalizeFnbOrderDateTime_(room.start_time);
+  var endTime = normalizeFnbOrderDateTime_(room.scheduled_end_time);
+  var endDate = parseJakartaDateTimeValue_(room.scheduled_end_time);
+  var durationMinutes = Number(room.booked_duration_minutes) || 0;
+
+  if (status !== "occupied") {
+    return {
+      has_active_session: false,
+      session_id: "",
+      start_time: startTime || "",
+      end_time: endTime || "",
+      duration_minutes: durationMinutes,
+      remaining_seconds: 0,
+      warning_level: "idle",
+      message: "Belum ada sesi aktif.",
+    };
+  }
+
+  if (!endDate) {
+    return {
+      has_active_session: false,
+      session_id: "",
+      start_time: startTime || "",
+      end_time: "",
+      duration_minutes: durationMinutes,
+      remaining_seconds: 0,
+      warning_level: "idle",
+      message: "Silakan hubungi kasir.",
+    };
+  }
+
+  var remainingSeconds = Math.floor((endDate.getTime() - nowDate.getTime()) / 1000);
+  var warningLevel = getCustomerDisplayWarningLevel_(remainingSeconds);
+
+  return {
+    has_active_session: true,
+    session_id: buildCustomerDisplaySessionId_(room),
+    start_time: startTime || "",
+    end_time: endTime || "",
+    duration_minutes: durationMinutes,
+    remaining_seconds: Math.max(0, remainingSeconds),
+    warning_level: warningLevel,
+    message: getCustomerDisplayMessage_(warningLevel),
+  };
+}
+
+function buildCustomerDisplaySessionId_(room) {
+  var roomId = String(room.room_id || "").trim();
+  var startTime = normalizeFnbOrderDateTime_(room.start_time);
+
+  if (!roomId || !startTime) {
+    return "";
+  }
+
+  return roomId + "-" + String(startTime).replace(/[^0-9]/g, "");
+}
+
+function getCustomerDisplayWarningLevel_(remainingSeconds) {
+  if (remainingSeconds <= 0) {
+    return "expired";
+  }
+
+  if (remainingSeconds <= 300) {
+    return "warning_5";
+  }
+
+  if (remainingSeconds <= 600) {
+    return "warning_10";
+  }
+
+  return "normal";
+}
+
+function getCustomerDisplayMessage_(warningLevel) {
+  if (warningLevel === "expired") {
+    return "Waktu karaoke telah habis. Silakan hubungi kasir.";
+  }
+
+  if (warningLevel === "warning_5") {
+    return "Sisa waktu kurang dari 5 menit.";
+  }
+
+  if (warningLevel === "warning_10") {
+    return "Sisa waktu kurang dari 10 menit.";
+  }
+
+  return "Selamat bernyanyi.";
+}
+
+function getLatestTvControlLogByRoomId_(roomId) {
+  ensureTvControlLogsSheet_();
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var logs = readSheetAsObjectsOrEmpty_("TVControlLogs");
+  var latestLog = null;
+
+  logs.forEach(function (log) {
+    if (String(log.room_id || "").trim() !== normalizedRoomId) {
+      return;
+    }
+
+    var normalizedLog = normalizeTvControlLog_(log);
+
+    if (!latestLog || String(normalizedLog.created_at || "").localeCompare(String(latestLog.created_at || "")) > 0) {
+      latestLog = normalizedLog;
+    }
+  });
+
+  return latestLog;
 }
 
 function sendTvCommand_(payload) {
@@ -5093,6 +5442,12 @@ function ensureTvControlLogsSheet_() {
   return sheet;
 }
 
+function ensureTvDisplaysSheet_() {
+  var sheet = ensureSheetWithHeaders_("TVDisplays", TV_DISPLAYS_HEADERS);
+  ensureColumns_(sheet, TV_DISPLAYS_HEADERS);
+  return sheet;
+}
+
 function appendRoomTimeLog_(logEntry) {
   var sheet = ensureRoomTimeLogsSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
@@ -5100,6 +5455,18 @@ function appendRoomTimeLog_(logEntry) {
   });
   var rowValues = headers.map(function (header) {
     return logEntry[header] !== undefined ? logEntry[header] : "";
+  });
+
+  sheet.appendRow(rowValues);
+}
+
+function appendTvDisplay_(display) {
+  var sheet = ensureTvDisplaysSheet_();
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var rowValues = headers.map(function (header) {
+    return display[header] !== undefined ? display[header] : "";
   });
 
   sheet.appendRow(rowValues);

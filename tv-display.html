@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Customer TV Display</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="css/tv-display.css" />
+  </head>
+  <body>
+    <main id="displayRoot" class="tv-display loading" aria-live="polite">
+      <div class="display-topline">
+        <span>Customer Display</span>
+        <span id="lastUpdate">Terakhir update: --:--:--</span>
+      </div>
+
+      <section class="display-content">
+        <p id="statusLabel" class="status-label">Sedang menyiapkan display...</p>
+        <h1 id="roomName" class="room-name">Karaoke Room</h1>
+        <div id="timerText" class="timer-text">00:00:00</div>
+        <p id="messageText" class="message-text">Sedang menyiapkan display...</p>
+
+        <div class="session-info" aria-label="Informasi sesi">
+          <div>
+            <span>Mulai</span>
+            <strong id="startTime">--:--</strong>
+          </div>
+          <div>
+            <span>Selesai</span>
+            <strong id="endTime">--:--</strong>
+          </div>
+          <div>
+            <span>Durasi</span>
+            <strong id="durationText">-- menit</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="js/tv-display.js"></script>
+  </body>
+</html>

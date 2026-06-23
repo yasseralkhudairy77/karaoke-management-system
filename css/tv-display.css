@@ -1,0 +1,207 @@
+:root {
+  color-scheme: dark;
+  --bg: #071016;
+  --panel: rgba(255, 255, 255, 0.05);
+  --line: rgba(255, 255, 255, 0.15);
+  --text: #f8fbff;
+  --muted: #b7c4cf;
+  --accent: #58d9ff;
+  --accent-strong: #96f0ff;
+  --warning: #ffd166;
+  --danger: #ff6b6b;
+  --idle: #9fb4c4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(88, 217, 255, 0.2), transparent 32%),
+    radial-gradient(circle at 78% 80%, rgba(255, 209, 102, 0.13), transparent 30%),
+    linear-gradient(135deg, #050b10 0%, #0a1a22 48%, #130f19 100%);
+  color: var(--text);
+  font-family:
+    Inter,
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+
+.tv-display {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  padding: clamp(24px, 4vw, 56px);
+}
+
+.tv-display::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 75%);
+  pointer-events: none;
+}
+
+.display-topline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  color: var(--muted);
+  font-size: clamp(14px, 1.5vw, 20px);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.display-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  text-align: center;
+}
+
+.status-label {
+  margin: 0 0 clamp(10px, 1.4vw, 18px);
+  color: var(--accent-strong);
+  font-size: clamp(20px, 2.5vw, 32px);
+  font-weight: 800;
+}
+
+.room-name {
+  width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: clamp(34px, 5vw, 60px);
+  font-weight: 900;
+  line-height: 1.05;
+}
+
+.timer-text {
+  width: 100%;
+  margin: clamp(18px, 2.5vw, 34px) 0 clamp(14px, 2vw, 28px);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(96px, 14vw, 180px);
+  font-weight: 950;
+  line-height: 0.95;
+  text-shadow: 0 0 34px rgba(88, 217, 255, 0.22);
+}
+
+.message-text {
+  max-width: min(1180px, 92vw);
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: clamp(24px, 4vw, 48px);
+  font-weight: 850;
+  line-height: 1.18;
+}
+
+.session-info {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  gap: clamp(12px, 1.7vw, 24px);
+  width: min(980px, 86vw);
+  margin-top: clamp(22px, 3vw, 42px);
+}
+
+.session-info div {
+  min-width: 0;
+  padding: clamp(14px, 1.8vw, 22px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.session-info span,
+.session-info strong {
+  display: block;
+}
+
+.session-info span {
+  color: var(--muted);
+  font-size: clamp(14px, 1.4vw, 18px);
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.session-info strong {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: clamp(20px, 2.5vw, 32px);
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.tv-display.idle .status-label,
+.tv-display.loading .status-label {
+  color: var(--idle);
+}
+
+.tv-display.normal .status-label,
+.tv-display.normal .timer-text {
+  color: var(--accent-strong);
+}
+
+.tv-display.warning-10 .status-label,
+.tv-display.warning-10 .timer-text,
+.tv-display.warning-5 .status-label,
+.tv-display.warning-5 .timer-text {
+  color: var(--warning);
+  text-shadow: 0 0 36px rgba(255, 209, 102, 0.26);
+}
+
+.tv-display.expired .status-label,
+.tv-display.expired .timer-text {
+  color: var(--danger);
+  text-shadow: 0 0 36px rgba(255, 107, 107, 0.24);
+}
+
+.tv-display.reconnecting .status-label {
+  color: var(--warning);
+}
+
+@media (max-width: 900px) {
+  .tv-display {
+    padding: 22px;
+  }
+
+  .display-topline {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .session-info {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+}
