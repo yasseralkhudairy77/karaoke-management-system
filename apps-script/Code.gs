@@ -1266,38 +1266,20 @@ function buildCustomerDisplaySession_(room, nowDate) {
   // Customer display derives session state only from the active room row and returns a safe public payload.
   var status = String(room.status || "").trim().toLowerCase();
   var startTime = normalizeFnbOrderDateTime_(room.start_time);
-  var endTime = normalizeFnbOrderDateTime_(room.scheduled_end_time);
   var endDate = parseJakartaDateTimeValue_(room.scheduled_end_time);
-  var durationMinutes = Number(room.booked_duration_minutes) || 0;
 
   if (status !== "occupied") {
-    return {
-      has_active_session: false,
-      session_id: "",
-      start_time: startTime || "",
-      end_time: endTime || "",
-      duration_minutes: durationMinutes,
-      remaining_seconds: 0,
-      warning_level: "idle",
-      message: "Silakan hubungi kasir untuk mulai karaoke.",
-    };
+    return buildIdleCustomerDisplaySession_("Silakan hubungi kasir untuk mulai karaoke.");
   }
 
   if (!endDate) {
-    return {
-      has_active_session: false,
-      session_id: "",
-      start_time: startTime || "",
-      end_time: "",
-      duration_minutes: durationMinutes,
-      remaining_seconds: 0,
-      warning_level: "idle",
-      message: "Silakan hubungi kasir.",
-    };
+    return buildIdleCustomerDisplaySession_("Silakan hubungi kasir.");
   }
 
   var remainingSeconds = Math.floor((endDate.getTime() - nowDate.getTime()) / 1000);
   var warningLevel = getCustomerDisplayWarningLevel_(remainingSeconds);
+  var endTime = normalizeFnbOrderDateTime_(room.scheduled_end_time);
+  var durationMinutes = Number(room.booked_duration_minutes) || 0;
 
   return {
     has_active_session: true,
@@ -1308,6 +1290,19 @@ function buildCustomerDisplaySession_(room, nowDate) {
     remaining_seconds: Math.max(0, remainingSeconds),
     warning_level: warningLevel,
     message: getCustomerDisplayMessage_(warningLevel),
+  };
+}
+
+function buildIdleCustomerDisplaySession_(message) {
+  return {
+    has_active_session: false,
+    session_id: "",
+    start_time: "",
+    end_time: "",
+    duration_minutes: 0,
+    remaining_seconds: 0,
+    warning_level: "idle",
+    message: message || "Silakan hubungi kasir untuk mulai karaoke.",
   };
 }
 
