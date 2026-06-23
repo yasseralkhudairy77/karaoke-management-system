@@ -36,6 +36,56 @@ POST `saveRoomMaster` dan `updateRoomMaster` mengelola data master room.
 - Room `occupied` tidak boleh diubah paksa ke `available` atau `maintenance` dari Pengaturan.
 - Fase 6B: POST `deleteRoomMaster` menghapus permanen hanya jika room belum punya histori di `Transactions`, `FnbOrders`, atau `RoomTimeLogs`.
 
+### Fase 7B-2C-A - Expired Session Diagnostics
+
+POST `getExpiredRoomRecoveryList` membaca kandidat room yang masih `occupied` tetapi waktu sesi sudah habis atau data waktu selesainya tidak valid.
+
+Action ini read-only:
+
+- Tidak mengubah `Rooms`.
+- Tidak mengubah session, status room, transaksi, F&B, stok, atau TV.
+- Tidak melakukan auto-close dan tidak melakukan recovery.
+- Recovery/mutasi akan dibuat pada fase berikutnya setelah kandidat tervalidasi.
+
+Payload opsional:
+
+```json
+{
+  "action": "getExpiredRoomRecoveryList",
+  "grace_minutes": 5,
+  "include_invalid_end_time": true
+}
+```
+
+Response summary:
+
+- `ok`
+- `success`
+- `server_time`
+- `operational_date`
+- `total_rooms_checked`
+- `expired_count`
+- `invalid_count`
+- `candidates`
+
+Field kandidat:
+
+- `room_id`
+- `room_name`
+- `room_status`
+- `session_id`
+- `start_time`
+- `end_time`
+- `duration_minutes`
+- `remaining_seconds`
+- `expired_minutes`
+- `issue_type`: `expired_session`, `invalid_end_time`, atau `occupied_without_session`
+- `recommended_action`: `manual_review` atau `eligible_for_recovery`
+- `safe_to_recover`
+- `reason`
+
+Safety boundary: response diagnostic ini tidak mengirim `payment_status`, `payment_method`, `room_total`, `fnb_total`, `grand_total`, `cashier_name`, data customer, `display_token`, token display, atau detail transaksi sensitif.
+
 ## RoomTimeLogs
 
 Menyimpan audit log perubahan durasi booking room.

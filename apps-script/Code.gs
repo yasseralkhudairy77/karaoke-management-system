@@ -342,6 +342,10 @@ function doGet(e) {
       return jsonResponse(getEmployees_());
     }
 
+    if (action === "getExpiredRoomRecoveryList") {
+      return jsonResponse(getExpiredRoomRecoveryList_(e.parameter));
+    }
+
     return jsonResponse({
       ok: false,
       success: false,
@@ -421,6 +425,10 @@ function doPost(e) {
 
     if (action === "getTvDisplaySetupList") {
       return jsonResponse(getTvDisplaySetupList_());
+    }
+
+    if (action === "getExpiredRoomRecoveryList") {
+      return jsonResponse(getExpiredRoomRecoveryList_(payload));
     }
 
     if (action === "getCustomerDisplayState") {
@@ -1327,6 +1335,121 @@ function getCustomerDisplayMessage_(warningLevel) {
   }
 
   return "Selamat bernyanyi.";
+}
+
+function getExpiredRoomRecoveryList_(payload) {
+  return getExpiredRoomRecoveryCandidates_(payload || {});
+}
+
+function buildExpiredRoomRecoveryResponse_(nowDate, rooms, candidates) {
+  var expiredCount = candidates.filter(function (candidate) {
+    return candidate.issue_type === "expired_session";
+  }).length;
+  var invalidCount = candidates.filter(function (candidate) {
+    return candidate.issue_type === "invalid_end_time" || candidate.issue_type === "occupied_without_session";
+  }).length;
+
+  return {
+    ok: true,
+    success: true,
+    server_time: toJakartaIsoString_(nowDate),
+    operational_date: getOperationalDateString_(nowDate),
+    total_rooms_checked: rooms.length,
+    expired_count: expiredCount,
+    invalid_count: invalidCount,
+    candidates: candidates,
+  };
+}
+
+function getExpiredRoomRecoveryCandidates_(options) {
+  var settings = options || {};
+  var nowDate = new Date();
+  var graceMinutes = normalizePositiveInteger_(settings.grace_minutes, 5);
+  var includeInvalidEndTime = settings.include_invalid_end_time === undefined
+    ? true
+    : normalizeBoolean_(settings.include_invalid_end_time);
+  ensureRoomsBookingColumns_();
+
+  var rooms = readSheetAsObjects_("Rooms");
+  var candidates = [];
+
+  // Read-only diagnostic: recovery/mutation belongs to the next phase after candidates are reviewed.
+  rooms.forEach(function (room) {
+    var roomStatus = String(room.status || "").trim().toLowerCase();
+    var isOccupied = roomStatus === "occupied";
+
+    if (!isOccupied) {
+      return;
+    }
+
+    var endDate = parseRoomRecoveryEndDate_(room);
+
+    if (!endDate) {
+      if (includeInvalidEndTime) {
+        candidates.push(buildExpiredRoomRecoveryCandidate_(room, nowDate, null, "invalid_end_time", graceMinutes));
+      }
+
+      return;
+    }
+
+    var remainingSeconds = Math.floor((endDate.getTime() - nowDate.getTime()) / 1000);
+
+    if (remainingSeconds <= 0) {
+      candidates.push(buildExpiredRoomRecoveryCandidate_(room, nowDate, endDate, "expired_session", graceMinutes));
+    }
+  });
+
+  return buildExpiredRoomRecoveryResponse_(nowDate, rooms, candidates);
+}
+
+function parseRoomRecoveryEndDate_(room) {
+  return parseJakartaDateTimeValue_(room.scheduled_end_time || room.end_time);
+}
+
+function buildExpiredRoomRecoveryCandidate_(room, nowDate, endDate, issueType, graceMinutes) {
+  var startTime = normalizeFnbOrderDateTime_(room.start_time);
+  var endTime = endDate ? toJakartaIsoString_(endDate) : normalizeFnbOrderDateTime_(room.scheduled_end_time || room.end_time);
+  var remainingSeconds = endDate ? Math.floor((endDate.getTime() - nowDate.getTime()) / 1000) : 0;
+  var expiredMinutes = endDate ? Math.max(0, Math.floor((nowDate.getTime() - endDate.getTime()) / 60000)) : 0;
+  var hasStartTime = !!parseJakartaDateTimeValue_(room.start_time);
+  var normalizedIssueType = issueType;
+  var safeToRecover = normalizedIssueType === "expired_session" && expiredMinutes >= graceMinutes;
+
+  if (normalizedIssueType === "invalid_end_time" && !hasStartTime) {
+    normalizedIssueType = "occupied_without_session";
+  }
+
+  return {
+    room_id: room.room_id || "",
+    room_name: room.room_name || "",
+    room_status: room.status || "",
+    session_id: buildCustomerDisplaySessionId_(room),
+    start_time: startTime || "",
+    end_time: endTime || "",
+    duration_minutes: Number(room.booked_duration_minutes) || 0,
+    remaining_seconds: Math.min(0, remainingSeconds),
+    expired_minutes: expiredMinutes,
+    issue_type: normalizedIssueType,
+    recommended_action: safeToRecover ? "eligible_for_recovery" : "manual_review",
+    safe_to_recover: safeToRecover,
+    reason: getExpiredRoomRecoveryReason_(normalizedIssueType, safeToRecover, graceMinutes),
+  };
+}
+
+function getExpiredRoomRecoveryReason_(issueType, safeToRecover, graceMinutes) {
+  if (issueType === "occupied_without_session") {
+    return "Room occupied tetapi tidak memiliki start_time/end_time valid.";
+  }
+
+  if (issueType === "invalid_end_time") {
+    return "Room occupied tetapi scheduled_end_time/end_time kosong atau tidak valid.";
+  }
+
+  if (safeToRecover) {
+    return "Room occupied sudah melewati waktu selesai lebih dari grace period.";
+  }
+
+  return "Room occupied sudah expired tetapi masih dalam grace period " + graceMinutes + " menit.";
 }
 
 function getLatestTvControlLogByRoomId_(roomId) {
