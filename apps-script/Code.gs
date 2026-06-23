@@ -1201,17 +1201,18 @@ function getCustomerDisplayState_(roomId, token) {
   var nowIso = toJakartaIsoString_(nowDate);
   var session = buildCustomerDisplaySession_(room, nowDate);
   var latestTvLog = getLatestTvControlLogByRoomId_(normalizedRoomId);
-  var roomName = resolveCustomerDisplayRoomName_(room, normalizedRoomId);
-
-  return {
+  var resolvedRoomId = normalizedRoomId || String(room.room_id || "").trim();
+  var resolvedRoomName = resolveCustomerDisplayRoomName_(resolvedRoomId, room, access);
+  var roomStatus = room.status || "";
+  var response = {
     ok: true,
     success: true,
     server_time: nowIso,
     operational_date: getOperationalDateString_(nowDate),
     room: {
-      room_id: room.room_id || "",
-      room_name: roomName,
-      status: room.status || "",
+      room_id: resolvedRoomId,
+      room_name: resolvedRoomName || "Karaoke Room",
+      status: roomStatus,
     },
     session: session,
     display: {
@@ -1225,9 +1226,31 @@ function getCustomerDisplayState_(roomId, token) {
       last_command_at: latestTvLog ? latestTvLog.created_at || "" : "",
     },
   };
+
+  return ensureCustomerDisplayRoomPayload_(response, resolvedRoomId, room, response.display || access, roomStatus);
 }
 
-function resolveCustomerDisplayRoomName_(room, roomId) {
+function ensureCustomerDisplayRoomPayload_(response, roomId, room, display, roomStatus) {
+  var safeResponse = response || {};
+  var responseRoom = safeResponse.room || {};
+  var responseDisplay = safeResponse.display || display || {};
+  var safeRoomId = String(roomId || responseRoom.room_id || "").trim();
+  var safeRoomStatus = String(roomStatus || responseRoom.status || "").trim();
+  var resolvedRoomName = resolveCustomerDisplayRoomName_(safeRoomId, room, responseDisplay)
+    || deriveRoomNameFromDisplayName_(responseDisplay.display_name)
+    || "Karaoke Room";
+  var safeRoomName = String(resolvedRoomName || "Karaoke Room").trim() || "Karaoke Room";
+
+  safeResponse.room = {
+    room_id: safeRoomId,
+    room_name: safeRoomName,
+    status: safeRoomStatus,
+  };
+
+  return safeResponse;
+}
+
+function resolveCustomerDisplayRoomName_(roomId, room, display) {
   var roomName = String(room && room.room_name || "").trim();
 
   if (roomName) {
@@ -1237,7 +1260,25 @@ function resolveCustomerDisplayRoomName_(room, roomId) {
   var masterRoom = getRoomMasterByRoomId_(roomId);
   roomName = String(masterRoom && masterRoom.room_name || "").trim();
 
+  if (roomName) {
+    return roomName;
+  }
+
+  var displayName = String(display && display.display_name || "").trim();
+
+  roomName = deriveRoomNameFromDisplayName_(displayName);
+
   return roomName || "Karaoke Room";
+}
+
+function deriveRoomNameFromDisplayName_(displayName) {
+  var normalizedDisplayName = String(displayName || "").trim();
+
+  if (normalizedDisplayName.indexOf("Display ") === 0 && normalizedDisplayName.length > "Display ".length) {
+    return normalizedDisplayName.substring("Display ".length).trim();
+  }
+
+  return "";
 }
 
 function selectCustomerDisplayRoom_(rooms, roomId) {
