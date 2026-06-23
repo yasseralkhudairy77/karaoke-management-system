@@ -923,14 +923,7 @@ function getCustomerDisplayState_(roomId, token) {
 
   var normalizedRoomId = String(roomId || "").trim();
   var rooms = readSheetAsObjects_("Rooms");
-  var room = null;
-
-  for (var roomIndex = 0; roomIndex < rooms.length; roomIndex++) {
-    if (String(rooms[roomIndex].room_id || "").trim() === normalizedRoomId) {
-      room = rooms[roomIndex];
-      break;
-    }
-  }
+  var room = selectCustomerDisplayRoom_(rooms, normalizedRoomId);
 
   if (!room) {
     return createCustomerDisplayError_("INVALID_ROOM_ID", "Room display tidak valid.");
@@ -965,7 +958,44 @@ function getCustomerDisplayState_(roomId, token) {
   };
 }
 
+function selectCustomerDisplayRoom_(rooms, roomId) {
+  var matchingRooms = rooms.filter(function (room) {
+    return String(room.room_id || "").trim() === roomId;
+  });
+
+  if (!matchingRooms.length) {
+    return null;
+  }
+
+  return matchingRooms.reduce(function (selectedRoom, currentRoom) {
+    if (!selectedRoom) {
+      return currentRoom;
+    }
+
+    var currentStatus = String(currentRoom.status || "").trim().toLowerCase();
+    var selectedStatus = String(selectedRoom.status || "").trim().toLowerCase();
+
+    if (currentStatus === "occupied" && selectedStatus !== "occupied") {
+      return currentRoom;
+    }
+
+    if (currentStatus !== "occupied" || selectedStatus !== "occupied") {
+      return selectedRoom;
+    }
+
+    var currentEndDate = parseJakartaDateTimeValue_(currentRoom.scheduled_end_time);
+    var selectedEndDate = parseJakartaDateTimeValue_(selectedRoom.scheduled_end_time);
+
+    if (currentEndDate && (!selectedEndDate || currentEndDate.getTime() > selectedEndDate.getTime())) {
+      return currentRoom;
+    }
+
+    return selectedRoom;
+  }, null);
+}
+
 function buildCustomerDisplaySession_(room, nowDate) {
+  // Customer display derives session state only from the active room row and returns a safe public payload.
   var status = String(room.status || "").trim().toLowerCase();
   var startTime = normalizeFnbOrderDateTime_(room.start_time);
   var endTime = normalizeFnbOrderDateTime_(room.scheduled_end_time);
@@ -981,7 +1011,7 @@ function buildCustomerDisplaySession_(room, nowDate) {
       duration_minutes: durationMinutes,
       remaining_seconds: 0,
       warning_level: "idle",
-      message: "Belum ada sesi aktif.",
+      message: "Silakan hubungi kasir untuk mulai karaoke.",
     };
   }
 
