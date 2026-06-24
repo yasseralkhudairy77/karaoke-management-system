@@ -3,9 +3,13 @@ import { API_BASE_URL } from "./config.js";
 var DEFAULT_REFRESH_SECONDS = 30;
 var WARNING_REFRESH_SECONDS = 15;
 var IDLE_REFRESH_SECONDS = 15;
+var SLOW_REQUEST_NOTICE_MS = 12000;
+var FETCH_HARD_TIMEOUT_MS = 70000;
 var EXPIRED_RESYNC_SECONDS = 5;
 var HARD_RELOAD_MINUTES = 60;
 var MISSING_CONFIG_MESSAGE = "Display belum dikonfigurasi. Silakan hubungi kasir.";
+var RECONNECT_MESSAGE = "Sedang memperbarui tampilan...";
+var IDLE_MESSAGE = "Silakan hubungi kasir untuk mulai karaoke.";
 var queryParams = new URLSearchParams(window.location.search);
 var roomId = String(queryParams.get("room_id") || "").trim();
 var token = String(queryParams.get("token") || "").trim();
@@ -18,6 +22,7 @@ var expiredResyncTimerId = null;
 var hardReloadTimerId = null;
 var hasWarnedFetchFailure = false;
 var isReconnecting = false;
+var latestRequestId = 0;
 
 document.addEventListener("DOMContentLoaded", initDisplay);
 window.addEventListener("beforeunload", clearTimers);
@@ -43,7 +48,7 @@ function initDisplay() {
   }
 
   if (!String(API_BASE_URL || "").trim()) {
-    renderSafeMessage("Sedang menyambungkan ulang...", "reconnecting");
+    renderSafeMessage(RECONNECT_MESSAGE, "reconnecting");
     return;
   }
 
@@ -53,17 +58,55 @@ function initDisplay() {
 }
 
 function postDisplayAction(payload) {
-  return fetch(API_BASE_URL, {
+  var abortController = typeof AbortController === "function" ? new AbortController() : null;
+  var hasCompleted = false;
+  var hardTimeoutTimerId = null;
+  var slowNoticeTimerId = window.setTimeout(function () {
+    if (!hasCompleted) {
+      renderReconnect();
+    }
+  }, SLOW_REQUEST_NOTICE_MS);
+  var requestOptions = {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload),
+  };
+
+  if (abortController) {
+    requestOptions.signal = abortController.signal;
+  }
+
+  var request = fetch(API_BASE_URL, {
+    method: requestOptions.method,
+    headers: requestOptions.headers,
+    body: requestOptions.body,
+    signal: requestOptions.signal,
   }).then(function (response) {
     return response.json();
+  });
+
+  var timeout = new Promise(function (_, reject) {
+    hardTimeoutTimerId = window.setTimeout(function () {
+      if (!hasCompleted && abortController) {
+        abortController.abort();
+      }
+
+      reject(new Error("Customer display request timed out."));
+    }, FETCH_HARD_TIMEOUT_MS);
+  });
+
+  return Promise.race([request, timeout]).finally(function () {
+    hasCompleted = true;
+    window.clearTimeout(slowNoticeTimerId);
+    window.clearTimeout(hardTimeoutTimerId);
   });
 }
 
 function fetchDisplayState() {
   clearPollTimer();
+
+  var requestId = latestRequestId + 1;
+  latestRequestId = requestId;
 
   postDisplayAction({
     action: "getCustomerDisplayState",
@@ -71,6 +114,10 @@ function fetchDisplayState() {
     token: token,
   })
     .then(function (data) {
+      if (requestId !== latestRequestId) {
+        return;
+      }
+
       if (!data || data.success === false || data.ok === false) {
         handleBackendError(data);
         scheduleNextPoll(DEFAULT_REFRESH_SECONDS);
@@ -84,8 +131,12 @@ function fetchDisplayState() {
       scheduleNextPoll(getRefreshIntervalSeconds(data));
     })
     .catch(function (error) {
+      if (requestId !== latestRequestId) {
+        return;
+      }
+
       if (!hasWarnedFetchFailure) {
-        console.warn("Customer display reconnecting.", error);
+        console.warn("Customer display update delayed.", getSafeErrorName(error));
         hasWarnedFetchFailure = true;
       }
 
@@ -119,7 +170,7 @@ function renderState(data) {
   if (!hasActiveSession) {
     setText(elements.statusLabel, "Ruangan tersedia");
     setText(elements.timerText, "00:00:00");
-    setText(elements.messageText, getDisplayMessage(data, resolveIdleMessage(session)));
+    setText(elements.messageText, IDLE_MESSAGE);
     setText(elements.startTime, "--:--");
     setText(elements.endTime, "--:--");
     setText(elements.durationText, "-- menit");
@@ -172,13 +223,17 @@ function handleBackendError(data) {
     DISPLAY_DISABLED: "Display room sedang nonaktif. Silakan hubungi kasir.",
     DISPLAY_NOT_FOUND: "Display belum terdaftar. Silakan hubungi kasir.",
   };
-  var message = messageMap[errorCode] || "Sedang menyambungkan ulang...";
+  var message = messageMap[errorCode] || RECONNECT_MESSAGE;
   isReconnecting = true;
 
   if (currentState) {
     setTone("reconnecting");
-    setText(elements.statusLabel, "Sedang menyambungkan ulang...");
-    setText(elements.messageText, message);
+    setText(elements.statusLabel, RECONNECT_MESSAGE);
+
+    if (messageMap[errorCode]) {
+      setText(elements.messageText, message);
+    }
+
     return;
   }
 
@@ -202,11 +257,11 @@ function renderReconnect() {
 
   if (currentState) {
     setTone("reconnecting");
-    setText(elements.statusLabel, "Sedang menyambungkan ulang...");
+    setText(elements.statusLabel, RECONNECT_MESSAGE);
     return;
   }
 
-  renderSafeMessage("Sedang menyambungkan ulang...", "reconnecting");
+  renderSafeMessage(RECONNECT_MESSAGE, "reconnecting");
 }
 
 function renderSafeMessage(message, tone) {
@@ -357,18 +412,14 @@ function getMessageForTone(tone) {
   return "Selamat bernyanyi";
 }
 
-function resolveIdleMessage(session) {
-  if (session && session.message === "Silakan hubungi kasir.") {
-    return "Silakan hubungi kasir.";
-  }
-
-  return "Silakan hubungi kasir untuk mulai karaoke.";
-}
-
 function getDisplayMessage(data, fallback) {
   var displayMessage = data && data.display ? String(data.display.message || "").trim() : "";
 
   return displayMessage || fallback;
+}
+
+function getSafeErrorName(error) {
+  return error && error.name ? error.name : "FetchError";
 }
 
 function setTone(tone) {
