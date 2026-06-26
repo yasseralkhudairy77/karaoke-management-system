@@ -16,3 +16,12 @@ temp/
 node_modules/
 dist/
 build/
+
+# Local Netlify folder
+.netlify
+
+# File berisi token / prototipe - JANGAN publish
+launcher.html
+js/launcher.js
+karaoke-mode.html
+js/karaoke-mode.js
