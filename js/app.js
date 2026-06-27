@@ -29,6 +29,8 @@ const currencyFormatter = new Intl.NumberFormat("id-ID", {
   currency: "IDR",
   maximumFractionDigits: 0,
 });
+const ROOM_WARNING_SOUND_DURATION_MS = 180;
+const ROOM_WARNING_SOUND_FREQUENCY_HZ = 880;
 
 let rooms = [];
 let errorMessage = "";
@@ -42,6 +44,12 @@ let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
 let transactionPeriodNotice = "";
+let roomWarningStateInitialized = false;
+let previousWarningRoomIds = new Set();
+let roomWarningAudioContext = null;
+let roomWarningAudioUnlocked = false;
+let pendingRoomWarningSound = false;
+let hasWarnedRoomWarningAudio = false;
 const TRANSACTION_PERIOD_OPTIONS = [
   ["today", "Shift Aktif"],
   ["yesterday", "Shift Kemarin"],
@@ -2789,6 +2797,155 @@ function getRoomTimeState(room) {
     status: getRemainingTimeStatus(remainingMs),
     remainingMs,
   };
+}
+
+function getRoomsTimeWarningRoomIds() {
+  return rooms.reduce((roomIds, room) => {
+    if (normalizeRoomStatus(room?.status) !== "occupied") {
+      return roomIds;
+    }
+
+    const status = getRemainingTimeStatus(getRoomRemainingTime(room));
+
+    if (status === "warning" || status === "expired") {
+      roomIds.push(room.room_id);
+    }
+
+    return roomIds;
+  }, []);
+}
+
+function getRoomsTimeWarningCount() {
+  return getRoomsTimeWarningRoomIds().length;
+}
+
+function updateRoomsTabWarningBadge(count = getRoomsTimeWarningCount()) {
+  if (!appTabsNav) {
+    return;
+  }
+
+  const badge = appTabsNav.querySelector("[data-role='rooms-warning-badge']");
+
+  if (!badge) {
+    return;
+  }
+
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.hidden = false;
+    badge.setAttribute("aria-label", `${count} room perlu perhatian`);
+    return;
+  }
+
+  badge.textContent = "";
+  badge.hidden = true;
+  badge.removeAttribute("aria-label");
+}
+
+function getRoomWarningAudioContext() {
+  if (roomWarningAudioContext) {
+    return roomWarningAudioContext;
+  }
+
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextConstructor) {
+    return null;
+  }
+
+  roomWarningAudioContext = new AudioContextConstructor();
+  return roomWarningAudioContext;
+}
+
+function logRoomWarningAudioFailure(error) {
+  if (hasWarnedRoomWarningAudio) {
+    return;
+  }
+
+  console.warn("Notifikasi suara room warning tidak bisa diputar.", error);
+  hasWarnedRoomWarningAudio = true;
+}
+
+function playRoomWarningSound() {
+  try {
+    const audioContext = getRoomWarningAudioContext();
+
+    if (!audioContext || audioContext.state !== "running") {
+      pendingRoomWarningSound = true;
+      return;
+    }
+
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const now = audioContext.currentTime;
+    const durationSeconds = ROOM_WARNING_SOUND_DURATION_MS / 1000;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(ROOM_WARNING_SOUND_FREQUENCY_HZ, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
+
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + durationSeconds);
+    pendingRoomWarningSound = false;
+  } catch (error) {
+    pendingRoomWarningSound = false;
+    logRoomWarningAudioFailure(error);
+  }
+}
+
+function unlockRoomWarningAudio() {
+  if (roomWarningAudioUnlocked) {
+    return;
+  }
+
+  try {
+    const audioContext = getRoomWarningAudioContext();
+
+    if (!audioContext) {
+      return;
+    }
+
+    audioContext.resume()
+      .then(() => {
+        roomWarningAudioUnlocked = audioContext.state === "running";
+
+        if (roomWarningAudioUnlocked && pendingRoomWarningSound) {
+          playRoomWarningSound();
+        }
+      })
+      .catch(logRoomWarningAudioFailure);
+  } catch (error) {
+    logRoomWarningAudioFailure(error);
+  }
+}
+
+function updateRoomsTimeWarningAwareness({ playSound = false } = {}) {
+  const warningRoomIds = new Set(getRoomsTimeWarningRoomIds());
+  const hasNewWarningRoom = Array.from(warningRoomIds).some(
+    (roomId) => !previousWarningRoomIds.has(roomId)
+  );
+
+  updateRoomsTabWarningBadge(warningRoomIds.size);
+
+  if (roomsLoading && !roomWarningStateInitialized) {
+    return;
+  }
+
+  if (!roomWarningStateInitialized) {
+    previousWarningRoomIds = warningRoomIds;
+    roomWarningStateInitialized = true;
+    return;
+  }
+
+  if (playSound && hasNewWarningRoom) {
+    playRoomWarningSound();
+  }
+
+  previousWarningRoomIds = warningRoomIds;
 }
 
 function getRoomTimeBadgeText(status) {
@@ -9563,9 +9720,12 @@ function renderAppTabs() {
   }
 
   const fragment = document.createDocumentFragment();
+  const roomsWarningCount = getRoomsTimeWarningCount();
 
   DASHBOARD_TABS.forEach((tab) => {
     const button = document.createElement("button");
+    const label = document.createElement("span");
+
     button.className = activeDashboardTab === tab.key
       ? "app-tab-button active"
       : "app-tab-button";
@@ -9574,7 +9734,24 @@ function renderAppTabs() {
     button.dataset.action = "switch-dashboard-tab";
     button.dataset.tab = tab.key;
     button.setAttribute("aria-selected", activeDashboardTab === tab.key ? "true" : "false");
-    button.textContent = tab.label;
+    label.className = "app-tab-label";
+    label.textContent = tab.label;
+    button.appendChild(label);
+
+    if (tab.key === "rooms") {
+      const badge = document.createElement("span");
+      badge.className = "app-tab-badge rooms-warning-badge";
+      badge.dataset.role = "rooms-warning-badge";
+      badge.hidden = roomsWarningCount <= 0;
+
+      if (roomsWarningCount > 0) {
+        badge.textContent = String(roomsWarningCount);
+        badge.setAttribute("aria-label", `${roomsWarningCount} room perlu perhatian`);
+      }
+
+      button.appendChild(badge);
+    }
+
     fragment.appendChild(button);
   });
 
@@ -9672,6 +9849,8 @@ function renderRooms() {
 }
 
 function updateRunningTimers() {
+  updateRoomsTimeWarningAwareness({ playSound: true });
+
   const occupiedCards = dashboardPanels
     ? dashboardPanels.querySelectorAll(".room-card.occupied")
     : [];
@@ -11082,6 +11261,8 @@ function handleDashboardChange(event) {
 }
 
 if (dashboardShell) {
+  dashboardShell.addEventListener("pointerdown", unlockRoomWarningAudio, { once: true });
+  dashboardShell.addEventListener("keydown", unlockRoomWarningAudio, { once: true });
   dashboardShell.addEventListener("click", handleRoomAction);
   dashboardShell.addEventListener("input", handleDashboardInput);
   dashboardShell.addEventListener("change", handleDashboardChange);
