@@ -244,6 +244,12 @@ let extendSessionNote = "";
 let isExtendingSession = false;
 let isSendingTvCommand = false;
 let tvOffConfirmation = null;
+let roomRecoveryCandidates = [];
+let roomRecoverySummary = null;
+let isLoadingRoomRecovery = false;
+let isRecoveringRoom = false;
+let roomRecoveryConfirmation = null;
+let roomRecoveryLoadStarted = false;
 let tvDevicesList = [];
 let tvControlLogs = [];
 let isLoadingTvDevices = false;
@@ -288,6 +294,8 @@ async function loadRooms() {
 
   if (!API_BASE_URL.trim()) {
     rooms = normalizeRooms(mockRooms);
+    roomRecoveryCandidates = [];
+    roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Mode Data Contoh", "mock");
@@ -303,12 +311,15 @@ async function loadRooms() {
     setDataSourceBadge("Terhubung ke Server", "live");
     console.info("Data ruangan berhasil dimuat dari Google Apps Script API.");
     renderRooms();
+    await loadRoomRecoveryCandidates();
   } catch (error) {
     console.warn("Gagal memuat data ruangan dari API. Memakai data contoh sementara.", error);
     roomsLoading = false;
     setDataSourceBadge("Server Bermasalah", "error");
     showErrorState("Gagal memuat data dari server, sementara memakai data contoh.");
     rooms = normalizeRooms(mockRooms);
+    roomRecoveryCandidates = [];
+    roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
     renderRooms();
   }
@@ -328,6 +339,57 @@ async function fetchRoomsFromApi() {
   }
 
   return data.rooms;
+}
+
+async function loadRoomRecoveryCandidates() {
+  if (!API_BASE_URL.trim()) {
+    roomRecoveryCandidates = [];
+    roomRecoverySummary = null;
+    roomRecoveryLoadStarted = false;
+    return;
+  }
+
+  if (isLoadingRoomRecovery) {
+    return;
+  }
+
+  roomRecoveryLoadStarted = true;
+  isLoadingRoomRecovery = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "getExpiredRoomRecoveryList",
+      grace_minutes: 5,
+      include_invalid_end_time: true,
+    });
+
+    const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+
+    if (!data || data.ok !== true || !Array.isArray(data.candidates)) {
+      throw new Error(data?.error || "Gagal memuat daftar room bermasalah.");
+    }
+
+    roomRecoveryCandidates = candidates;
+    roomRecoverySummary = {
+      expired_count: Number(data.expired_count) || 0,
+      invalid_count: Number(data.invalid_count) || 0,
+      total_rooms_checked: Number(data.total_rooms_checked) || 0,
+    };
+    console.info("Daftar room recovery dimuat.", {
+      candidates: roomRecoveryCandidates.length,
+      expired_count: roomRecoverySummary.expired_count,
+      invalid_count: roomRecoverySummary.invalid_count,
+    });
+  } catch (error) {
+    console.warn("Gagal memuat daftar room recovery.", error);
+    roomRecoveryCandidates = [];
+    roomRecoverySummary = null;
+    showInlineNotice(error.message || "Gagal memuat daftar room bermasalah.", "error");
+  } finally {
+    isLoadingRoomRecovery = false;
+    renderRooms();
+  }
 }
 
 function normalizeTransactionPeriodForApi(period) {
@@ -4162,6 +4224,155 @@ function createReceiptFnbDetailElement(transaction) {
   });
 
   return section;
+}
+
+function findRoomRecoveryCandidate(roomId, sessionId) {
+  return roomRecoveryCandidates.find((candidate) => (
+    String(candidate?.room_id || "") === String(roomId || "") &&
+    String(candidate?.session_id || "") === String(sessionId || "")
+  ));
+}
+
+function formatExpiredMinutesText(minutes) {
+  const expiredMinutes = Math.max(0, Math.floor(Number(minutes) || 0));
+
+  if (expiredMinutes <= 0) {
+    return "baru saja expired";
+  }
+
+  return `expired ${expiredMinutes} menit lalu`;
+}
+
+function createRoomRecoveryPanelElement() {
+  const section = document.createElement("section");
+  section.className = "room-recovery-panel";
+  section.setAttribute("aria-labelledby", "room-recovery-title");
+
+  const header = document.createElement("div");
+  header.className = "room-recovery-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "room-recovery-title";
+  title.id = "room-recovery-title";
+  title.textContent = "Room Bermasalah";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "room-recovery-subtitle";
+  subtitle.textContent = "Review manual untuk room expired atau data waktu sesi yang perlu perhatian.";
+
+  titleGroup.append(title, subtitle);
+
+  const summary = document.createElement("span");
+  summary.className = withStatusBadge("room-recovery-summary", "warning");
+  summary.textContent = `${roomRecoveryCandidates.length} kandidat`;
+
+  header.append(titleGroup, summary);
+
+  const list = document.createElement("div");
+  list.className = "room-recovery-list";
+
+  roomRecoveryCandidates.forEach((candidate) => {
+    list.appendChild(createRoomRecoveryCandidateElement(candidate));
+  });
+
+  section.append(header, list);
+  return section;
+}
+
+function hasRoomRecoveryCandidates() {
+  return Array.isArray(roomRecoveryCandidates) && roomRecoveryCandidates.length > 0;
+}
+
+function ensureRoomRecoveryCandidatesLoaded() {
+  if (
+    !API_BASE_URL.trim() ||
+    roomRecoveryLoadStarted ||
+    isLoadingRoomRecovery ||
+    hasRoomRecoveryCandidates()
+  ) {
+    return;
+  }
+
+  roomRecoveryLoadStarted = true;
+
+  setTimeout(() => {
+    loadRoomRecoveryCandidates();
+  }, 0);
+}
+
+function createRoomRecoveryCandidateElement(candidate) {
+  const item = document.createElement("article");
+  item.className = candidate.safe_to_recover
+    ? "room-recovery-item recoverable"
+    : "room-recovery-item review";
+
+  const topLine = document.createElement("div");
+  topLine.className = "room-recovery-item-header";
+
+  const title = document.createElement("h3");
+  title.className = "room-recovery-room";
+  title.textContent = `${candidate.room_name || "Room"} (${candidate.room_id || "-"})`;
+
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge(
+    "room-recovery-badge",
+    candidate.safe_to_recover ? "success" : "warning"
+  );
+  badge.textContent = candidate.safe_to_recover ? "Bisa Dipulihkan" : "Perlu Review Manual";
+
+  topLine.append(title, badge);
+
+  const meta = document.createElement("div");
+  meta.className = "room-recovery-meta";
+
+  [
+    ["Expired", formatExpiredMinutesText(candidate.expired_minutes)],
+    ["Issue", candidate.issue_type || "-"],
+    ["Sesi", candidate.session_id || "-"],
+  ].forEach(([labelText, valueText]) => {
+    const row = document.createElement("p");
+    row.className = "room-recovery-meta-item";
+
+    const label = document.createElement("span");
+    label.className = "room-recovery-meta-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("span");
+    value.className = "room-recovery-meta-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+    meta.appendChild(row);
+  });
+
+  const reason = document.createElement("p");
+  reason.className = "room-recovery-reason";
+  reason.textContent = candidate.reason || "Perlu dicek manual.";
+
+  const actions = document.createElement("div");
+  actions.className = "room-recovery-actions";
+
+  if (candidate.safe_to_recover) {
+    const recoverButton = document.createElement("button");
+    recoverButton.className = "master-button primary room-recovery-button";
+    recoverButton.type = "button";
+    recoverButton.dataset.action = "open-room-recovery-confirmation";
+    recoverButton.dataset.roomId = candidate.room_id || "";
+    recoverButton.dataset.sessionId = candidate.session_id || "";
+    recoverButton.disabled = isRecoveringRoom;
+    recoverButton.textContent = "Pulihkan";
+    actions.appendChild(recoverButton);
+  } else {
+    const manual = document.createElement("p");
+    manual.className = "room-recovery-manual-note";
+    manual.textContent = "Perlu dicek manual. Sistem tidak menyediakan tombol pulihkan untuk kandidat ini.";
+    actions.appendChild(manual);
+  }
+
+  item.append(topLine, meta, reason, actions);
+  return item;
 }
 
 function createRoomCard(room) {
@@ -9650,6 +9861,7 @@ function refreshActiveTabData() {
 
   switch (activeDashboardTab) {
     case "rooms":
+      loadRoomRecoveryCandidates();
       break;
     case "fnb":
       loadMenuItems();
@@ -9711,6 +9923,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createTvOffConfirmationElement());
   }
 
+  if (roomRecoveryConfirmation) {
+    fragment.appendChild(createRoomRecoveryConfirmationElement());
+  }
+
   dashboardGlobal.replaceChildren(fragment);
 }
 
@@ -9761,6 +9977,12 @@ function renderAppTabs() {
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
+      ensureRoomRecoveryCandidatesLoaded();
+
+      if (hasRoomRecoveryCandidates()) {
+        panel.appendChild(createRoomRecoveryPanelElement());
+      }
+
       const roomsContainer = document.createElement("div");
       roomsContainer.className = "rooms-tab-grid";
 
@@ -10447,6 +10669,219 @@ function createTvOffConfirmationElement() {
   return overlay;
 }
 
+function openRoomRecoveryConfirmation(roomId, sessionId) {
+  const candidate = findRoomRecoveryCandidate(roomId, sessionId);
+
+  if (!candidate) {
+    showInlineNotice("Kandidat recovery tidak ditemukan. Refresh data room lalu coba lagi.", "error");
+    return;
+  }
+
+  if (!candidate.safe_to_recover) {
+    showInlineNotice("Room ini perlu review manual dan tidak bisa dipulihkan dari UI.", "error");
+    return;
+  }
+
+  roomRecoveryConfirmation = {
+    room_id: candidate.room_id || "",
+    room_name: candidate.room_name || candidate.room_id || "Room",
+    session_id: candidate.session_id || "",
+    expired_minutes: candidate.expired_minutes,
+    reason: candidate.reason || "",
+    typedText: "",
+    note: "",
+  };
+  renderRooms();
+}
+
+function closeRoomRecoveryConfirmation() {
+  if (isRecoveringRoom) {
+    return;
+  }
+
+  roomRecoveryConfirmation = null;
+  renderRooms();
+}
+
+function updateRoomRecoveryConfirmation(field, value) {
+  if (!roomRecoveryConfirmation) {
+    return;
+  }
+
+  roomRecoveryConfirmation = {
+    ...roomRecoveryConfirmation,
+    [field]: value,
+  };
+}
+
+function syncRoomRecoveryConfirmationControls() {
+  if (!dashboardGlobal || !roomRecoveryConfirmation) {
+    return;
+  }
+
+  const submitButton = dashboardGlobal.querySelector("[data-role='room-recovery-submit']");
+
+  if (submitButton) {
+    submitButton.disabled = isRecoveringRoom || roomRecoveryConfirmation.typedText !== "RECOVER";
+  }
+}
+
+function createRoomRecoveryConfirmationElement() {
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal room-recovery-modal";
+  overlay.setAttribute("aria-labelledby", "room-recovery-confirm-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog room-recovery-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "room-recovery-confirm-title";
+  title.textContent = "Konfirmasi Pemulihan Room";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Pemulihan hanya mengubah status room menjadi available dan mengosongkan durasi/jadwal selesai. Transaksi, F&B, pembayaran, dan start_time tidak disentuh.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details room-recovery-confirm-details";
+
+  [
+    ["Room", `${roomRecoveryConfirmation.room_name} (${roomRecoveryConfirmation.room_id})`],
+    ["Expired", formatExpiredMinutesText(roomRecoveryConfirmation.expired_minutes)],
+    ["Sesi", roomRecoveryConfirmation.session_id || "-"],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const reason = document.createElement("p");
+  reason.className = "room-recovery-confirm-reason";
+  reason.textContent = roomRecoveryConfirmation.reason || "Tidak ada alasan dari diagnostic.";
+
+  const typedField = createRoomRecoveryField(
+    "Ketik RECOVER",
+    "typedText",
+    roomRecoveryConfirmation.typedText,
+    "input"
+  );
+  const noteField = createRoomRecoveryField(
+    "Alasan tambahan",
+    "note",
+    roomRecoveryConfirmation.note,
+    "textarea"
+  );
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-room-recovery-confirmation";
+  cancelButton.disabled = isRecoveringRoom;
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-room-recovery";
+  submitButton.dataset.role = "room-recovery-submit";
+  submitButton.disabled = isRecoveringRoom || roomRecoveryConfirmation.typedText !== "RECOVER";
+  submitButton.textContent = isRecoveringRoom ? "Memulihkan..." : "Pulihkan Room";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, reason, typedField, noteField, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+function createRoomRecoveryField(labelText, field, value, type = "input") {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const input = type === "textarea"
+    ? document.createElement("textarea")
+    : document.createElement("input");
+
+  input.className = type === "textarea"
+    ? "master-form-input room-recovery-textarea"
+    : "master-form-input";
+  input.dataset.action = "update-room-recovery-confirmation";
+  input.dataset.field = field;
+  input.value = value || "";
+
+  if (type !== "textarea") {
+    input.type = "text";
+  } else {
+    input.rows = 3;
+  }
+
+  wrapper.append(label, input);
+  return wrapper;
+}
+
+async function submitRoomRecovery() {
+  if (!roomRecoveryConfirmation) {
+    return;
+  }
+
+  if (roomRecoveryConfirmation.typedText !== "RECOVER") {
+    showInlineNotice("Ketik RECOVER untuk mengaktifkan pemulihan room.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  isRecoveringRoom = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const reason = roomRecoveryConfirmation.note.trim()
+      || roomRecoveryConfirmation.reason
+      || "Manual expired room recovery";
+
+    const data = await postApiAction({
+      action: "recoverExpiredRoomSession",
+      room_id: roomRecoveryConfirmation.room_id,
+      session_id: roomRecoveryConfirmation.session_id,
+      confirm: "RECOVER",
+      reason,
+      actor: "system",
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.message || data?.error || data?.code || "Gagal memulihkan room.");
+    }
+
+    showInlineNotice(data.message || "Room berhasil dipulihkan.");
+    roomRecoveryConfirmation = null;
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulihkan room.", "error");
+  } finally {
+    isRecoveringRoom = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
 async function sendTvCommand(roomId, tvDeviceId, tvAction) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
@@ -10596,7 +11031,7 @@ function setActionButtonsDisabled(isDisabled) {
         + ", .cashier-closing-button, .today-fnb-button, .today-fnb-filter-button, .fnb-cancel-button, .inventory-button"
         + ", .stock-adjustment-button, .duration-option-button, .duration-custom-button, .duration-cancel-button"
         + ", .room-button-extend, .extend-option-button, .extend-custom-button, .extend-cancel-button"
-        + ", .room-tv-button"
+        + ", .room-tv-button, .room-recovery-button"
     )
     .forEach((button) => {
       button.disabled = isDisabled;
@@ -10780,6 +11215,24 @@ async function handleRoomAction(event) {
         "power_off"
       );
     }
+    return;
+  }
+
+  if (action === "open-room-recovery-confirmation") {
+    openRoomRecoveryConfirmation(
+      button.dataset.roomId || "",
+      button.dataset.sessionId || ""
+    );
+    return;
+  }
+
+  if (action === "close-room-recovery-confirmation") {
+    closeRoomRecoveryConfirmation();
+    return;
+  }
+
+  if (action === "submit-room-recovery") {
+    await submitRoomRecovery();
     return;
   }
 
@@ -11199,6 +11652,14 @@ function handleDashboardChange(event) {
   if (adminPinField) {
     updateAdminPinModal(adminPinField.dataset.field, adminPinField.value);
     syncAdminPinModalControls();
+    return;
+  }
+
+  const roomRecoveryField = event.target.closest("[data-action='update-room-recovery-confirmation']");
+
+  if (roomRecoveryField) {
+    updateRoomRecoveryConfirmation(roomRecoveryField.dataset.field, roomRecoveryField.value);
+    syncRoomRecoveryConfirmationControls();
     return;
   }
 
