@@ -13,7 +13,9 @@ const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
 const appTabsNav = document.querySelector("#appTabs");
 const dashboardPanels = document.querySelector("#dashboardPanels");
+const appHeader = document.querySelector(".app-header");
 const DASHBOARD_TAB_STORAGE_KEY = "karaoke_active_dashboard_tab";
+const OPERATOR_SESSION_STORAGE_KEY = "karaoke_operator_session";
 const DASHBOARD_TABS = [
   { key: "rooms", label: "Ruangan" },
   { key: "fnb", label: "F&B" },
@@ -61,6 +63,55 @@ const TRANSACTION_PERIOD_OPTIONS = [
 
 const OPERATIONAL_SHIFT_NOTE =
   "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+
+function loadOperatorSession() {
+  try {
+    const savedOperator = sessionStorage.getItem(OPERATOR_SESSION_STORAGE_KEY);
+
+    if (!savedOperator) {
+      return null;
+    }
+
+    const parsedOperator = JSON.parse(savedOperator);
+
+    if (!parsedOperator || !parsedOperator.employee_id || !parsedOperator.employee_name || !parsedOperator.role) {
+      sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      employee_id: String(parsedOperator.employee_id),
+      employee_name: String(parsedOperator.employee_name),
+      role: String(parsedOperator.role),
+    };
+  } catch (error) {
+    sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+    return null;
+  }
+}
+
+function saveOperatorSession(operator) {
+  const safeOperator = {
+    employee_id: String(operator?.employee_id || ""),
+    employee_name: String(operator?.employee_name || ""),
+    role: String(operator?.role || ""),
+  };
+
+  sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(safeOperator));
+  currentOperator = safeOperator;
+}
+
+function clearOperatorSession() {
+  sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+  currentOperator = null;
+  loginPin = "";
+  loginErrorMessage = "";
+  dashboardDataInitialized = false;
+}
+
+function isOperatorLoggedIn() {
+  return Boolean(currentOperator?.employee_id && currentOperator?.employee_name && currentOperator?.role);
+}
 
 function buildActiveShiftQueryParams() {
   const params = new URLSearchParams();
@@ -258,6 +309,11 @@ let tvDeviceForm = null;
 let isSavingTvDevice = false;
 let isTogglingTvDeviceStatus = false;
 let activeDashboardTab = loadActiveDashboardTab();
+let currentOperator = loadOperatorSession();
+let loginPin = "";
+let loginErrorMessage = "";
+let isLoggingIn = false;
+let dashboardDataInitialized = false;
 const PAGINATION_PAGE_SIZE = 15;
 const paginationState = {};
 const OPERATIONAL_OPEN_HOUR = 17;
@@ -11016,6 +11072,201 @@ async function postApiAction(payload) {
   return response.json();
 }
 
+function ensureOperatorHeader() {
+  if (!appHeader) {
+    return null;
+  }
+
+  let operatorPanel = appHeader.querySelector(".operator-session");
+
+  if (!operatorPanel) {
+    operatorPanel = document.createElement("div");
+    operatorPanel.className = "operator-session";
+
+    if (dataSourceBadge) {
+      dataSourceBadge.insertAdjacentElement("afterend", operatorPanel);
+    } else {
+      appHeader.appendChild(operatorPanel);
+    }
+  }
+
+  return operatorPanel;
+}
+
+function renderOperatorHeader() {
+  const operatorPanel = ensureOperatorHeader();
+
+  if (!operatorPanel) {
+    return;
+  }
+
+  operatorPanel.replaceChildren();
+
+  if (!isOperatorLoggedIn()) {
+    operatorPanel.hidden = true;
+    return;
+  }
+
+  operatorPanel.hidden = false;
+
+  const operatorLabel = document.createElement("span");
+  operatorLabel.className = "operator-session-label";
+  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${currentOperator.role})`;
+
+  const logoutButton = document.createElement("button");
+  logoutButton.type = "button";
+  logoutButton.className = "btn btn-secondary operator-logout-button";
+  logoutButton.dataset.action = "logout-operator";
+  logoutButton.textContent = "Logout";
+
+  operatorPanel.append(operatorLabel, logoutButton);
+}
+
+function renderLoginScreen() {
+  let loginScreen = document.querySelector("#operatorLoginScreen");
+
+  if (isOperatorLoggedIn()) {
+    document.body.classList.remove("login-required");
+
+    if (loginScreen) {
+      loginScreen.remove();
+    }
+
+    return;
+  }
+
+  document.body.classList.add("login-required");
+
+  if (!loginScreen) {
+    loginScreen = document.createElement("section");
+    loginScreen.id = "operatorLoginScreen";
+    loginScreen.className = "operator-login-screen";
+    loginScreen.setAttribute("aria-labelledby", "operatorLoginTitle");
+    document.body.appendChild(loginScreen);
+  }
+
+  loginScreen.replaceChildren();
+
+  const loginPanel = document.createElement("form");
+  loginPanel.className = "operator-login-panel";
+  loginPanel.dataset.action = "operator-login-form";
+
+  const kicker = document.createElement("p");
+  kicker.className = "operator-login-kicker";
+  kicker.textContent = "Akses Operator";
+
+  const title = document.createElement("h2");
+  title.id = "operatorLoginTitle";
+  title.textContent = "Masuk Dashboard";
+
+  const label = document.createElement("label");
+  label.className = "operator-login-field";
+  label.htmlFor = "operatorLoginPin";
+  label.textContent = "PIN Operator";
+
+  const input = document.createElement("input");
+  input.id = "operatorLoginPin";
+  input.className = "operator-login-input";
+  input.type = "password";
+  input.inputMode = "numeric";
+  input.pattern = "[0-9]*";
+  input.autocomplete = "current-password";
+  input.value = loginPin;
+  input.placeholder = "Masukkan PIN";
+  input.disabled = isLoggingIn;
+  input.dataset.action = "update-operator-login-pin";
+
+  label.appendChild(input);
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "btn btn-primary operator-login-button";
+  submitButton.disabled = isLoggingIn || !loginPin.trim();
+  submitButton.textContent = isLoggingIn ? "Memeriksa..." : "Masuk";
+
+  loginPanel.append(kicker, title, label);
+
+  if (loginErrorMessage) {
+    const error = document.createElement("p");
+    error.className = "operator-login-error";
+    error.setAttribute("role", "alert");
+    error.textContent = loginErrorMessage;
+    loginPanel.appendChild(error);
+  }
+
+  loginPanel.appendChild(submitButton);
+  loginScreen.appendChild(loginPanel);
+
+  window.requestAnimationFrame(() => {
+    const activeInput = document.querySelector("#operatorLoginPin");
+
+    if (activeInput && document.activeElement !== activeInput) {
+      activeInput.focus();
+    }
+  });
+}
+
+async function handleOperatorLogin() {
+  if (isLoggingIn) {
+    return;
+  }
+
+  const pin = loginPin.trim();
+
+  if (!pin) {
+    loginErrorMessage = "PIN tidak valid";
+    renderLoginScreen();
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    loginErrorMessage = "Server login belum dikonfigurasi.";
+    renderLoginScreen();
+    return;
+  }
+
+  isLoggingIn = true;
+  loginErrorMessage = "";
+  renderLoginScreen();
+
+  try {
+    const data = await postApiAction({
+      action: "validateAdminPin",
+      pin,
+      required_role: "staff",
+      requested_action: "login",
+      changed_by: "login_screen",
+    });
+
+    const employee = data?.employee || data?.data;
+
+    if (data?.success !== true || !employee?.employee_id || !employee?.employee_name || !employee?.role) {
+      throw new Error("PIN tidak valid");
+    }
+
+    saveOperatorSession(employee);
+    loginPin = "";
+    loginErrorMessage = "";
+    renderOperatorHeader();
+    renderLoginScreen();
+  } catch (error) {
+    loginErrorMessage = "PIN tidak valid";
+    renderLoginScreen();
+    return;
+  } finally {
+    isLoggingIn = false;
+    renderLoginScreen();
+  }
+
+  await initializeDashboard();
+}
+
+function handleOperatorLogout() {
+  clearOperatorSession();
+  renderOperatorHeader();
+  renderLoginScreen();
+}
+
 function formatCurrency(value) {
   return currencyFormatter.format(Number(value) || 0);
 }
@@ -11721,6 +11972,39 @@ function handleDashboardChange(event) {
   }
 }
 
+document.addEventListener("input", (event) => {
+  const loginPinInput = event.target.closest("[data-action='update-operator-login-pin']");
+
+  if (!loginPinInput) {
+    return;
+  }
+
+  loginPin = loginPinInput.value.replace(/\D/g, "");
+  loginErrorMessage = "";
+  renderLoginScreen();
+});
+
+document.addEventListener("submit", (event) => {
+  const loginForm = event.target.closest("[data-action='operator-login-form']");
+
+  if (!loginForm) {
+    return;
+  }
+
+  event.preventDefault();
+  handleOperatorLogin();
+});
+
+document.addEventListener("click", (event) => {
+  const logoutButton = event.target.closest("[data-action='logout-operator']");
+
+  if (!logoutButton) {
+    return;
+  }
+
+  handleOperatorLogout();
+});
+
 if (dashboardShell) {
   dashboardShell.addEventListener("pointerdown", unlockRoomWarningAudio, { once: true });
   dashboardShell.addEventListener("keydown", unlockRoomWarningAudio, { once: true });
@@ -11732,6 +12016,19 @@ initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
 async function initializeDashboard() {
+  renderOperatorHeader();
+  renderLoginScreen();
+
+  if (!isOperatorLoggedIn()) {
+    return;
+  }
+
+  if (dashboardDataInitialized) {
+    renderRooms();
+    return;
+  }
+
+  dashboardDataInitialized = true;
   renderRooms();
   loadMenuItems();
   loadOpenFnbOrders();
