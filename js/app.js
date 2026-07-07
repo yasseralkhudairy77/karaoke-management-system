@@ -113,6 +113,24 @@ function isOperatorLoggedIn() {
   return Boolean(currentOperator?.employee_id && currentOperator?.employee_name && currentOperator?.role);
 }
 
+function getLoggedInOperatorName() {
+  const currentName = String(currentOperator?.employee_name || "").trim();
+
+  if (currentName) {
+    return currentName;
+  }
+
+  const savedOperator = loadOperatorSession();
+  const savedName = String(savedOperator?.employee_name || "").trim();
+
+  if (savedName) {
+    currentOperator = savedOperator;
+    return savedName;
+  }
+
+  return "Kasir";
+}
+
 function buildActiveShiftQueryParams() {
   const params = new URLSearchParams();
   params.set("period", "today");
@@ -1308,7 +1326,7 @@ async function sendTvCommandFromSettings(roomId, tvDeviceId) {
       tv_device_id: tvDeviceId,
       tv_action: "test",
       trigger_source: "settings_page",
-      cashier_name: "Admin",
+      cashier_name: getLoggedInOperatorName(),
     });
 
     if (!data || data.success !== true) {
@@ -1432,7 +1450,7 @@ function buildStockAdjustmentPayload() {
     adjustment_type: stockAdjustmentForm.adjustment_type,
     quantity: Number(stockAdjustmentForm.quantity),
     note: stockAdjustmentForm.note,
-    cashier_name: "Kasir",
+    cashier_name: getLoggedInOperatorName(),
   };
 }
 
@@ -2672,7 +2690,7 @@ function buildFnbOrderPayload() {
       menu_id: item.menu_id,
       quantity: item.quantity,
     })),
-    cashier_name: "Kasir",
+    cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
   };
 }
@@ -9285,7 +9303,7 @@ function syncDeleteMasterConfirmationControls() {
 function buildDeleteMasterPayload(adminPin = "", authData = null) {
   const confirmation = deleteMasterConfirmation || {};
   const basePayload = {
-    changed_by: authData?.employee_name || "Admin",
+    changed_by: getLoggedInOperatorName(),
     note: confirmation.note || "",
     admin_pin: adminPin,
   };
@@ -9608,7 +9626,7 @@ async function submitAdminPinModal() {
       pin: adminPin,
       required_role: adminPinModal.requiredRole || "admin",
       requested_action: adminPinModal.requestedAction || "admin_action",
-      changed_by: "Kasir",
+      changed_by: getLoggedInOperatorName(),
     });
 
     if (!data || (data.ok !== true && data.success !== true)) {
@@ -9710,7 +9728,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
   const values = masterDataForm?.values || {};
   const isEdit = masterDataForm?.mode === "edit";
   const accessPayload = {
-    changed_by: authData?.employee_name || "Admin",
+    changed_by: getLoggedInOperatorName(),
     admin_pin: adminPin,
   };
 
@@ -10546,7 +10564,7 @@ async function extendSession(roomId, addMinutes) {
       action: "extendSession",
       room_id: roomId,
       add_minutes: selectedMinutes,
-      cashier_name: "Kasir",
+      cashier_name: getLoggedInOperatorName(),
     };
 
     if (extendSessionNote.trim()) {
@@ -10627,7 +10645,7 @@ async function closeSession(roomId) {
     const data = await postApiAction({
       action: "closeSession",
       room_id: roomId,
-      cashier_name: "Kasir",
+      cashier_name: getLoggedInOperatorName(),
     });
 
     if (!data || data.ok !== true) {
@@ -10919,7 +10937,7 @@ async function submitRoomRecovery() {
       session_id: roomRecoveryConfirmation.session_id,
       confirm: "RECOVER",
       reason,
-      actor: "system",
+      actor: getLoggedInOperatorName(),
     });
 
     if (!data || data.ok !== true) {
@@ -10960,7 +10978,7 @@ async function sendTvCommand(roomId, tvDeviceId, tvAction) {
       tv_device_id: tvDeviceId,
       tv_action: tvAction,
       trigger_source: "room_card",
-      cashier_name: "Kasir",
+      cashier_name: getLoggedInOperatorName(),
     });
 
     if (!data || data.success !== true) {
@@ -11038,7 +11056,7 @@ async function saveCashierClosing() {
       action: "saveCashierClosing",
       cash_actual: Number(cashierClosingCashActual || 0),
       note: cashierClosingNote,
-      cashier_name: "Kasir",
+      cashier_name: getLoggedInOperatorName(),
     });
 
     if (!data || data.ok !== true) {
