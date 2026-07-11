@@ -8,6 +8,8 @@
 
 import { API_BASE_URL } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=thermal-logo-canvas-5g";
+import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-5g";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -2110,13 +2112,101 @@ function hideReceiptPrint() {
   renderRooms();
 }
 
-function printReceipt() {
+function transactionHasFnbForReceipt(transaction) {
+  return getTransactionFnbTotal(transaction) > 0 || getTransactionFnbOrderIds(transaction).length > 0;
+}
+
+function transactionHasLoadedFnbDetails(transaction) {
+  return getReceiptFnbOrders(transaction).length > 0;
+}
+
+async function prepareReceiptTransaction(transaction) {
+  if (!transaction) {
+    showInlineNotice("Belum ada transaksi untuk dicetak.", "error");
+    return null;
+  }
+
+  if (!transactionHasFnbForReceipt(transaction) || transactionHasLoadedFnbDetails(transaction)) {
+    return transaction;
+  }
+
+  showInlineNotice("Memuat detail F&B untuk struk...");
+  await loadFnbDetailsForTransaction(transaction);
+
+  return transaction;
+}
+
+async function printReceipt(transaction = selectedReceiptTransaction || lastTransaction) {
+  const preparedTransaction = await prepareReceiptTransaction(transaction);
+
+  if (!preparedTransaction) {
+    return;
+  }
+
   if (typeof window === "undefined" || typeof window.print !== "function") {
     showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
     return;
   }
 
   window.print();
+}
+
+async function showThermalReceiptPreview(transaction) {
+  const preparedTransaction = await prepareReceiptTransaction(transaction);
+
+  if (!preparedTransaction) {
+    return;
+  }
+
+  const receipt = queryDashboard(".receipt-print");
+
+  if (!receipt) {
+    showInlineNotice("Buka preview struk terlebih dahulu.", "error");
+    return;
+  }
+
+  const receiptData = buildReceiptData(preparedTransaction, {
+    fnbOrders: getReceiptFnbOrders(preparedTransaction),
+  });
+  const previewText = formatReceipt58mm(receiptData);
+  let preview = receipt.querySelector(".thermal-receipt-preview");
+  let content = preview?.querySelector(".thermal-receipt-preview-content");
+
+  if (!preview) {
+    preview = document.createElement("section");
+    preview.className = "thermal-receipt-preview";
+
+    const title = document.createElement("h3");
+    title.className = "thermal-receipt-preview-title";
+    title.textContent = "Preview Thermal 58mm";
+
+    content = document.createElement("pre");
+    content.className = "thermal-receipt-preview-content";
+
+    preview.append(title, content);
+    receipt.querySelector(".receipt-print-actions")?.before(preview);
+  }
+
+  if (content) {
+    content.textContent = previewText;
+  }
+}
+
+async function printThermalReceiptFromTransaction(transaction = selectedReceiptTransaction || lastTransaction) {
+  const preparedTransaction = await prepareReceiptTransaction(transaction);
+
+  if (!preparedTransaction) {
+    return;
+  }
+
+  const receiptData = buildReceiptData(preparedTransaction, {
+    fnbOrders: getReceiptFnbOrders(preparedTransaction),
+  });
+  const printStarted = printThermalReceipt(receiptData);
+
+  if (!printStarted) {
+    showInlineNotice("Fitur cetak thermal tidak tersedia di browser ini.", "error");
+  }
 }
 
 function setTransactionHistoryFilter(filter) {
@@ -4114,6 +4204,9 @@ function createBillingFnbOrderElement(order) {
 }
 
 function createReceiptPrintElement(transaction) {
+  const receiptData = buildReceiptData(transaction, {
+    fnbOrders: getReceiptFnbOrders(transaction),
+  });
   const receipt = document.createElement("section");
   receipt.className = "receipt-print";
   receipt.setAttribute("aria-labelledby", "receipt-print-title");
@@ -4123,7 +4216,7 @@ function createReceiptPrintElement(transaction) {
 
   const brand = document.createElement("p");
   brand.className = "receipt-print-brand";
-  brand.textContent = "Karaoke POS";
+  brand.textContent = receiptData.business.name || "Karaoke POS";
 
   const title = document.createElement("h2");
   title.className = "receipt-print-title";
@@ -4132,18 +4225,18 @@ function createReceiptPrintElement(transaction) {
 
   const meta = document.createElement("p");
   meta.className = "receipt-print-meta";
-  meta.textContent = `ID Transaksi: ${transaction?.transaction_id || "-"} | Waktu: ${transaction?.created_at || transaction?.end_time || "-"} | Kasir: ${transaction?.cashier_name || "-"}`;
+  meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${receiptData.transaction.createdAt || "-"} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
 
   header.append(brand, title, meta);
 
   const roomRows = [
-    ["Nama Ruangan", transaction?.room_name || transaction?.room_id || "-"],
-    ["Waktu Mulai", transaction?.start_time || "-"],
-    ["Waktu Selesai", transaction?.end_time || "-"],
-    ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
-    ["Tarif per Jam", formatCurrency(transaction?.rate_per_hour)],
+    ["Nama Ruangan", receiptData.room.name || receiptData.room.id || "-"],
+    ["Waktu Mulai", receiptData.room.startTime || "-"],
+    ["Waktu Selesai", receiptData.room.endTime || "-"],
+    ["Durasi", `${receiptData.room.durationMinutes} menit`],
+    ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
   ];
-  const basisLabel = getBillingBasisLabel(transaction?.billing_basis);
+  const basisLabel = getBillingBasisLabel(receiptData.room.billingBasis);
 
   if (basisLabel) {
     roomRows.push(["Dasar Tagihan", basisLabel]);
@@ -4152,14 +4245,14 @@ function createReceiptPrintElement(transaction) {
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
   const billingSection = createReceiptSection("Rincian Tagihan", [
-    ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
-    ["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))],
-    ["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"],
+    ["Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
+    ["Total F&B", formatCurrency(receiptData.totals.fnbTotal)],
+    ["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"],
   ]);
 
   const paymentSection = createReceiptSection("Status Pembayaran", [
-    ["Status", getPaymentStatusLabel(transaction?.payment_status)],
-    ["Metode Pembayaran", formatPaymentMethodLabel(transaction?.payment_method)],
+    ["Status", getPaymentStatusLabel(receiptData.payment.status)],
+    ["Metode Pembayaran", formatPaymentMethodLabel(receiptData.payment.method)],
   ]);
 
   const footer = document.createElement("footer");
@@ -4182,18 +4275,30 @@ function createReceiptPrintElement(transaction) {
   printButton.dataset.action = "print-receipt";
   printButton.textContent = "Cetak";
 
+  const thermalPreviewButton = document.createElement("button");
+  thermalPreviewButton.className = "receipt-print-button secondary";
+  thermalPreviewButton.type = "button";
+  thermalPreviewButton.dataset.action = "preview-thermal-receipt";
+  thermalPreviewButton.textContent = "Preview Thermal";
+
+  const thermalPrintButton = document.createElement("button");
+  thermalPrintButton.className = "receipt-print-button secondary";
+  thermalPrintButton.type = "button";
+  thermalPrintButton.dataset.action = "print-thermal-receipt";
+  thermalPrintButton.textContent = "Cetak Thermal";
+
   const closeButton = document.createElement("button");
   closeButton.className = "receipt-print-button secondary";
   closeButton.type = "button";
   closeButton.dataset.action = "hide-receipt-print";
   closeButton.textContent = "Tutup Preview";
 
-  actions.append(printButton, closeButton);
+  actions.append(printButton, thermalPreviewButton, thermalPrintButton, closeButton);
   receipt.append(
     header,
     roomSection,
     billingSection,
-    createReceiptFnbDetailElement(transaction),
+    createReceiptFnbDetailElement(receiptData),
     paymentSection,
     footer,
     actions
@@ -4233,7 +4338,7 @@ function createReceiptSection(titleText, rows) {
   return section;
 }
 
-function createReceiptFnbDetailElement(transaction) {
+function createReceiptFnbDetailElement(receiptData) {
   const section = document.createElement("section");
   section.className = "receipt-print-section receipt-print-fnb";
 
@@ -4243,7 +4348,7 @@ function createReceiptFnbDetailElement(transaction) {
 
   section.appendChild(title);
 
-  if (getTransactionFnbTotal(transaction) <= 0) {
+  if (!receiptData.fnb.hasFnb) {
     const empty = document.createElement("p");
     empty.className = "receipt-print-note";
     empty.textContent = "Tidak ada pesanan F&B.";
@@ -4251,7 +4356,7 @@ function createReceiptFnbDetailElement(transaction) {
     return section;
   }
 
-  const orders = getReceiptFnbOrders(transaction);
+  const orders = receiptData.fnb.orders;
 
   if (!orders.length) {
     const unavailable = document.createElement("p");
@@ -11515,7 +11620,17 @@ async function handleRoomAction(event) {
   }
 
   if (action === "print-receipt") {
-    printReceipt();
+    await printReceipt();
+    return;
+  }
+
+  if (action === "preview-thermal-receipt") {
+    await showThermalReceiptPreview(selectedReceiptTransaction || lastTransaction);
+    return;
+  }
+
+  if (action === "print-thermal-receipt") {
+    await printThermalReceiptFromTransaction();
     return;
   }
 
