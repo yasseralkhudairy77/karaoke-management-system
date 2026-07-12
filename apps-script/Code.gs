@@ -35,11 +35,23 @@ var NUMERIC_FIELDS = {
   stock_before: true,
   stock_after: true,
   cost_per_unit: true,
+  cost_rate: true,
+  selling_rate: true,
   selling_price: true,
+  hpp: true,
+  var_cost_rate: true,
+  var_cost_amount: true,
+  total_cost: true,
+  margin_amount: true,
+  margin_percent: true,
+  additional_price: true,
+  cost_amount: true,
+  line_no: true,
   price: true,
   quantity: true,
   subtotal: true,
   qty_used: true,
+  waste_percent: true,
   base_salary: true,
 };
 var CASHIER_CLOSINGS_HEADERS = [
@@ -232,6 +244,78 @@ var EMPLOYEES_HEADERS = [
   "created_at",
   "updated_at",
 ];
+var SERVICE_ITEMS_HEADERS = [
+  "service_item_id",
+  "service_name",
+  "service_type",
+  "unit",
+  "cost_rate",
+  "selling_rate",
+  "status",
+  "updated_at",
+  "note",
+];
+var COSTING_HEADERS = [
+  "costing_id",
+  "menu_id",
+  "source_type",
+  "hpp",
+  "var_cost_rate",
+  "var_cost_amount",
+  "total_cost",
+  "selling_price",
+  "margin_amount",
+  "margin_percent",
+  "effective_from",
+  "status",
+  "updated_at",
+  "note",
+];
+var PACKAGE_MASTER_HEADERS = [
+  "package_id",
+  "menu_id",
+  "package_name",
+  "package_category",
+  "package_type",
+  "selling_price",
+  "status",
+  "valid_day_type",
+  "duration_minutes",
+  "updated_at",
+  "note",
+];
+var PACKAGE_DETAIL_HEADERS = [
+  "package_detail_id",
+  "package_id",
+  "line_no",
+  "component_type",
+  "component_ref_id",
+  "component_name",
+  "qty",
+  "unit",
+  "hpp",
+  "additional_price",
+  "cost_amount",
+  "is_choice",
+  "choice_group",
+  "updated_at",
+  "note",
+];
+var RECIPE_BOM_HEADERS = [
+  "recipe_id",
+  "menu_id",
+  "line_no",
+  "ingredient_item_id",
+  "ingredient_name",
+  "qty_used",
+  "unit",
+  "cost_per_unit",
+  "cost_amount",
+  "waste_percent",
+  "status",
+  "updated_at",
+  "note",
+];
 
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
@@ -262,6 +346,26 @@ function doGet(e) {
 
     if (action === "getMenuItems") {
       return jsonResponse(getMenuItems_());
+    }
+
+    if (action === "getServiceItems") {
+      return jsonResponse(getServiceItems_());
+    }
+
+    if (action === "getCosting") {
+      return jsonResponse(getCosting_());
+    }
+
+    if (action === "getPackages") {
+      return jsonResponse(getPackages_());
+    }
+
+    if (action === "getPackageDetails") {
+      return jsonResponse(getPackageDetails_(e.parameter.package_id));
+    }
+
+    if (action === "getRecipeBom") {
+      return jsonResponse(getRecipeBom_(e.parameter.menu_id));
     }
 
     if (action === "getInventoryItems") {
@@ -2241,6 +2345,215 @@ function getMenuItems_() {
     ok: true,
     menu_items: menuItems,
   };
+}
+
+function getServiceItems_() {
+  ensureServiceItemsSheet_();
+
+  return {
+    ok: true,
+    success: true,
+    service_items: readSheetAsObjects_("ServiceItems")
+      .map(normalizeServiceItem_)
+      .filter(function (item) {
+        return item.service_item_id || item.service_name;
+      })
+      .sort(function (first, second) {
+        var typeCompare = String(first.service_type || "").localeCompare(String(second.service_type || ""));
+
+        if (typeCompare !== 0) {
+          return typeCompare;
+        }
+
+        return String(first.service_name || "").localeCompare(String(second.service_name || ""));
+      }),
+  };
+}
+
+function normalizeServiceItem_(item) {
+  return {
+    service_item_id: item.service_item_id || "",
+    service_name: item.service_name || "",
+    service_type: item.service_type || "",
+    unit: item.unit || "",
+    cost_rate: Number(item.cost_rate) || 0,
+    selling_rate: Number(item.selling_rate) || 0,
+    status: item.status || "",
+    updated_at: item.updated_at || "",
+    note: item.note || "",
+  };
+}
+
+function getCosting_() {
+  ensureCostingSheet_();
+
+  return {
+    ok: true,
+    success: true,
+    costing: readSheetAsObjects_("Costing")
+      .map(normalizeCosting_)
+      .filter(function (item) {
+        return item.costing_id || item.menu_id;
+      }),
+  };
+}
+
+function normalizeCosting_(item) {
+  return {
+    costing_id: item.costing_id || "",
+    menu_id: item.menu_id || "",
+    source_type: item.source_type || "",
+    hpp: Number(item.hpp) || 0,
+    var_cost_rate: Number(item.var_cost_rate) || 0,
+    var_cost_amount: Number(item.var_cost_amount) || 0,
+    total_cost: Number(item.total_cost) || 0,
+    selling_price: Number(item.selling_price) || 0,
+    margin_amount: Number(item.margin_amount) || 0,
+    margin_percent: Number(item.margin_percent) || 0,
+    effective_from: item.effective_from || "",
+    status: item.status || "",
+    updated_at: item.updated_at || "",
+    note: item.note || "",
+  };
+}
+
+function getPackages_() {
+  ensurePackageMasterSheet_();
+
+  return {
+    ok: true,
+    success: true,
+    packages: readSheetAsObjects_("PackageMaster")
+      .map(normalizePackageMaster_)
+      .filter(function (item) {
+        return item.package_id || item.package_name;
+      })
+      .sort(function (first, second) {
+        var typeCompare = String(first.package_type || "").localeCompare(String(second.package_type || ""));
+
+        if (typeCompare !== 0) {
+          return typeCompare;
+        }
+
+        return String(first.package_name || "").localeCompare(String(second.package_name || ""));
+      }),
+  };
+}
+
+function normalizePackageMaster_(item) {
+  return {
+    package_id: item.package_id || "",
+    menu_id: item.menu_id || "",
+    package_name: item.package_name || "",
+    package_category: item.package_category || "",
+    package_type: item.package_type || "",
+    selling_price: Number(item.selling_price) || 0,
+    status: item.status || "",
+    valid_day_type: item.valid_day_type || "",
+    duration_minutes: Number(item.duration_minutes) || 0,
+    updated_at: item.updated_at || "",
+    note: item.note || "",
+  };
+}
+
+function getPackageDetails_(packageId) {
+  ensurePackageDetailSheet_();
+  var normalizedPackageId = String(packageId || "").trim();
+
+  return {
+    ok: true,
+    success: true,
+    package_details: readSheetAsObjects_("PackageDetail")
+      .map(normalizePackageDetail_)
+      .filter(function (item) {
+        if (!item.package_detail_id && !item.package_id && !item.component_name) {
+          return false;
+        }
+
+        return !normalizedPackageId || item.package_id === normalizedPackageId;
+      })
+      .sort(function (first, second) {
+        var packageCompare = String(first.package_id || "").localeCompare(String(second.package_id || ""));
+
+        if (packageCompare !== 0) {
+          return packageCompare;
+        }
+
+        return (Number(first.line_no) || 0) - (Number(second.line_no) || 0);
+      }),
+  };
+}
+
+function normalizePackageDetail_(item) {
+  return {
+    package_detail_id: item.package_detail_id || "",
+    package_id: item.package_id || "",
+    line_no: Number(item.line_no) || 0,
+    component_type: item.component_type || "",
+    component_ref_id: item.component_ref_id || "",
+    component_name: item.component_name || "",
+    qty: Number(item.qty) || 0,
+    unit: item.unit || "",
+    hpp: Number(item.hpp) || 0,
+    additional_price: Number(item.additional_price) || 0,
+    cost_amount: Number(item.cost_amount) || 0,
+    is_choice: normalizeBooleanString_(item.is_choice),
+    choice_group: item.choice_group || "",
+    updated_at: item.updated_at || "",
+    note: item.note || "",
+  };
+}
+
+function getRecipeBom_(menuId) {
+  ensureRecipeBomSheet_();
+  var normalizedMenuId = String(menuId || "").trim();
+
+  return {
+    ok: true,
+    success: true,
+    recipe_bom: readSheetAsObjects_("RecipeBom")
+      .map(normalizeRecipeBom_)
+      .filter(function (item) {
+        if (!item.recipe_id && !item.menu_id && !item.ingredient_name) {
+          return false;
+        }
+
+        return !normalizedMenuId || item.menu_id === normalizedMenuId;
+      })
+      .sort(function (first, second) {
+        var menuCompare = String(first.menu_id || "").localeCompare(String(second.menu_id || ""));
+
+        if (menuCompare !== 0) {
+          return menuCompare;
+        }
+
+        return (Number(first.line_no) || 0) - (Number(second.line_no) || 0);
+      }),
+  };
+}
+
+function normalizeRecipeBom_(item) {
+  return {
+    recipe_id: item.recipe_id || "",
+    menu_id: item.menu_id || "",
+    line_no: Number(item.line_no) || 0,
+    ingredient_item_id: item.ingredient_item_id || "",
+    ingredient_name: item.ingredient_name || "",
+    qty_used: Number(item.qty_used) || 0,
+    unit: item.unit || "",
+    cost_per_unit: Number(item.cost_per_unit) || 0,
+    cost_amount: Number(item.cost_amount) || 0,
+    waste_percent: Number(item.waste_percent) || 0,
+    status: item.status || "",
+    updated_at: item.updated_at || "",
+    note: item.note || "",
+  };
+}
+
+function normalizeBooleanString_(value) {
+  var normalizedValue = String(value || "").trim().toLowerCase();
+
+  return normalizedValue === "true" || normalizedValue === "yes" || normalizedValue === "1";
 }
 
 function getInventoryItems_() {
@@ -5929,6 +6242,32 @@ function ensureInventorySheetColumns_() {
     }
   });
 
+  return sheet;
+}
+
+function ensureServiceItemsSheet_() {
+  return ensureSheetColumns_("ServiceItems", SERVICE_ITEMS_HEADERS);
+}
+
+function ensureCostingSheet_() {
+  return ensureSheetColumns_("Costing", COSTING_HEADERS);
+}
+
+function ensurePackageMasterSheet_() {
+  return ensureSheetColumns_("PackageMaster", PACKAGE_MASTER_HEADERS);
+}
+
+function ensurePackageDetailSheet_() {
+  return ensureSheetColumns_("PackageDetail", PACKAGE_DETAIL_HEADERS);
+}
+
+function ensureRecipeBomSheet_() {
+  return ensureSheetColumns_("RecipeBom", RECIPE_BOM_HEADERS);
+}
+
+function ensureSheetColumns_(sheetName, expectedHeaders) {
+  var sheet = ensureSheetWithHeaders_(sheetName, expectedHeaders);
+  ensureColumns_(sheet, expectedHeaders);
   return sheet;
 }
 
