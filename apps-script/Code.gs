@@ -6189,6 +6189,558 @@ function generateStockMovementId_() {
   return "MOV-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
+function migrateFnbV23BInventoryIdentity_(config) {
+  var migrationConfig = buildFnbV23BInventoryIdentityConfig_(config || {});
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  var output;
+
+  try {
+    lock.waitLock(10000);
+    lockAcquired = true;
+
+    output = collectFnbV23BInventoryIdentityPlan_(migrationConfig);
+
+    if (!output.ok || migrationConfig.dry_run) {
+      return output;
+    }
+
+    executeFnbV23BInventoryIdentityPlan_(output);
+    output.post_validation = validateFnbV23BInventoryIdentityMigration_(migrationConfig);
+    output.ok = output.post_validation.ok;
+    output.warnings = output.warnings.concat(output.post_validation.warnings || []);
+
+    if (!output.ok) {
+      output.abort_reason = output.post_validation.abort_reason || "POST_VALIDATION_FAILED";
+    }
+
+    return output;
+  } catch (error) {
+    return buildFnbV23BInventoryIdentityErrorOutput_(migrationConfig, output, error);
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function buildFnbV23BInventoryIdentityConfig_(config) {
+  return {
+    migration_id: "MIG-FNB-V23B-INVENTORY-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss"),
+    dry_run: config.dry_run !== false,
+    backup_confirmed: config.backup_confirmed === true,
+    canonical_items: [
+      {
+        stock_item_id: "ITEM-001",
+        stock_item_name: "Air Mineral 600ml",
+      },
+      {
+        stock_item_id: "ITEM-002",
+        stock_item_name: "Teh Botol",
+      },
+    ],
+    protected_menu_refs: [
+      {
+        menu_id: "MENU-001",
+        menu_name: "Air Mineral 600ml",
+        stock_item_id: "ITEM-001",
+      },
+      {
+        menu_id: "MENU-002",
+        menu_name: "Teh Botol",
+        stock_item_id: "ITEM-002",
+      },
+    ],
+    mappings: [
+      {
+        old_stock_item_id: "ITEM-001",
+        stock_item_name: "TEST - INVENTORY QA",
+        new_stock_item_id: "ITEM-QA-001",
+      },
+      {
+        old_stock_item_id: "ITEM-002",
+        stock_item_name: "TEST - Inventory Delete QA",
+        new_stock_item_id: "ITEM-QA-002",
+      },
+    ],
+  };
+}
+
+function collectFnbV23BInventoryIdentityPlan_(config) {
+  var inventorySheet = getSheet_("Inventory");
+  var stockMovementsSheet = getSheet_("StockMovements");
+  var menuSheet = getSheet_("Menu");
+  var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+  var stockMovementsHeaderMap = getHeaderMap_(stockMovementsSheet);
+  var menuHeaderMap = getHeaderMap_(menuSheet);
+  var inventoryRows = getFnbV23BSheetRows_(inventorySheet, inventoryHeaderMap);
+  var stockMovementRows = getFnbV23BSheetRows_(stockMovementsSheet, stockMovementsHeaderMap);
+  var menuRows = getFnbV23BSheetRows_(menuSheet, menuHeaderMap);
+  var output = {
+    ok: true,
+    dry_run: config.dry_run,
+    migration_id: config.migration_id,
+    backup_confirmed: config.backup_confirmed,
+    planned_updates: {
+      inventory_updates: [],
+      stock_movement_updates: [],
+    },
+    applied_updates: {
+      inventory_updates: [],
+      stock_movement_updates: [],
+    },
+    partial_applied: false,
+    inventory_updates: [],
+    stock_movement_updates: [],
+    canonical_inventory_rows: [],
+    protected_menu_refs: [],
+    duplicate_stock_item_id_before: [],
+    duplicate_stock_item_id_after: [],
+    warnings: [],
+    abort_reason: "",
+  };
+  var abortReasons = [];
+
+  validateFnbV23BRequiredColumns_(inventoryHeaderMap, ["stock_item_id", "stock_item_name"], "Inventory", abortReasons);
+  validateFnbV23BRequiredColumns_(stockMovementsHeaderMap, ["stock_item_id", "stock_item_name", "movement_id", "reference_type", "reference_id", "qty_change", "note", "created_at"], "StockMovements", abortReasons);
+  validateFnbV23BRequiredColumns_(menuHeaderMap, ["menu_id", "menu_name", "stock_item_id"], "Menu", abortReasons);
+
+  if (!config.dry_run && !config.backup_confirmed) {
+    abortReasons.push("BACKUP_NOT_CONFIRMED");
+  }
+
+  config.canonical_items.forEach(function (canonical) {
+    var rows = findFnbV23BRowsByStockIdentity_(inventoryRows, canonical.stock_item_id, canonical.stock_item_name);
+
+    if (rows.length !== 1) {
+      abortReasons.push("CANONICAL_ROW_COUNT_INVALID:" + canonical.stock_item_id + ":" + canonical.stock_item_name + ":" + rows.length);
+    } else {
+      output.canonical_inventory_rows.push(buildFnbV23BInventoryRowAudit_(rows[0]));
+    }
+  });
+
+  config.mappings.forEach(function (mapping) {
+    var targetRows = inventoryRows.filter(function (row) {
+      return String(row.values.stock_item_id || row.values.item_id || "").trim() === mapping.new_stock_item_id;
+    });
+
+    if (targetRows.length > 0) {
+      abortReasons.push("TARGET_ID_ALREADY_EXISTS:" + mapping.new_stock_item_id);
+    }
+
+    var qaRows = findFnbV23BRowsByStockIdentity_(inventoryRows, mapping.old_stock_item_id, mapping.stock_item_name);
+
+    if (qaRows.length !== 1) {
+      abortReasons.push("QA_ROW_COUNT_INVALID:" + mapping.old_stock_item_id + ":" + mapping.stock_item_name + ":" + qaRows.length);
+      return;
+    }
+
+    output.inventory_updates.push({
+      sheet: "Inventory",
+      row_number: qaRows[0].row_number,
+      column_name: "stock_item_id",
+      stock_item_name: mapping.stock_item_name,
+      old_stock_item_id: mapping.old_stock_item_id,
+      new_stock_item_id: mapping.new_stock_item_id,
+      old_value: mapping.old_stock_item_id,
+      new_value: mapping.new_stock_item_id,
+    });
+  });
+  output.planned_updates.inventory_updates = output.inventory_updates;
+
+  validateFnbV23BDuplicateScope_(config, inventoryRows, output, abortReasons);
+  validateFnbV23BMenuRefs_(config, menuRows, output, abortReasons);
+  collectFnbV23BStockMovementUpdates_(config, stockMovementRows, output, abortReasons);
+  output.planned_updates.stock_movement_updates = output.stock_movement_updates;
+
+  if (abortReasons.length > 0) {
+    output.ok = false;
+    output.abort_reason = abortReasons.join("; ");
+  }
+
+  return output;
+}
+
+function validateFnbV23BRequiredColumns_(headerMap, columns, sheetName, abortReasons) {
+  columns.forEach(function (column) {
+    if (!headerMap[column]) {
+      abortReasons.push("MISSING_COLUMN:" + sheetName + "." + column);
+    }
+  });
+}
+
+function getFnbV23BSheetRows_(sheet, headerMap) {
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+
+  if (lastRow < 2 || lastColumn < 1) {
+    return [];
+  }
+
+  var values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  var headerByColumn = {};
+
+  Object.keys(headerMap).forEach(function (header) {
+    headerByColumn[headerMap[header]] = header;
+  });
+
+  return values.reduce(function (rows, row, index) {
+    var isEmptyRow = row.every(function (cell) {
+      return cell === "" || cell === null;
+    });
+
+    if (isEmptyRow) {
+      return rows;
+    }
+
+    var valuesByHeader = {};
+
+    Object.keys(headerByColumn).forEach(function (column) {
+      var header = headerByColumn[column];
+      valuesByHeader[header] = normalizeCellValue_(header, row[Number(column) - 1]);
+    });
+
+    rows.push({
+      row_number: index + 2,
+      values: valuesByHeader,
+    });
+    return rows;
+  }, []);
+}
+
+function findFnbV23BRowsByStockIdentity_(rows, stockItemId, stockItemName) {
+  var expectedId = String(stockItemId || "").trim();
+  var expectedName = String(stockItemName || "").trim();
+
+  return rows.filter(function (row) {
+    var rowId = String(row.values.stock_item_id || row.values.item_id || "").trim();
+    var rowName = String(row.values.stock_item_name || row.values.item_name || "").trim();
+
+    return rowId === expectedId && rowName === expectedName;
+  });
+}
+
+function buildFnbV23BInventoryRowAudit_(row) {
+  return {
+    row_number: row.row_number,
+    stock_item_id: row.values.stock_item_id || row.values.item_id || "",
+    stock_item_name: row.values.stock_item_name || row.values.item_name || "",
+    category: row.values.category || "",
+    unit: row.values.unit || "",
+    stock_qty: Number(row.values.stock_qty) || 0,
+    min_stock: Number(row.values.min_stock) || 0,
+    status: row.values.status || "",
+    updated_at: row.values.updated_at || "",
+  };
+}
+
+function validateFnbV23BDuplicateScope_(config, inventoryRows, output, abortReasons) {
+  config.canonical_items.forEach(function (canonical) {
+    var rowsForId = inventoryRows.filter(function (row) {
+      return String(row.values.stock_item_id || row.values.item_id || "").trim() === canonical.stock_item_id;
+    });
+    var allowedNames = [canonical.stock_item_name].concat(config.mappings.filter(function (mapping) {
+      return mapping.old_stock_item_id === canonical.stock_item_id;
+    }).map(function (mapping) {
+      return mapping.stock_item_name;
+    }));
+    var unexpectedRows = rowsForId.filter(function (row) {
+      var rowName = String(row.values.stock_item_name || row.values.item_name || "").trim();
+      return allowedNames.indexOf(rowName) === -1;
+    });
+
+    output.duplicate_stock_item_id_before.push({
+      stock_item_id: canonical.stock_item_id,
+      count: rowsForId.length,
+      row_numbers: rowsForId.map(function (row) {
+        return row.row_number;
+      }),
+      names: rowsForId.map(function (row) {
+        return row.values.stock_item_name || row.values.item_name || "";
+      }),
+    });
+
+    if (rowsForId.length !== allowedNames.length) {
+      abortReasons.push("DUPLICATE_SCOPE_COUNT_INVALID:" + canonical.stock_item_id + ":" + rowsForId.length);
+    }
+
+    if (unexpectedRows.length > 0) {
+      abortReasons.push("DUPLICATE_SCOPE_UNEXPECTED_ROWS:" + canonical.stock_item_id);
+    }
+  });
+}
+
+function validateFnbV23BMenuRefs_(config, menuRows, output, abortReasons) {
+  config.protected_menu_refs.forEach(function (expected) {
+    var rows = menuRows.filter(function (row) {
+      return String(row.values.menu_id || "").trim() === expected.menu_id;
+    });
+
+    if (rows.length !== 1) {
+      abortReasons.push("PROTECTED_MENU_ROW_COUNT_INVALID:" + expected.menu_id + ":" + rows.length);
+      return;
+    }
+
+    var row = rows[0];
+    var actualStockItemId = String(row.values.stock_item_id || "").trim();
+    var actualMenuName = String(row.values.menu_name || "").trim();
+
+    output.protected_menu_refs.push({
+      row_number: row.row_number,
+      menu_id: expected.menu_id,
+      menu_name: actualMenuName,
+      expected_stock_item_id: expected.stock_item_id,
+      actual_stock_item_id: actualStockItemId,
+    });
+
+    if (actualStockItemId !== expected.stock_item_id) {
+      abortReasons.push("PROTECTED_MENU_REF_CHANGED:" + expected.menu_id + ":" + actualStockItemId);
+    }
+  });
+}
+
+function collectFnbV23BStockMovementUpdates_(config, stockMovementRows, output, abortReasons) {
+  var oldIds = config.canonical_items.map(function (canonical) {
+    return canonical.stock_item_id;
+  });
+  var knownNamesByOldId = {};
+
+  config.canonical_items.forEach(function (canonical) {
+    knownNamesByOldId[canonical.stock_item_id] = [canonical.stock_item_name];
+  });
+  config.mappings.forEach(function (mapping) {
+    if (!knownNamesByOldId[mapping.old_stock_item_id]) {
+      knownNamesByOldId[mapping.old_stock_item_id] = [];
+    }
+
+    knownNamesByOldId[mapping.old_stock_item_id].push(mapping.stock_item_name);
+  });
+
+  stockMovementRows.forEach(function (row) {
+    var rowId = String(row.values.stock_item_id || "").trim();
+    var rowName = String(row.values.stock_item_name || "").trim();
+
+    if (oldIds.indexOf(rowId) === -1) {
+      return;
+    }
+
+    if ((knownNamesByOldId[rowId] || []).indexOf(rowName) === -1) {
+      abortReasons.push("UNKNOWN_STOCK_MOVEMENT_NAME:" + rowId + ":" + rowName + ":ROW_" + row.row_number);
+      return;
+    }
+
+    config.mappings.forEach(function (mapping) {
+      if (rowId !== mapping.old_stock_item_id || rowName !== mapping.stock_item_name) {
+        return;
+      }
+
+      output.stock_movement_updates.push({
+        sheet: "StockMovements",
+        row_number: row.row_number,
+        column_name: "stock_item_id",
+        movement_id: row.values.movement_id || "",
+        created_at: row.values.created_at || "",
+        stock_item_name: rowName,
+        old_stock_item_id: mapping.old_stock_item_id,
+        new_stock_item_id: mapping.new_stock_item_id,
+        old_value: mapping.old_stock_item_id,
+        new_value: mapping.new_stock_item_id,
+        qty_change: Number(row.values.qty_change) || 0,
+        reference_type: row.values.reference_type || "",
+        reference_id: row.values.reference_id || "",
+        note: row.values.note || "",
+      });
+    });
+  });
+}
+
+function executeFnbV23BInventoryIdentityPlan_(plan) {
+  var inventorySheet = getSheet_("Inventory");
+  var stockMovementsSheet = getSheet_("StockMovements");
+  var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+  var stockMovementsHeaderMap = getHeaderMap_(stockMovementsSheet);
+
+  if (!plan.applied_updates) {
+    plan.applied_updates = {
+      inventory_updates: [],
+      stock_movement_updates: [],
+    };
+  }
+
+  plan.inventory_updates.forEach(function (update) {
+    applyFnbV23BCellUpdate_(inventorySheet, inventoryHeaderMap, update, plan.applied_updates.inventory_updates);
+  });
+
+  plan.stock_movement_updates.forEach(function (update) {
+    applyFnbV23BCellUpdate_(stockMovementsSheet, stockMovementsHeaderMap, update, plan.applied_updates.stock_movement_updates);
+  });
+}
+
+function applyFnbV23BCellUpdate_(sheet, headerMap, update, appliedUpdates) {
+  var column = headerMap[update.column_name];
+
+  if (!column) {
+    throw new Error("Kolom tidak ditemukan untuk migrasi: " + update.sheet + "." + update.column_name);
+  }
+
+  var range = sheet.getRange(update.row_number, column);
+  var currentValue = String(range.getValue() || "").trim();
+  var expectedValue = String(update.old_value || "").trim();
+
+  if (currentValue !== expectedValue) {
+    throw new Error("Nilai lama tidak sesuai untuk " + update.sheet + " row " + update.row_number + " kolom " + update.column_name + ". Expected: " + expectedValue + ", actual: " + currentValue);
+  }
+
+  range.setValue(update.new_value);
+  appliedUpdates.push(Object.assign({}, update, {
+    column: update.column_name,
+    old_value: expectedValue,
+    new_value: update.new_value,
+    timestamp: toJakartaIsoString_(new Date()),
+  }));
+}
+
+function validateFnbV23BInventoryIdentityMigration_(config) {
+  var inventorySheet = getSheet_("Inventory");
+  var stockMovementsSheet = getSheet_("StockMovements");
+  var menuSheet = getSheet_("Menu");
+  var inventoryRows = getFnbV23BSheetRows_(inventorySheet, getHeaderMap_(inventorySheet));
+  var stockMovementRows = getFnbV23BSheetRows_(stockMovementsSheet, getHeaderMap_(stockMovementsSheet));
+  var menuRows = getFnbV23BSheetRows_(menuSheet, getHeaderMap_(menuSheet));
+  var duplicateIds = [];
+  var idGroups = {};
+  var protectedMenuRefs = [];
+  var abortReasons = [];
+  var warnings = [];
+  var scopedIds = config.canonical_items.map(function (canonical) {
+    return canonical.stock_item_id;
+  }).concat(config.mappings.map(function (mapping) {
+    return mapping.new_stock_item_id;
+  }));
+
+  inventoryRows.forEach(function (row) {
+    var stockItemId = String(row.values.stock_item_id || row.values.item_id || "").trim();
+
+    if (!stockItemId) {
+      return;
+    }
+
+    if (!idGroups[stockItemId]) {
+      idGroups[stockItemId] = [];
+    }
+
+    idGroups[stockItemId].push(row);
+  });
+  Object.keys(idGroups).forEach(function (stockItemId) {
+    if (idGroups[stockItemId].length > 1) {
+      duplicateIds.push({
+        stock_item_id: stockItemId,
+        count: idGroups[stockItemId].length,
+        row_numbers: idGroups[stockItemId].map(function (row) {
+          return row.row_number;
+        }),
+      });
+    }
+  });
+
+  duplicateIds.forEach(function (duplicate) {
+    if (scopedIds.indexOf(duplicate.stock_item_id) !== -1) {
+      abortReasons.push("POST_SCOPED_DUPLICATE_STOCK_ITEM_ID_EXISTS:" + duplicate.stock_item_id);
+    } else {
+      warnings.push("POST_OUT_OF_SCOPE_DUPLICATE_STOCK_ITEM_ID:" + duplicate.stock_item_id);
+    }
+  });
+
+  config.canonical_items.forEach(function (canonical) {
+    var rows = findFnbV23BRowsByStockIdentity_(inventoryRows, canonical.stock_item_id, canonical.stock_item_name);
+
+    if (rows.length !== 1) {
+      abortReasons.push("POST_CANONICAL_ROW_INVALID:" + canonical.stock_item_id + ":" + rows.length);
+    }
+  });
+
+  config.mappings.forEach(function (mapping) {
+    var oldRows = findFnbV23BRowsByStockIdentity_(inventoryRows, mapping.old_stock_item_id, mapping.stock_item_name);
+    var newRows = findFnbV23BRowsByStockIdentity_(inventoryRows, mapping.new_stock_item_id, mapping.stock_item_name);
+
+    if (oldRows.length !== 0) {
+      abortReasons.push("POST_QA_OLD_ID_STILL_EXISTS:" + mapping.old_stock_item_id + ":" + mapping.stock_item_name);
+    }
+
+    if (newRows.length !== 1) {
+      abortReasons.push("POST_QA_NEW_ID_INVALID:" + mapping.new_stock_item_id + ":" + newRows.length);
+    }
+
+    stockMovementRows.forEach(function (row) {
+      var stockItemId = String(row.values.stock_item_id || "").trim();
+      var stockItemName = String(row.values.stock_item_name || "").trim();
+
+      if (stockItemId === mapping.old_stock_item_id && stockItemName === mapping.stock_item_name) {
+        abortReasons.push("POST_QA_STOCK_MOVEMENT_OLD_ID_EXISTS:" + mapping.old_stock_item_id + ":ROW_" + row.row_number);
+      }
+    });
+  });
+
+  config.protected_menu_refs.forEach(function (expected) {
+    var rows = menuRows.filter(function (row) {
+      return String(row.values.menu_id || "").trim() === expected.menu_id;
+    });
+
+    if (rows.length !== 1) {
+      abortReasons.push("POST_PROTECTED_MENU_ROW_INVALID:" + expected.menu_id + ":" + rows.length);
+      return;
+    }
+
+    protectedMenuRefs.push({
+      row_number: rows[0].row_number,
+      menu_id: expected.menu_id,
+      menu_name: rows[0].values.menu_name || "",
+      expected_stock_item_id: expected.stock_item_id,
+      actual_stock_item_id: rows[0].values.stock_item_id || "",
+    });
+
+    if (String(rows[0].values.stock_item_id || "").trim() !== expected.stock_item_id) {
+      abortReasons.push("POST_PROTECTED_MENU_REF_CHANGED:" + expected.menu_id);
+    }
+  });
+
+  return {
+    ok: abortReasons.length === 0,
+    abort_reason: abortReasons.join("; "),
+    duplicate_stock_item_id_after: duplicateIds,
+    protected_menu_refs: protectedMenuRefs,
+    warnings: warnings,
+  };
+}
+
+function buildFnbV23BInventoryIdentityErrorOutput_(config, partialOutput, error) {
+  var appliedUpdates = partialOutput && partialOutput.applied_updates
+    ? partialOutput.applied_updates
+    : {
+      inventory_updates: [],
+      stock_movement_updates: [],
+    };
+  var partialApplied = appliedUpdates.inventory_updates.length > 0 || appliedUpdates.stock_movement_updates.length > 0;
+
+  return {
+    ok: false,
+    dry_run: config ? config.dry_run : true,
+    migration_id: config ? config.migration_id : "",
+    backup_confirmed: config ? config.backup_confirmed : false,
+    abort_reason: "ERROR",
+    error_message: error && error.message ? error.message : String(error),
+    partial_applied: partialApplied,
+    planned_updates: partialOutput && partialOutput.planned_updates ? partialOutput.planned_updates : {
+      inventory_updates: partialOutput && partialOutput.inventory_updates ? partialOutput.inventory_updates : [],
+      stock_movement_updates: partialOutput && partialOutput.stock_movement_updates ? partialOutput.stock_movement_updates : [],
+    },
+    applied_updates: appliedUpdates,
+    inventory_updates: partialOutput && partialOutput.inventory_updates ? partialOutput.inventory_updates : [],
+    stock_movement_updates: partialOutput && partialOutput.stock_movement_updates ? partialOutput.stock_movement_updates : [],
+    warnings: partialOutput && partialOutput.warnings ? partialOutput.warnings : [],
+  };
+}
+
 function ensureFnbOrdersSheet_() {
   return ensureFnbOrdersSheetColumns_();
 }
