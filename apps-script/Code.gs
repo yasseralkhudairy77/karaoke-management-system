@@ -6190,9 +6190,12 @@ function generateStockMovementId_() {
 }
 
 function runFnbV23BInventoryIdentityDryRun() {
-  return migrateFnbV23BInventoryIdentity_({
+  var result = migrateFnbV23BInventoryIdentity_({
     dry_run: true,
   });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function migrateFnbV23BInventoryIdentity_(config) {
