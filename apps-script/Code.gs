@@ -6189,6 +6189,12 @@ function generateStockMovementId_() {
   return "MOV-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
+function runFnbV23BInventoryIdentityDryRun() {
+  return migrateFnbV23BInventoryIdentity_({
+    dry_run: true,
+  });
+}
+
 function migrateFnbV23BInventoryIdentity_(config) {
   var migrationConfig = buildFnbV23BInventoryIdentityConfig_(config || {});
   var lock = LockService.getScriptLock();
