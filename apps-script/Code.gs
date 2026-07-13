@@ -6198,6 +6198,16 @@ function runFnbV23BInventoryIdentityDryRun() {
   return result;
 }
 
+function runFnbV23BInventoryIdentityExecute() {
+  var result = migrateFnbV23BInventoryIdentity_({
+    dry_run: false,
+    backup_confirmed: true,
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 function migrateFnbV23BInventoryIdentity_(config) {
   var migrationConfig = buildFnbV23BInventoryIdentityConfig_(config || {});
   var lock = LockService.getScriptLock();
