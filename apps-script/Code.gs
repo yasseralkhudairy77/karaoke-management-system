@@ -6445,6 +6445,616 @@ function validateFnbV23BInventoryQaArchiveRestore_(sheet, expectedRows, inserted
   };
 }
 
+function runFnbV24PackageImportDryRun() {
+  var result = importFnbV24Package_({
+    dry_run: true,
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function runFnbV24PackageImportExecute() {
+  var result = importFnbV24Package_({
+    dry_run: false,
+    backup_confirmed: true,
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function importFnbV24Package_(config) {
+  var importConfig = buildFnbV24PackageImportConfig_(config || {});
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  var output;
+
+  try {
+    lock.waitLock(10000);
+    lockAcquired = true;
+
+    output = collectFnbV24PackageImportPlan_(importConfig);
+
+    if (!output.ok || importConfig.dry_run) {
+      return output;
+    }
+
+    executeFnbV24PackageImportPlan_(output);
+    output.validation = validateFnbV24PackageImport_(importConfig);
+    output.ok = output.validation.ok;
+    output.partial_insert = output.inserted_rows.package_master.length > 0
+      && output.inserted_rows.package_details.length !== importConfig.package_details.length;
+
+    if (!output.ok) {
+      output.abort_reason = output.validation.abort_reason || "POST_VALIDATION_FAILED";
+    }
+
+    if (output.partial_insert) {
+      output.rollback_info = buildFnbV24PackageImportRollbackInfo_(output);
+    }
+
+    return output;
+  } catch (error) {
+    return buildFnbV24PackageImportErrorOutput_(importConfig, output, error);
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function buildFnbV24PackageImportConfig_(config) {
+  var now = toJakartaIsoString_(new Date());
+
+  return {
+    import_id: "IMP-FNB-V24-PACKAGE-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss"),
+    dry_run: config.dry_run !== false,
+    backup_confirmed: config.backup_confirmed === true,
+    package_master: {
+      package_id: "PKG-001",
+      menu_id: "",
+      package_name: "Beer Holic Package",
+      package_category: "Beer Holic",
+      package_type: "room_fnb_bundle",
+      selling_price: 1100000,
+      status: "active",
+      valid_day_type: "all",
+      duration_minutes: 120,
+      updated_at: now,
+      note: "Package karaoke 2 jam + F&B",
+    },
+    package_details: [
+      {
+        package_detail_id: "PKD-001",
+        package_id: "PKG-001",
+        line_no: 1,
+        component_type: "service",
+        component_ref_id: "SVC-001",
+        component_name: "Room",
+        qty: 2,
+        unit: "Hour",
+        hpp: 0,
+        additional_price: 0,
+        cost_amount: 0,
+        is_choice: "no",
+        choice_group: "",
+        updated_at: now,
+        note: "",
+      },
+      {
+        package_detail_id: "PKD-002",
+        package_id: "PKG-001",
+        line_no: 2,
+        component_type: "service",
+        component_ref_id: "SVC-002",
+        component_name: "LC/Talent",
+        qty: 2,
+        unit: "Person",
+        hpp: 0,
+        additional_price: 0,
+        cost_amount: 0,
+        is_choice: "no",
+        choice_group: "",
+        updated_at: now,
+        note: "",
+      },
+      {
+        package_detail_id: "PKD-003",
+        package_id: "PKG-001",
+        line_no: 3,
+        component_type: "inventory",
+        component_ref_id: "ITEM-004",
+        component_name: "Beer",
+        qty: 6,
+        unit: "botol",
+        hpp: 0,
+        additional_price: 0,
+        cost_amount: 0,
+        is_choice: "no",
+        choice_group: "",
+        updated_at: now,
+        note: "",
+      },
+      {
+        package_detail_id: "PKD-004",
+        package_id: "PKG-001",
+        line_no: 4,
+        component_type: "inventory",
+        component_ref_id: "ITEM-005",
+        component_name: "Mineral Water 330ml",
+        qty: 2,
+        unit: "botol",
+        hpp: 0,
+        additional_price: 0,
+        cost_amount: 0,
+        is_choice: "no",
+        choice_group: "",
+        updated_at: now,
+        note: "",
+      },
+      {
+        package_detail_id: "PKD-005",
+        package_id: "PKG-001",
+        line_no: 5,
+        component_type: "menu",
+        component_ref_id: "MENU-004",
+        component_name: "Fruit Platter",
+        qty: 1,
+        unit: "porsi",
+        hpp: 0,
+        additional_price: 0,
+        cost_amount: 0,
+        is_choice: "no",
+        choice_group: "",
+        updated_at: now,
+        note: "",
+      },
+    ],
+  };
+}
+
+function collectFnbV24PackageImportPlan_(config) {
+  var output = buildFnbV24PackageImportOutput_(config);
+  var abortReasons = [];
+  var packageMasterSheet;
+  var packageDetailSheet;
+  var packageMasterRows;
+  var packageDetailRows;
+  var packageMasterHeaderMap;
+  var packageDetailHeaderMap;
+
+  if (!config.dry_run && !config.backup_confirmed) {
+    abortReasons.push("BACKUP_NOT_CONFIRMED");
+  }
+
+  try {
+    packageMasterSheet = getSheet_("PackageMaster");
+    packageDetailSheet = getSheet_("PackageDetail");
+  } catch (error) {
+    abortReasons.push(error && error.message ? error.message : String(error));
+    output.abort_reason = abortReasons.join("; ");
+    output.validation = buildFnbV24PackageImportValidationOutput_(abortReasons);
+    return output;
+  }
+
+  packageMasterHeaderMap = getHeaderMap_(packageMasterSheet);
+  packageDetailHeaderMap = getHeaderMap_(packageDetailSheet);
+  validateFnbV23BRequiredColumns_(packageMasterHeaderMap, PACKAGE_MASTER_HEADERS, "PackageMaster", abortReasons);
+  validateFnbV23BRequiredColumns_(packageDetailHeaderMap, PACKAGE_DETAIL_HEADERS, "PackageDetail", abortReasons);
+
+  packageMasterRows = getFnbV23BSheetRows_(packageMasterSheet, packageMasterHeaderMap);
+  packageDetailRows = getFnbV23BSheetRows_(packageDetailSheet, packageDetailHeaderMap);
+
+  output.validation = validateFnbV24PackageImportPlan_(config, packageMasterRows, packageDetailRows, abortReasons);
+  output.ok = output.validation.ok;
+  output.abort_reason = output.ok ? "" : output.validation.abort_reason;
+
+  return output;
+}
+
+function executeFnbV24PackageImportPlan_(plan) {
+  var packageMasterSheet = getSheet_("PackageMaster");
+  var packageDetailSheet = getSheet_("PackageDetail");
+  var detailRows = plan.planned_rows.package_details.slice().sort(function (first, second) {
+    return (Number(first.line_no) || 0) - (Number(second.line_no) || 0);
+  });
+
+  appendObjectRow_(packageMasterSheet, plan.planned_rows.package_master);
+  plan.inserted_rows.package_master.push({
+    package_id: plan.planned_rows.package_master.package_id,
+    package_name: plan.planned_rows.package_master.package_name,
+    row_number: packageMasterSheet.getLastRow(),
+  });
+
+  detailRows.forEach(function (detail) {
+    appendObjectRow_(packageDetailSheet, detail);
+    plan.inserted_rows.package_details.push({
+      package_detail_id: detail.package_detail_id,
+      package_id: detail.package_id,
+      line_no: detail.line_no,
+      component_type: detail.component_type,
+      component_ref_id: detail.component_ref_id,
+      row_number: packageDetailSheet.getLastRow(),
+    });
+  });
+}
+
+function validateFnbV24PackageImport_(config) {
+  var abortReasons = [];
+  var packageMasterSheet = getSheet_("PackageMaster");
+  var packageDetailSheet = getSheet_("PackageDetail");
+  var packageMasterHeaderMap = getHeaderMap_(packageMasterSheet);
+  var packageDetailHeaderMap = getHeaderMap_(packageDetailSheet);
+  var packageMasterRows;
+  var packageDetailRows;
+  var duplicatePackageIds;
+  var duplicatePackageDetailIds;
+  var referenceCheck;
+  var lineNumbers = {};
+
+  validateFnbV23BRequiredColumns_(packageMasterHeaderMap, PACKAGE_MASTER_HEADERS, "PackageMaster", abortReasons);
+  validateFnbV23BRequiredColumns_(packageDetailHeaderMap, PACKAGE_DETAIL_HEADERS, "PackageDetail", abortReasons);
+
+  packageMasterRows = getFnbV23BSheetRows_(packageMasterSheet, packageMasterHeaderMap);
+  packageDetailRows = getFnbV23BSheetRows_(packageDetailSheet, packageDetailHeaderMap);
+  duplicatePackageIds = findFnbV24DuplicateIds_(packageMasterRows, "package_id");
+  duplicatePackageDetailIds = findFnbV24DuplicateIds_(packageDetailRows, "package_detail_id");
+  referenceCheck = buildFnbV24PackageReferenceCheck_(config.package_details, abortReasons);
+  var packageMatches = packageMasterRows.filter(function (row) {
+    return String(row.values.package_id || "").trim() === config.package_master.package_id
+      && String(row.values.package_name || "").trim() === config.package_master.package_name;
+  });
+  var detailMatches = config.package_details.map(function (expectedDetail) {
+    var matches = packageDetailRows.filter(function (row) {
+      return String(row.values.package_detail_id || "").trim() === expectedDetail.package_detail_id
+        && String(row.values.package_id || "").trim() === expectedDetail.package_id
+        && String(row.values.component_type || "").trim() === expectedDetail.component_type
+        && String(row.values.component_ref_id || "").trim() === expectedDetail.component_ref_id
+        && String(row.values.component_name || "").trim() === expectedDetail.component_name;
+    });
+
+    if (matches.length !== 1) {
+      abortReasons.push("PACKAGE_DETAIL_POST_VALIDATION_INVALID:" + expectedDetail.package_detail_id + ":" + matches.length);
+    }
+
+    return {
+      package_detail_id: expectedDetail.package_detail_id,
+      match_count: matches.length,
+      row_numbers: matches.map(function (row) {
+        return row.row_number;
+      }),
+    };
+  });
+
+  if (packageMatches.length !== 1) {
+    abortReasons.push("PACKAGE_POST_VALIDATION_INVALID:" + config.package_master.package_id + ":" + packageMatches.length);
+  }
+
+  config.package_details.forEach(function (detail) {
+    var lineNo = String(detail.line_no || "").trim();
+    var detailPackageId = String(detail.package_id || "").trim();
+    var scopedLineNo = detailPackageId + "::" + lineNo;
+
+    if (detailPackageId !== config.package_master.package_id) {
+      abortReasons.push("PACKAGE_DETAIL_PACKAGE_ID_MISMATCH:" + detail.package_detail_id);
+    }
+
+    if (!isFnbV24PackageComponentTypeValid_(detail.component_type)) {
+      abortReasons.push("INVALID_COMPONENT_TYPE:" + detail.package_detail_id + ":" + detail.component_type);
+    }
+
+    if (!lineNo || lineNumbers[scopedLineNo]) {
+      abortReasons.push("DUPLICATE_OR_EMPTY_LINE_NO:" + detail.package_detail_id + ":" + scopedLineNo);
+    }
+
+    lineNumbers[scopedLineNo] = true;
+  });
+
+  if (duplicatePackageIds.length) {
+    abortReasons.push("DUPLICATE_PACKAGE_ID_EXISTS");
+  }
+
+  if (duplicatePackageDetailIds.length) {
+    abortReasons.push("DUPLICATE_PACKAGE_DETAIL_ID_EXISTS");
+  }
+
+  return {
+    ok: abortReasons.length === 0,
+    abort_reason: abortReasons.join("; "),
+    errors: abortReasons,
+    duplicate_check: {
+      package_id: duplicatePackageIds,
+      package_detail_id: duplicatePackageDetailIds,
+    },
+    reference_check: referenceCheck,
+    package_master_post_validation: {
+      package_id: config.package_master.package_id,
+      match_count: packageMatches.length,
+      row_numbers: packageMatches.map(function (row) {
+        return row.row_number;
+      }),
+    },
+    package_detail_post_validation: detailMatches,
+  };
+}
+
+function buildFnbV24PackageImportErrorOutput_(config, partialOutput, error) {
+  var output = partialOutput || buildFnbV24PackageImportOutput_(config);
+
+  output.ok = false;
+  output.error_message = error && error.message ? error.message : String(error);
+  output.partial_insert = output.inserted_rows.package_master.length > 0
+    && output.inserted_rows.package_details.length !== config.package_details.length;
+  output.abort_reason = output.partial_insert ? "ERROR_PARTIAL_INSERT" : "ERROR";
+
+  if (output.partial_insert) {
+    output.rollback_info = buildFnbV24PackageImportRollbackInfo_(output);
+  }
+
+  return output;
+}
+
+function buildFnbV24PackageImportOutput_(config) {
+  return {
+    ok: false,
+    dry_run: config.dry_run,
+    import_id: config.import_id,
+    backup_confirmed: config.backup_confirmed,
+    abort_reason: "",
+    error_message: "",
+    partial_insert: false,
+    planned_rows: {
+      package_master: config.package_master,
+      package_details: config.package_details,
+    },
+    inserted_rows: {
+      package_master: [],
+      package_details: [],
+    },
+    validation: {},
+    rollback_info: [],
+  };
+}
+
+function validateFnbV24PackageImportPlan_(config, packageMasterRows, packageDetailRows, abortReasons) {
+  var errors = abortReasons ? abortReasons.slice() : [];
+  var packageId = config.package_master.package_id;
+  var packageDetailIds = config.package_details.map(function (detail) {
+    return detail.package_detail_id;
+  });
+  var referenceCheck = buildFnbV24PackageReferenceCheck_(config.package_details, errors);
+  var duplicatePackageIds = findFnbV24DuplicateIds_(packageMasterRows, "package_id");
+  var duplicatePackageDetailIds = findFnbV24DuplicateIds_(packageDetailRows, "package_detail_id");
+  var existingPackageRows = findFnbV24RowsByValue_(packageMasterRows, "package_id", packageId);
+  var existingDetailRows = packageDetailIds.reduce(function (rowsById, packageDetailId) {
+    rowsById[packageDetailId] = findFnbV24RowsByValue_(packageDetailRows, "package_detail_id", packageDetailId);
+    return rowsById;
+  }, {});
+  var detailPackageIds = {};
+  var lineNumbers = {};
+
+  if (existingPackageRows.length) {
+    errors.push("PACKAGE_ID_ALREADY_EXISTS:" + packageId);
+  }
+
+  Object.keys(existingDetailRows).forEach(function (packageDetailId) {
+    if (existingDetailRows[packageDetailId].length) {
+      errors.push("PACKAGE_DETAIL_ID_ALREADY_EXISTS:" + packageDetailId);
+    }
+  });
+
+  if (duplicatePackageIds.length) {
+    errors.push("DUPLICATE_PACKAGE_ID_EXISTS");
+  }
+
+  if (duplicatePackageDetailIds.length) {
+    errors.push("DUPLICATE_PACKAGE_DETAIL_ID_EXISTS");
+  }
+
+  config.package_details.forEach(function (detail) {
+    var lineNo = String(detail.line_no || "").trim();
+    var componentType = String(detail.component_type || "").trim();
+
+    if (String(detail.package_id || "").trim() !== packageId) {
+      errors.push("PACKAGE_DETAIL_PACKAGE_ID_MISMATCH:" + detail.package_detail_id);
+    }
+
+    if (!isFnbV24PackageComponentTypeValid_(componentType)) {
+      errors.push("INVALID_COMPONENT_TYPE:" + detail.package_detail_id + ":" + componentType);
+    }
+
+    if (!lineNo || lineNumbers[lineNo]) {
+      errors.push("DUPLICATE_OR_EMPTY_LINE_NO:" + detail.package_detail_id + ":" + lineNo);
+    }
+
+    lineNumbers[lineNo] = true;
+    detailPackageIds[String(detail.package_id || "").trim()] = true;
+  });
+
+  return {
+    ok: errors.length === 0,
+    abort_reason: errors.join("; "),
+    errors: errors,
+    sheet_availability: {
+      PackageMaster: true,
+      PackageDetail: true,
+    },
+    header_validation: {
+      PackageMaster: errors.filter(function (error) {
+        return String(error).indexOf("MISSING_COLUMN:PackageMaster.") === 0;
+      }),
+      PackageDetail: errors.filter(function (error) {
+        return String(error).indexOf("MISSING_COLUMN:PackageDetail.") === 0;
+      }),
+    },
+    duplicate_check: {
+      package_id: duplicatePackageIds,
+      package_detail_id: duplicatePackageDetailIds,
+    },
+    id_availability: {
+      package_id: {
+        id: packageId,
+        available: existingPackageRows.length === 0,
+        existing_row_numbers: existingPackageRows.map(function (row) {
+          return row.row_number;
+        }),
+      },
+      package_detail_id: Object.keys(existingDetailRows).map(function (packageDetailId) {
+        return {
+          id: packageDetailId,
+          available: existingDetailRows[packageDetailId].length === 0,
+          existing_row_numbers: existingDetailRows[packageDetailId].map(function (row) {
+            return row.row_number;
+          }),
+        };
+      }),
+    },
+    detail_validation: {
+      unique_package_ids: Object.keys(detailPackageIds),
+      line_no_values: Object.keys(lineNumbers),
+      component_types_valid: config.package_details.every(function (detail) {
+        return isFnbV24PackageComponentTypeValid_(detail.component_type);
+      }),
+    },
+    reference_check: referenceCheck,
+  };
+}
+
+function buildFnbV24PackageReferenceCheck_(details, errors) {
+  var serviceItems = readSheetAsObjects_("ServiceItems");
+  var inventoryItems = readSheetAsObjects_("Inventory");
+  var menuItems = readSheetAsObjects_("Menu");
+  var serviceMap = buildFnbV24ObjectMap_(serviceItems, "service_item_id");
+  var inventoryMap = buildFnbV24ObjectMapWithFallback_(inventoryItems, "stock_item_id", "item_id");
+  var menuMap = buildFnbV24ObjectMap_(menuItems, "menu_id");
+
+  return details.map(function (detail) {
+    var componentType = String(detail.component_type || "").trim();
+    var componentRefId = String(detail.component_ref_id || "").trim();
+    var expectedName = String(detail.component_name || "").trim();
+    var reference = null;
+    var actualName = "";
+
+    if (componentType === "service") {
+      reference = serviceMap[componentRefId] || null;
+      actualName = reference ? String(reference.service_name || "").trim() : "";
+    } else if (componentType === "inventory") {
+      reference = inventoryMap[componentRefId] || null;
+      actualName = reference ? String(reference.stock_item_name || reference.item_name || "").trim() : "";
+    } else if (componentType === "menu") {
+      reference = menuMap[componentRefId] || null;
+      actualName = reference ? String(reference.menu_name || "").trim() : "";
+    }
+
+    if (!reference) {
+      errors.push("REFERENCE_NOT_FOUND:" + detail.package_detail_id + ":" + componentRefId);
+    } else if (actualName !== expectedName) {
+      errors.push("REFERENCE_NAME_MISMATCH:" + detail.package_detail_id + ":" + componentRefId);
+    }
+
+    return {
+      package_detail_id: detail.package_detail_id,
+      component_type: componentType,
+      component_ref_id: componentRefId,
+      expected_name: expectedName,
+      actual_name: actualName,
+      exists: Boolean(reference),
+      name_ok: Boolean(reference) && actualName === expectedName,
+    };
+  });
+}
+
+function findFnbV24DuplicateIds_(rows, fieldName) {
+  var groups = {};
+  var duplicates = [];
+
+  rows.forEach(function (row) {
+    var id = String(row.values[fieldName] || "").trim();
+
+    if (!id) {
+      return;
+    }
+
+    if (!groups[id]) {
+      groups[id] = [];
+    }
+
+    groups[id].push(row.row_number);
+  });
+
+  Object.keys(groups).forEach(function (id) {
+    if (groups[id].length > 1) {
+      duplicates.push({
+        id: id,
+        count: groups[id].length,
+        row_numbers: groups[id],
+      });
+    }
+  });
+
+  return duplicates;
+}
+
+function findFnbV24RowsByValue_(rows, fieldName, value) {
+  var expectedValue = String(value || "").trim();
+
+  return rows.filter(function (row) {
+    return String(row.values[fieldName] || "").trim() === expectedValue;
+  });
+}
+
+function isFnbV24PackageComponentTypeValid_(componentType) {
+  var normalizedType = String(componentType || "").trim();
+
+  return normalizedType === "service"
+    || normalizedType === "inventory"
+    || normalizedType === "menu";
+}
+
+function buildFnbV24ObjectMap_(rows, idField) {
+  return rows.reduce(function (map, row) {
+    var id = String(row[idField] || "").trim();
+
+    if (id) {
+      map[id] = row;
+    }
+
+    return map;
+  }, {});
+}
+
+function buildFnbV24ObjectMapWithFallback_(rows, primaryIdField, fallbackIdField) {
+  return rows.reduce(function (map, row) {
+    var id = String(row[primaryIdField] || row[fallbackIdField] || "").trim();
+
+    if (id) {
+      map[id] = row;
+    }
+
+    return map;
+  }, {});
+}
+
+function buildFnbV24PackageImportValidationOutput_(errors) {
+  return {
+    ok: false,
+    abort_reason: errors.join("; "),
+    errors: errors,
+  };
+}
+
+function buildFnbV24PackageImportRollbackInfo_(output) {
+  return [
+    "Manual rollback required if partial_insert=true.",
+    "Review PackageMaster package_id=PKG-001.",
+    "Review PackageDetail package_detail_id=PKD-001..PKD-005.",
+    "Do not delete rows until operator confirms no dependent usage.",
+    "Inserted PackageMaster rows: " + JSON.stringify(output.inserted_rows.package_master),
+    "Inserted PackageDetail rows: " + JSON.stringify(output.inserted_rows.package_details),
+  ];
+}
+
 function migrateFnbV23BInventoryIdentity_(config) {
   var migrationConfig = buildFnbV23BInventoryIdentityConfig_(config || {});
   var lock = LockService.getScriptLock();
