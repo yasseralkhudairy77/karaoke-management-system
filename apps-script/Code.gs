@@ -6208,6 +6208,243 @@ function runFnbV23BInventoryIdentityExecute() {
   return result;
 }
 
+function runRestoreFnbV23BInventoryQaArchive() {
+  var result = restoreFnbV23BInventoryQaArchive_();
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function restoreFnbV23BInventoryQaArchive_() {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  var output = buildFnbV23BInventoryQaArchiveOutput_();
+
+  try {
+    lock.waitLock(10000);
+    lockAcquired = true;
+
+    return executeFnbV23BInventoryQaArchiveRestore_(output);
+  } catch (error) {
+    output.ok = false;
+    output.abort_reason = "ERROR";
+    output.validation.errors.push(error && error.message ? error.message : String(error));
+    return output;
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function executeFnbV23BInventoryQaArchiveRestore_(output) {
+  var sheet = getSheet_("Inventory");
+  var requiredHeaders = [
+    "item_id",
+    "item_name",
+    "category",
+    "stock_qty",
+    "unit",
+    "cost_per_unit",
+    "updated_at",
+    "stock_item_id",
+    "stock_item_name",
+    "min_stock",
+    "status",
+  ];
+  var headerMap = getHeaderMap_(sheet);
+  var rows;
+  var duplicateIds;
+  var targetRows = buildFnbV23BInventoryQaArchiveRows_();
+  var targetIds = targetRows.map(function (row) {
+    return row.stock_item_id;
+  });
+  var now = toJakartaIsoString_(new Date());
+
+  validateFnbV23BRequiredColumns_(headerMap, requiredHeaders, "Inventory", output.validation.errors);
+
+  if (output.validation.errors.length) {
+    output.abort_reason = "MISSING_REQUIRED_COLUMNS";
+    return output;
+  }
+
+  rows = getFnbV23BSheetRows_(sheet, headerMap);
+  duplicateIds = findFnbV23BInventoryDuplicateIdentityIds_(rows);
+
+  output.validation.duplicate_stock_item_id = duplicateIds;
+
+  if (duplicateIds.length) {
+    output.abort_reason = "DUPLICATE_STOCK_ITEM_ID_EXISTS";
+    return output;
+  }
+
+  targetIds.forEach(function (stockItemId) {
+    var existingRows = findFnbV23BInventoryRowsByAnyId_(rows, stockItemId);
+
+    if (existingRows.length) {
+      output.skipped_rows.push({
+        stock_item_id: stockItemId,
+        reason: "ID_ALREADY_EXISTS",
+        existing_row_numbers: existingRows.map(function (row) {
+          return row.row_number;
+        }),
+      });
+    }
+  });
+
+  if (output.skipped_rows.length) {
+    output.abort_reason = "TARGET_ID_ALREADY_EXISTS";
+    return output;
+  }
+
+  targetRows.forEach(function (row) {
+    row.updated_at = now;
+    appendObjectRow_(sheet, row);
+    output.inserted_rows.push({
+      stock_item_id: row.stock_item_id,
+      stock_item_name: row.stock_item_name,
+      row_number: sheet.getLastRow(),
+    });
+  });
+
+  output.validation = validateFnbV23BInventoryQaArchiveRestore_(sheet, targetRows, output.inserted_rows);
+  output.ok = output.validation.ok;
+  output.abort_reason = output.ok ? "" : "POST_VALIDATION_FAILED";
+
+  return output;
+}
+
+function buildFnbV23BInventoryQaArchiveOutput_() {
+  return {
+    ok: false,
+    inserted_rows: [],
+    skipped_rows: [],
+    abort_reason: "",
+    validation: {
+      ok: false,
+      errors: [],
+      duplicate_stock_item_id: [],
+      restored_rows: [],
+    },
+  };
+}
+
+function buildFnbV23BInventoryQaArchiveRows_() {
+  return [
+    {
+      item_id: "ITEM-QA-001",
+      item_name: "TEST - INVENTORY QA",
+      category: "TEST",
+      stock_qty: -7,
+      unit: "PCS",
+      cost_per_unit: "",
+      updated_at: "",
+      stock_item_id: "ITEM-QA-001",
+      stock_item_name: "TEST - INVENTORY QA",
+      min_stock: 1,
+      status: "inactive",
+    },
+    {
+      item_id: "ITEM-QA-002",
+      item_name: "TEST - Inventory Delete QA",
+      category: "Test",
+      stock_qty: -4,
+      unit: "pcs",
+      cost_per_unit: "",
+      updated_at: "",
+      stock_item_id: "ITEM-QA-002",
+      stock_item_name: "TEST - Inventory Delete QA",
+      min_stock: 1,
+      status: "inactive",
+    },
+  ];
+}
+
+function findFnbV23BInventoryDuplicateIdentityIds_(rows) {
+  var idGroups = {};
+  var duplicates = [];
+
+  rows.forEach(function (row) {
+    var stockItemId = String(row.values.stock_item_id || row.values.item_id || "").trim();
+
+    if (!stockItemId) {
+      return;
+    }
+
+    if (!idGroups[stockItemId]) {
+      idGroups[stockItemId] = [];
+    }
+
+    idGroups[stockItemId].push(row.row_number);
+  });
+
+  Object.keys(idGroups).forEach(function (stockItemId) {
+    if (idGroups[stockItemId].length > 1) {
+      duplicates.push({
+        stock_item_id: stockItemId,
+        count: idGroups[stockItemId].length,
+        row_numbers: idGroups[stockItemId],
+      });
+    }
+  });
+
+  return duplicates;
+}
+
+function findFnbV23BInventoryRowsByAnyId_(rows, stockItemId) {
+  var expectedId = String(stockItemId || "").trim();
+
+  return rows.filter(function (row) {
+    var canonicalId = String(row.values.stock_item_id || "").trim();
+    var legacyId = String(row.values.item_id || "").trim();
+
+    return canonicalId === expectedId || legacyId === expectedId;
+  });
+}
+
+function validateFnbV23BInventoryQaArchiveRestore_(sheet, expectedRows, insertedRows) {
+  var rows = getFnbV23BSheetRows_(sheet, getHeaderMap_(sheet));
+  var duplicateIds = findFnbV23BInventoryDuplicateIdentityIds_(rows);
+  var errors = [];
+  var restoredRows = expectedRows.map(function (expectedRow) {
+    var matches = rows.filter(function (row) {
+      return String(row.values.stock_item_id || "").trim() === expectedRow.stock_item_id
+        && String(row.values.item_id || "").trim() === expectedRow.item_id
+        && String(row.values.stock_item_name || "").trim() === expectedRow.stock_item_name
+        && String(row.values.item_name || "").trim() === expectedRow.item_name
+        && String(row.values.status || "").trim() === expectedRow.status;
+    });
+
+    if (matches.length !== 1) {
+      errors.push("RESTORED_ROW_INVALID:" + expectedRow.stock_item_id + ":" + matches.length);
+    }
+
+    return {
+      stock_item_id: expectedRow.stock_item_id,
+      expected_name: expectedRow.stock_item_name,
+      match_count: matches.length,
+      row_numbers: matches.map(function (row) {
+        return row.row_number;
+      }),
+    };
+  });
+
+  if (duplicateIds.length) {
+    errors.push("DUPLICATE_STOCK_ITEM_ID_AFTER_RESTORE");
+  }
+
+  if (insertedRows.length !== expectedRows.length) {
+    errors.push("INSERTED_ROW_COUNT_MISMATCH");
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors: errors,
+    duplicate_stock_item_id: duplicateIds,
+    restored_rows: restoredRows,
+  };
+}
+
 function migrateFnbV23BInventoryIdentity_(config) {
   var migrationConfig = buildFnbV23BInventoryIdentityConfig_(config || {});
   var lock = LockService.getScriptLock();
