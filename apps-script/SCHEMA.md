@@ -800,6 +800,349 @@ Menyimpan item detail untuk setiap order F&B.
 | `subtotal` | `price * quantity`. |
 | `created_at` | Timestamp item dicatat. |
 
+## F&B V2.5A - Package Eligibility and Pricing Preview
+
+READ-ONLY BUSINESS OPERATION.
+
+Fase V2.5A menambahkan endpoint backend read-only untuk evaluasi package dan preview harga. Tidak ada sheet baru, tidak ada initializer, tidak ada perubahan header sheet, dan tidak ada mutasi data Google Sheets.
+
+Endpoint ini hanya membaca:
+
+- `Rooms`
+- `PackageMaster`
+- `PackageDetail`
+
+Endpoint ini tidak menulis:
+
+- `Inventory`
+- `StockMovements`
+- `FnbOrders`
+- `FnbOrderItems`
+- `PricingAuditLogs`
+- sheet lain apa pun
+
+### Konstanta bisnis
+
+Supported `booking_mode`:
+
+- `regular`
+- `package`
+
+Supported `package_type` V2.5A:
+
+- `room_fnb_bundle`
+
+Supported `valid_day_type`:
+
+- `all`
+- `weekday` = Senin sampai Jumat berdasarkan tanggal kalender Asia/Jakarta
+- `weekend` = Sabtu dan Minggu berdasarkan tanggal kalender Asia/Jakarta
+
+Promotion engine belum aktif di V2.5A. Semua response preview mengembalikan:
+
+- `promotion_free_minutes = 0`
+- `promotion_benefit = 0`
+- `manual_discount = 0`
+- `surcharge = 0`
+
+Package dengan `PackageDetail.is_choice = true` belum didukung dan tidak eligible.
+
+### GET `getEligiblePackages`
+
+READ-ONLY BUSINESS OPERATION.
+
+Request:
+
+```text
+GET ?action=getEligiblePackages
+    &room_id=ROOM-001
+    &duration_minutes=120
+    &booking_date=2026-07-15
+```
+
+`booking_date` opsional. Jika kosong, backend memakai tanggal kalender saat ini di Asia/Jakarta.
+
+Validasi:
+
+- `room_id` wajib
+- room harus ada
+- room harus `available`
+- `duration_minutes` harus angka bulat positif dalam format numeric ketat; hanya numeric primitive dan strict numeric string yang diterima. Array, object, boolean, scientific notation (`"1e2"`), hexadecimal (`"0x78"`), binary (`"0b1111"`), partial numeric string (`"120abc"`), blank, non-finite value, dan decimal saat integer diwajibkan ditolak
+- durasi minimum 15 menit
+- `booking_date`, jika dikirim, harus string tanggal kalender valid `YYYY-MM-DD`; hanya `undefined`, `null`, atau blank string setelah trim yang dianggap omitted
+
+Kode error stabil:
+
+- `ROOM_ID_REQUIRED`
+- `ROOM_NOT_FOUND`
+- `ROOM_NOT_AVAILABLE`
+- `INVALID_DURATION`
+- `INVALID_BOOKING_DATE`
+
+Eligibility package:
+
+- `status = active`
+- `package_type = room_fnb_bundle`
+- `selling_price` numeric, finite, dan nonnegative
+- `duration_minutes` numeric, finite, positive integer
+- requested duration >= package duration
+- `valid_day_type` cocok dengan tanggal booking
+- minimal satu row `PackageDetail` raw
+- tidak ada `PackageDetail` malformed
+- tidak ada detail dengan `is_choice = true`
+
+PackageDetail diagnostics internal per package:
+
+- `raw_detail_count`
+- `valid_detail_count`
+- `invalid_detail_count`
+- `invalid_choice_count`
+- `details`
+
+Eligibility order:
+
+```text
+raw_detail_count = 0 -> PACKAGE_DETAILS_REQUIRED
+invalid_choice_count > 0 -> PACKAGE_CHOICE_NOT_SUPPORTED
+invalid_detail_count > 0 -> PACKAGE_DETAILS_INVALID
+valid_detail_count = 0 -> PACKAGE_DETAILS_REQUIRED
+```
+
+PackageDetail valid jika:
+
+- `package_detail_id`: required nonblank
+- `package_id`: required nonblank
+- `line_no`: positive integer, minimum 1
+- `component_type`: `service`, `inventory`, atau `menu`
+- `component_ref_id`: required nonblank
+- `component_name`: required nonblank
+- `qty`: numeric, finite, greater than 0
+- `unit`: required nonblank
+- `hpp`: optional blank defaults `0`; jika diisi harus finite nonnegative
+- `additional_price`: optional blank defaults `0`; jika diisi harus finite nonnegative
+- `cost_amount`: optional blank defaults `0`; jika diisi harus finite nonnegative
+- `is_choice`: valid explicit boolean representation
+
+Supported `is_choice`:
+
+- boolean `true`, `false`
+- number `1`, `0`
+- string `"1"`, `"0"`, `"true"`, `"false"`, `"yes"`, `"no"` case-insensitive
+- blank atau whitespace-only string = `false`
+
+Array/object dan value tidak dikenal dihitung sebagai `invalid_choice_count` dan menghasilkan `PACKAGE_CHOICE_NOT_SUPPORTED` untuk direct preview. Row detail invalid tidak masuk ke `package_snapshot.details`.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "success": true,
+  "room": {
+    "room_id": "ROOM-001",
+    "room_name": "Room Name",
+    "status": "available",
+    "rate_per_hour": 300000
+  },
+  "criteria": {
+    "duration_minutes": 120,
+    "booking_date": "2026-07-15",
+    "day_type": "weekday"
+  },
+  "packages": [
+    {
+      "package_id": "PKG-001",
+      "package_name": "Beer Holic Package",
+      "package_category": "Beer Holic",
+      "package_type": "room_fnb_bundle",
+      "selling_price": 1100000,
+      "duration_minutes": 120,
+      "valid_day_type": "all",
+      "valid_day_result": "pass",
+      "details_preview": []
+    }
+  ],
+  "meta": {
+    "eligible_count": 1,
+    "evaluated_count": 1,
+    "excluded_count": 0,
+    "pricing_version": "fnb-v2.5a"
+  }
+}
+```
+
+Eligible package list kosong tetap response sukses.
+
+### POST `previewSessionPricing`
+
+READ-ONLY BUSINESS OPERATION.
+
+Walaupun memakai transport POST, endpoint ini tidak membuat session, tidak menulis audit log, tidak mengubah room, tidak mengubah transaksi, dan tidak mengurangi stok.
+
+Regular request:
+
+```json
+{
+  "action": "previewSessionPricing",
+  "room_id": "ROOM-001",
+  "duration_minutes": 120,
+  "booking_mode": "regular",
+  "cashier_name": "Kasir"
+}
+```
+
+Package request:
+
+```json
+{
+  "action": "previewSessionPricing",
+  "room_id": "ROOM-001",
+  "duration_minutes": 180,
+  "booking_mode": "package",
+  "package_id": "PKG-001",
+  "cashier_name": "Kasir"
+}
+```
+
+`cashier_name` hanya informational di V2.5A dan bukan otorisasi.
+
+Kode error tambahan:
+
+- `BOOKING_MODE_REQUIRED`
+- `INVALID_BOOKING_MODE`
+- `PACKAGE_REQUIRED`
+- `PACKAGE_NOT_FOUND`
+- `PACKAGE_NOT_ACTIVE`
+- `PACKAGE_TYPE_NOT_SUPPORTED`
+- `PACKAGE_NOT_ELIGIBLE`
+- `INVALID_PACKAGE_DURATION`
+- `PACKAGE_DURATION_TOO_SHORT`
+- `PACKAGE_DAY_NOT_ELIGIBLE`
+- `PACKAGE_DETAILS_REQUIRED`
+- `PACKAGE_DETAILS_INVALID`
+- `PACKAGE_CHOICE_NOT_SUPPORTED`
+- `INVALID_ROOM_RATE`
+- `INVALID_PACKAGE_PRICE`
+- `PRICING_AMOUNT_INVALID`
+
+Formula regular:
+
+```text
+package_subtotal = 0
+package_included_minutes = 0
+promotion_free_minutes = 0
+billable_room_minutes = duration_minutes
+base_room_charge = ceil(duration_minutes / 60 * room.rate_per_hour)
+excess_room_charge = 0
+additional_fnb_total = 0
+additional_service_total = 0
+surcharge = 0
+promotion_benefit = 0
+manual_discount = 0
+room_total_compat = base_room_charge
+grand_total = base_room_charge
+```
+
+Jika hasil perhitungan amount menjadi `Infinity`, `NaN`, atau nilai negatif/tidak numeric, response gagal dengan:
+
+```json
+{
+  "ok": false,
+  "success": false,
+  "code": "PRICING_AMOUNT_INVALID",
+  "message": "Hasil perhitungan harga tidak valid.",
+  "error": "Hasil perhitungan harga tidak valid."
+}
+```
+
+Formula package `room_fnb_bundle`:
+
+```text
+package_subtotal = package.selling_price
+package_included_minutes = package.duration_minutes
+promotion_free_minutes = 0
+billable_room_minutes = max(0, requested_duration - package_included_minutes)
+base_room_charge = 0
+excess_room_charge = ceil(billable_room_minutes / 60 * room.rate_per_hour)
+additional_fnb_total = 0
+additional_service_total = 0
+surcharge = 0
+promotion_benefit = 0
+manual_discount = 0
+room_total_compat = excess_room_charge
+grand_total = package_subtotal + excess_room_charge
+```
+
+Requested duration lebih kecil dari package duration mengembalikan `PACKAGE_DURATION_TOO_SHORT`; backend tidak menaikkan durasi otomatis.
+
+Response package minimal:
+
+```json
+{
+  "ok": true,
+  "success": true,
+  "pricing": {
+    "pricing_version": "fnb-v2.5a",
+    "booking_mode": "package",
+    "requested_duration_minutes": 180,
+    "package_included_minutes": 120,
+    "promotion_free_minutes": 0,
+    "billable_room_minutes": 60,
+    "rate_per_hour": 300000,
+    "package_subtotal": 1100000,
+    "base_room_charge": 0,
+    "excess_room_charge": 300000,
+    "additional_fnb_total": 0,
+    "additional_service_total": 0,
+    "surcharge": 0,
+    "promotion_benefit": 0,
+    "manual_discount": 0,
+    "room_total_compat": 300000,
+    "grand_total": 1400000,
+    "lines": []
+  },
+  "criteria": {
+    "duration_minutes": 180,
+    "booking_mode": "package",
+    "booking_date": "2026-07-15",
+    "day_type": "weekday",
+    "valid_day_result": "pass"
+  },
+  "room": {},
+  "package_snapshot": {}
+}
+```
+
+`package_snapshot` adalah object preview saja dan tidak dipersist. Field snapshot:
+
+- `package_id`
+- `package_name`
+- `package_category`
+- `package_type`
+- `selling_price`
+- `duration_minutes`
+- `valid_day_type`
+- `valid_day_result`
+- `details`
+
+Detail snapshot diurutkan berdasarkan `line_no`, lalu `package_detail_id`, dan berisi:
+
+- `package_detail_id`
+- `line_no`
+- `component_type`
+- `component_ref_id`
+- `component_name`
+- `qty`
+- `unit`
+- `hpp`
+- `additional_price`
+- `cost_amount`
+- `is_choice`
+- `choice_group`
+- `note`
+
+Komponen service, inventory, dan menu pada package V2.5A bersifat included/informational dan tidak menambah `grand_total`. `PackageDetail.additional_price` tidak otomatis ditagihkan.
+
 ## Recipe
 
 Menghubungkan menu dengan item inventory yang dipakai.

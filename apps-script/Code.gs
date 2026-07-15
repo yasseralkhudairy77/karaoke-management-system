@@ -9,6 +9,13 @@
  */
 
 var SERVICE_NAME = "karaoke-pos-api";
+var FNB_V25A_BOOKING_MODE_REGULAR = "regular";
+var FNB_V25A_BOOKING_MODE_PACKAGE = "package";
+var FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE = "room_fnb_bundle";
+var FNB_V25A_PRICING_VERSION = "fnb-v2.5a";
+var FNB_V25A_VALID_DAY_ALL = "all";
+var FNB_V25A_VALID_DAY_WEEKDAY = "weekday";
+var FNB_V25A_VALID_DAY_WEEKEND = "weekend";
 var NUMERIC_FIELDS = {
   rate_per_hour: true,
   duration_minutes: true,
@@ -360,6 +367,14 @@ function doGet(e) {
       return jsonResponse(getPackages_());
     }
 
+    if (action === "getEligiblePackages") {
+      return jsonResponse(getEligiblePackages_(
+        e.parameter.room_id,
+        e.parameter.duration_minutes,
+        e.parameter.booking_date
+      ));
+    }
+
     if (action === "getPackageDetails") {
       return jsonResponse(getPackageDetails_(e.parameter.package_id));
     }
@@ -510,6 +525,10 @@ function doPost(e) {
 
     if (action === "saveFnbOrder") {
       return jsonResponse(saveFnbOrder_(payload.room_id, payload.items, payload.cashier_name, payload.note));
+    }
+
+    if (action === "previewSessionPricing") {
+      return jsonResponse(previewSessionPricing_(payload));
     }
 
     if (action === "cancelFnbOrder") {
@@ -2501,6 +2520,923 @@ function normalizePackageDetail_(item) {
     choice_group: item.choice_group || "",
     updated_at: item.updated_at || "",
     note: item.note || "",
+  };
+}
+
+function getEligiblePackages_(roomId, durationMinutes, bookingDate) {
+  var roomResult = getAvailableRoomForPricing_(roomId);
+
+  if (!roomResult.ok) {
+    return roomResult;
+  }
+
+  var durationResult = normalizePricingDuration_(durationMinutes);
+
+  if (!durationResult.ok) {
+    return durationResult;
+  }
+
+  var bookingDateResult = normalizePricingBookingDate_(bookingDate);
+
+  if (!bookingDateResult.ok) {
+    return bookingDateResult;
+  }
+
+  var packageDetailsById = getPackageDetailsByPackageIdForPricing_();
+  var candidates = readSheetAsObjects_("PackageMaster").map(function (item) {
+    var normalizedPackageId = normalizePackageIdForPricing_(item.package_id);
+    return buildPackageCandidateForPricing_(item, getPackageDetailDiagnosticsForPricing_(packageDetailsById, normalizedPackageId));
+  });
+  var eligibleCandidates = candidates.filter(function (candidate) {
+    return evaluatePackageEligibilityForPricing_(
+      candidate,
+      durationResult.duration_minutes,
+      bookingDateResult.day_type
+    ).eligible;
+  });
+  var packages = eligibleCandidates
+    .sort(sortEligiblePackagesForPricing_)
+    .map(function (candidate) {
+      return {
+        package_id: candidate.package_id,
+        package_name: candidate.package_name,
+        package_category: candidate.package_category,
+        package_type: candidate.package_type,
+        selling_price: candidate.selling_price,
+        duration_minutes: candidate.duration_minutes,
+        valid_day_type: candidate.valid_day_type,
+        valid_day_result: "pass",
+        details_preview: candidate.details.map(buildPackageDetailPreviewForPricing_),
+      };
+    });
+
+  return {
+    ok: true,
+    success: true,
+    room: roomResult.room,
+    criteria: {
+      duration_minutes: durationResult.duration_minutes,
+      booking_date: bookingDateResult.booking_date,
+      day_type: bookingDateResult.day_type,
+    },
+    packages: packages,
+    meta: {
+      eligible_count: packages.length,
+      evaluated_count: candidates.length,
+      excluded_count: candidates.length - packages.length,
+      pricing_version: FNB_V25A_PRICING_VERSION,
+    },
+  };
+}
+
+function previewSessionPricing_(payload) {
+  var request = payload || {};
+  var roomResult = getAvailableRoomForPricing_(request.room_id);
+
+  if (!roomResult.ok) {
+    return roomResult;
+  }
+
+  var durationResult = normalizePricingDuration_(request.duration_minutes);
+
+  if (!durationResult.ok) {
+    return durationResult;
+  }
+
+  var bookingDateResult = normalizePricingBookingDate_(request.booking_date);
+
+  if (!bookingDateResult.ok) {
+    return bookingDateResult;
+  }
+
+  var bookingMode = String(request.booking_mode || "").trim().toLowerCase();
+
+  if (!bookingMode) {
+    return pricingError_("BOOKING_MODE_REQUIRED", "booking_mode wajib diisi.");
+  }
+
+  if (bookingMode !== FNB_V25A_BOOKING_MODE_REGULAR && bookingMode !== FNB_V25A_BOOKING_MODE_PACKAGE) {
+    return pricingError_("INVALID_BOOKING_MODE", "booking_mode tidak didukung.");
+  }
+
+  if (bookingMode === FNB_V25A_BOOKING_MODE_REGULAR) {
+    var regularPricing = calculateRegularPricingPreview_(
+      roomResult.room,
+      durationResult.duration_minutes,
+      roomResult.room.rate_per_hour
+    );
+
+    if (regularPricing.ok === false) {
+      return regularPricing;
+    }
+
+    return {
+      ok: true,
+      success: true,
+      pricing: regularPricing,
+      room: roomResult.room,
+      package_snapshot: null,
+      criteria: {
+        duration_minutes: durationResult.duration_minutes,
+        booking_mode: bookingMode,
+        booking_date: bookingDateResult.booking_date,
+        day_type: bookingDateResult.day_type,
+        valid_day_result: "not_applicable",
+      },
+    };
+  }
+
+  var packageId = String(request.package_id || "").trim();
+
+  if (!packageId) {
+    return pricingError_("PACKAGE_REQUIRED", "package_id wajib diisi untuk booking package.");
+  }
+
+  var packageDetailsById = getPackageDetailsByPackageIdForPricing_();
+  var packageCandidate = findPackageCandidateForPricing_(packageId, packageDetailsById);
+
+  if (!packageCandidate) {
+    return pricingError_("PACKAGE_NOT_FOUND", "Package tidak ditemukan.");
+  }
+
+  var eligibility = evaluatePackageEligibilityForPricing_(
+    packageCandidate,
+    durationResult.duration_minutes,
+    bookingDateResult.day_type
+  );
+
+  if (!eligibility.eligible) {
+    return pricingError_(eligibility.code, eligibility.message);
+  }
+
+  var packagePricing = calculatePackagePricingPreview_(
+    roomResult.room,
+    packageCandidate,
+    durationResult.duration_minutes,
+    roomResult.room.rate_per_hour
+  );
+
+  if (packagePricing.ok === false) {
+    return packagePricing;
+  }
+
+  return {
+    ok: true,
+    success: true,
+    pricing: packagePricing,
+    room: roomResult.room,
+    package_snapshot: buildPackageSnapshotForPricing_(packageCandidate),
+    criteria: {
+      duration_minutes: durationResult.duration_minutes,
+      booking_mode: bookingMode,
+      booking_date: bookingDateResult.booking_date,
+      day_type: bookingDateResult.day_type,
+      valid_day_result: "pass",
+    },
+  };
+}
+
+function getAvailableRoomForPricing_(roomId) {
+  var normalizedRoomId = String(roomId || "").trim();
+
+  if (!normalizedRoomId) {
+    return pricingError_("ROOM_ID_REQUIRED", "room_id wajib diisi.");
+  }
+
+  var sheet = getSheet_("Rooms");
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", normalizedRoomId);
+
+  if (!rowNumber) {
+    return pricingError_("ROOM_NOT_FOUND", "Ruangan tidak ditemukan.");
+  }
+
+  var room = getRowObject_(sheet, headerMap, rowNumber);
+  var status = String(room.status || "").trim().toLowerCase();
+
+  if (status !== "available") {
+    return pricingError_("ROOM_NOT_AVAILABLE", "Ruangan tidak tersedia.");
+  }
+
+  var roomRateResult = normalizeNonNegativeFiniteNumberForPricing_(room.rate_per_hour);
+
+  if (!roomRateResult.ok) {
+    return pricingError_("INVALID_ROOM_RATE", "Tarif room tidak valid.");
+  }
+
+  return {
+    ok: true,
+    room: {
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      status: status,
+      rate_per_hour: roomRateResult.value,
+    },
+  };
+}
+
+function normalizePricingDuration_(durationMinutes) {
+  if (!isStrictNumericValueForPricing_(durationMinutes)) {
+    return pricingError_("INVALID_DURATION", "duration_minutes wajib berupa angka bulat positif.");
+  }
+
+  var numberValue = Number(durationMinutes);
+
+  if (!isFinite(numberValue) || numberValue <= 0 || Math.floor(numberValue) !== numberValue) {
+    return pricingError_("INVALID_DURATION", "duration_minutes wajib berupa angka bulat positif.");
+  }
+
+  if (numberValue < 15) {
+    return pricingError_("INVALID_DURATION", "Durasi minimal 15 menit.");
+  }
+
+  return {
+    ok: true,
+    duration_minutes: numberValue,
+  };
+}
+
+function normalizePricingBookingDate_(bookingDate) {
+  var isOmitted = bookingDate === undefined || bookingDate === null ||
+    (typeof bookingDate === "string" && !bookingDate.trim());
+
+  if (isOmitted) {
+    var jakartaDate = getJakartaDateString_(new Date());
+    return {
+      ok: true,
+      booking_date: jakartaDate,
+      day_type: resolvePricingDayTypeFromParts_(jakartaDate),
+    };
+  }
+
+  if (typeof bookingDate !== "string") {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date wajib memakai format YYYY-MM-DD.");
+  }
+
+  var normalizedDate = bookingDate.trim();
+  var match = normalizedDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date wajib memakai format YYYY-MM-DD.");
+  }
+
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+  var localDate = new Date(year, month - 1, day);
+
+  if (
+    localDate.getFullYear() !== year ||
+    localDate.getMonth() !== month - 1 ||
+    localDate.getDate() !== day
+  ) {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date tidak valid.");
+  }
+
+  return {
+    ok: true,
+    booking_date: normalizedDate,
+    day_type: resolvePricingDayType_(localDate),
+  };
+}
+
+function resolvePricingDayTypeFromParts_(dateText) {
+  var parts = String(dateText || "").split("-");
+  var year = Number(parts[0]);
+  var month = Number(parts[1]);
+  var day = Number(parts[2]);
+  return resolvePricingDayType_(new Date(year, month - 1, day));
+}
+
+function resolvePricingDayType_(date) {
+  var day = date.getDay();
+  return day === 0 || day === 6 ? FNB_V25A_VALID_DAY_WEEKEND : FNB_V25A_VALID_DAY_WEEKDAY;
+}
+
+function normalizeNonNegativeFiniteNumberForPricing_(value) {
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < 0) {
+    return {
+      ok: false,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function normalizePositiveFiniteNumberForPricing_(value) {
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue <= 0) {
+    return {
+      ok: false,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function normalizePositiveIntegerForPricing_(value) {
+  var result = normalizePositiveFiniteNumberForPricing_(value);
+
+  if (!result.ok || Math.floor(result.value) !== result.value) {
+    return {
+      ok: false,
+    };
+  }
+
+  return result;
+}
+
+function normalizeOptionalNumberForPricing_(value, defaultValue) {
+  if (value === "" || value === null || value === undefined) {
+    return {
+      ok: true,
+      value: defaultValue,
+    };
+  }
+
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+      value: defaultValue,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < 0) {
+    return {
+      ok: false,
+      value: defaultValue,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function isStrictNumericValueForPricing_(value) {
+  if (value === "" || value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "number") {
+    return isFinite(value);
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  var normalizedText = value.trim();
+
+  if (!normalizedText) {
+    return false;
+  }
+
+  return /^[-+]?(?:\d+|\d+\.\d+|\.\d+)$/.test(normalizedText) && isFinite(Number(normalizedText));
+}
+
+function getPackageDetailsByPackageIdForPricing_() {
+  return readSheetAsObjects_("PackageDetail")
+    .map(buildPackageDetailForPricing_)
+    .reduce(function (map, detail) {
+      if (!detail.package_id) {
+        return map;
+      }
+
+      if (!map[detail.package_id]) {
+        map[detail.package_id] = createPackageDetailDiagnosticsForPricing_();
+      }
+
+      map[detail.package_id].raw_detail_count += 1;
+
+      if (!detail.is_choice_valid) {
+        map[detail.package_id].invalid_choice_count += 1;
+      }
+
+      if (!detail.detail_valid) {
+        map[detail.package_id].invalid_detail_count += 1;
+        return map;
+      }
+
+      map[detail.package_id].valid_detail_count += 1;
+      map[detail.package_id].details.push(detail);
+      return map;
+    }, {});
+}
+
+function findPackageCandidateForPricing_(packageId, packageDetailsById) {
+  var normalizedPackageId = normalizePackageIdForPricing_(packageId);
+  var rows = readSheetAsObjects_("PackageMaster");
+
+  for (var index = 0; index < rows.length; index += 1) {
+    if (normalizePackageIdForPricing_(rows[index].package_id) === normalizedPackageId) {
+      return buildPackageCandidateForPricing_(rows[index], getPackageDetailDiagnosticsForPricing_(packageDetailsById, normalizedPackageId));
+    }
+  }
+
+  return null;
+}
+
+function buildPackageCandidateForPricing_(item, detailDiagnostics) {
+  var priceResult = normalizeNonNegativeFiniteNumberForPricing_(item.selling_price);
+  var durationResult = normalizePositiveIntegerForPricing_(item.duration_minutes);
+  var diagnostics = detailDiagnostics || createPackageDetailDiagnosticsForPricing_();
+
+  return {
+    package_id: normalizePackageIdForPricing_(item.package_id),
+    package_name: String(item.package_name || "").trim(),
+    package_category: String(item.package_category || "").trim(),
+    package_type: String(item.package_type || "").trim().toLowerCase(),
+    selling_price: priceResult.ok ? priceResult.value : item.selling_price,
+    selling_price_valid: priceResult.ok,
+    status: String(item.status || "").trim().toLowerCase(),
+    valid_day_type: String(item.valid_day_type || "").trim().toLowerCase(),
+    duration_minutes: durationResult.ok ? durationResult.value : item.duration_minutes,
+    duration_minutes_valid: durationResult.ok,
+    note: item.note || "",
+    raw_detail_count: diagnostics.raw_detail_count,
+    valid_detail_count: diagnostics.valid_detail_count,
+    invalid_detail_count: diagnostics.invalid_detail_count,
+    invalid_choice_count: diagnostics.invalid_choice_count,
+    details: (diagnostics.details || []).slice().sort(sortPackageDetailsForPricing_),
+  };
+}
+
+function buildPackageDetailForPricing_(item) {
+  var lineNoResult = normalizePositiveIntegerForPricing_(item.line_no);
+  var qtyResult = normalizePositiveFiniteNumberForPricing_(item.qty);
+  var hppResult = normalizeOptionalNumberForPricing_(item.hpp, 0);
+  var additionalPriceResult = normalizeOptionalNumberForPricing_(item.additional_price, 0);
+  var costAmountResult = normalizeOptionalNumberForPricing_(item.cost_amount, 0);
+  var choiceResult = normalizePackageChoiceForPricing_(item.is_choice);
+  var packageDetailId = String(item.package_detail_id || "").trim();
+  var packageId = normalizePackageIdForPricing_(item.package_id);
+  var componentType = String(item.component_type || "").trim().toLowerCase();
+  var componentRefId = String(item.component_ref_id || "").trim();
+  var componentName = String(item.component_name || "").trim();
+  var unit = String(item.unit || "").trim();
+
+  return {
+    package_detail_id: packageDetailId,
+    package_id: packageId,
+    line_no: lineNoResult.value,
+    component_type: componentType,
+    component_ref_id: componentRefId,
+    component_name: componentName,
+    qty: qtyResult.value,
+    unit: unit,
+    hpp: hppResult.value,
+    additional_price: additionalPriceResult.value,
+    cost_amount: costAmountResult.value,
+    is_choice: choiceResult.value,
+    is_choice_valid: choiceResult.ok,
+    choice_group: String(item.choice_group || "").trim(),
+    note: String(item.note || "").trim(),
+    detail_valid: Boolean(
+      packageDetailId &&
+      packageId &&
+      isSupportedPackageDetailComponentTypeForPricing_(componentType) &&
+      componentRefId &&
+      componentName &&
+      unit &&
+      lineNoResult.ok &&
+      qtyResult.ok &&
+      hppResult.ok &&
+      additionalPriceResult.ok &&
+      costAmountResult.ok &&
+      choiceResult.ok
+    ),
+  };
+}
+
+function evaluatePackageEligibilityForPricing_(candidate, requestedDurationMinutes, requestDayType) {
+  if (candidate.status !== "active") {
+    return packageEligibilityFailure_("PACKAGE_NOT_ACTIVE", "Package tidak aktif.");
+  }
+
+  if (candidate.package_type !== FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE) {
+    return packageEligibilityFailure_("PACKAGE_TYPE_NOT_SUPPORTED", "Tipe package tidak didukung.");
+  }
+
+  if (!candidate.selling_price_valid) {
+    return packageEligibilityFailure_("INVALID_PACKAGE_PRICE", "Harga package tidak valid.");
+  }
+
+  if (!candidate.duration_minutes_valid) {
+    return packageEligibilityFailure_("INVALID_PACKAGE_DURATION", "Durasi package tidak valid.");
+  }
+
+  if (requestedDurationMinutes < candidate.duration_minutes) {
+    return packageEligibilityFailure_("PACKAGE_DURATION_TOO_SHORT", "Durasi request lebih pendek dari durasi package.");
+  }
+
+  if (!isValidPackageDayForPricing_(candidate.valid_day_type, requestDayType)) {
+    return packageEligibilityFailure_("PACKAGE_DAY_NOT_ELIGIBLE", "Package tidak berlaku untuk tanggal booking.");
+  }
+
+  if (candidate.raw_detail_count === 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_REQUIRED", "Package belum memiliki detail.");
+  }
+
+  if (candidate.invalid_choice_count > 0) {
+    return packageEligibilityFailure_("PACKAGE_CHOICE_NOT_SUPPORTED", "Nilai pilihan komponen package tidak didukung.");
+  }
+
+  if (candidate.invalid_detail_count > 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_INVALID", "Detail package tidak valid.");
+  }
+
+  if (candidate.valid_detail_count === 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_REQUIRED", "Package belum memiliki detail valid.");
+  }
+
+  if (candidate.details.some(function (detail) { return detail.is_choice; })) {
+    return packageEligibilityFailure_("PACKAGE_CHOICE_NOT_SUPPORTED", "Package dengan pilihan komponen belum didukung.");
+  }
+
+  return {
+    eligible: true,
+  };
+}
+
+function createPackageDetailDiagnosticsForPricing_() {
+  return {
+    raw_detail_count: 0,
+    valid_detail_count: 0,
+    invalid_detail_count: 0,
+    invalid_choice_count: 0,
+    details: [],
+  };
+}
+
+function getPackageDetailDiagnosticsForPricing_(packageDetailsById, packageId) {
+  var normalizedPackageId = normalizePackageIdForPricing_(packageId);
+  return packageDetailsById[normalizedPackageId] || createPackageDetailDiagnosticsForPricing_();
+}
+
+function normalizePackageIdForPricing_(packageId) {
+  return String(packageId || "").trim();
+}
+
+function isSupportedPackageDetailComponentTypeForPricing_(componentType) {
+  return componentType === "service" || componentType === "inventory" || componentType === "menu";
+}
+
+function normalizePackageChoiceForPricing_(value) {
+  if (value === null || value === undefined) {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  if (typeof value === "boolean") {
+    return {
+      ok: true,
+      value: value,
+    };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) {
+      return {
+        ok: true,
+        value: true,
+      };
+    }
+
+    if (value === 0) {
+      return {
+        ok: true,
+        value: false,
+      };
+    }
+
+    return {
+      ok: false,
+      value: false,
+    };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      ok: false,
+      value: false,
+    };
+  }
+
+  var normalizedText = value.trim().toLowerCase();
+
+  if (!normalizedText) {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  if (normalizedText === "true" || normalizedText === "1" || normalizedText === "yes") {
+    return {
+      ok: true,
+      value: true,
+    };
+  }
+
+  if (normalizedText === "false" || normalizedText === "0" || normalizedText === "no") {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  return {
+    ok: false,
+    value: false,
+  };
+}
+
+function isValidPackageDayForPricing_(validDayType, requestDayType) {
+  if (validDayType === FNB_V25A_VALID_DAY_ALL) {
+    return true;
+  }
+
+  if (validDayType === FNB_V25A_VALID_DAY_WEEKDAY) {
+    return requestDayType === FNB_V25A_VALID_DAY_WEEKDAY;
+  }
+
+  if (validDayType === FNB_V25A_VALID_DAY_WEEKEND) {
+    return requestDayType === FNB_V25A_VALID_DAY_WEEKEND;
+  }
+
+  return false;
+}
+
+function calculateRegularPricingPreview_(room, durationMinutes, ratePerHour) {
+  var baseRoomCharge = calculateRoomTotal_(durationMinutes, ratePerHour);
+
+  return validatePricingPreviewObject_(buildPricingPreviewObject_({
+    booking_mode: FNB_V25A_BOOKING_MODE_REGULAR,
+    requested_duration_minutes: durationMinutes,
+    package_included_minutes: 0,
+    billable_room_minutes: durationMinutes,
+    rate_per_hour: ratePerHour,
+    package_subtotal: 0,
+    base_room_charge: baseRoomCharge,
+    excess_room_charge: 0,
+    room_total_compat: baseRoomCharge,
+    grand_total: baseRoomCharge,
+    lines: [
+      buildPricingLineForPreview_(
+        "room_base",
+        "room",
+        room.room_id,
+        "Room " + durationMinutes + " menit",
+        durationMinutes,
+        "minute",
+        0,
+        baseRoomCharge,
+        10
+      ),
+    ],
+  }));
+}
+
+function calculatePackagePricingPreview_(room, packageCandidate, requestedDurationMinutes, ratePerHour) {
+  var packageIncludedMinutes = Number(packageCandidate.duration_minutes);
+  var billableRoomMinutes = Math.max(0, requestedDurationMinutes - packageIncludedMinutes);
+  var excessRoomCharge = calculateRoomTotal_(billableRoomMinutes, ratePerHour);
+  var lines = [
+    buildPricingLineForPreview_(
+      "package_subtotal",
+      "package",
+      packageCandidate.package_id,
+      packageCandidate.package_name,
+      1,
+      "package",
+      packageCandidate.selling_price,
+      packageCandidate.selling_price,
+      10
+    ),
+    buildPricingLineForPreview_(
+      "package_included_room",
+      "package_component",
+      getPackageIncludedRoomSourceIdForPricing_(packageCandidate),
+      "Room included " + packageIncludedMinutes + " menit",
+      packageIncludedMinutes,
+      "minute",
+      0,
+      0,
+      20
+    ),
+  ];
+
+  if (billableRoomMinutes > 0) {
+    lines.push(buildPricingLineForPreview_(
+      "room_excess",
+      "room",
+      room.room_id,
+      "Excess room " + billableRoomMinutes + " menit",
+      billableRoomMinutes,
+      "minute",
+      0,
+      excessRoomCharge,
+      30
+    ));
+  }
+
+  return validatePricingPreviewObject_(buildPricingPreviewObject_({
+    booking_mode: FNB_V25A_BOOKING_MODE_PACKAGE,
+    requested_duration_minutes: requestedDurationMinutes,
+    package_included_minutes: packageIncludedMinutes,
+    billable_room_minutes: billableRoomMinutes,
+    rate_per_hour: ratePerHour,
+    package_subtotal: packageCandidate.selling_price,
+    base_room_charge: 0,
+    excess_room_charge: excessRoomCharge,
+    room_total_compat: excessRoomCharge,
+    grand_total: packageCandidate.selling_price + excessRoomCharge,
+    lines: lines,
+  }));
+}
+
+function buildPricingPreviewObject_(input) {
+  return {
+    pricing_version: FNB_V25A_PRICING_VERSION,
+    booking_mode: input.booking_mode,
+    requested_duration_minutes: input.requested_duration_minutes,
+    package_included_minutes: input.package_included_minutes,
+    promotion_free_minutes: 0,
+    billable_room_minutes: input.billable_room_minutes,
+    rate_per_hour: input.rate_per_hour,
+    package_subtotal: input.package_subtotal,
+    base_room_charge: input.base_room_charge,
+    excess_room_charge: input.excess_room_charge,
+    additional_fnb_total: 0,
+    additional_service_total: 0,
+    surcharge: 0,
+    promotion_benefit: 0,
+    manual_discount: 0,
+    room_total_compat: input.room_total_compat,
+    grand_total: input.grand_total,
+    lines: input.lines,
+  };
+}
+
+function buildPricingLineForPreview_(lineType, sourceType, sourceId, description, qty, unit, unitPrice, netAmount, sortOrder) {
+  return {
+    line_type: lineType,
+    source_type: sourceType,
+    source_id: sourceId,
+    description: description,
+    qty: qty,
+    unit: unit,
+    unit_price: unitPrice,
+    gross_amount: netAmount,
+    discount_amount: 0,
+    net_amount: netAmount,
+    sort_order: sortOrder,
+  };
+}
+
+function validatePricingPreviewObject_(pricing) {
+  var amountFields = [
+    "package_subtotal",
+    "base_room_charge",
+    "excess_room_charge",
+    "room_total_compat",
+    "grand_total",
+  ];
+
+  for (var index = 0; index < amountFields.length; index += 1) {
+    if (!isValidPricingAmount_(pricing[amountFields[index]])) {
+      return pricingError_("PRICING_AMOUNT_INVALID", "Hasil perhitungan harga tidak valid.");
+    }
+  }
+
+  for (var lineIndex = 0; lineIndex < pricing.lines.length; lineIndex += 1) {
+    if (
+      !isValidPricingAmount_(pricing.lines[lineIndex].gross_amount) ||
+      !isValidPricingAmount_(pricing.lines[lineIndex].net_amount)
+    ) {
+      return pricingError_("PRICING_AMOUNT_INVALID", "Hasil perhitungan harga tidak valid.");
+    }
+  }
+
+  return pricing;
+}
+
+function isValidPricingAmount_(value) {
+  return typeof value === "number" && isFinite(value) && value >= 0;
+}
+
+function buildPackageSnapshotForPricing_(candidate) {
+  return {
+    package_id: candidate.package_id,
+    package_name: candidate.package_name,
+    package_category: candidate.package_category,
+    package_type: candidate.package_type,
+    selling_price: candidate.selling_price,
+    duration_minutes: candidate.duration_minutes,
+    valid_day_type: candidate.valid_day_type,
+    valid_day_result: "pass",
+    details: candidate.details.map(buildPackageDetailPreviewForPricing_),
+  };
+}
+
+function buildPackageDetailPreviewForPricing_(detail) {
+  return {
+    package_detail_id: detail.package_detail_id,
+    line_no: detail.line_no,
+    component_type: detail.component_type,
+    component_ref_id: detail.component_ref_id,
+    component_name: detail.component_name,
+    qty: detail.qty,
+    unit: detail.unit,
+    hpp: detail.hpp,
+    additional_price: detail.additional_price,
+    cost_amount: detail.cost_amount,
+    is_choice: detail.is_choice,
+    choice_group: detail.choice_group,
+    note: detail.note,
+  };
+}
+
+function getPackageIncludedRoomSourceIdForPricing_(candidate) {
+  var roomDetails = candidate.details.filter(function (detail) {
+    return String(detail.component_name || "").trim().toLowerCase() === "room";
+  });
+
+  if (roomDetails.length > 0) {
+    return roomDetails[0].package_detail_id || candidate.package_id;
+  }
+
+  return candidate.package_id;
+}
+
+function sortPackageDetailsForPricing_(first, second) {
+  var lineCompare = Number(first.line_no) - Number(second.line_no);
+
+  if (lineCompare !== 0) {
+    return lineCompare;
+  }
+
+  return String(first.package_detail_id || "").localeCompare(String(second.package_detail_id || ""));
+}
+
+function sortEligiblePackagesForPricing_(first, second) {
+  var categoryCompare = String(first.package_category || "").localeCompare(String(second.package_category || ""));
+
+  if (categoryCompare !== 0) {
+    return categoryCompare;
+  }
+
+  var nameCompare = String(first.package_name || "").localeCompare(String(second.package_name || ""));
+
+  if (nameCompare !== 0) {
+    return nameCompare;
+  }
+
+  return String(first.package_id || "").localeCompare(String(second.package_id || ""));
+}
+
+function packageEligibilityFailure_(code, message) {
+  return {
+    eligible: false,
+    code: code,
+    message: message,
+  };
+}
+
+function pricingError_(code, message) {
+  return {
+    ok: false,
+    success: false,
+    code: code,
+    message: message,
+    error: message,
   };
 }
 
