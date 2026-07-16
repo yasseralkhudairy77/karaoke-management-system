@@ -1143,6 +1143,301 @@ Detail snapshot diurutkan berdasarkan `line_no`, lalu `package_detail_id`, dan b
 
 Komponen service, inventory, dan menu pada package V2.5A bersifat included/informational dan tidak menambah `grand_total`. `PackageDetail.additional_price` tidak otomatis ditagihkan.
 
+## F&B V2.5B Package Session Schema Foundation
+
+Status: PLANNED / INITIALIZER AVAILABLE.
+
+Fase V2.5B menambahkan kontrak schema append-only untuk session dan snapshot package. Schema ini belum dipakai untuk booking package, belum terhubung ke frontend, dan belum terintegrasi ke `startSession`, `extendSession`, atau `closeSession`.
+
+Tidak ada perubahan header pada `Rooms` atau `Transactions`. `Rooms` tetap menjadi active-room compatibility cache untuk UI legacy, sedangkan `RoomSessions` direncanakan menjadi canonical lifecycle record saat fase integrasi berikutnya. Tidak ada deduction inventory package, tidak ada write `TransactionLines`, tidak ada promotion/manual discount aktif, dan tidak ada `PricingAuditLogs` pada fase ini.
+
+### RoomSessions
+
+Purpose: canonical session lifecycle record dengan satu `session_id` permanen per sesi.
+
+Headers:
+
+```text
+session_id
+room_id
+room_name
+booking_mode
+status
+start_time
+scheduled_end_time
+end_time
+booked_duration_minutes
+package_included_minutes
+promotion_free_minutes
+billable_room_minutes
+rate_per_hour
+cashier_name
+created_at
+updated_at
+closed_transaction_id
+idempotency_key
+legacy_room_start_time
+note
+```
+
+Rules:
+
+- `session_id` wajib, unik, dan immutable.
+- `room_id` wajib mengacu ke `Rooms.room_id`.
+- `booking_mode`: `regular` atau `package`.
+- `status`: `starting`, `active`, `closing`, `closed`, `voided`, `start_failed`, `close_failed`.
+- Lifecycle terdokumentasi: `starting -> active`, `starting -> start_failed`, `active -> closing`, `closing -> closed`, `closing -> close_failed`, `active -> voided`.
+- Duration/rate fields finite, integer untuk menit, nonnegative; active session minimal `booked_duration_minutes = 15`.
+- `package_included_minutes` dan `promotion_free_minutes` default `0`.
+- `billable_room_minutes` default sama dengan booked duration untuk regular.
+- `rate_per_hour` adalah snapshot.
+- `closed_transaction_id` kosong sebelum close dan immutable setelah status `closed`.
+- `idempotency_key` optional untuk legacy, unik jika nonblank.
+
+### SessionPackages
+
+Purpose: snapshot package master yang dipilih pada session. Perubahan `PackageMaster` di masa depan tidak boleh mengubah histori.
+
+Headers:
+
+```text
+session_package_id
+session_id
+package_id
+package_name
+package_category
+package_type
+selling_price
+duration_minutes
+valid_day_type
+valid_day_result
+status
+selected_at
+selected_by
+snapshot_json
+void_reason
+voided_at
+```
+
+Rules:
+
+- `session_package_id` wajib dan unik.
+- `session_id` wajib mengacu ke `RoomSessions.session_id`.
+- `package_id` adalah snapshot reference.
+- `package_type` V2.5: `room_fnb_bundle`.
+- `selling_price` finite dan nonnegative.
+- `duration_minutes` positive integer.
+- `status`: `active` atau `voided`.
+- `valid_day_type`: `all`, `weekday`, atau `weekend`.
+- `valid_day_result`: `pass`.
+- Versi awal maksimal satu row active `SessionPackages` per session.
+- Snapshot fields immutable setelah insert, kecuali `status`, `void_reason`, dan `voided_at`.
+
+### SessionPackageDetails
+
+Purpose: snapshot komponen package dan basis fulfillment.
+
+Headers:
+
+```text
+session_package_detail_id
+session_package_id
+session_id
+package_detail_id
+line_no
+component_type
+component_ref_id
+component_name
+qty
+unit
+hpp
+additional_price
+cost_amount
+is_choice
+choice_group
+chosen_ref_id
+chosen_name
+fulfillment_status
+fulfilled_qty
+fulfilled_at
+snapshot_json
+```
+
+Rules:
+
+- `session_package_detail_id` wajib dan unik.
+- `session_package_id` mengacu ke `SessionPackages.session_package_id`.
+- `session_id` mengacu ke `RoomSessions.session_id`.
+- `component_type`: `service`, `inventory`, atau `menu`.
+- `line_no` positive integer.
+- `qty` finite dan lebih dari `0`.
+- `is_choice` wajib explicit boolean; initial package V2.5 harus `false`.
+- `fulfillment_status`: `pending`, `fulfilled`, `partial`, atau `voided`.
+- Initial value `fulfillment_status = pending`.
+- `fulfilled_qty` default `0`, finite, nonnegative, dan tidak boleh melebihi `qty`.
+- Snapshot fields immutable kecuali fulfillment fields.
+- Component package V2.5 bersifat included-only; package inventory belum dipotong pada fase ini.
+
+### TransactionLines
+
+Purpose: planned auditable pricing breakdown setelah transaksi close. Sheet ini belum ditulis pada V2.5B.
+
+Headers:
+
+```text
+transaction_line_id
+transaction_id
+session_id
+line_type
+source_type
+source_id
+description
+qty
+unit
+unit_price
+gross_amount
+discount_amount
+net_amount
+tax_amount
+sort_order
+created_at
+snapshot_json
+```
+
+Rules:
+
+- `transaction_line_id` wajib dan unik.
+- `transaction_id` mengacu ke `Transactions.transaction_id` setelah close.
+- `session_id` mengacu ke `RoomSessions.session_id`.
+- Planned `line_type`: `room_base`, `package_subtotal`, `package_included_room`, `room_excess`, `fnb_order`, `service`, `promotion`, `manual_discount`, `surcharge`.
+- Amounts finite.
+- `gross_amount`, `discount_amount`, dan `tax_amount` nonnegative.
+- `net_amount` boleh negatif hanya untuk future discount line.
+- V2.5 package component informational lines dapat memiliki `net_amount = 0`.
+
+### Validator Contract
+
+POST `validatePackageSessionFoundation` adalah read-only walaupun memakai transport POST.
+
+Request:
+
+```json
+{
+  "action": "validatePackageSessionFoundation"
+}
+```
+
+Validator membaca apakah empat sheet foundation ada, apakah header persis cocok, dan apakah data existing melanggar kontrak dasar. Validator tidak membuat sheet, tidak menambah header, tidak memperbaiki row invalid, tidak memakai lock, dan tidak mengubah spreadsheet.
+
+Response sukses jika semua sheet ada dan valid:
+
+```json
+{
+  "ok": true,
+  "success": true,
+  "status": "ready",
+  "sheets": {},
+  "summary": {
+    "required_sheet_count": 4,
+    "existing_sheet_count": 4,
+    "valid_sheet_count": 4,
+    "missing_sheet_count": 0,
+    "invalid_sheet_count": 0
+  }
+}
+```
+
+Jika belum semua sheet dibuat, response tetap terstruktur dengan `status = not_initialized`.
+
+Jika sebagian sheet belum ada tetapi sheet foundation existing memiliki konflik header/data, response memakai `status = partial_invalid` agar conflict tidak tersembunyi sebagai sekadar belum initialized. Jika semua sheet ada tetapi ada konflik, response memakai `status = invalid`.
+
+Per sheet validator mengembalikan:
+
+- `sheet_name`
+- `exists`
+- `header_count`
+- `expected_header_count`
+- `missing_headers`
+- `unexpected_headers`
+- `header_order_valid`
+- `duplicate_headers`
+- `data_row_count`
+- `missing_primary_id_count`
+- `duplicate_primary_id_count`
+- `duplicate_*` / `invalid_*` / `missing_*` / `*_mismatch_count` counters sesuai sheet
+- `validation_status`
+
+Numeric parsing validator foundation bersifat strict. Nilai numeric hanya valid jika berupa number primitive finite atau strict numeric string. Boolean, array, object, Date, function, `null`, `undefined`, blank string, scientific notation string, hexadecimal string, binary string, partial numeric string, `NaN`, dan `Infinity` ditolak. Integer helpers juga menolak decimal.
+
+Reference maps yang dibaca validator:
+
+- `Rooms.room_id`
+- `Transactions.transaction_id`
+- `RoomSessions.session_id`
+- `SessionPackages.session_package_id`
+- `SessionPackages.session_package_id -> session_id`
+
+Validator tidak memakai helper `ensure*`, sehingga sheet `Rooms` atau `Transactions` yang tidak tersedia dilaporkan sebagai missing reference secara terstruktur dan tidak dibuat otomatis.
+
+Counter tambahan utama:
+
+- `RoomSessions`: `missing_room_id_count`, `missing_room_reference_count`, `missing_required_field_count`
+- `SessionPackages`: `missing_package_identity_count`, `missing_snapshot_field_count`, `missing_required_field_count`, `invalid_valid_day_type_count`
+- `SessionPackageDetails`: `missing_required_field_count`, `session_package_session_mismatch_count`, `invalid_amount_count`
+- `TransactionLines`: `missing_transaction_reference_count`, `missing_required_field_count`, `invalid_qty_count`, `invalid_unit_price_count`, `invalid_negative_net_amount_count`
+
+### Initializer Contract
+
+POST `initializePackageSessionFoundation` tersedia tetapi tidak otomatis dipanggil dari `doGet`, `doPost`, `startSession`, `extendSession`, atau `closeSession`.
+
+Default request adalah dry-run:
+
+```json
+{
+  "action": "initializePackageSessionFoundation",
+  "dry_run": true,
+  "backup_confirmed": false,
+  "confirm": ""
+}
+```
+
+Dry-run tidak membuat sheet dan tidak mengubah spreadsheet. Response melaporkan sheet yang akan dibuat, blockers, expected headers, dan hasil validator.
+
+Execute hanya boleh berjalan dengan:
+
+```json
+{
+  "action": "initializePackageSessionFoundation",
+  "dry_run": false,
+  "backup_confirmed": true,
+  "confirm": "INITIALIZE_V25B"
+}
+```
+
+Safeguards:
+
+- Acquire script lock sebelum write.
+- Revalidate state setelah lock.
+- Jika semua sheet sudah valid, return `FOUNDATION_ALREADY_INITIALIZED` tanpa write.
+- Jika sheet dengan nama sama ada tetapi header/schema konflik, return `FOUNDATION_SCHEMA_CONFLICT` tanpa perbaikan otomatis.
+- Buat hanya sheet yang belum ada.
+- Tulis satu header row dan freeze row pertama jika tersedia.
+- Tidak membuat sample data atau placeholder rows.
+- Tidak mengubah sheet existing.
+- Jika gagal sebagian, tidak menghapus sheet otomatis; response mencantumkan created/failed sheets dan validator bisa membaca partial state.
+- Lock timeout atau failure saat lock/initialize dikembalikan sebagai `FOUNDATION_INITIALIZATION_FAILED`.
+- Setelah creation, initializer menjalankan final validation gate. Response sukses hanya jika `status = ready`, required/existing/valid sheet count semua `4`, missing/invalid count `0`, dan tidak ada failed sheets. Jika API creation tidak melempar error tetapi final validation gagal, response memakai `code = FOUNDATION_INITIALIZATION_FAILED` dan `status = post_validation_failed`.
+
+Stable error codes:
+
+- `INITIALIZATION_CONFIRMATION_REQUIRED`
+- `BACKUP_CONFIRMATION_REQUIRED`
+- `FOUNDATION_SCHEMA_CONFLICT`
+- `FOUNDATION_ALREADY_INITIALIZED`
+- `FOUNDATION_INITIALIZATION_FAILED`
+
+No production initialization is implied by this documentation. Jalankan initializer production hanya setelah backup manual dan owner approval.
+
 ## Recipe
 
 Menghubungkan menu dengan item inventory yang dipakai.

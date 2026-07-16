@@ -308,6 +308,114 @@ var PACKAGE_DETAIL_HEADERS = [
   "updated_at",
   "note",
 ];
+var ROOM_SESSIONS_SHEET = "RoomSessions";
+var SESSION_PACKAGES_SHEET = "SessionPackages";
+var SESSION_PACKAGE_DETAILS_SHEET = "SessionPackageDetails";
+var TRANSACTION_LINES_SHEET = "TransactionLines";
+var ROOM_SESSION_HEADERS = [
+  "session_id",
+  "room_id",
+  "room_name",
+  "booking_mode",
+  "status",
+  "start_time",
+  "scheduled_end_time",
+  "end_time",
+  "booked_duration_minutes",
+  "package_included_minutes",
+  "promotion_free_minutes",
+  "billable_room_minutes",
+  "rate_per_hour",
+  "cashier_name",
+  "created_at",
+  "updated_at",
+  "closed_transaction_id",
+  "idempotency_key",
+  "legacy_room_start_time",
+  "note",
+];
+var SESSION_PACKAGE_HEADERS = [
+  "session_package_id",
+  "session_id",
+  "package_id",
+  "package_name",
+  "package_category",
+  "package_type",
+  "selling_price",
+  "duration_minutes",
+  "valid_day_type",
+  "valid_day_result",
+  "status",
+  "selected_at",
+  "selected_by",
+  "snapshot_json",
+  "void_reason",
+  "voided_at",
+];
+var SESSION_PACKAGE_DETAIL_HEADERS = [
+  "session_package_detail_id",
+  "session_package_id",
+  "session_id",
+  "package_detail_id",
+  "line_no",
+  "component_type",
+  "component_ref_id",
+  "component_name",
+  "qty",
+  "unit",
+  "hpp",
+  "additional_price",
+  "cost_amount",
+  "is_choice",
+  "choice_group",
+  "chosen_ref_id",
+  "chosen_name",
+  "fulfillment_status",
+  "fulfilled_qty",
+  "fulfilled_at",
+  "snapshot_json",
+];
+var TRANSACTION_LINE_HEADERS = [
+  "transaction_line_id",
+  "transaction_id",
+  "session_id",
+  "line_type",
+  "source_type",
+  "source_id",
+  "description",
+  "qty",
+  "unit",
+  "unit_price",
+  "gross_amount",
+  "discount_amount",
+  "net_amount",
+  "tax_amount",
+  "sort_order",
+  "created_at",
+  "snapshot_json",
+];
+var PACKAGE_SESSION_FOUNDATION_SHEETS = [
+  {
+    sheet_name: ROOM_SESSIONS_SHEET,
+    headers: ROOM_SESSION_HEADERS,
+    primary_id: "session_id",
+  },
+  {
+    sheet_name: SESSION_PACKAGES_SHEET,
+    headers: SESSION_PACKAGE_HEADERS,
+    primary_id: "session_package_id",
+  },
+  {
+    sheet_name: SESSION_PACKAGE_DETAILS_SHEET,
+    headers: SESSION_PACKAGE_DETAIL_HEADERS,
+    primary_id: "session_package_detail_id",
+  },
+  {
+    sheet_name: TRANSACTION_LINES_SHEET,
+    headers: TRANSACTION_LINE_HEADERS,
+    primary_id: "transaction_line_id",
+  },
+];
 var RECIPE_BOM_HEADERS = [
   "recipe_id",
   "menu_id",
@@ -529,6 +637,14 @@ function doPost(e) {
 
     if (action === "previewSessionPricing") {
       return jsonResponse(previewSessionPricing_(payload));
+    }
+
+    if (action === "validatePackageSessionFoundation") {
+      return jsonResponse(validatePackageSessionFoundation_());
+    }
+
+    if (action === "initializePackageSessionFoundation") {
+      return jsonResponse(initializePackageSessionFoundation_(payload));
     }
 
     if (action === "cancelFnbOrder") {
@@ -3437,6 +3553,988 @@ function pricingError_(code, message) {
     code: code,
     message: message,
     error: message,
+  };
+}
+
+function validatePackageSessionFoundation_() {
+  var validation = buildPackageSessionFoundationValidation_();
+
+  return {
+    ok: true,
+    success: true,
+    status: validation.status,
+    sheets: validation.sheets,
+    summary: validation.summary,
+  };
+}
+
+function initializePackageSessionFoundation_(payload) {
+  var request = payload || {};
+  var dryRun = request.dry_run !== false;
+  var backupConfirmed = request.backup_confirmed === true;
+  var confirmToken = typeof request.confirm === "string"
+    ? request.confirm.trim()
+    : "";
+  var initialValidation = buildPackageSessionFoundationValidation_();
+  var output = buildPackageSessionFoundationInitializerPlan_(dryRun, initialValidation);
+
+  if (dryRun) {
+    return output;
+  }
+
+  if (!backupConfirmed) {
+    return packageSessionFoundationError_(
+      "BACKUP_CONFIRMATION_REQUIRED",
+      "Backup manual spreadsheet wajib dikonfirmasi sebelum initializer dijalankan.",
+      output
+    );
+  }
+
+  if (confirmToken !== "INITIALIZE_V25B") {
+    return packageSessionFoundationError_(
+      "INITIALIZATION_CONFIRMATION_REQUIRED",
+      "Token confirm wajib INITIALIZE_V25B.",
+      output
+    );
+  }
+
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+
+  try {
+    lock.waitLock(10000);
+    lockAcquired = true;
+
+    var lockedValidation = buildPackageSessionFoundationValidation_();
+    var lockedPlan = buildPackageSessionFoundationInitializerPlan_(false, lockedValidation);
+
+    if (lockedValidation.summary.valid_sheet_count === lockedValidation.summary.required_sheet_count) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_ALREADY_INITIALIZED",
+        "Package session foundation sudah terinisialisasi.",
+        lockedPlan
+      );
+    }
+
+    if (lockedValidation.summary.invalid_sheet_count > 0) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_SCHEMA_CONFLICT",
+        "Terdapat sheet foundation dengan header konflik. Initializer dihentikan tanpa perbaikan otomatis.",
+        lockedPlan
+      );
+    }
+
+    var createdSheets = [];
+    var failedSheets = [];
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (!spreadsheet) {
+      throw new Error("Active spreadsheet was not found.");
+    }
+
+    PACKAGE_SESSION_FOUNDATION_SHEETS.forEach(function (definition) {
+      var existingSheet = spreadsheet.getSheetByName(definition.sheet_name);
+
+      if (existingSheet) {
+        return;
+      }
+
+      try {
+        var sheet = spreadsheet.insertSheet(definition.sheet_name);
+        sheet.getRange(1, 1, 1, definition.headers.length).setValues([definition.headers]);
+
+        if (typeof sheet.setFrozenRows === "function") {
+          sheet.setFrozenRows(1);
+        }
+
+        createdSheets.push(definition.sheet_name);
+      } catch (error) {
+        failedSheets.push({
+          sheet_name: definition.sheet_name,
+          error: error.message,
+        });
+      }
+    });
+
+    var finalValidation = buildPackageSessionFoundationValidation_();
+
+    if (failedSheets.length > 0) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "Sebagian sheet foundation gagal dibuat. Tidak ada rollback otomatis.",
+        {
+          ok: false,
+          success: false,
+          status: "partial_initialization_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    if (!isPackageSessionFoundationReady_(finalValidation)) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "Post-validation package session foundation gagal.",
+        {
+          status: "post_validation_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    return {
+      ok: true,
+      success: true,
+      status: "initialized",
+      dry_run: false,
+      code: "FOUNDATION_INITIALIZED",
+      message: "Package session foundation berhasil diinisialisasi.",
+      created_sheets: createdSheets,
+      failed_sheets: failedSheets,
+      validation: finalValidation,
+    };
+  } catch (error) {
+    return packageSessionFoundationError_(
+      "FOUNDATION_INITIALIZATION_FAILED",
+      "Package session foundation gagal diinisialisasi.",
+      {
+        dry_run: false,
+        safe_error_detail: error.message,
+      }
+    );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function isPackageSessionFoundationReady_(validation) {
+  var summary = validation.summary || {};
+
+  return validation.status === "ready" &&
+    summary.required_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.existing_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.valid_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.missing_sheet_count === 0 &&
+    summary.invalid_sheet_count === 0;
+}
+
+function buildPackageSessionFoundationInitializerPlan_(dryRun, validation) {
+  var sheetsToCreate = PACKAGE_SESSION_FOUNDATION_SHEETS
+    .filter(function (definition) {
+      var sheetResult = validation.sheets[definition.sheet_name];
+      return !sheetResult || !sheetResult.exists;
+    })
+    .map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    });
+  var blockers = [];
+
+  Object.keys(validation.sheets).forEach(function (sheetName) {
+    var sheetResult = validation.sheets[sheetName];
+
+    if (sheetResult.exists && sheetResult.validation_status !== "valid") {
+      blockers.push({
+        code: "FOUNDATION_SCHEMA_CONFLICT",
+        sheet_name: sheetName,
+        validation_status: sheetResult.validation_status,
+        missing_headers: sheetResult.missing_headers,
+        unexpected_headers: sheetResult.unexpected_headers,
+        duplicate_headers: sheetResult.duplicate_headers,
+        header_order_valid: sheetResult.header_order_valid,
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    success: true,
+    status: dryRun ? "dry_run" : "ready_to_initialize",
+    dry_run: dryRun,
+    required_sheet_count: PACKAGE_SESSION_FOUNDATION_SHEETS.length,
+    sheets_to_create: sheetsToCreate,
+    blockers: blockers,
+    expected_schemas: PACKAGE_SESSION_FOUNDATION_SHEETS.map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    }),
+    validation: validation,
+  };
+}
+
+function packageSessionFoundationError_(code, message, data) {
+  var response = data || {};
+  response.ok = false;
+  response.success = false;
+  response.code = code;
+  response.message = message;
+  response.error = message;
+  return response;
+}
+
+function buildPackageSessionFoundationValidation_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!spreadsheet) {
+    throw new Error("Active spreadsheet was not found.");
+  }
+
+  var sheets = {};
+  var referenceMaps = buildPackageSessionFoundationReferenceMaps_(spreadsheet);
+
+  PACKAGE_SESSION_FOUNDATION_SHEETS.forEach(function (definition) {
+    sheets[definition.sheet_name] = validatePackageSessionFoundationSheet_(spreadsheet, definition, referenceMaps);
+  });
+
+  var summary = Object.keys(sheets).reduce(function (result, sheetName) {
+    var sheetResult = sheets[sheetName];
+
+    if (sheetResult.exists) {
+      result.existing_sheet_count += 1;
+    } else {
+      result.missing_sheet_count += 1;
+    }
+
+    if (sheetResult.validation_status === "valid") {
+      result.valid_sheet_count += 1;
+    } else if (sheetResult.validation_status === "invalid") {
+      result.invalid_sheet_count += 1;
+    }
+
+    return result;
+  }, {
+    required_sheet_count: PACKAGE_SESSION_FOUNDATION_SHEETS.length,
+    existing_sheet_count: 0,
+    valid_sheet_count: 0,
+    missing_sheet_count: 0,
+    invalid_sheet_count: 0,
+  });
+
+  return {
+    status: getPackageSessionFoundationStatus_(summary),
+    sheets: sheets,
+    summary: summary,
+  };
+}
+
+function getPackageSessionFoundationStatus_(summary) {
+  if (summary.invalid_sheet_count > 0 && summary.missing_sheet_count > 0) {
+    return "partial_invalid";
+  }
+
+  if (summary.invalid_sheet_count > 0) {
+    return "invalid";
+  }
+
+  if (summary.missing_sheet_count > 0) {
+    return "not_initialized";
+  }
+
+  return "ready";
+}
+
+function validatePackageSessionFoundationSheet_(spreadsheet, definition, referenceMaps) {
+  var sheet = spreadsheet.getSheetByName(definition.sheet_name);
+  var result = {
+    sheet_name: definition.sheet_name,
+    exists: !!sheet,
+    header_count: 0,
+    expected_header_count: definition.headers.length,
+    missing_headers: definition.headers.slice(),
+    unexpected_headers: [],
+    header_order_valid: false,
+    duplicate_headers: [],
+    data_row_count: 0,
+    missing_primary_id_count: 0,
+    duplicate_primary_id_count: 0,
+    validation_status: "missing",
+  };
+
+  if (!sheet) {
+    return result;
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var rows = values.length > 1 ? values.slice(1).filter(packageSessionFoundationRowHasData_) : [];
+  var headerIssues = getPackageSessionFoundationHeaderIssues_(headers, definition.headers);
+
+  result.header_count = headers.length;
+  result.missing_headers = headerIssues.missing_headers;
+  result.unexpected_headers = headerIssues.unexpected_headers;
+  result.header_order_valid = headerIssues.header_order_valid;
+  result.duplicate_headers = headerIssues.duplicate_headers;
+  result.data_row_count = rows.length;
+  result.missing_primary_id_count = countMissingValuesInRows_(rows, headers, definition.primary_id);
+  result.duplicate_primary_id_count = countDuplicateNonBlankValuesInRows_(rows, headers, definition.primary_id);
+
+  var dataIssues = validatePackageSessionFoundationRows_(definition.sheet_name, headers, rows, referenceMaps);
+
+  Object.keys(dataIssues).forEach(function (key) {
+    result[key] = dataIssues[key];
+  });
+
+  result.validation_status = (
+    result.missing_headers.length === 0 &&
+    result.unexpected_headers.length === 0 &&
+    result.duplicate_headers.length === 0 &&
+    result.header_order_valid &&
+    result.missing_primary_id_count === 0 &&
+    result.duplicate_primary_id_count === 0 &&
+    dataIssues.issue_count === 0
+  ) ? "valid" : "invalid";
+
+  return result;
+}
+
+function getPackageSessionFoundationHeaderIssues_(headers, expectedHeaders) {
+  var headerCounts = countValues_(headers);
+  var expectedMap = countValues_(expectedHeaders);
+
+  return {
+    missing_headers: expectedHeaders.filter(function (header) {
+      return !headerCounts[header];
+    }),
+    unexpected_headers: headers.filter(function (header) {
+      return header && !expectedMap[header];
+    }),
+    header_order_valid: headers.length === expectedHeaders.length && expectedHeaders.every(function (header, index) {
+      return headers[index] === header;
+    }),
+    duplicate_headers: Object.keys(headerCounts).filter(function (header) {
+      return header && headerCounts[header] > 1;
+    }),
+  };
+}
+
+function buildPackageSessionFoundationReferenceMaps_(spreadsheet) {
+  var rooms = readPackageSessionFoundationRowsForReference_(spreadsheet, "Rooms");
+  var transactions = readPackageSessionFoundationRowsForReference_(spreadsheet, "Transactions");
+  var roomSessions = readPackageSessionFoundationRowsForReference_(spreadsheet, ROOM_SESSIONS_SHEET);
+  var sessionPackages = readPackageSessionFoundationRowsForReference_(spreadsheet, SESSION_PACKAGES_SHEET);
+
+  return {
+    rooms_sheet_exists: rooms.exists,
+    transactions_sheet_exists: transactions.exists,
+    room_ids: buildValueSet_(rooms.rows, rooms.headers, "room_id"),
+    transaction_ids: buildValueSet_(transactions.rows, transactions.headers, "transaction_id"),
+    room_session_ids: buildValueSet_(roomSessions.rows, roomSessions.headers, "session_id"),
+    session_package_ids: buildValueSet_(sessionPackages.rows, sessionPackages.headers, "session_package_id"),
+    session_package_session_ids: buildValueMap_(sessionPackages.rows, sessionPackages.headers, "session_package_id", "session_id"),
+  };
+}
+
+function readPackageSessionFoundationRowsForReference_(spreadsheet, sheetName) {
+  var sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    return {
+      exists: false,
+      headers: [],
+      rows: [],
+    };
+  }
+
+  var values = sheet.getDataRange().getValues();
+
+  return {
+    exists: true,
+    headers: values.length ? values[0].map(function (header) {
+      return String(header).trim();
+    }) : [],
+    rows: values.length > 1 ? values.slice(1).filter(packageSessionFoundationRowHasData_) : [],
+  };
+}
+
+function validatePackageSessionFoundationRows_(sheetName, headers, rows, referenceMaps) {
+  if (sheetName === ROOM_SESSIONS_SHEET) {
+    return validateRoomSessionFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === SESSION_PACKAGES_SHEET) {
+    return validateSessionPackageFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === SESSION_PACKAGE_DETAILS_SHEET) {
+    return validateSessionPackageDetailFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === TRANSACTION_LINES_SHEET) {
+    return validateTransactionLineFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  return {
+    issue_count: 0,
+  };
+}
+
+function validateRoomSessionFoundationRows_(headers, rows, referenceMaps) {
+  var idempotencyDuplicateCount = countDuplicateNonBlankValuesInRows_(rows, headers, "idempotency_key");
+  var issues = {
+    duplicate_idempotency_key_count: idempotencyDuplicateCount,
+    missing_room_id_count: 0,
+    missing_room_reference_count: 0,
+    missing_required_field_count: 0,
+    invalid_booking_mode_count: 0,
+    invalid_status_count: 0,
+    invalid_duration_or_rate_count: 0,
+    closed_without_transaction_count: 0,
+    active_with_closed_transaction_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var roomId = String(objectRow.room_id || "").trim();
+    var bookingMode = String(objectRow.booking_mode || "").trim().toLowerCase();
+    var status = String(objectRow.status || "").trim().toLowerCase();
+
+    [
+      "session_id",
+      "room_id",
+      "booking_mode",
+      "status",
+      "booked_duration_minutes",
+      "package_included_minutes",
+      "promotion_free_minutes",
+      "billable_room_minutes",
+      "rate_per_hour",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!roomId) {
+      issues.missing_room_id_count += 1;
+    } else if (!referenceMaps.rooms_sheet_exists || !referenceMaps.room_ids[roomId]) {
+      issues.missing_room_reference_count += 1;
+    }
+
+    if (["regular", "package"].indexOf(bookingMode) === -1) {
+      issues.invalid_booking_mode_count += 1;
+    }
+
+    if (["starting", "active", "closing", "closed", "voided", "start_failed", "close_failed"].indexOf(status) === -1) {
+      issues.invalid_status_count += 1;
+    }
+
+    ["booked_duration_minutes", "package_included_minutes", "promotion_free_minutes", "billable_room_minutes"].forEach(function (fieldName) {
+      if (!isFoundationNonNegativeInteger_(objectRow[fieldName])) {
+        issues.invalid_duration_or_rate_count += 1;
+      }
+    });
+
+    if (status === "active" && Number(objectRow.booked_duration_minutes) < 15) {
+      issues.invalid_duration_or_rate_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.rate_per_hour)) {
+      issues.invalid_duration_or_rate_count += 1;
+    }
+
+    if (status === "closed" && !String(objectRow.closed_transaction_id || "").trim()) {
+      issues.closed_without_transaction_count += 1;
+    }
+
+    if (status === "active" && String(objectRow.closed_transaction_id || "").trim()) {
+      issues.active_with_closed_transaction_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateSessionPackageFoundationRows_(headers, rows, referenceMaps) {
+  var activePackageCountBySession = {};
+  var issues = {
+    missing_session_reference_count: 0,
+    missing_package_identity_count: 0,
+    missing_snapshot_field_count: 0,
+    missing_required_field_count: 0,
+    multiple_active_package_session_count: 0,
+    invalid_package_type_count: 0,
+    invalid_status_count: 0,
+    invalid_price_count: 0,
+    invalid_duration_count: 0,
+    invalid_valid_day_type_count: 0,
+    invalid_valid_day_result_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var sessionId = String(objectRow.session_id || "").trim();
+    var status = String(objectRow.status || "").trim().toLowerCase();
+
+    if (isFoundationBlank_(objectRow.package_id)) {
+      issues.missing_package_identity_count += 1;
+    }
+
+    [
+      "session_id",
+      "package_id",
+      "package_name",
+      "package_type",
+      "selling_price",
+      "duration_minutes",
+      "valid_day_type",
+      "valid_day_result",
+      "status",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    [
+      "package_name",
+      "package_type",
+      "selling_price",
+      "duration_minutes",
+      "valid_day_type",
+      "valid_day_result",
+      "status",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_snapshot_field_count += 1;
+      }
+    });
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if (String(objectRow.package_type || "").trim().toLowerCase() !== FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE) {
+      issues.invalid_package_type_count += 1;
+    }
+
+    if (["active", "voided"].indexOf(status) === -1) {
+      issues.invalid_status_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.selling_price)) {
+      issues.invalid_price_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.duration_minutes)) {
+      issues.invalid_duration_count += 1;
+    }
+
+    if (!isFoundationStringInEnum_(objectRow.valid_day_type, ["all", "weekday", "weekend"])) {
+      issues.invalid_valid_day_type_count += 1;
+    }
+
+    if (String(objectRow.valid_day_result || "").trim().toLowerCase() !== "pass") {
+      issues.invalid_valid_day_result_count += 1;
+    }
+
+    if (status === "active" && sessionId) {
+      activePackageCountBySession[sessionId] = (activePackageCountBySession[sessionId] || 0) + 1;
+    }
+  });
+
+  issues.multiple_active_package_session_count = Object.keys(activePackageCountBySession).filter(function (sessionId) {
+    return activePackageCountBySession[sessionId] > 1;
+  }).length;
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateSessionPackageDetailFoundationRows_(headers, rows, referenceMaps) {
+  var issues = {
+    missing_session_package_reference_count: 0,
+    missing_session_reference_count: 0,
+    missing_required_field_count: 0,
+    session_package_session_mismatch_count: 0,
+    invalid_component_type_count: 0,
+    invalid_line_no_count: 0,
+    invalid_qty_count: 0,
+    invalid_amount_count: 0,
+    invalid_is_choice_count: 0,
+    invalid_fulfillment_status_count: 0,
+    invalid_fulfilled_qty_count: 0,
+    fulfilled_qty_exceeds_qty_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var sessionPackageId = String(objectRow.session_package_id || "").trim();
+    var sessionId = String(objectRow.session_id || "").trim();
+    var choiceResult = parseFoundationBoolean_(objectRow.is_choice);
+    var qty = isFoundationPositiveNumber_(objectRow.qty) ? Number(objectRow.qty) : NaN;
+    var fulfilledQty = isFoundationBlank_(objectRow.fulfilled_qty)
+      ? 0
+      : isFoundationFiniteNumber_(objectRow.fulfilled_qty) ? Number(objectRow.fulfilled_qty) : NaN;
+
+    [
+      "session_package_id",
+      "session_id",
+      "package_detail_id",
+      "component_type",
+      "component_ref_id",
+      "component_name",
+      "line_no",
+      "qty",
+      "unit",
+      "is_choice",
+      "fulfillment_status",
+      "fulfilled_qty",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!sessionPackageId || !referenceMaps.session_package_ids[sessionPackageId]) {
+      issues.missing_session_package_reference_count += 1;
+    } else if (sessionId && referenceMaps.session_package_session_ids[sessionPackageId] !== sessionId) {
+      issues.session_package_session_mismatch_count += 1;
+    }
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if (["service", "inventory", "menu"].indexOf(String(objectRow.component_type || "").trim().toLowerCase()) === -1) {
+      issues.invalid_component_type_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.line_no)) {
+      issues.invalid_line_no_count += 1;
+    }
+
+    if (!isFoundationPositiveNumber_(objectRow.qty)) {
+      issues.invalid_qty_count += 1;
+    }
+
+    ["hpp", "additional_price", "cost_amount"].forEach(function (fieldName) {
+      if (!isFoundationBlank_(objectRow[fieldName]) && !isFoundationNonNegativeNumber_(objectRow[fieldName])) {
+        issues.invalid_amount_count += 1;
+      }
+    });
+
+    if (!choiceResult.valid || choiceResult.value !== false) {
+      issues.invalid_is_choice_count += 1;
+    }
+
+    if (["pending", "fulfilled", "partial", "voided"].indexOf(String(objectRow.fulfillment_status || "").trim().toLowerCase()) === -1) {
+      issues.invalid_fulfillment_status_count += 1;
+    }
+
+    if (!isFinite(fulfilledQty) || fulfilledQty < 0) {
+      issues.invalid_fulfilled_qty_count += 1;
+    } else if (isFinite(qty) && fulfilledQty > qty) {
+      issues.fulfilled_qty_exceeds_qty_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateTransactionLineFoundationRows_(headers, rows, referenceMaps) {
+  var issues = {
+    missing_session_reference_count: 0,
+    missing_transaction_reference_count: 0,
+    missing_required_field_count: 0,
+    invalid_line_type_count: 0,
+    invalid_qty_count: 0,
+    invalid_unit_price_count: 0,
+    invalid_negative_net_amount_count: 0,
+    invalid_amount_count: 0,
+    invalid_sort_order_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var transactionId = String(objectRow.transaction_id || "").trim();
+    var sessionId = String(objectRow.session_id || "").trim();
+    var lineType = String(objectRow.line_type || "").trim().toLowerCase();
+
+    [
+      "transaction_id",
+      "session_id",
+      "line_type",
+      "source_type",
+      "source_id",
+      "description",
+      "qty",
+      "unit",
+      "unit_price",
+      "gross_amount",
+      "discount_amount",
+      "net_amount",
+      "tax_amount",
+      "sort_order",
+      "created_at",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!transactionId || !referenceMaps.transactions_sheet_exists || !referenceMaps.transaction_ids[transactionId]) {
+      issues.missing_transaction_reference_count += 1;
+    }
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if ([
+      "room_base",
+      "package_subtotal",
+      "package_included_room",
+      "room_excess",
+      "fnb_order",
+      "service",
+      "promotion",
+      "manual_discount",
+      "surcharge",
+    ].indexOf(lineType) === -1) {
+      issues.invalid_line_type_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.qty)) {
+      issues.invalid_qty_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.unit_price)) {
+      issues.invalid_unit_price_count += 1;
+    }
+
+    ["gross_amount", "discount_amount", "tax_amount"].forEach(function (fieldName) {
+      if (!isFoundationNonNegativeNumber_(objectRow[fieldName])) {
+        issues.invalid_amount_count += 1;
+      }
+    });
+
+    if (!isFoundationFiniteNumber_(objectRow.net_amount)) {
+      issues.invalid_amount_count += 1;
+    } else if (Number(objectRow.net_amount) < 0 && ["manual_discount", "promotion"].indexOf(lineType) === -1) {
+      issues.invalid_negative_net_amount_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.sort_order)) {
+      issues.invalid_sort_order_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function buildObjectFromFoundationRow_(headers, row) {
+  return headers.reduce(function (objectRow, header, index) {
+    if (header) {
+      objectRow[header] = row[index];
+    }
+
+    return objectRow;
+  }, {});
+}
+
+function packageSessionFoundationRowHasData_(row) {
+  return row.some(function (cell) {
+    return cell !== "" && cell !== null && cell !== undefined;
+  });
+}
+
+function buildValueSet_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return {};
+  }
+
+  return rows.reduce(function (set, row) {
+    var value = String(row[index] || "").trim();
+
+    if (value) {
+      set[value] = true;
+    }
+
+    return set;
+  }, {});
+}
+
+function buildValueMap_(rows, headers, keyFieldName, valueFieldName) {
+  var keyIndex = headers.indexOf(keyFieldName);
+  var valueIndex = headers.indexOf(valueFieldName);
+
+  if (keyIndex === -1 || valueIndex === -1) {
+    return {};
+  }
+
+  return rows.reduce(function (map, row) {
+    var key = String(row[keyIndex] || "").trim();
+
+    if (key) {
+      map[key] = String(row[valueIndex] || "").trim();
+    }
+
+    return map;
+  }, {});
+}
+
+function countDuplicateNonBlankValuesInRows_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  var counts = rows.reduce(function (map, row) {
+    var value = String(row[index] || "").trim();
+
+    if (value) {
+      map[value] = (map[value] || 0) + 1;
+    }
+
+    return map;
+  }, {});
+
+  return Object.keys(counts).filter(function (value) {
+    return counts[value] > 1;
+  }).length;
+}
+
+function countMissingValuesInRows_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  return rows.filter(function (row) {
+    return !String(row[index] || "").trim();
+  }).length;
+}
+
+function countValues_(values) {
+  return values.reduce(function (map, value) {
+    var key = String(value || "").trim();
+
+    if (key) {
+      map[key] = (map[key] || 0) + 1;
+    }
+
+    return map;
+  }, {});
+}
+
+function sumPackageSessionFoundationIssueCounts_(issues) {
+  return Object.keys(issues).reduce(function (total, key) {
+    if (key === "issue_count") {
+      return total;
+    }
+
+    return total + (Number(issues[key]) || 0);
+  }, 0);
+}
+
+function isFoundationFiniteNumber_(value) {
+  return isStrictNumericValueForPricing_(value);
+}
+
+function isFoundationNonNegativeNumber_(value) {
+  return isFoundationFiniteNumber_(value) && Number(value) >= 0;
+}
+
+function isFoundationPositiveNumber_(value) {
+  return isFoundationFiniteNumber_(value) && Number(value) > 0;
+}
+
+function isFoundationNonNegativeInteger_(value) {
+  var numberValue = Number(value);
+  return isFoundationNonNegativeNumber_(value) && Math.floor(numberValue) === numberValue;
+}
+
+function isFoundationPositiveInteger_(value) {
+  var numberValue = Number(value);
+  return isFoundationPositiveNumber_(value) && Math.floor(numberValue) === numberValue;
+}
+
+function isFoundationBlank_(value) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  return typeof value === "string" && value.trim() === "";
+}
+
+function isFoundationStringInEnum_(value, allowedValues) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return allowedValues.indexOf(value.trim().toLowerCase()) !== -1;
+}
+
+function parseFoundationBoolean_(value) {
+  if (typeof value === "boolean") {
+    return {
+      valid: true,
+      value: value,
+    };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1 || value === 0) {
+      return {
+        valid: true,
+        value: value === 1,
+      };
+    }
+
+    return {
+      valid: false,
+      value: false,
+    };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      valid: false,
+      value: false,
+    };
+  }
+
+  var normalizedValue = String(value || "").trim().toLowerCase();
+
+  if (["false", "0", "no"].indexOf(normalizedValue) !== -1) {
+    return {
+      valid: true,
+      value: false,
+    };
+  }
+
+  if (["true", "1", "yes"].indexOf(normalizedValue) !== -1) {
+    return {
+      valid: true,
+      value: true,
+    };
+  }
+
+  return {
+    valid: false,
+    value: false,
   };
 }
 
