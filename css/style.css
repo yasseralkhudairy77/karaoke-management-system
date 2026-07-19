@@ -779,6 +779,25 @@ body::after {
   position: sticky;
   top: 116px;
   grid-column: 2;
+  max-height: calc(100vh - 132px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(226, 184, 92, 0.48) rgba(13, 10, 7, 0.55);
+  scrollbar-width: thin;
+}
+
+.app-tab-panel--fnb.active .fb-order-panel::-webkit-scrollbar {
+  width: 9px;
+}
+
+.app-tab-panel--fnb.active .fb-order-panel::-webkit-scrollbar-track {
+  background: rgba(13, 10, 7, 0.55);
+  border-radius: 999px;
+}
+
+.app-tab-panel--fnb.active .fb-order-panel::-webkit-scrollbar-thumb {
+  background: rgba(226, 184, 92, 0.48);
+  border-radius: 999px;
 }
 
 .app-tab-panel--fnb.active .open-fnb-panel,
@@ -6268,6 +6287,10 @@ body::after {
   box-shadow: var(--shadow-soft);
 }
 
+.fb-order-panel .fb-cart-total {
+  position: static;
+}
+
 .room-booking-info {
   gap: var(--space-2);
   padding: var(--space-3);
@@ -6432,6 +6455,9 @@ body::after {
 
   .app-tab-panel--fnb.active .fb-order-panel {
     position: static;
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
   }
 }
 
