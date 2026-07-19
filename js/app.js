@@ -27,6 +27,48 @@ const DASHBOARD_TABS = [
   { key: "audit", label: "Audit" },
   { key: "settings", label: "Pengaturan" },
 ];
+const FNB_PRIMARY_CATEGORY_ORDER = ["favorites", "Food", "Beverage", "Beer", "Spirit", "Anggur", "Cigarette"];
+const FNB_SPIRIT_SUBCATEGORY_ORDER = [
+  "Cognac",
+  "Vodka",
+  "Tequila",
+  "Gin",
+  "Rum",
+  "Blended",
+  "Single Malt",
+  "American Whisky",
+  "Lokal",
+];
+const FNB_SPIRIT_CATEGORY_ALIASES = new Map([
+  ["cognac", "Cognac"],
+  ["vodca", "Vodka"],
+  ["vodka", "Vodka"],
+  ["tequila", "Tequila"],
+  ["gin", "Gin"],
+  ["rum", "Rum"],
+  ["blended", "Blended"],
+  ["single malt", "Single Malt"],
+  ["american whisky", "American Whisky"],
+  ["lokal", "Lokal"],
+]);
+const FNB_CATEGORY_LABELS = {
+  all: "Semua",
+  favorites: "Favorit",
+  Food: "Food",
+  Beverage: "Beverage",
+  Beer: "Beer",
+  Spirit: "Spirit",
+  Anggur: "Anggur",
+  Cigarette: "Cigarette",
+};
+const FNB_FAVORITE_ITEM_NAMES = new Set([
+  "es teh manis",
+  "mineral water 600ml",
+  "french fries",
+  "bintang",
+  "anggur merah",
+  "sampoerna mild red",
+]);
 const dataSourceBadge = document.querySelector("#dataSourceBadge");
 const currencyFormatter = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -252,6 +294,7 @@ let closingPrintPreviewVisible = false;
 let menuItems = [];
 let menuSearchQuery = "";
 let menuCategoryFilter = "all";
+let menuSpiritFilter = "all";
 let menuErrorMessage = "";
 let inventoryItems = [];
 let inventorySummary = null;
@@ -2495,16 +2538,51 @@ function getFilteredMenuItems() {
   const normalizedSearch = menuSearchQuery.trim().toLowerCase();
 
   return menuItems.filter((menuItem) => {
-    const category = menuItem.category || "";
+    const classification = getFnbMenuClassification(menuItem);
     const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
-    const matchesCategory =
-      menuCategoryFilter === "all" || category === menuCategoryFilter;
+    const matchesCategory = menuCategoryFilter === "all" ||
+      (menuCategoryFilter === "favorites" && isFavoriteFnbMenuItem(menuItem)) ||
+      classification.primary === menuCategoryFilter;
+    const matchesSpirit = menuCategoryFilter !== "Spirit" ||
+      menuSpiritFilter === "all" ||
+      classification.subcategory === menuSpiritFilter;
     const matchesSearch =
       !normalizedSearch ||
-      `${menuItem.menu_name || ""} ${category}`.toLowerCase().includes(normalizedSearch);
+      `${menuItem.menu_name || ""} ${classification.primary} ${classification.subcategory} ${classification.rawCategory}`
+        .toLowerCase()
+        .includes(normalizedSearch);
 
-    return isActive && matchesCategory && matchesSearch;
+    return isActive && matchesCategory && matchesSpirit && matchesSearch;
   });
+}
+
+function getFnbMenuClassification(menuItem) {
+  const rawCategory = String(menuItem && menuItem.category || "").trim();
+  const normalizedRaw = rawCategory.toLowerCase();
+  const spiritSubcategory = FNB_SPIRIT_CATEGORY_ALIASES.get(normalizedRaw);
+
+  if (spiritSubcategory) {
+    return {
+      primary: "Spirit",
+      subcategory: spiritSubcategory,
+      rawCategory,
+    };
+  }
+
+  const primary = FNB_PRIMARY_CATEGORY_ORDER.includes(rawCategory) && rawCategory !== "favorites"
+    ? rawCategory
+    : rawCategory || "Lainnya";
+
+  return {
+    primary,
+    subcategory: "",
+    rawCategory,
+  };
+}
+
+function isFavoriteFnbMenuItem(menuItem) {
+  const normalizedName = String(menuItem && menuItem.menu_name || "").trim().toLowerCase();
+  return FNB_FAVORITE_ITEM_NAMES.has(normalizedName);
 }
 
 function setMenuSearchQuery(value) {
@@ -2526,14 +2604,53 @@ function setMenuSearchQuery(value) {
 
 function setMenuCategoryFilter(category) {
   menuCategoryFilter = category || "all";
+  if (menuCategoryFilter !== "Spirit") {
+    menuSpiritFilter = "all";
+  }
+  renderRooms();
+}
+
+function setMenuSpiritFilter(subcategory) {
+  menuSpiritFilter = subcategory || "all";
   renderRooms();
 }
 
 function getMenuCategories() {
-  return [...new Set(menuItems
+  const activeItems = menuItems.filter((menuItem) => {
+    return String(menuItem.status || "").trim().toLowerCase() === "active";
+  });
+  const available = new Set(activeItems.map((menuItem) => getFnbMenuClassification(menuItem).primary));
+  const ordered = FNB_PRIMARY_CATEGORY_ORDER.filter((category) => {
+    return category === "favorites"
+      ? activeItems.some(isFavoriteFnbMenuItem)
+      : available.has(category);
+  });
+  const extra = [...available].filter((category) => !FNB_PRIMARY_CATEGORY_ORDER.includes(category)).sort();
+
+  return ["all", ...ordered, ...extra];
+}
+
+function getFnbMenuCategoryCount(category) {
+  return menuItems.filter((menuItem) => {
+    const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
+    const classification = getFnbMenuClassification(menuItem);
+
+    return isActive && (
+      category === "all" ||
+      (category === "favorites" && isFavoriteFnbMenuItem(menuItem)) ||
+      classification.primary === category
+    );
+  }).length;
+}
+
+function getAvailableSpiritSubcategories() {
+  const available = new Set(menuItems
     .filter((menuItem) => String(menuItem.status || "").trim().toLowerCase() === "active")
-    .map((menuItem) => menuItem.category)
-    .filter(Boolean))].sort();
+    .map((menuItem) => getFnbMenuClassification(menuItem))
+    .filter((classification) => classification.primary === "Spirit" && classification.subcategory)
+    .map((classification) => classification.subcategory));
+
+  return FNB_SPIRIT_SUBCATEGORY_ORDER.filter((subcategory) => available.has(subcategory));
 }
 
 function setSelectedFbRoom(roomId) {
@@ -4841,11 +4958,11 @@ function createMenuPanelElement() {
   const title = document.createElement("h2");
   title.className = "menu-panel-title";
   title.id = "menu-panel-title";
-  title.textContent = "Menu F&B";
+  title.textContent = "POS F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "menu-panel-subtitle";
-  subtitle.textContent = "Daftar makanan dan minuman dari Google Sheets.";
+  subtitle.textContent = "Cari cepat, pilih kategori, lalu tambah item ke tray pesanan.";
 
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
@@ -4856,12 +4973,12 @@ function createMenuPanelElement() {
   const search = document.createElement("input");
   search.className = "menu-search";
   search.type = "search";
-  search.placeholder = "Cari menu...";
+  search.placeholder = "Cari item: bintang, fries, soju, marlboro...";
   search.value = menuSearchQuery;
   search.dataset.action = "search-menu";
   search.setAttribute("aria-label", "Cari menu F&B");
 
-  toolbar.append(search, createMenuCategoryFilterElement());
+  toolbar.append(search, createMenuCategoryFilterElement(), createMenuSpiritFilterElement());
 
   const list = document.createElement("div");
   list.className = "menu-list";
@@ -4896,8 +5013,9 @@ function createMenuCategoryFilterElement() {
   filter.className = "menu-category-filter";
   filter.setAttribute("aria-label", "Filter kategori Menu F&B");
 
-  [["all", "Semua"], ...getMenuCategories().map((category) => [category, category])].forEach(
-    ([value, labelText]) => {
+  getMenuCategories().forEach(
+    (value) => {
+      const labelText = FNB_CATEGORY_LABELS[value] || value;
       const button = document.createElement("button");
       button.className =
         value === menuCategoryFilter
@@ -4906,6 +5024,36 @@ function createMenuCategoryFilterElement() {
       button.type = "button";
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
+      button.innerHTML = `<span>${labelText}</span><strong>${getFnbMenuCategoryCount(value)}</strong>`;
+      filter.appendChild(button);
+    }
+  );
+
+  return filter;
+}
+
+function createMenuSpiritFilterElement() {
+  const subcategories = getAvailableSpiritSubcategories();
+  const filter = document.createElement("div");
+  filter.className = menuCategoryFilter === "Spirit"
+    ? "menu-spirit-filter"
+    : "menu-spirit-filter is-hidden";
+  filter.setAttribute("aria-label", "Filter subkategori Spirit");
+
+  if (menuCategoryFilter !== "Spirit" || subcategories.length === 0) {
+    return filter;
+  }
+
+  [["all", "Semua"], ...subcategories.map((subcategory) => [subcategory, subcategory])].forEach(
+    ([value, labelText]) => {
+      const button = document.createElement("button");
+      button.className =
+        value === menuSpiritFilter
+          ? "menu-spirit-button active"
+          : "menu-spirit-button";
+      button.type = "button";
+      button.dataset.action = "filter-menu-spirit";
+      button.dataset.subcategory = value;
       button.textContent = labelText;
       filter.appendChild(button);
     }
@@ -4918,8 +5066,11 @@ function createMenuCardElement(menuItem) {
   const card = document.createElement("article");
   card.className =
     menuItem.status === "inactive" ? "menu-card inactive" : "menu-card";
+  const classification = getFnbMenuClassification(menuItem);
+  const isFavorite = isFavoriteFnbMenuItem(menuItem);
 
   const info = document.createElement("div");
+  info.className = "menu-card-info";
 
   const name = document.createElement("h3");
   name.className = "menu-name";
@@ -4927,9 +5078,15 @@ function createMenuCardElement(menuItem) {
 
   const meta = document.createElement("p");
   meta.className = "menu-meta";
-  meta.textContent = menuItem.category || "Tanpa kategori";
+  meta.textContent = classification.subcategory
+    ? `${classification.primary} / ${classification.subcategory}`
+    : classification.primary || "Tanpa kategori";
 
   info.append(name, meta);
+
+  const badge = document.createElement("span");
+  badge.className = isFavorite ? "menu-category-chip favorite" : "menu-category-chip";
+  badge.textContent = isFavorite ? "Favorit" : classification.primary;
 
   const price = document.createElement("p");
   price.className = "menu-price";
@@ -4950,9 +5107,9 @@ function createMenuCardElement(menuItem) {
   addButton.dataset.action = "add-menu-to-cart";
   addButton.dataset.menuId = menuItem.menu_id || "";
   addButton.disabled = !isActive;
-  addButton.textContent = isActive ? "Tambah ke Keranjang" : "Tidak Aktif";
+  addButton.textContent = isActive ? "+ Tambah" : "Tidak Aktif";
 
-  card.append(info, price, status, addButton);
+  card.append(badge, info, price, status, addButton);
 
   return card;
 }
@@ -11690,6 +11847,11 @@ async function handleRoomAction(event) {
 
   if (action === "filter-menu-category") {
     setMenuCategoryFilter(button.dataset.category || "all");
+    return;
+  }
+
+  if (action === "filter-menu-spirit") {
+    setMenuSpiritFilter(button.dataset.subcategory || "all");
     return;
   }
 
