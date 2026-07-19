@@ -7,12 +7,17 @@
 */
 
 :root {
-  --bg: #0a0c12;
-  --surface: #12151d;
-  --surface-raised: #171b26;
-  --text: #eef2f7;
-  --muted: #8b96a8;
-  --border: #232838;
+  --bg: #0b0805;
+  --surface: rgba(26, 20, 14, 0.88);
+  --surface-raised: rgba(38, 29, 20, 0.92);
+  --surface-deep: rgba(13, 10, 7, 0.94);
+  --text: #f6ead2;
+  --muted: #cbbda3;
+  --gold: #e2b85c;
+  --gold-strong: #ffd77a;
+  --gold-deep: #c99632;
+  --gold-smoke: rgba(226, 184, 92, 0.28);
+  --border: rgba(226, 184, 92, 0.22);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -26,37 +31,37 @@
   --panel-gap: 20px;
   --panel-padding: 24px;
   --content-max: 1320px;
-  --shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.38);
-  --shadow-panel: 0 14px 36px rgba(0, 0, 0, 0.42);
-  --focus-ring: 0 0 0 3px rgba(92, 213, 155, 0.18);
-  --available: #18c787;
-  --available-deep: #0e8a5f;
-  --occupied: #ff3d68;
-  --occupied-deep: #c41f47;
-  --maintenance: #f2b84b;
-  --maintenance-deep: #7a5a1f;
-  --button: #12151d;
-  --button-bg: #eef2f7;
-  --button-hover: #ffffff;
-  --button-focus: #78f7c6;
-  --card-text: #ffffff;
+  --shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-panel: 0 18px 48px rgba(0, 0, 0, 0.5);
+  --focus-ring: 0 0 0 3px rgba(226, 184, 92, 0.2);
+  --available: #35b779;
+  --available-deep: #0c6244;
+  --occupied: #d86a5f;
+  --occupied-deep: #7f241f;
+  --maintenance: #f0b84f;
+  --maintenance-deep: #7a4c12;
+  --button: #1a130b;
+  --button-bg: #c99632;
+  --button-hover: #e2b85c;
+  --button-focus: #ffd77a;
+  --card-text: #fff5df;
   --status-bg: rgba(255, 255, 255, 0.18);
   --meta-text: rgba(255, 255, 255, 0.78);
   --rate-text: rgba(255, 255, 255, 0.86);
-  --shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.58);
   --available-glow: 0 0 28px rgba(24, 199, 135, 0.35);
   --occupied-glow: 0 0 28px rgba(255, 61, 104, 0.35);
   --maintenance-glow: 0 0 28px rgba(242, 184, 75, 0.3);
-  --state-bg: rgba(18, 21, 29, 0.82);
+  --state-bg: rgba(26, 20, 14, 0.82);
   --state-info-bg: rgba(24, 199, 135, 0.12);
   --state-info-border: rgba(24, 199, 135, 0.45);
   --state-info-text: #c9ffe8;
   --state-error-bg: rgba(255, 61, 104, 0.12);
   --state-error-border: rgba(255, 61, 104, 0.48);
   --state-error-text: #ffd7df;
-  --billing-accent: #78f7c6;
-  --billing-amber: #ffc166;
-  --billing-value-bg: rgba(255, 255, 255, 0.04);
+  --billing-accent: #ffd77a;
+  --billing-amber: #e2b85c;
+  --billing-value-bg: rgba(226, 184, 92, 0.08);
 }
 
 * {
@@ -64,11 +69,14 @@
 }
 
 body {
+  position: relative;
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   background:
-    radial-gradient(1200px 500px at 10% -10%, rgba(24, 199, 135, 0.08), transparent 55%),
-    radial-gradient(900px 420px at 100% 0%, rgba(120, 247, 198, 0.05), transparent 50%),
+    radial-gradient(1200px 620px at 16% -12%, rgba(226, 184, 92, 0.12), transparent 55%),
+    radial-gradient(900px 460px at 100% 0%, rgba(201, 150, 50, 0.1), transparent 52%),
+    linear-gradient(180deg, rgba(11, 8, 5, 0.92), rgba(7, 5, 4, 0.98)),
     var(--bg);
   color: var(--text);
   font-family:
@@ -76,6 +84,31 @@ body {
     sans-serif;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  position: fixed;
+  inset: -5vh -8vw;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  background-image: url("../assets/brand/happy-song-logo-bg.jpg");
+  background-position: right 12% top 42%;
+  background-repeat: no-repeat;
+  background-size: min(980px, 82vw) auto;
+  opacity: 0.11;
+  filter: blur(1.5px) saturate(0.9);
+}
+
+body::after {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(90deg, rgba(11, 8, 5, 0.72), rgba(11, 8, 5, 0.34), rgba(11, 8, 5, 0.78)),
+    radial-gradient(circle at 50% 20%, rgba(255, 215, 122, 0.06), transparent 42%);
 }
 
 /* UI-3: reusable badge, button, form, and panel primitives */
@@ -213,9 +246,10 @@ body {
 .inventory-button:not(:disabled),
 .stock-movements-button:not(:disabled),
 .fnb-sales-report-button:not(:disabled) {
-  border-color: rgba(24, 199, 135, 0.45);
-  background: var(--available);
-  color: #062217;
+  border-color: rgba(255, 215, 122, 0.62);
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
+  box-shadow: 0 10px 24px rgba(201, 150, 50, 0.18);
 }
 
 .btn-secondary,
@@ -461,13 +495,20 @@ body {
 }
 
 .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
   padding: 28px clamp(18px, 4vw, 40px) 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, rgba(38, 29, 20, 0.94), rgba(13, 10, 7, 0.9)),
+    var(--surface-deep);
+  border-bottom: 1px solid var(--gold-smoke);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(14px);
 }
 
 .login-required {
@@ -476,28 +517,30 @@ body {
 
 .app-kicker {
   margin: 0 0 6px;
-  color: var(--muted);
+  color: var(--gold);
   font-size: 0.86rem;
-  font-weight: 700;
-  letter-spacing: 0;
+  font-weight: 900;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .app-header h1 {
   margin: 0;
+  color: var(--text);
   font-size: clamp(1.7rem, 3vw, 2.4rem);
   line-height: 1.1;
+  text-shadow: 0 0 24px rgba(226, 184, 92, 0.18);
 }
 
 .app-badge {
   flex: 0 0 auto;
   padding: 9px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--gold-smoke);
   border-radius: 8px;
   color: var(--muted);
   font-size: 0.9rem;
   font-weight: 700;
-  background: var(--surface);
+  background: rgba(26, 20, 14, 0.72);
 }
 
 .app-badge.mock {
@@ -534,10 +577,10 @@ body {
   align-items: center;
   min-height: 42px;
   padding: 0 12px;
-  border: 1px solid rgba(120, 247, 198, 0.35);
+  border: 1px solid var(--gold-smoke);
   border-radius: var(--radius-sm);
-  background: rgba(120, 247, 198, 0.08);
-  color: #c9ffe8;
+  background: rgba(226, 184, 92, 0.1);
+  color: var(--gold-strong);
   font-size: 0.88rem;
   font-weight: 800;
   white-space: nowrap;
@@ -555,14 +598,14 @@ body {
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(800px 420px at 20% 0%, rgba(24, 199, 135, 0.16), transparent 58%),
-    rgba(10, 12, 18, 0.96);
+    radial-gradient(800px 420px at 20% 0%, rgba(226, 184, 92, 0.16), transparent 58%),
+    rgba(11, 8, 5, 0.96);
 }
 
 .operator-login-panel {
   width: min(420px, 100%);
   padding: 28px;
-  border: 1px solid rgba(120, 247, 198, 0.2);
+  border: 1px solid var(--gold-smoke);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--shadow-panel);
@@ -570,7 +613,7 @@ body {
 
 .operator-login-kicker {
   margin: 0 0 8px;
-  color: var(--muted);
+  color: var(--gold);
   font-size: 0.82rem;
   font-weight: 900;
   letter-spacing: 0;
@@ -586,7 +629,7 @@ body {
 .operator-login-field {
   display: grid;
   gap: 8px;
-  color: #d6deea;
+  color: var(--muted);
   font-size: 0.92rem;
   font-weight: 800;
 }
@@ -628,6 +671,8 @@ body {
 }
 
 .dashboard-shell {
+  position: relative;
+  z-index: 1;
   width: min(var(--content-max), 100%);
   margin: 0 auto;
   padding: var(--space-5) clamp(18px, 3.5vw, 40px) var(--space-6);
@@ -640,6 +685,8 @@ body {
 }
 
 .app-tabs {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
@@ -658,9 +705,9 @@ body {
   flex: 0 0 auto;
   min-height: 42px;
   padding: 0 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--gold-smoke);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(26, 20, 14, 0.62);
   color: var(--muted);
   cursor: pointer;
   font: inherit;
@@ -692,16 +739,16 @@ body {
 
 .app-tab-button:hover,
 .app-tab-button:focus-visible {
-  border-color: rgba(92, 213, 155, 0.45);
+  border-color: rgba(226, 184, 92, 0.5);
   color: var(--text);
-  outline: 3px solid rgba(92, 213, 155, 0.15);
+  outline: 3px solid rgba(226, 184, 92, 0.16);
   outline-offset: 2px;
 }
 
 .app-tab-button.active {
-  border-color: rgba(92, 213, 155, 0.55);
-  background: rgba(92, 213, 155, 0.14);
-  color: #5cd59b;
+  border-color: rgba(255, 215, 122, 0.62);
+  background: linear-gradient(180deg, rgba(255, 215, 122, 0.2), rgba(201, 150, 50, 0.12));
+  color: var(--gold-strong);
 }
 
 .dashboard-panels {
@@ -6248,6 +6295,162 @@ body {
   .transaction-actions .transaction-pay-button {
     width: 100%;
     flex: 1 1 100%;
+  }
+}
+
+/* Happy Song dark lounge theme refinements. */
+.menu-panel,
+.fb-order-panel,
+.open-fnb-panel,
+.today-fnb-panel,
+.inventory-panel,
+.stock-adjustment-panel,
+.stock-movements-panel,
+.owner-dashboard,
+.room-occupancy,
+.room-usage-report,
+.fnb-sales-report-panel,
+.transaction-history,
+.settings-panel,
+.room-time-logs-panel,
+.cashier-revenue-panel,
+.cashier-closing-panel,
+.billing-summary {
+  border-color: var(--gold-smoke);
+  background:
+    linear-gradient(180deg, rgba(38, 29, 20, 0.9), rgba(16, 12, 8, 0.88)),
+    var(--surface);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(10px);
+}
+
+.panel-header,
+.menu-panel-header,
+.fb-order-header,
+.open-fnb-header,
+.today-fnb-header,
+.inventory-header,
+.stock-movements-header,
+.owner-dashboard-header,
+.room-occupancy-header,
+.room-usage-report-header,
+.fnb-sales-report-header,
+.transaction-history-header,
+.cashier-closing-history-header,
+.room-time-logs-header,
+.settings-header,
+.billing-summary-header {
+  border-bottom-color: rgba(226, 184, 92, 0.16);
+}
+
+.panel-title,
+.menu-panel-title,
+.fb-order-title,
+.open-fnb-title,
+.today-fnb-title,
+.inventory-title,
+.stock-movements-title,
+.owner-dashboard-title,
+.room-occupancy-title,
+.room-usage-report-title,
+.fnb-sales-report-title,
+.transaction-history-header h2,
+.cashier-closing-history-title,
+.room-time-logs-title,
+.cashier-revenue-title,
+.cashier-closing-title,
+.billing-summary-title {
+  color: var(--gold-strong);
+}
+
+.billing-summary-value,
+.billing-summary-total .billing-summary-value,
+.room-usage-summary-value,
+.room-occupancy-summary-value,
+.owner-dashboard-value,
+.fnb-sales-report-value,
+.cashier-revenue-value {
+  color: var(--gold-strong);
+}
+
+.custom-date-input,
+.billing-payment-select,
+.today-fnb-room-filter,
+.fb-order-note,
+.fb-order-quantity,
+.stock-adjustment-input,
+.stock-adjustment-select,
+.stock-adjustment-textarea,
+.settings-input,
+.settings-select,
+.settings-textarea {
+  border-color: rgba(226, 184, 92, 0.22);
+  background: rgba(13, 10, 7, 0.68);
+  color: var(--text);
+}
+
+.custom-date-input:focus-visible,
+.billing-payment-select:focus-visible,
+.today-fnb-room-filter:focus-visible,
+.fb-order-note:focus-visible,
+.fb-order-quantity:focus-visible,
+.stock-adjustment-input:focus-visible,
+.stock-adjustment-select:focus-visible,
+.stock-adjustment-textarea:focus-visible,
+.settings-input:focus-visible,
+.settings-select:focus-visible,
+.settings-textarea:focus-visible {
+  border-color: rgba(255, 215, 122, 0.72);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.period-filter-apply-button,
+.room-usage-report-button,
+.pagination-button:not(:disabled) {
+  border-color: rgba(255, 215, 122, 0.55);
+  background: rgba(226, 184, 92, 0.13);
+  color: var(--gold-strong);
+}
+
+.period-filter-apply-button:hover,
+.period-filter-apply-button:focus-visible,
+.room-usage-report-button:hover,
+.room-usage-report-button:focus-visible,
+.pagination-button:hover:not(:disabled),
+.pagination-button:focus-visible:not(:disabled) {
+  background: rgba(226, 184, 92, 0.22);
+  outline: 3px solid rgba(226, 184, 92, 0.16);
+}
+
+.room-card.available {
+  background:
+    linear-gradient(160deg, rgba(53, 183, 121, 0.95), rgba(12, 98, 68, 0.96)),
+    var(--surface);
+}
+
+.room-card.occupied {
+  background:
+    linear-gradient(160deg, rgba(216, 106, 95, 0.96), rgba(127, 36, 31, 0.98)),
+    var(--surface);
+}
+
+.room-card.maintenance {
+  background:
+    linear-gradient(160deg, rgba(240, 184, 79, 0.96), rgba(122, 76, 18, 0.98)),
+    var(--surface);
+}
+
+@media (max-width: 767px) {
+  body::before {
+    inset: 0 -34vw;
+    background-position: center top 92px;
+    background-size: 120vw auto;
+    opacity: 0.08;
+  }
+
+  .app-header {
+    position: relative;
   }
 }
 
