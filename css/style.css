@@ -40,6 +40,10 @@
   --occupied-deep: #7f241f;
   --maintenance: #f0b84f;
   --maintenance-deep: #7a4c12;
+  --paid-waiting-start: #4b86d9;
+  --paid-waiting-start-deep: #153a70;
+  --cleaning: #dba742;
+  --cleaning-deep: #6b4411;
   --button: #1a130b;
   --button-bg: #c99632;
   --button-hover: #e2b85c;
@@ -52,6 +56,8 @@
   --available-glow: 0 0 28px rgba(24, 199, 135, 0.35);
   --occupied-glow: 0 0 28px rgba(255, 61, 104, 0.35);
   --maintenance-glow: 0 0 28px rgba(242, 184, 75, 0.3);
+  --paid-waiting-start-glow: 0 0 28px rgba(96, 165, 250, 0.32);
+  --cleaning-glow: 0 0 28px rgba(226, 184, 92, 0.28);
   --state-bg: rgba(26, 20, 14, 0.82);
   --state-info-bg: rgba(24, 199, 135, 0.12);
   --state-info-border: rgba(24, 199, 135, 0.45);
@@ -2103,6 +2109,16 @@ body::after {
 .room-card.maintenance {
   background: linear-gradient(160deg, var(--maintenance), var(--maintenance-deep));
   box-shadow: var(--shadow), var(--maintenance-glow);
+}
+
+.room-card.paid-waiting-start {
+  background: linear-gradient(160deg, var(--paid-waiting-start), var(--paid-waiting-start-deep));
+  box-shadow: var(--shadow), var(--paid-waiting-start-glow);
+}
+
+.room-card.cleaning {
+  background: linear-gradient(160deg, var(--cleaning), var(--cleaning-deep));
+  box-shadow: var(--shadow), var(--cleaning-glow);
 }
 
 .state-message {
@@ -5869,6 +5885,14 @@ body::after {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.room-operational-helper {
+  margin: 0;
+  color: rgba(255, 245, 223, 0.82);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .room-tv-control {
   display: grid;
   gap: 8px;
@@ -7042,6 +7066,18 @@ body::after {
 .room-card.maintenance {
   background:
     linear-gradient(160deg, rgba(240, 184, 79, 0.96), rgba(122, 76, 18, 0.98)),
+    var(--surface);
+}
+
+.room-card.paid-waiting-start {
+  background:
+    linear-gradient(160deg, rgba(75, 134, 217, 0.96), rgba(21, 58, 112, 0.98)),
+    var(--surface);
+}
+
+.room-card.cleaning {
+  background:
+    linear-gradient(160deg, rgba(219, 167, 66, 0.96), rgba(107, 68, 17, 0.98)),
     var(--surface);
 }
 

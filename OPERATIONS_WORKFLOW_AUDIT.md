@@ -236,16 +236,20 @@ Goal:
 
 Backend impact: low.
 
+Status: implemented in frontend only on 2026-07-20.
+
 Work:
 
 - Add frontend labels for future states without changing backend writes.
 - Update management/audit checks to recognize future statuses as planned.
 - Update schema documentation with intended lifecycle.
+- Keep master room status options limited to current backend-supported values until lifecycle actions are implemented.
 
 Safe outcome:
 
 - App remains operational.
 - Future backend states will not immediately appear as "Tidak Dikenal".
+- No `startSession`, `extendSession`, `closeSession`, transaction, F&B, or closing behavior is changed in this phase.
 
 ### Phase 2: Add booking/prepayment record without starting countdown
 
@@ -396,4 +400,3 @@ The safest route is:
 5. Introduce cleaning as a separate transition after the payment flow is stable.
 
 This keeps the currently stable cashier closing, owner reports, F&B billing, and transaction history from being disrupted while we move toward the real karaoke operating model.
-

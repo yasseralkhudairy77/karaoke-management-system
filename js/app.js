@@ -139,6 +139,39 @@ const REPORT_SUB_TABS = [
 
 const OPERATIONAL_SHIFT_NOTE =
   "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+const ROOM_STATUS_CONFIG = {
+  available: {
+    label: "Kosong",
+    className: "available",
+    tone: "success",
+    buttonLabel: "Mulai Sesi",
+  },
+  occupied: {
+    label: "Terisi",
+    className: "occupied",
+    tone: "danger",
+    buttonLabel: "Selesaikan Sesi",
+  },
+  maintenance: {
+    label: "Perbaikan",
+    className: "maintenance",
+    tone: "warning",
+    buttonLabel: "Tidak Tersedia",
+  },
+  paid_waiting_start: {
+    label: "Menunggu Mulai",
+    className: "paid-waiting-start",
+    tone: "info",
+    buttonLabel: "Menunggu Room Siap",
+  },
+  cleaning: {
+    label: "Cleaning",
+    className: "cleaning",
+    tone: "warning",
+    buttonLabel: "Menunggu Siap",
+  },
+};
+const VALID_ROOM_STATUS_KEYS = new Set(Object.keys(ROOM_STATUS_CONFIG));
 
 function loadOperatorSession() {
   try {
@@ -228,19 +261,7 @@ function withStatusBadge(baseClass, tone = "neutral") {
 }
 
 function getRoomStatusTone(status) {
-  if (status === "available") {
-    return "success";
-  }
-
-  if (status === "occupied") {
-    return "danger";
-  }
-
-  if (status === "maintenance") {
-    return "warning";
-  }
-
-  return "neutral";
+  return ROOM_STATUS_CONFIG[status]?.tone || "neutral";
 }
 
 function getPaymentStatusTone(status) {
@@ -3570,39 +3591,15 @@ function getElapsedSeconds(startTime) {
 }
 
 function getStatusLabel(status) {
-  if (status === "available") {
-    return "Kosong";
-  }
-
-  if (status === "occupied") {
-    return "Terisi";
-  }
-
-  if (status === "maintenance") {
-    return "Perbaikan";
-  }
-
-  return "Tidak Dikenal";
+  return ROOM_STATUS_CONFIG[status]?.label || "Tidak Dikenal";
 }
 
 function getStatusClass(status) {
-  return ["available", "occupied", "maintenance"].includes(status) ? status : "unknown";
+  return ROOM_STATUS_CONFIG[status]?.className || "unknown";
 }
 
 function getSessionButtonLabel(status) {
-  if (status === "available") {
-    return "Mulai Sesi";
-  }
-
-  if (status === "occupied") {
-    return "Selesaikan Sesi";
-  }
-
-  if (status === "maintenance") {
-    return "Tidak Tersedia";
-  }
-
-  return "Cek Status";
+  return ROOM_STATUS_CONFIG[status]?.buttonLabel || "Cek Status";
 }
 
 function getCurrentOperatorRole() {
@@ -5073,6 +5070,8 @@ function createRoomCard(room) {
 
   if (room.status === "occupied") {
     meta.appendChild(createRoomBookingInfoElement(room));
+  } else if (room.status === "paid_waiting_start" || room.status === "cleaning") {
+    meta.appendChild(createRoomOperationalStatusInfoElement(room.status));
   } else {
     const durationLabel = document.createElement("p");
     durationLabel.className = "meta-label";
@@ -5100,6 +5099,7 @@ function createRoomCard(room) {
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
   sessionButton.textContent = sessionButtonLabel;
+  sessionButton.disabled = room.status === "paid_waiting_start" || room.status === "cleaning";
 
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
@@ -5126,6 +5126,33 @@ function createRoomCard(room) {
   }
 
   return card;
+}
+
+function createRoomOperationalStatusInfoElement(status) {
+  const info = document.createElement("div");
+  info.className = "room-booking-info room-operational-info";
+
+  const title = document.createElement("p");
+  title.className = "room-booking-row";
+
+  const label = document.createElement("span");
+  label.className = "room-booking-label";
+  label.textContent = "Status:";
+
+  const value = document.createElement("span");
+  value.className = "room-booking-value";
+  value.textContent = getStatusLabel(status);
+
+  title.append(label, value);
+
+  const helper = document.createElement("p");
+  helper.className = "room-operational-helper";
+  helper.textContent = status === "paid_waiting_start"
+    ? "Sudah dibayar, menunggu room dan perangkat siap sebelum countdown dimulai."
+    : "Room sedang dibersihkan dan belum bisa dijual kembali.";
+
+  info.append(title, helper);
+  return info;
 }
 
 function createRoomBookingInfoElement(room) {
@@ -9541,18 +9568,16 @@ function createMasterDataFormElement() {
 
 function getMasterStatusBadge(status) {
   const normalizedStatus = String(status || "").trim().toLowerCase();
-  const tone = normalizedStatus === "active" || normalizedStatus === "available"
-    ? "success"
-    : normalizedStatus === "maintenance"
-      ? "warning"
-      : normalizedStatus === "occupied"
-        ? "danger"
-        : normalizedStatus === "inactive"
-          ? "neutral"
-          : "neutral";
+  const roomTone = ROOM_STATUS_CONFIG[normalizedStatus]?.tone;
+  const tone = roomTone
+    || (normalizedStatus === "active"
+      ? "success"
+      : normalizedStatus === "inactive"
+        ? "neutral"
+        : "neutral");
   const badge = document.createElement("span");
   badge.className = withStatusBadge("master-status-badge", tone);
-  badge.textContent = normalizedStatus || "unknown";
+  badge.textContent = ROOM_STATUS_CONFIG[normalizedStatus]?.label || normalizedStatus || "unknown";
   return badge;
 }
 
@@ -9787,7 +9812,7 @@ function createQualityIssue({ type, id, name, issue, severity, recommendation, c
 
 function detectRoomQualityIssues(sourceRooms) {
   const nameCounts = createNameCountMap(sourceRooms, (room) => room.room_name);
-  const validStatuses = new Set(["available", "occupied", "maintenance"]);
+  const validStatuses = VALID_ROOM_STATUS_KEYS;
   const issues = [];
 
   sourceRooms.forEach((room) => {
@@ -13116,6 +13141,16 @@ async function handleRoomAction(event) {
 
   if (room.status === "maintenance") {
     showInlineNotice("Ruangan sedang dalam perbaikan.", "error");
+    return;
+  }
+
+  if (room.status === "paid_waiting_start") {
+    showInlineNotice("Room sudah dibayar dan menunggu instruksi mulai. Tombol mulai countdown akan dibuat pada fase berikutnya.", "error");
+    return;
+  }
+
+  if (room.status === "cleaning") {
+    showInlineNotice("Room sedang cleaning. Tunggu waiter menandai room siap sebelum dijual lagi.", "error");
     return;
   }
 
