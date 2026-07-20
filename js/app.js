@@ -114,6 +114,28 @@ const TRANSACTION_PERIOD_OPTIONS = [
   ["all", "Semua"],
   ["custom", "Custom"],
 ];
+const REPORT_SUB_TABS = [
+  {
+    key: "owner",
+    label: "Owner",
+    description: "Ringkasan uang masuk, status kas, dan cetak laporan owner.",
+  },
+  {
+    key: "cashier",
+    label: "Tutup Shift",
+    description: "Pantau hasil closing kasir dan laporan tutup shift.",
+  },
+  {
+    key: "fnb",
+    label: "F&B",
+    description: "Lihat penjualan makanan/minuman, menu terlaris, dan stok rendah.",
+  },
+  {
+    key: "room",
+    label: "Room",
+    description: "Pantau okupansi, pemakaian room, durasi, dan room terlaris.",
+  },
+];
 
 const OPERATIONAL_SHIFT_NOTE =
   "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
@@ -383,6 +405,7 @@ let tvDeviceForm = null;
 let isSavingTvDevice = false;
 let isTogglingTvDeviceStatus = false;
 let activeDashboardTab = loadActiveDashboardTab();
+let activeReportSubTab = "owner";
 let currentOperator = loadOperatorSession();
 let loginPin = "";
 let loginErrorMessage = "";
@@ -11080,6 +11103,19 @@ function isValidDashboardTab(tabKey) {
   return DASHBOARD_TABS.some((tab) => tab.key === tabKey);
 }
 
+function isValidReportSubTab(tabKey) {
+  return REPORT_SUB_TABS.some((tab) => tab.key === tabKey);
+}
+
+function setActiveReportSubTab(tabKey) {
+  if (!isValidReportSubTab(tabKey) || activeReportSubTab === tabKey) {
+    return;
+  }
+
+  activeReportSubTab = tabKey;
+  renderRooms();
+}
+
 function setActiveDashboardTab(tabKey) {
   if (!isValidDashboardTab(tabKey) || activeDashboardTab === tabKey) {
     return;
@@ -11113,6 +11149,7 @@ function refreshActiveTabData() {
       loadOwnerPeriodReport();
       loadOwnerDashboardSummary();
       loadTodayFnbSalesReport();
+      loadTodayCashierClosings();
       loadRoomUsageReport();
       break;
     case "transactions":
@@ -11220,6 +11257,67 @@ function renderAppTabs() {
   appTabsNav.replaceChildren(fragment);
 }
 
+function createReportsSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "reports-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu laporan");
+
+  REPORT_SUB_TABS.forEach((tab) => {
+    const button = document.createElement("button");
+    button.className = activeReportSubTab === tab.key
+      ? "reports-subnav-button active"
+      : "reports-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-report-subtab";
+    button.dataset.reportTab = tab.key;
+    button.setAttribute("aria-pressed", activeReportSubTab === tab.key ? "true" : "false");
+
+    const label = document.createElement("span");
+    label.className = "reports-subnav-label";
+    label.textContent = tab.label;
+
+    const description = document.createElement("span");
+    description.className = "reports-subnav-description";
+    description.textContent = tab.description;
+
+    button.append(label, description);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
+function createReportsSubTabContentElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = `reports-subtab-content reports-subtab-content--${activeReportSubTab}`;
+
+  switch (activeReportSubTab) {
+    case "owner":
+      wrapper.append(
+        createFinanceOverviewElement(),
+        createOwnerDashboardElement()
+      );
+      break;
+    case "cashier":
+      wrapper.appendChild(renderCashierClosingHistory());
+      break;
+    case "fnb":
+      wrapper.appendChild(createTodayFnbSalesReportPanelElement());
+      break;
+    case "room":
+      wrapper.append(
+        createRoomOccupancyElement(),
+        createRoomUsageReportPanelElement()
+      );
+      break;
+    default:
+      wrapper.appendChild(createStateMessage("Sub menu laporan tidak dikenal.", "error"));
+      break;
+  }
+
+  return wrapper;
+}
+
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
@@ -11259,11 +11357,8 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "reports":
       panel.append(
-        createFinanceOverviewElement(),
-        createOwnerDashboardElement(),
-        createRoomOccupancyElement(),
-        createTodayFnbSalesReportPanelElement(),
-        createRoomUsageReportPanelElement()
+        createReportsSubNavElement(),
+        createReportsSubTabContentElement()
       );
       break;
     case "transactions":
@@ -12608,6 +12703,11 @@ async function handleRoomAction(event) {
 
   if (action === "submit-master-form") {
     await submitMasterDataForm();
+    return;
+  }
+
+  if (action === "switch-report-subtab") {
+    setActiveReportSubTab(button.dataset.reportTab || "owner");
     return;
   }
 
