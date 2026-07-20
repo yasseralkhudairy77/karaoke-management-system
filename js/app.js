@@ -387,7 +387,7 @@ let loginPin = "";
 let loginErrorMessage = "";
 let isLoggingIn = false;
 let dashboardDataInitialized = false;
-const PAGINATION_PAGE_SIZE = 15;
+const PAGINATION_PAGE_SIZE = 10;
 const paginationState = {};
 const OPERATIONAL_OPEN_HOUR = 17;
 const OPERATIONAL_CLOSE_HOUR = 10;
@@ -9104,7 +9104,7 @@ function createPaginationControlsElement(key, totalItems) {
 
   const info = document.createElement("p");
   info.className = "pagination-info";
-  info.textContent = `Menampilkan ${rangeStart}-${rangeEnd} dari ${totalItems} data · Halaman ${page} dari ${totalPages}`;
+  info.textContent = `Menampilkan ${rangeStart}-${rangeEnd} dari ${totalItems} data - Halaman ${page} dari ${totalPages}`;
 
   const actions = document.createElement("div");
   actions.className = "pagination-actions";
