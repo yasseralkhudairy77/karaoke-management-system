@@ -7738,7 +7738,7 @@ function buildFinanceOverviewSummary() {
   const fnbOrderSummary = todayFnbOrderSummary || {};
   const fnbSalesSummary = ownerReportFnbSalesSummary || todayFnbSalesSummary || {};
   const activeRoomCount = rooms.filter((room) => normalizeRoomStatus(room?.status) === "occupied").length;
-  const relevantClosings = ownerReportCashierClosings.length > 0 ? ownerReportCashierClosings : todayCashierClosings;
+  const relevantClosings = hasOwnerReportData ? ownerReportCashierClosings : todayCashierClosings;
   const latestClosing = relevantClosings[0] || null;
   const cashDifference = Number(latestClosing?.cash_difference) || 0;
   const openFnbAmount = Number(fnbOrderSummary.open_amount) || calculateOpenFnbOrdersSummary(openFnbOrders).total_amount;
@@ -7771,6 +7771,7 @@ function buildFinanceOverviewSummary() {
     roomTeraktif: roomSummary.top_room_name || "-",
     menuTerlaris: fnbSalesSummary.top_menu_name || "-",
     setoranKasirTersimpan: relevantClosings.length > 0,
+    jumlahClosing: relevantClosings.length,
     latestClosing,
     cashDifference,
   };
@@ -8086,7 +8087,7 @@ function createOwnerReportPrintPreviewElement() {
     ["Status Kas", cashStatus.label, cashStatus.detail],
     ["Closing Terakhir", latestClosing.closing_id || "-", latestClosing.created_at || "Belum ada closing pada periode ini."],
     ["Selisih Cash", formatCurrency(summary.cashDifference), "Selisih dari closing kasir terakhir pada periode ini."],
-    ["Jumlah Closing", `${ownerReportCashierClosings.length || todayCashierClosings.length} closing`, "Jumlah laporan tutup shift yang tercatat."],
+    ["Jumlah Closing", `${summary.jumlahClosing} closing`, "Jumlah laporan tutup shift yang tercatat."],
   ]);
 
   const checklistSection = document.createElement("section");
