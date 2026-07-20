@@ -5266,6 +5266,21 @@ body::after {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.closing-print-section--equal {
+  border-color: rgba(120, 247, 198, 0.32);
+  background: rgba(120, 247, 198, 0.06);
+}
+
+.closing-print-section--positive {
+  border-color: rgba(155, 215, 255, 0.32);
+  background: rgba(155, 215, 255, 0.06);
+}
+
+.closing-print-section--negative {
+  border-color: rgba(255, 193, 102, 0.34);
+  background: rgba(255, 193, 102, 0.07);
+}
+
 .closing-print-section h3 {
   margin: 0;
   color: var(--text);
@@ -5304,6 +5319,36 @@ body::after {
   font-size: 0.95rem;
   font-weight: 700;
   line-height: 1.45;
+}
+
+.closing-print-helper {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.closing-print-signatures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 18px 14px 10px;
+  border: 1px dashed rgba(226, 184, 92, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.closing-print-signature {
+  display: grid;
+  gap: 8px;
+  min-height: 82px;
+  align-content: end;
+}
+
+.closing-print-signature-line {
+  height: 1px;
+  background: rgba(226, 184, 92, 0.5);
 }
 
 .closing-print-actions {
@@ -6903,6 +6948,7 @@ body::after {
 
   .closing-print-header,
   .closing-print-section,
+  .closing-print-signatures,
   .receipt-print-header,
   .receipt-print-section,
   .receipt-print-footer,
@@ -6916,6 +6962,7 @@ body::after {
   .closing-print-section h3,
   .closing-print-value,
   .closing-print-note,
+  .closing-print-signature-line,
   .receipt-print-title,
   .receipt-print-section-title,
   .receipt-print-value,
@@ -6926,6 +6973,7 @@ body::after {
 
   .closing-print-subtitle,
   .closing-print-label,
+  .closing-print-helper,
   .receipt-print-brand,
   .receipt-print-meta,
   .receipt-print-label,
@@ -6936,5 +6984,15 @@ body::after {
   .closing-print-actions,
   .receipt-print-actions {
     display: none;
+  }
+
+  .closing-print-section--equal,
+  .closing-print-section--positive,
+  .closing-print-section--negative {
+    background: #ffffff;
+  }
+
+  .closing-print-signature-line {
+    background: #000000;
   }
 }

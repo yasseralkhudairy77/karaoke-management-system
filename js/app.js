@@ -8338,11 +8338,11 @@ function createClosingPrintPreviewElement(closing) {
   const title = document.createElement("h2");
   title.className = "closing-print-title";
   title.id = "closing-print-title";
-  title.textContent = "Rekap Closing Kasir";
+  title.textContent = "Laporan Tutup Shift Kasir";
 
   const subtitle = document.createElement("p");
   subtitle.className = "closing-print-subtitle";
-  subtitle.textContent = "Karaoke POS";
+  subtitle.textContent = "Happy Song Karaoke - arsip operasional kasir";
 
   header.append(title, subtitle);
 
@@ -8361,15 +8361,21 @@ function createClosingPrintPreviewElement(closing) {
     ["Total Tagihan", formatCurrency(closing?.total_revenue)],
   ]);
 
-  const paymentSummary = createClosingPrintSection("Pembayaran", [
-    ["Cash Sistem", formatCurrency(closing?.cash_expected)],
-    ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+  const cashSummary = createClosingPrintSection("Pemeriksaan Cash", [
+    ["Cash Sistem", formatCurrency(closing?.cash_expected), "Uang cash yang seharusnya ada di laci."],
+    ["Cash Aktual", formatCurrency(closing?.cash_actual), "Uang cash yang dihitung kasir."],
     [
       "Selisih Cash",
       `${formatCurrency(closing?.cash_difference)} - ${getClosingHistoryDifferenceLabel(Number(closing?.cash_difference) || 0)}`,
+      "Selisih otomatis antara cash aktual dan cash sistem.",
     ],
-    ["Transfer", formatCurrency(closing?.transfer_revenue)],
-    ["Sisa Belum Dibayar", formatCurrency(closing?.unpaid_revenue)],
+  ], `closing-print-section--${getCashDifferenceClass(Number(closing?.cash_difference) || 0)}`);
+
+  const transferSummary = createClosingPrintSection("Pemeriksaan Transfer", [
+    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue), "Total pembayaran transfer yang tercatat di sistem."],
+    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`, "Cocokkan dengan mutasi rekening, QRIS, atau bukti transfer."],
+    ["Status Cek", Number(closing?.transfer_transactions) > 0 ? "Perlu cocokkan manual" : "Tidak ada transfer", "Jika belum masuk, tulis di catatan kasir."],
+    ["Sisa Belum Dibayar", formatCurrency(closing?.unpaid_revenue), "Tagihan yang belum lunas pada saat closing."],
   ]);
 
   const noteSection = document.createElement("section");
@@ -8384,9 +8390,27 @@ function createClosingPrintPreviewElement(closing) {
 
   noteSection.append(noteTitle, note);
 
+  const signatureSection = document.createElement("section");
+  signatureSection.className = "closing-print-signatures";
+
+  ["Kasir", "Owner / Supervisor"].forEach((labelText) => {
+    const signature = document.createElement("div");
+    signature.className = "closing-print-signature";
+
+    const line = document.createElement("div");
+    line.className = "closing-print-signature-line";
+
+    const label = document.createElement("p");
+    label.className = "closing-print-label";
+    label.textContent = labelText;
+
+    signature.append(line, label);
+    signatureSection.appendChild(signature);
+  });
+
   const footer = document.createElement("p");
   footer.className = "closing-print-note";
-  footer.textContent = "Dicetak dari Dashboard Kasir Karaoke";
+  footer.textContent = "Dicetak dari Dashboard Kasir Happy Song Karaoke. Simpan laporan ini sebagai arsip tutup shift.";
 
   const actions = document.createElement("div");
   actions.className = "closing-print-actions";
@@ -8404,14 +8428,16 @@ function createClosingPrintPreviewElement(closing) {
   closeButton.textContent = "Tutup Preview Cetak";
 
   actions.append(printButton, closeButton);
-  print.append(header, identity, transactionSummary, paymentSummary, noteSection, footer, actions);
+  print.append(header, identity, transactionSummary, cashSummary, transferSummary, noteSection, signatureSection, footer, actions);
 
   return print;
 }
 
-function createClosingPrintSection(titleText, rows) {
+function createClosingPrintSection(titleText, rows, modifierClass = "") {
   const section = document.createElement("section");
-  section.className = "closing-print-section";
+  section.className = modifierClass
+    ? `closing-print-section ${modifierClass}`
+    : "closing-print-section";
 
   const title = document.createElement("h3");
   title.textContent = titleText;
@@ -8419,7 +8445,7 @@ function createClosingPrintSection(titleText, rows) {
   const grid = document.createElement("div");
   grid.className = "closing-print-grid";
 
-  rows.forEach(([labelText, valueText]) => {
+  rows.forEach(([labelText, valueText, helperText]) => {
     const row = document.createElement("div");
     row.className = "closing-print-row";
 
@@ -8432,6 +8458,14 @@ function createClosingPrintSection(titleText, rows) {
     value.textContent = valueText;
 
     row.append(label, value);
+
+    if (helperText) {
+      const helper = document.createElement("p");
+      helper.className = "closing-print-helper";
+      helper.textContent = helperText;
+      row.appendChild(helper);
+    }
+
     grid.appendChild(row);
   });
 
