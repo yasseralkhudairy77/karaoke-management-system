@@ -1159,6 +1159,14 @@ body::after {
   border-bottom: 1px solid rgba(226, 184, 92, 0.18);
 }
 
+.finance-overview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .finance-overview-title {
   margin: 0;
   color: var(--gold-strong);
@@ -1813,6 +1821,7 @@ body::after {
 
 @media (max-width: 767px) {
   .finance-overview-header,
+  .finance-overview-actions,
   .finance-checklist-row,
   .owner-dashboard-header,
   .room-occupancy-header,
@@ -6924,12 +6933,15 @@ body::after {
 
   .closing-print,
   .closing-print *,
+  .owner-report-print,
+  .owner-report-print *,
   .receipt-print,
   .receipt-print * {
     visibility: visible;
   }
 
   .closing-print,
+  .owner-report-print,
   .receipt-print {
     position: absolute;
     left: 0;
@@ -6949,6 +6961,7 @@ body::after {
   .closing-print-header,
   .closing-print-section,
   .closing-print-signatures,
+  .owner-report-print-section,
   .receipt-print-header,
   .receipt-print-section,
   .receipt-print-footer,
@@ -6982,6 +6995,7 @@ body::after {
   }
 
   .closing-print-actions,
+  .owner-report-print .closing-print-actions,
   .receipt-print-actions {
     display: none;
   }

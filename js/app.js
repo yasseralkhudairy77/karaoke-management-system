@@ -99,6 +99,7 @@ let ownerReportRoomUsageSummary = null;
 let ownerReportFnbSalesSummary = null;
 let ownerReportCashierClosings = [];
 let isLoadingOwnerReport = false;
+let ownerReportPrintVisible = false;
 let roomWarningStateInitialized = false;
 let previousWarningRoomIds = new Set();
 let roomWarningAudioContext = null;
@@ -2597,6 +2598,25 @@ function hideClosingPrintPreview() {
 }
 
 function printSelectedClosing() {
+  if (typeof window === "undefined" || typeof window.print !== "function") {
+    showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
+    return;
+  }
+
+  window.print();
+}
+
+function showOwnerReportPrintPreview() {
+  ownerReportPrintVisible = true;
+  renderRooms();
+}
+
+function hideOwnerReportPrintPreview() {
+  ownerReportPrintVisible = false;
+  renderRooms();
+}
+
+function printOwnerReport() {
   if (typeof window === "undefined" || typeof window.print !== "function") {
     showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
     return;
@@ -7729,6 +7749,8 @@ function buildFinanceOverviewSummary() {
     totalPenjualan: pickNumber(transactionSummary.total_revenue_all, roomSummary.total_grand_revenue),
     sudahDibayar: pickNumber(transactionSummary.paid_revenue, transactionSummary.total_revenue_paid, roomSummary.paid_revenue),
     belumDibayar: pickNumber(transactionSummary.unpaid_revenue, roomSummary.unpaid_revenue),
+    cashMasuk: pickNumber(transactionSummary.cash_revenue),
+    transferMasuk: pickNumber(transactionSummary.transfer_revenue),
     penjualanRoom: pickNumber(
       roomSummary.total_room_revenue,
       fallbackTransactions.reduce((total, transaction) => total + (Number(transaction.room_total) || 0), 0)
@@ -7981,6 +8003,131 @@ function createOwnerReportPeriodFilterElement() {
   return wrapper;
 }
 
+function createOwnerReportPrintSection(titleText, rows) {
+  const section = document.createElement("section");
+  section.className = "closing-print-section owner-report-print-section";
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+
+  const grid = document.createElement("div");
+  grid.className = "closing-print-grid owner-report-print-grid";
+
+  rows.forEach(([labelText, valueText, helperText]) => {
+    const row = document.createElement("div");
+    row.className = "closing-print-row";
+
+    const label = document.createElement("p");
+    label.className = "closing-print-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "closing-print-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+
+    if (helperText) {
+      const helper = document.createElement("p");
+      helper.className = "closing-print-helper";
+      helper.textContent = helperText;
+      row.appendChild(helper);
+    }
+
+    grid.appendChild(row);
+  });
+
+  section.append(title, grid);
+
+  return section;
+}
+
+function createOwnerReportPrintPreviewElement() {
+  const summary = buildFinanceOverviewSummary();
+  const cashStatus = getFinanceCashStatus(summary);
+  const checklist = buildFinanceChecklist(summary);
+  const latestClosing = summary.latestClosing || {};
+
+  const print = document.createElement("section");
+  print.className = "closing-print owner-report-print";
+  print.setAttribute("aria-labelledby", "owner-report-print-title");
+
+  const header = document.createElement("div");
+  header.className = "closing-print-header";
+
+  const title = document.createElement("h2");
+  title.className = "closing-print-title";
+  title.id = "owner-report-print-title";
+  title.textContent = "Laporan Owner";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "closing-print-subtitle";
+  subtitle.textContent = `Happy Song Karaoke - ${getOwnerReportPeriodTitleSuffix()}`;
+
+  header.append(title, subtitle);
+
+  const moneySummary = createOwnerReportPrintSection("Ringkasan Uang Masuk", [
+    ["Total Penjualan", formatCurrency(summary.totalPenjualan), `${summary.totalTransaksi} transaksi tercatat.`],
+    ["Sudah Dibayar", formatCurrency(summary.sudahDibayar), "Uang yang sudah tercatat lunas."],
+    ["Belum Dibayar", formatCurrency(summary.belumDibayar), `${summary.transaksiBelumDibayar} transaksi belum lunas.`],
+    ["Cash", formatCurrency(summary.cashMasuk), "Pembayaran tunai dari transaksi lunas."],
+    ["Transfer", formatCurrency(summary.transferMasuk), "Pembayaran transfer yang perlu cocok dengan mutasi/QRIS."],
+  ]);
+
+  const operationalSummary = createOwnerReportPrintSection("Penjualan Operasional", [
+    ["Penjualan Room", formatCurrency(summary.penjualanRoom), `${summary.totalSesi} sesi room tercatat.`],
+    ["Penjualan F&B", formatCurrency(summary.penjualanFnb), `Menu terlaris: ${summary.menuTerlaris}`],
+    ["F&B Berjalan", formatCurrency(summary.pesananFnbBerjalan), "Pesanan aktif yang belum masuk tagihan akhir."],
+    ["Room Teraktif", summary.roomTeraktif, "Room dengan pemakaian terbesar pada periode ini."],
+    ["Room Berjalan", `${summary.roomBerjalan} room`, "Room yang masih occupied saat laporan dibuka."],
+  ]);
+
+  const closingSummary = createOwnerReportPrintSection("Status Tutup Shift", [
+    ["Status Kas", cashStatus.label, cashStatus.detail],
+    ["Closing Terakhir", latestClosing.closing_id || "-", latestClosing.created_at || "Belum ada closing pada periode ini."],
+    ["Selisih Cash", formatCurrency(summary.cashDifference), "Selisih dari closing kasir terakhir pada periode ini."],
+    ["Jumlah Closing", `${ownerReportCashierClosings.length || todayCashierClosings.length} closing`, "Jumlah laporan tutup shift yang tercatat."],
+  ]);
+
+  const checklistSection = document.createElement("section");
+  checklistSection.className = "closing-print-section owner-report-print-section";
+
+  const checklistTitle = document.createElement("h3");
+  checklistTitle.textContent = "Hal yang Perlu Dicek";
+
+  const checklistNote = document.createElement("p");
+  checklistNote.className = "closing-print-note";
+  checklistNote.textContent = checklist.length > 0
+    ? checklist.map((item) => `${item.label}: ${item.detail}`).join(" | ")
+    : "Tidak ada hal penting yang perlu dicek pada periode ini.";
+
+  checklistSection.append(checklistTitle, checklistNote);
+
+  const footer = document.createElement("p");
+  footer.className = "closing-print-note";
+  footer.textContent = "Dicetak dari Dashboard Owner Happy Song Karaoke. Gunakan laporan ini sebagai arsip evaluasi operasional.";
+
+  const actions = document.createElement("div");
+  actions.className = "closing-print-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "closing-print-button";
+  printButton.type = "button";
+  printButton.dataset.action = "print-owner-report";
+  printButton.textContent = "Cetak";
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "closing-print-button secondary";
+  closeButton.type = "button";
+  closeButton.dataset.action = "hide-owner-report-print";
+  closeButton.textContent = "Tutup Preview Cetak";
+
+  actions.append(printButton, closeButton);
+  print.append(header, moneySummary, operationalSummary, closingSummary, checklistSection, footer, actions);
+
+  return print;
+}
+
 function createFinanceOverviewElement() {
   const section = document.createElement("section");
   section.className = "finance-overview";
@@ -8010,7 +8157,18 @@ function createFinanceOverviewElement() {
   status.className = withStatusBadge("finance-overview-status", cashStatus.tone);
   status.textContent = cashStatus.label;
 
-  header.append(titleGroup, status);
+  const actions = document.createElement("div");
+  actions.className = "finance-overview-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "owner-dashboard-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-owner-report-print";
+  printButton.disabled = isLoadingOwnerReport;
+  printButton.textContent = "Preview Cetak";
+
+  actions.append(status, printButton);
+  header.append(titleGroup, actions);
 
   const grid = document.createElement("div");
   grid.className = "finance-overview-grid";
@@ -10998,6 +11156,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
+  if (ownerReportPrintVisible) {
+    fragment.appendChild(createOwnerReportPrintPreviewElement());
+  }
+
   if (cashierClosingConfirmationVisible) {
     fragment.appendChild(createCashierClosingConfirmationElement());
   }
@@ -12684,6 +12846,21 @@ async function handleRoomAction(event) {
 
   if (action === "apply-owner-report-custom-period") {
     await applyOwnerReportCustomPeriod();
+    return;
+  }
+
+  if (action === "show-owner-report-print") {
+    showOwnerReportPrintPreview();
+    return;
+  }
+
+  if (action === "hide-owner-report-print") {
+    hideOwnerReportPrintPreview();
+    return;
+  }
+
+  if (action === "print-owner-report") {
+    printOwnerReport();
     return;
   }
 
