@@ -285,6 +285,7 @@ function getRoomTimeBadgeTone(status) {
 let cashierClosingPreviewVisible = false;
 let cashierClosingCashActual = "";
 let cashierClosingNote = "";
+let cashierClosingConfirmationVisible = false;
 let lastCashierClosing = null;
 let isSavingCashierClosing = false;
 let todayCashierClosings = [];
@@ -3830,6 +3831,95 @@ function createCashierClosingSectionTitle(titleText, helperText = "") {
   }
 
   return wrapper;
+}
+
+function openCashierClosingConfirmation() {
+  if (hasTodayCashierClosing()) {
+    showInlineNotice("Closing kasir hari ini sudah tersimpan.", "error");
+    return;
+  }
+
+  cashierClosingConfirmationVisible = true;
+  renderRooms();
+}
+
+function closeCashierClosingConfirmation() {
+  cashierClosingConfirmationVisible = false;
+  renderRooms();
+}
+
+function createCashierClosingConfirmationElement() {
+  const preview = calculateCashierClosingPreview(todayTransactions);
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal cashier-closing-confirm-modal";
+  overlay.setAttribute("aria-labelledby", "cashier-closing-confirm-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog cashier-closing-confirm-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title cashier-closing-confirm-title";
+  title.id = "cashier-closing-confirm-title";
+  title.textContent = "Konfirmasi Simpan Closing";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning cashier-closing-confirm-warning";
+  warning.textContent = "Periksa angka terakhir ini sebelum closing disimpan. Setelah tersimpan, closing shift aktif akan terkunci.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details cashier-closing-confirm-details";
+
+  [
+    ["Cash Sistem", formatCurrency(preview.cashExpected)],
+    ["Cash Aktual", formatCurrency(preview.cashActual)],
+    ["Selisih Cash", `${formatCurrency(preview.cashDifference)} - ${getCashDifferenceLabel(preview.cashDifference)}`],
+    ["Transfer Sistem", formatCurrency(preview.transferRevenue)],
+    ["Belum Dibayar", formatCurrency(preview.unpaidRevenue)],
+    ["Total Tagihan", formatCurrency(preview.totalRevenue)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    item.className = "cashier-closing-confirm-item";
+
+    const label = document.createElement("p");
+    label.className = "cashier-closing-saved-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "cashier-closing-saved-value";
+    value.textContent = valueText;
+
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const transferNote = document.createElement("p");
+  transferNote.className = "cashier-closing-confirm-note";
+  transferNote.textContent = preview.transferTransactions > 0
+    ? "Transfer dianggap sudah dicek manual dengan mutasi/QRIS/bukti transfer."
+    : "Tidak ada transaksi transfer pada shift aktif.";
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-cashier-closing-confirmation";
+  cancelButton.disabled = isSavingCashierClosing;
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "confirm-save-cashier-closing";
+  submitButton.disabled = isSavingCashierClosing;
+  submitButton.textContent = isSavingCashierClosing ? "Menyimpan..." : "Ya, Simpan Closing";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, transferNote, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
 }
 
 function createCashierClosingPreviewElement(preview) {
@@ -10599,6 +10689,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
+  if (cashierClosingConfirmationVisible) {
+    fragment.appendChild(createCashierClosingConfirmationElement());
+  }
+
   if (tvOffConfirmation) {
     fragment.appendChild(createTvOffConfirmationElement());
   }
@@ -11671,6 +11765,7 @@ async function saveCashierClosing() {
     }
 
     lastCashierClosing = data.closing || null;
+    cashierClosingConfirmationVisible = false;
     showInlineNotice("Closing kasir berhasil disimpan.");
     await loadTodayCashierClosings();
   } catch (error) {
@@ -12112,6 +12207,16 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "close-cashier-closing-confirmation") {
+    closeCashierClosingConfirmation();
+    return;
+  }
+
+  if (action === "confirm-save-cashier-closing") {
+    await saveCashierClosing();
+    return;
+  }
+
   if (action === "send-tv-command") {
     await sendTvCommand(
       button.dataset.roomId || roomId || "",
@@ -12162,7 +12267,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "save-cashier-closing") {
-    await saveCashierClosing();
+    openCashierClosingConfirmation();
     return;
   }
 
