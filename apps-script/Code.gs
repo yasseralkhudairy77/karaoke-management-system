@@ -4967,9 +4967,19 @@ function sanitizeEmployeeForAccess_(employee) {
   return {
     employee_id: employee.employee_id || "",
     employee_name: employee.employee_name || "",
-    role: String(employee.role || "").trim().toLowerCase(),
+    role: normalizeEmployeeRole_(employee.role),
     status: getEmployeeStatus_(employee),
   };
+}
+
+function normalizeEmployeeRole_(role) {
+  var normalizedRole = String(role || "").trim().toLowerCase();
+
+  if (normalizedRole === "admin") {
+    return "manager";
+  }
+
+  return normalizedRole || "cashier";
 }
 
 function getEmployeeStatus_(employee) {
@@ -4987,12 +4997,13 @@ function getEmployees_() {
 }
 
 function roleMeetsRequired_(role, requiredRole) {
-  var normalizedRole = String(role || "").trim().toLowerCase();
-  var normalizedRequiredRole = String(requiredRole || "admin").trim().toLowerCase();
+  var normalizedRole = normalizeEmployeeRole_(role);
+  var normalizedRequiredRole = normalizeEmployeeRole_(requiredRole || "manager");
   var rank = {
     staff: 1,
+    receptionist: 1,
     cashier: 2,
-    admin: 3,
+    manager: 3,
     owner: 4,
   };
 
@@ -5000,11 +5011,11 @@ function roleMeetsRequired_(role, requiredRole) {
     return true;
   }
 
-  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.admin);
+  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.manager);
 }
 
 function auditAdminPinValidation_(payload, result, blockReason, employee) {
-  var requestedAction = String(payload.requested_action || "admin_pin").trim();
+  var requestedAction = String(payload.requested_action || "manager_pin").trim();
   var safeEmployee = sanitizeEmployeeForAccess_(employee);
 
   appendMasterDataAuditLog_({
@@ -5019,14 +5030,14 @@ function auditAdminPinValidation_(payload, result, blockReason, employee) {
         employee_name: safeEmployee.employee_name,
         role: safeEmployee.role,
         status: safeEmployee.status,
-        required_role: payload.required_role || "admin",
+        required_role: payload.required_role || "manager",
         requested_action: requestedAction,
       }
       : {
-        required_role: payload.required_role || "admin",
+        required_role: payload.required_role || "manager",
         requested_action: requestedAction,
       },
-    changed_by: safeEmployee ? safeEmployee.employee_name : payload.changed_by || "Admin",
+    changed_by: safeEmployee ? safeEmployee.employee_name : payload.changed_by || "Manager",
     note: requestedAction,
     result: result,
     block_reason: blockReason || "",
@@ -5038,9 +5049,9 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
 
   var payload = {
     pin: pin,
-    required_role: requiredRole || "admin",
-    requested_action: requestedAction || "admin_pin",
-    changed_by: changedBy || "Admin",
+    required_role: requiredRole || "manager",
+    requested_action: requestedAction || "manager_pin",
+    changed_by: changedBy || "Manager",
   };
   var normalizedPin = String(pin || "").trim();
 
@@ -5052,7 +5063,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN admin wajib diisi.",
+      message: "PIN owner/manager wajib diisi.",
       block_reason: "EMPTY_PIN",
     };
   }
@@ -5071,7 +5082,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN admin tidak valid.",
+      message: "PIN owner/manager tidak valid.",
       block_reason: "INVALID_PIN",
     };
   }
@@ -5097,7 +5108,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
   return {
     ok: true,
     success: true,
-    message: "PIN admin valid.",
+    message: "PIN owner/manager valid.",
     employee: sanitizeEmployeeForAccess_(employee),
   };
 }
@@ -5105,9 +5116,9 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
 function validateAdminPin_(payload) {
   var result = validateAdminPinPayload_(
     payload.pin,
-    payload.required_role || "admin",
-    payload.requested_action || "admin_pin",
-    payload.changed_by || "Admin",
+    payload.required_role || "manager",
+    payload.requested_action || "manager_pin",
+    payload.changed_by || "Manager",
     true
   );
 
@@ -5694,9 +5705,9 @@ function deleteBlockedResponse_(entityType, entityId, blockReason, message) {
 function authorizeAdminPinForMasterDelete_(payload, entityType, entityId) {
   var authResult = validateAdminPinPayload_(
     payload.admin_pin,
-    "admin",
+    "manager",
     "delete_permanent_" + entityType,
-    payload.changed_by || "Admin",
+    payload.changed_by || "Manager",
     true
   );
 
@@ -5709,7 +5720,7 @@ function authorizeAdminPinForMasterDelete_(payload, entityType, entityId) {
         entityType,
         entityId,
         "INVALID_ADMIN_PIN",
-        "Delete permanen membutuhkan PIN owner/admin yang valid."
+        "Delete permanen membutuhkan PIN owner/manager yang valid."
       ),
     };
   }

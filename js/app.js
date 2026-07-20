@@ -27,6 +27,28 @@ const DASHBOARD_TABS = [
   { key: "audit", label: "Audit" },
   { key: "settings", label: "Pengaturan" },
 ];
+const ROLE_ALIASES = {
+  admin: "manager",
+};
+const ROLE_LABELS = {
+  owner: "Owner",
+  manager: "Manager Operasional",
+  cashier: "Kasir",
+  receptionist: "Resepsionis",
+  staff: "Staff",
+};
+const ROLE_DASHBOARD_TABS = {
+  owner: ["rooms", "fnb", "stock", "reports", "transactions", "audit", "settings"],
+  manager: ["rooms", "fnb", "stock", "reports", "transactions", "audit", "settings"],
+  cashier: ["rooms", "fnb", "reports", "transactions"],
+  receptionist: ["rooms"],
+};
+const ROLE_REPORT_SUB_TABS = {
+  owner: ["owner", "cashier", "fnb", "room"],
+  manager: ["cashier", "fnb", "room"],
+  cashier: ["cashier"],
+  receptionist: [],
+};
 const FNB_PRIMARY_CATEGORY_ORDER = ["favorites", "Food", "Beverage", "Beer", "Spirit", "Anggur", "Cigarette"];
 const FNB_SPIRIT_SUBCATEGORY_ORDER = [
   "Cognac",
@@ -173,6 +195,49 @@ const ROOM_STATUS_CONFIG = {
 };
 const VALID_ROOM_STATUS_KEYS = new Set(Object.keys(ROOM_STATUS_CONFIG));
 
+function normalizeOperatorRole(role) {
+  const normalizedRole = String(role || "cashier").trim().toLowerCase() || "cashier";
+  return ROLE_ALIASES[normalizedRole] || normalizedRole;
+}
+
+function getOperatorRoleLabel(role) {
+  const normalizedRole = normalizeOperatorRole(role);
+  return ROLE_LABELS[normalizedRole] || normalizedRole || "Kasir";
+}
+
+function getCurrentOperatorRole() {
+  if (currentOperator?.role) {
+    return normalizeOperatorRole(currentOperator.role);
+  }
+
+  try {
+    return normalizeOperatorRole(
+      localStorage.getItem("karaoke_current_role")
+        || localStorage.getItem("karaoke_user_role")
+        || "cashier"
+    );
+  } catch (error) {
+    return "cashier";
+  }
+}
+
+function getAllowedDashboardTabsForCurrentRole() {
+  return ROLE_DASHBOARD_TABS[getCurrentOperatorRole()] || ROLE_DASHBOARD_TABS.cashier;
+}
+
+function getVisibleDashboardTabs() {
+  const allowedTabs = new Set(getAllowedDashboardTabsForCurrentRole());
+  return DASHBOARD_TABS.filter((tab) => allowedTabs.has(tab.key));
+}
+
+function getDefaultDashboardTabForCurrentRole() {
+  return getVisibleDashboardTabs()[0]?.key || "rooms";
+}
+
+function canAccessDashboardTab(tabKey) {
+  return getAllowedDashboardTabsForCurrentRole().includes(tabKey);
+}
+
 function loadOperatorSession() {
   try {
     const savedOperator = sessionStorage.getItem(OPERATOR_SESSION_STORAGE_KEY);
@@ -191,7 +256,7 @@ function loadOperatorSession() {
     return {
       employee_id: String(parsedOperator.employee_id),
       employee_name: String(parsedOperator.employee_name),
-      role: String(parsedOperator.role),
+      role: normalizeOperatorRole(parsedOperator.role),
     };
   } catch (error) {
     sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
@@ -203,7 +268,7 @@ function saveOperatorSession(operator) {
   const safeOperator = {
     employee_id: String(operator?.employee_id || ""),
     employee_name: String(operator?.employee_name || ""),
-    role: String(operator?.role || ""),
+    role: normalizeOperatorRole(operator?.role),
   };
 
   sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(safeOperator));
@@ -1121,7 +1186,7 @@ function truncateTvLogRawResponse(value, maxLength = 120) {
 
 function openTvDeviceForm(mode, item = null) {
   if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    showInlineNotice("Hanya owner/manager yang boleh mengelola mapping TV.", "error");
     return;
   }
 
@@ -1295,7 +1360,7 @@ function createTvDeviceActionButtons(device) {
   if (!canManageTvMapping()) {
     const note = document.createElement("span");
     note.className = "settings-section-subtitle";
-    note.textContent = "Hanya owner/admin";
+    note.textContent = "Hanya owner/manager";
     actions.appendChild(note);
     return actions;
   }
@@ -1448,7 +1513,7 @@ async function submitTvDeviceForm() {
   }
 
   if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    showInlineNotice("Hanya owner/manager yang boleh mengelola mapping TV.", "error");
     return;
   }
 
@@ -1501,7 +1566,7 @@ async function submitTvDeviceForm() {
 
 async function toggleTvDeviceStatus(tvDeviceId) {
   if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
+    showInlineNotice("Hanya owner/manager yang boleh mengelola mapping TV.", "error");
     return;
   }
 
@@ -1552,7 +1617,7 @@ async function toggleTvDeviceStatus(tvDeviceId) {
 
 async function sendTvCommandFromSettings(roomId, tvDeviceId) {
   if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh test TV dari Pengaturan.", "error");
+    showInlineNotice("Hanya owner/manager yang boleh test TV dari Pengaturan.", "error");
     return;
   }
 
@@ -3605,24 +3670,12 @@ function getSessionButtonLabel(status) {
   return ROOM_STATUS_CONFIG[status]?.buttonLabel || "Cek Status";
 }
 
-function getCurrentOperatorRole() {
-  try {
-    return String(
-      localStorage.getItem("karaoke_current_role")
-        || localStorage.getItem("karaoke_user_role")
-        || "cashier"
-    ).trim().toLowerCase();
-  } catch (error) {
-    return "cashier";
-  }
-}
-
 function canControlTv() {
-  return ["owner", "admin", "cashier"].includes(getCurrentOperatorRole());
+  return ["owner", "manager", "cashier"].includes(getCurrentOperatorRole());
 }
 
 function canManageTvMapping() {
-  return ["owner", "admin"].includes(getCurrentOperatorRole());
+  return ["owner", "manager"].includes(getCurrentOperatorRole());
 }
 
 function getTvStatusLabel(status) {
@@ -9788,7 +9841,7 @@ function createAccessSettingsSection() {
   title.textContent = "Pengaturan Akses";
   const subtitle = document.createElement("p");
   subtitle.className = "settings-section-subtitle";
-  subtitle.textContent = "Daftar role aktif untuk proteksi PIN admin.";
+  subtitle.textContent = "Daftar role aktif untuk proteksi PIN owner/manager.";
   titleGroup.append(title, subtitle);
 
   const refreshButton = document.createElement("button");
@@ -10620,10 +10673,10 @@ async function submitDeleteMasterData() {
   }
 
   openAdminPinModal({
-    title: "PIN Admin Delete Permanen",
-    message: `Masukkan PIN owner/admin untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
+    title: "PIN Manager Delete Permanen",
+    message: `Masukkan PIN owner/manager untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
     requestedAction: `delete_permanent_${deleteMasterConfirmation.type}`,
-    requiredRole: "admin",
+    requiredRole: "manager",
     validatePin: false,
     onSuccess: (authData, adminPin) => executeDeleteMasterData(adminPin, authData),
   });
@@ -10769,10 +10822,10 @@ function createDeleteField(labelText, field, value) {
   return wrapper;
 }
 
-function openAdminPinModal({ title, message, requestedAction, requiredRole = "admin", validatePin = true, onSuccess }) {
+function openAdminPinModal({ title, message, requestedAction, requiredRole = "manager", validatePin = true, onSuccess }) {
   adminPinModal = {
-    title: title || "PIN Admin",
-    message: message || "Masukkan PIN owner/admin untuk melanjutkan.",
+    title: title || "PIN Manager",
+    message: message || "Masukkan PIN owner/manager untuk melanjutkan.",
     requestedAction: requestedAction || "admin_action",
     requiredRole,
     validatePin,
@@ -10871,13 +10924,13 @@ async function submitAdminPinModal() {
     const data = await postApiAction({
       action: "validateAdminPin",
       pin: adminPin,
-      required_role: adminPinModal.requiredRole || "admin",
+      required_role: adminPinModal.requiredRole || "manager",
       requested_action: adminPinModal.requestedAction || "admin_action",
       changed_by: getLoggedInOperatorName(),
     });
 
     if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "PIN admin tidak valid.");
+      throw new Error(data?.message || data?.error || "PIN owner/manager tidak valid.");
     }
 
     const authData = data.data || {};
@@ -10892,7 +10945,7 @@ async function submitAdminPinModal() {
     adminPinModal = {
       ...adminPinModal,
       pin: "",
-      error: error.message || "PIN admin tidak valid.",
+      error: error.message || "PIN owner/manager tidak valid.",
     };
     isValidatingAdminPin = false;
     renderRooms();
@@ -10914,18 +10967,18 @@ function createAdminPinModalElement() {
   const title = document.createElement("h3");
   title.className = "master-delete-title";
   title.id = "admin-pin-title";
-  title.textContent = adminPinModal.title || "PIN Admin";
+  title.textContent = adminPinModal.title || "PIN Manager";
 
   const message = document.createElement("p");
   message.className = "master-delete-warning";
-  message.textContent = adminPinModal.message || "Masukkan PIN owner/admin untuk melanjutkan.";
+  message.textContent = adminPinModal.message || "Masukkan PIN owner/manager untuk melanjutkan.";
 
   const field = document.createElement("label");
   field.className = "master-form-field";
 
   const label = document.createElement("span");
   label.className = "master-form-label";
-  label.textContent = "PIN Admin";
+  label.textContent = "PIN Owner/Manager";
 
   const input = document.createElement("input");
   input.className = "master-form-input";
@@ -11029,10 +11082,10 @@ async function submitMasterDataForm() {
 
   if (isSensitiveMasterDataChange()) {
     openAdminPinModal({
-      title: "PIN Admin Master Data",
+      title: "PIN Manager Master Data",
       message: getSensitiveMasterDataMessage(),
       requestedAction: getSensitiveMasterDataAction(),
-      requiredRole: "admin",
+      requiredRole: "manager",
       onSuccess: (authData, adminPin) => executeMasterDataSubmit(authData, adminPin),
     });
     return;
@@ -11094,7 +11147,7 @@ function getSensitiveMasterDataAction() {
 
 function getSensitiveMasterDataMessage() {
   if (!masterDataForm) {
-    return "Masukkan PIN owner/admin untuk menyimpan perubahan.";
+    return "Masukkan PIN owner/manager untuk menyimpan perubahan.";
   }
 
   const labels = {
@@ -11104,7 +11157,7 @@ function getSensitiveMasterDataMessage() {
   };
   const action = getSensitiveMasterDataAction();
 
-  return `Masukkan PIN owner/admin untuk ${labels[action] || "menyimpan perubahan sensitif"}.`;
+  return `Masukkan PIN owner/manager untuk ${labels[action] || "menyimpan perubahan sensitif"}.`;
 }
 
 async function executeMasterDataSubmit(authData = null, adminPin = "") {
@@ -11161,11 +11214,25 @@ function saveActiveDashboardTab(tabKey) {
 }
 
 function isValidDashboardTab(tabKey) {
-  return DASHBOARD_TABS.some((tab) => tab.key === tabKey);
+  return DASHBOARD_TABS.some((tab) => tab.key === tabKey) && canAccessDashboardTab(tabKey);
 }
 
 function isValidReportSubTab(tabKey) {
-  return REPORT_SUB_TABS.some((tab) => tab.key === tabKey);
+  const allowedTabs = ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || [];
+  return REPORT_SUB_TABS.some((tab) => tab.key === tabKey) && allowedTabs.includes(tabKey);
+}
+
+function ensureActiveDashboardTabAllowed() {
+  if (!isValidDashboardTab(activeDashboardTab)) {
+    activeDashboardTab = getDefaultDashboardTabForCurrentRole();
+    saveActiveDashboardTab(activeDashboardTab);
+  }
+}
+
+function ensureActiveReportSubTabAllowed() {
+  if (!isValidReportSubTab(activeReportSubTab)) {
+    activeReportSubTab = (ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || [])[0] || "cashier";
+  }
 }
 
 function setActiveReportSubTab(tabKey) {
@@ -11189,6 +11256,8 @@ function setActiveDashboardTab(tabKey) {
 }
 
 function refreshActiveTabData() {
+  ensureActiveDashboardTabAllowed();
+
   if (!API_BASE_URL.trim() && activeDashboardTab !== "rooms") {
     return;
   }
@@ -11207,11 +11276,22 @@ function refreshActiveTabData() {
       loadTodayStockMovements();
       break;
     case "reports":
-      loadOwnerPeriodReport();
-      loadOwnerDashboardSummary();
-      loadTodayFnbSalesReport();
-      loadTodayCashierClosings();
-      loadRoomUsageReport();
+      if (isValidReportSubTab("owner")) {
+        loadOwnerPeriodReport();
+        loadOwnerDashboardSummary();
+      }
+
+      if (isValidReportSubTab("fnb")) {
+        loadTodayFnbSalesReport();
+      }
+
+      if (isValidReportSubTab("cashier")) {
+        loadTodayCashierClosings();
+      }
+
+      if (isValidReportSubTab("room")) {
+        loadRoomUsageReport();
+      }
       break;
     case "transactions":
       loadTodayTransactions();
@@ -11279,10 +11359,12 @@ function renderAppTabs() {
     return;
   }
 
+  ensureActiveDashboardTabAllowed();
+
   const fragment = document.createDocumentFragment();
   const roomsWarningCount = getRoomsTimeWarningCount();
 
-  DASHBOARD_TABS.forEach((tab) => {
+  getVisibleDashboardTabs().forEach((tab) => {
     const button = document.createElement("button");
     const label = document.createElement("span");
 
@@ -11323,7 +11405,10 @@ function createReportsSubNavElement() {
   wrapper.className = "reports-subnav";
   wrapper.setAttribute("aria-label", "Sub menu laporan");
 
-  REPORT_SUB_TABS.forEach((tab) => {
+  ensureActiveReportSubTabAllowed();
+  const allowedReportTabs = new Set(ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || []);
+
+  REPORT_SUB_TABS.filter((tab) => allowedReportTabs.has(tab.key)).forEach((tab) => {
     const button = document.createElement("button");
     button.className = activeReportSubTab === tab.key
       ? "reports-subnav-button active"
@@ -11446,9 +11531,11 @@ function renderDashboardTabPanels() {
     return;
   }
 
+  ensureActiveDashboardTabAllowed();
+
   const fragment = document.createDocumentFragment();
 
-  DASHBOARD_TABS.forEach((tab) => {
+  getVisibleDashboardTabs().forEach((tab) => {
     const panel = document.createElement("section");
     panel.className = activeDashboardTab === tab.key
       ? `app-tab-panel app-tab-panel--${tab.key} active`
@@ -11468,6 +11555,8 @@ function renderDashboardTabPanels() {
 }
 
 function renderRooms() {
+  ensureActiveDashboardTabAllowed();
+  ensureActiveReportSubTabAllowed();
   renderDashboardGlobal();
   renderAppTabs();
   renderDashboardTabPanels();
@@ -12555,7 +12644,7 @@ function renderOperatorHeader() {
 
   const operatorLabel = document.createElement("span");
   operatorLabel.className = "operator-session-label";
-  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${currentOperator.role})`;
+  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${getOperatorRoleLabel(currentOperator.role)})`;
 
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
@@ -13564,20 +13653,47 @@ async function initializeDashboard() {
 
   dashboardDataInitialized = true;
   renderRooms();
-  loadMenuItems();
-  loadOpenFnbOrders();
-  loadInventoryItems();
   await loadRooms();
-  await Promise.all([
-    loadTodayFnbOrders(),
-    loadTodayStockMovements(),
-    loadOwnerDashboardSummary(),
-    loadOwnerPeriodReport(),
-    loadTodayFnbSalesReport(),
-    loadRoomUsageReport(),
-    loadTodayRoomTimeLogs(),
-    loadTodayTransactions(),
-    loadTodayCashierClosings(),
-    activeDashboardTab === "settings" ? loadSettingsTabData() : Promise.resolve(),
-  ]);
+
+  const initialLoads = [];
+
+  if (canAccessDashboardTab("fnb")) {
+    initialLoads.push(loadMenuItems(), loadOpenFnbOrders(), loadTodayFnbOrders());
+  }
+
+  if (canAccessDashboardTab("stock")) {
+    initialLoads.push(loadInventoryItems(), loadTodayStockMovements());
+  }
+
+  if (canAccessDashboardTab("reports")) {
+    if (isValidReportSubTab("owner")) {
+      initialLoads.push(loadOwnerDashboardSummary(), loadOwnerPeriodReport());
+    }
+
+    if (isValidReportSubTab("fnb")) {
+      initialLoads.push(loadTodayFnbSalesReport());
+    }
+
+    if (isValidReportSubTab("room")) {
+      initialLoads.push(loadRoomUsageReport());
+    }
+
+    if (isValidReportSubTab("cashier")) {
+      initialLoads.push(loadTodayCashierClosings());
+    }
+  }
+
+  if (canAccessDashboardTab("audit")) {
+    initialLoads.push(loadTodayRoomTimeLogs());
+  }
+
+  if (canAccessDashboardTab("transactions")) {
+    initialLoads.push(loadTodayTransactions(), loadTodayCashierClosings());
+  }
+
+  if (activeDashboardTab === "settings" && canAccessDashboardTab("settings")) {
+    initialLoads.push(loadSettingsTabData());
+  }
+
+  await Promise.all(initialLoads);
 }

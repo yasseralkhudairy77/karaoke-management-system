@@ -388,7 +388,7 @@ GET `getTvControlLogs` membaca log TV. Query opsional: `room_id`, `tv_device_id`
 | trigger_source | Deskripsi |
 | --- | --- |
 | `room_card` | Command dari tombol TEST / TV ON / TV OFF di card room |
-| `settings_page` | Command test dari tab Pengaturan (owner/admin) |
+| `settings_page` | Command test dari tab Pengaturan (owner/manager) |
 
 ## Transactions
 
@@ -1466,7 +1466,7 @@ Menyimpan data karyawan awal.
 | --- | --- |
 | `employee_id` | ID unik karyawan. |
 | `employee_name` | Nama karyawan. |
-| `role` | Peran karyawan, contoh `cashier`, `admin`, `manager`. |
+| `role` | Peran karyawan: `owner`, `manager`, `cashier`, atau `receptionist`. Nilai lama `admin` diperlakukan sebagai alias `manager`. |
 | `salary_type` | Jenis gaji, contoh `monthly`, `daily`, `shift`. |
 | `base_salary` | Nilai gaji dasar. |
 | `is_active` | Status aktif karyawan, contoh `TRUE` atau `FALSE`. |

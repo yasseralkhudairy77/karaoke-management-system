@@ -405,3 +405,30 @@ The safest route is:
 5. Introduce cleaning as a separate transition after the payment flow is stable.
 
 This keeps the currently stable cashier closing, owner reports, F&B billing, and transaction history from being disrupted while we move toward the real karaoke operating model.
+
+## Phase 3A Role Navigation
+
+Status: implemented on 2026-07-20.
+
+Business roles:
+
+- `owner` = Owner
+- `manager` = Manager Operasional
+- `cashier` = Kasir
+- `receptionist` = Resepsionis
+
+Compatibility:
+
+- Legacy `admin` role is treated as `manager` so existing employee data does not get locked out.
+
+Initial navigation policy:
+
+- Owner and manager can access all current tabs.
+- Cashier can access `Ruangan`, `F&B`, `Laporan`, and `Transaksi`.
+- Receptionist can access `Ruangan` only until the dedicated guest-order flow is implemented.
+- Cashier report access is limited to the cashier closing report sub-tab.
+- Manager report access excludes the owner summary sub-tab.
+
+Safety boundary:
+
+- No transaction, F&B billing, cashier closing, or room lifecycle accounting behavior is changed in this phase.
