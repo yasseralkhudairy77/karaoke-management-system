@@ -90,6 +90,15 @@ let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
 let transactionPeriodNotice = "";
+let ownerReportPeriodFilter = "today";
+let ownerReportCustomStartDate = "";
+let ownerReportCustomEndDate = "";
+let ownerReportPeriodNotice = "";
+let ownerReportTransactionSummary = null;
+let ownerReportRoomUsageSummary = null;
+let ownerReportFnbSalesSummary = null;
+let ownerReportCashierClosings = [];
+let isLoadingOwnerReport = false;
 let roomWarningStateInitialized = false;
 let previousWarningRoomIds = new Set();
 let roomWarningAudioContext = null;
@@ -589,6 +598,153 @@ async function fetchTodayTransactionsFromApi() {
     transactions: data.transactions,
     summary: data.summary || null,
   };
+}
+
+function buildOwnerReportPeriodQueryParams() {
+  const params = new URLSearchParams();
+
+  params.set("period", normalizeTransactionPeriodForApi(ownerReportPeriodFilter));
+
+  if (ownerReportPeriodFilter === "custom") {
+    if (ownerReportCustomStartDate) {
+      params.set("start_date", ownerReportCustomStartDate);
+    }
+
+    if (ownerReportCustomEndDate) {
+      params.set("end_date", ownerReportCustomEndDate);
+    }
+  }
+
+  return params;
+}
+
+function canFetchOwnerReportPeriodData() {
+  if (ownerReportPeriodFilter !== "custom") {
+    return true;
+  }
+
+  return Boolean(ownerReportCustomStartDate && ownerReportCustomEndDate);
+}
+
+function getOwnerReportPeriodTitleSuffix() {
+  const labels = {
+    today: "Shift Aktif",
+    yesterday: "Shift Kemarin",
+    last7days: "7 Shift",
+    thisMonth: "Bulan Ini",
+    all: "Semua",
+    custom: "Custom",
+  };
+
+  if (ownerReportPeriodFilter === "custom" && ownerReportCustomStartDate && ownerReportCustomEndDate) {
+    return `${ownerReportCustomStartDate} s/d ${ownerReportCustomEndDate}`;
+  }
+
+  return labels[ownerReportPeriodFilter] || "Shift Aktif";
+}
+
+function setOwnerReportPeriodFilter(period) {
+  if (!TRANSACTION_PERIOD_OPTIONS.some(([value]) => value === period)) {
+    return;
+  }
+
+  ownerReportPeriodFilter = period;
+
+  if (period !== "custom") {
+    ownerReportCustomStartDate = "";
+    ownerReportCustomEndDate = "";
+    ownerReportPeriodNotice = "";
+    loadOwnerPeriodReport();
+    return;
+  }
+
+  ownerReportPeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+  renderRooms();
+}
+
+function updateOwnerReportCustomStartDate(value) {
+  ownerReportCustomStartDate = value || "";
+}
+
+function updateOwnerReportCustomEndDate(value) {
+  ownerReportCustomEndDate = value || "";
+}
+
+async function applyOwnerReportCustomPeriod() {
+  if (!ownerReportCustomStartDate || !ownerReportCustomEndDate) {
+    ownerReportPeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+    renderRooms();
+    return;
+  }
+
+  if (ownerReportCustomStartDate > ownerReportCustomEndDate) {
+    ownerReportPeriodNotice = "Tanggal mulai tidak boleh lebih besar dari tanggal akhir.";
+    renderRooms();
+    return;
+  }
+
+  ownerReportPeriodNotice = "";
+  await loadOwnerPeriodReport();
+}
+
+async function fetchOwnerReportEndpoint(action) {
+  const params = buildOwnerReportPeriodQueryParams();
+  const response = await fetch(`${API_BASE_URL}?action=${action}&${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return data;
+}
+
+async function loadOwnerPeriodReport() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  if (!canFetchOwnerReportPeriodData()) {
+    renderRooms();
+    return;
+  }
+
+  isLoadingOwnerReport = true;
+  renderRooms();
+
+  try {
+    const [
+      transactionData,
+      roomUsageData,
+      fnbSalesData,
+      closingData,
+    ] = await Promise.all([
+      fetchOwnerReportEndpoint("getTodayTransactions"),
+      fetchOwnerReportEndpoint("getRoomUsageReport"),
+      fetchOwnerReportEndpoint("getTodayFnbSalesReport"),
+      fetchOwnerReportEndpoint("getTodayCashierClosings"),
+    ]);
+
+    ownerReportTransactionSummary = transactionData.summary || null;
+    ownerReportRoomUsageSummary = roomUsageData.summary || null;
+    ownerReportFnbSalesSummary = fnbSalesData.summary || null;
+    ownerReportCashierClosings = Array.isArray(closingData.closings) ? closingData.closings : [];
+  } catch (error) {
+    console.warn("Gagal memuat laporan owner periode.", error);
+    showInlineNotice(error.message || "Gagal memuat laporan owner periode.", "error");
+    ownerReportTransactionSummary = null;
+    ownerReportRoomUsageSummary = null;
+    ownerReportFnbSalesSummary = null;
+    ownerReportCashierClosings = [];
+  } finally {
+    isLoadingOwnerReport = false;
+    renderRooms();
+  }
 }
 
 async function loadTodayCashierClosings() {
@@ -7537,29 +7693,62 @@ function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, item
 }
 
 function buildFinanceOverviewSummary() {
-  const transactionSummary = todayTransactionSummary || {};
-  const roomSummary = roomUsageSummary || ownerRoomUsageSummary || {};
+  const pickNumber = (...values) => {
+    for (const value of values) {
+      if (value === null || value === undefined || value === "") {
+        continue;
+      }
+
+      const numberValue = Number(value);
+
+      if (Number.isFinite(numberValue)) {
+        return numberValue;
+      }
+    }
+
+    return 0;
+  };
+  const hasOwnerReportData = Boolean(
+    ownerReportTransactionSummary ||
+    ownerReportRoomUsageSummary ||
+    ownerReportFnbSalesSummary
+  );
+  const transactionSummary = ownerReportTransactionSummary || todayTransactionSummary || {};
+  const roomSummary = ownerReportRoomUsageSummary || roomUsageSummary || ownerRoomUsageSummary || {};
   const fnbOrderSummary = todayFnbOrderSummary || {};
-  const fnbSalesSummary = todayFnbSalesSummary || {};
+  const fnbSalesSummary = ownerReportFnbSalesSummary || todayFnbSalesSummary || {};
   const activeRoomCount = rooms.filter((room) => normalizeRoomStatus(room?.status) === "occupied").length;
-  const latestClosing = todayCashierClosings[0] || null;
+  const relevantClosings = ownerReportCashierClosings.length > 0 ? ownerReportCashierClosings : todayCashierClosings;
+  const latestClosing = relevantClosings[0] || null;
   const cashDifference = Number(latestClosing?.cash_difference) || 0;
   const openFnbAmount = Number(fnbOrderSummary.open_amount) || calculateOpenFnbOrdersSummary(openFnbOrders).total_amount;
+  const isActiveShiftReport = ownerReportPeriodFilter === "today";
+  const fallbackTransactions = hasOwnerReportData ? [] : todayTransactions;
 
   return {
-    totalPenjualan: Number(transactionSummary.total_revenue_all) || Number(roomSummary.total_grand_revenue) || 0,
-    sudahDibayar: Number(transactionSummary.paid_revenue) || Number(transactionSummary.total_revenue_paid) || Number(roomSummary.paid_revenue) || 0,
-    belumDibayar: Number(transactionSummary.unpaid_revenue) || Number(roomSummary.unpaid_revenue) || 0,
-    penjualanRoom: Number(roomSummary.total_room_revenue) || todayTransactions.reduce((total, transaction) => total + (Number(transaction.room_total) || 0), 0),
-    penjualanFnb: Number(fnbSalesSummary.total_fnb_sales) || Number(roomSummary.total_fnb_revenue) || todayTransactions.reduce((total, transaction) => total + (Number(transaction.fnb_total) || 0), 0),
-    pesananFnbBerjalan: openFnbAmount,
-    totalTransaksi: Number(transactionSummary.total_transactions) || todayTransactions.length,
-    transaksiBelumDibayar: Number(transactionSummary.unpaid_transactions) || todayTransactions.filter((transaction) => transaction.payment_status === "unpaid").length,
+    totalPenjualan: pickNumber(transactionSummary.total_revenue_all, roomSummary.total_grand_revenue),
+    sudahDibayar: pickNumber(transactionSummary.paid_revenue, transactionSummary.total_revenue_paid, roomSummary.paid_revenue),
+    belumDibayar: pickNumber(transactionSummary.unpaid_revenue, roomSummary.unpaid_revenue),
+    penjualanRoom: pickNumber(
+      roomSummary.total_room_revenue,
+      fallbackTransactions.reduce((total, transaction) => total + (Number(transaction.room_total) || 0), 0)
+    ),
+    penjualanFnb: pickNumber(
+      fnbSalesSummary.total_fnb_sales,
+      roomSummary.total_fnb_revenue,
+      fallbackTransactions.reduce((total, transaction) => total + (Number(transaction.fnb_total) || 0), 0)
+    ),
+    pesananFnbBerjalan: isActiveShiftReport ? openFnbAmount : 0,
+    totalTransaksi: pickNumber(transactionSummary.total_transactions, fallbackTransactions.length),
+    transaksiBelumDibayar: pickNumber(
+      transactionSummary.unpaid_transactions,
+      fallbackTransactions.filter((transaction) => transaction.payment_status === "unpaid").length
+    ),
     roomBerjalan: activeRoomCount,
     totalSesi: Number(roomSummary.total_sessions) || 0,
     roomTeraktif: roomSummary.top_room_name || "-",
     menuTerlaris: fnbSalesSummary.top_menu_name || "-",
-    setoranKasirTersimpan: todayCashierClosings.length > 0,
+    setoranKasirTersimpan: relevantClosings.length > 0,
     latestClosing,
     cashDifference,
   };
@@ -7567,10 +7756,14 @@ function buildFinanceOverviewSummary() {
 
 function getFinanceCashStatus(summary) {
   if (!summary.setoranKasirTersimpan) {
+    const isActiveShiftReport = ownerReportPeriodFilter === "today";
+
     return {
-      label: "Belum Tutup Shift",
+      label: isActiveShiftReport ? "Belum Tutup Shift" : "Belum Ada Closing",
       tone: "warning",
-      detail: "Kasir belum menyimpan laporan tutup shift.",
+      detail: isActiveShiftReport
+        ? "Kasir belum menyimpan laporan tutup shift."
+        : "Belum ada laporan tutup shift pada periode ini.",
     };
   }
 
@@ -7712,6 +7905,82 @@ function createFinanceChecklistElement(items) {
   return panel;
 }
 
+function createOwnerReportPeriodFilterElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "period-filter owner-report-period-filter";
+  wrapper.setAttribute("aria-label", "Filter periode laporan owner");
+
+  const buttons = document.createElement("div");
+  buttons.className = "period-filter-buttons";
+
+  TRANSACTION_PERIOD_OPTIONS.forEach(([period, labelText]) => {
+    const button = document.createElement("button");
+    button.className = period === ownerReportPeriodFilter
+      ? "period-filter-button active"
+      : "period-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-owner-report-period";
+    button.dataset.period = period;
+    button.textContent = labelText;
+    buttons.appendChild(button);
+  });
+
+  wrapper.appendChild(buttons);
+
+  if (ownerReportPeriodFilter === "custom") {
+    const custom = document.createElement("div");
+    custom.className = "custom-date-filter";
+
+    const startField = document.createElement("div");
+    startField.className = "custom-date-field";
+
+    const startLabel = document.createElement("label");
+    startLabel.className = "custom-date-label";
+    startLabel.textContent = "Tanggal Operasional Mulai";
+
+    const startInput = document.createElement("input");
+    startInput.className = "custom-date-input";
+    startInput.type = "date";
+    startInput.dataset.action = "update-owner-report-custom-start-date";
+    startInput.value = ownerReportCustomStartDate;
+
+    startField.append(startLabel, startInput);
+
+    const endField = document.createElement("div");
+    endField.className = "custom-date-field";
+
+    const endLabel = document.createElement("label");
+    endLabel.className = "custom-date-label";
+    endLabel.textContent = "Tanggal Operasional Akhir";
+
+    const endInput = document.createElement("input");
+    endInput.className = "custom-date-input";
+    endInput.type = "date";
+    endInput.dataset.action = "update-owner-report-custom-end-date";
+    endInput.value = ownerReportCustomEndDate;
+
+    endField.append(endLabel, endInput);
+
+    const applyButton = document.createElement("button");
+    applyButton.className = "period-filter-apply-button";
+    applyButton.type = "button";
+    applyButton.dataset.action = "apply-owner-report-custom-period";
+    applyButton.textContent = "Terapkan";
+
+    custom.append(startField, endField, applyButton);
+    wrapper.appendChild(custom);
+  }
+
+  if (ownerReportPeriodNotice) {
+    const notice = document.createElement("p");
+    notice.className = "period-filter-notice";
+    notice.textContent = ownerReportPeriodNotice;
+    wrapper.appendChild(notice);
+  }
+
+  return wrapper;
+}
+
 function createFinanceOverviewElement() {
   const section = document.createElement("section");
   section.className = "finance-overview";
@@ -7729,11 +7998,11 @@ function createFinanceOverviewElement() {
   const title = document.createElement("h2");
   title.className = "finance-overview-title";
   title.id = "finance-overview-title";
-  title.textContent = "Ringkasan Keuangan Harian";
+  title.textContent = `Ringkasan Keuangan Owner - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "finance-overview-subtitle";
-  subtitle.textContent = "Pantau uang masuk, tagihan berjalan, penjualan room, dan penjualan F&B dalam satu layar.";
+  subtitle.textContent = "Pantau uang masuk, tagihan berjalan, penjualan room, dan penjualan F&B sesuai periode operasional.";
 
   titleGroup.append(title, subtitle);
 
@@ -7789,10 +8058,15 @@ function createFinanceOverviewElement() {
 
   section.append(
     header,
+    createOwnerReportPeriodFilterElement(),
     createOperationalShiftNoteElement("finance-overview-note"),
     grid,
     createFinanceChecklistElement(checklist)
   );
+
+  if (isLoadingOwnerReport) {
+    section.appendChild(createStateMessage("Memuat laporan owner periode...", "info"));
+  }
 
   return section;
 }
@@ -7810,11 +8084,11 @@ function createOwnerDashboardElement() {
   const title = document.createElement("h2");
   title.className = "owner-dashboard-title";
   title.id = "owner-dashboard-title";
-  title.textContent = "Dashboard Owner";
+  title.textContent = `Dashboard Owner - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "owner-dashboard-subtitle";
-  subtitle.textContent = "Ringkasan cepat shift aktif berdasarkan tanggal operasional karaoke.";
+  subtitle.textContent = "Ringkasan cepat berdasarkan filter periode laporan owner.";
 
   titleGroup.append(title, subtitle);
 
@@ -7822,12 +8096,12 @@ function createOwnerDashboardElement() {
   refreshButton.className = "owner-dashboard-button";
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-owner-dashboard";
-  refreshButton.disabled = isLoadingOwnerDashboard || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingOwnerDashboard ? "Memuat..." : "Refresh Dashboard";
+  refreshButton.disabled = isLoadingOwnerDashboard || isLoadingOwnerReport || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Refresh Dashboard";
 
   header.append(titleGroup, refreshButton);
 
-  const summary = ownerRoomUsageSummary || {
+  const summary = ownerReportRoomUsageSummary || ownerRoomUsageSummary || {
     total_sessions: 0,
     total_duration_minutes: 0,
     total_duration_hours: 0,
@@ -7851,7 +8125,7 @@ function createOwnerDashboardElement() {
 
   [
     {
-      label: "Total Revenue Shift Aktif",
+      label: "Total Penjualan Periode",
       value: formatCurrency(summary.total_grand_revenue),
       detail: `${Number(summary.total_sessions) || 0} sesi tercatat`,
     },
@@ -10677,6 +10951,7 @@ function refreshActiveTabData() {
       loadTodayStockMovements();
       break;
     case "reports":
+      loadOwnerPeriodReport();
       loadOwnerDashboardSummary();
       loadTodayFnbSalesReport();
       loadRoomUsageReport();
@@ -12395,7 +12670,20 @@ async function handleRoomAction(event) {
   }
 
   if (action === "refresh-owner-dashboard") {
-    await loadOwnerDashboardSummary();
+    await Promise.all([
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return;
+  }
+
+  if (action === "filter-owner-report-period") {
+    setOwnerReportPeriodFilter(button.dataset.period || "today");
+    return;
+  }
+
+  if (action === "apply-owner-report-custom-period") {
+    await applyOwnerReportCustomPeriod();
     return;
   }
 
@@ -12572,6 +12860,16 @@ function handleDashboardInput(event) {
 
   if (action === "update-closing-note") {
     updateCashierClosingNote(field.value);
+    return;
+  }
+
+  if (action === "update-owner-report-custom-start-date") {
+    updateOwnerReportCustomStartDate(field.value);
+    return;
+  }
+
+  if (action === "update-owner-report-custom-end-date") {
+    updateOwnerReportCustomEndDate(field.value);
     return;
   }
 
@@ -12817,6 +13115,7 @@ async function initializeDashboard() {
     loadTodayFnbOrders(),
     loadTodayStockMovements(),
     loadOwnerDashboardSummary(),
+    loadOwnerPeriodReport(),
     loadTodayFnbSalesReport(),
     loadRoomUsageReport(),
     loadTodayRoomTimeLogs(),
