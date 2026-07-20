@@ -3787,6 +3787,51 @@ function calculateCashierClosingPreview(transactions) {
   return preview;
 }
 
+function createCashierClosingCard(labelText, valueText, detailText = "", modifierClass = "") {
+  const card = document.createElement("div");
+  card.className = modifierClass
+    ? `cashier-closing-card ${modifierClass}`
+    : "cashier-closing-card";
+
+  const label = document.createElement("p");
+  label.className = "cashier-closing-label";
+  label.textContent = labelText;
+
+  const value = document.createElement("p");
+  value.className = "cashier-closing-value";
+  value.textContent = valueText;
+
+  card.append(label, value);
+
+  if (detailText) {
+    const detail = document.createElement("p");
+    detail.className = "cashier-closing-card-detail";
+    detail.textContent = detailText;
+    card.appendChild(detail);
+  }
+
+  return card;
+}
+
+function createCashierClosingSectionTitle(titleText, helperText = "") {
+  const wrapper = document.createElement("div");
+
+  const title = document.createElement("h4");
+  title.className = "cashier-closing-section-title";
+  title.textContent = titleText;
+
+  wrapper.appendChild(title);
+
+  if (helperText) {
+    const helper = document.createElement("p");
+    helper.className = "cashier-closing-helper";
+    helper.textContent = helperText;
+    wrapper.appendChild(helper);
+  }
+
+  return wrapper;
+}
+
 function createCashierClosingPreviewElement(preview) {
   const closing = document.createElement("section");
   closing.className = "cashier-closing";
@@ -3813,37 +3858,30 @@ function createCashierClosingPreviewElement(preview) {
   grid.className = "cashier-closing-grid";
 
   [
-    ["Total Transaksi", `${preview.totalTransactions} transaksi`],
-    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`],
-    ["Belum Dibayar", `${preview.unpaidTransactions} transaksi`],
-    ["Omzet Lunas", formatCurrency(preview.paidRevenue)],
-    ["Cash Sistem", formatCurrency(preview.cashExpected)],
-    ["Transfer", formatCurrency(preview.transferRevenue)],
-    ["Sisa Belum Dibayar", formatCurrency(preview.unpaidRevenue)],
-    ["Total Semua Tagihan", formatCurrency(preview.totalRevenue)],
-  ].forEach(([labelText, valueText]) => {
-    const card = document.createElement("div");
-    card.className = "cashier-closing-card";
-
-    const label = document.createElement("p");
-    label.className = "cashier-closing-label";
-    label.textContent = labelText;
-
-    const value = document.createElement("p");
-    value.className = "cashier-closing-value";
-    value.textContent = valueText;
-
-    card.append(label, value);
-    grid.appendChild(card);
+    ["Total Transaksi", `${preview.totalTransactions} transaksi`, "Semua transaksi pada shift aktif"],
+    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`, "Sudah dibayar cash atau transfer"],
+    ["Belum Dibayar", `${preview.unpaidTransactions} transaksi`, "Perlu diketahui sebelum tutup shift", preview.unpaidTransactions > 0 ? "negative" : "equal"],
+    ["Omzet Lunas", formatCurrency(preview.paidRevenue), "Uang masuk yang sudah tercatat lunas", "equal"],
+    ["Cash Sistem", formatCurrency(preview.cashExpected), `${preview.cashTransactions} transaksi cash`],
+    ["Transfer Sistem", formatCurrency(preview.transferRevenue), `${preview.transferTransactions} transaksi transfer`],
+    ["Sisa Belum Dibayar", formatCurrency(preview.unpaidRevenue), "Tagihan yang belum lunas"],
+    ["Total Semua Tagihan", formatCurrency(preview.totalRevenue), "Lunas dan belum dibayar"],
+  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
+    grid.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
   });
 
   const cashSection = document.createElement("div");
   cashSection.className = "cashier-closing-section";
 
+  cashSection.appendChild(createCashierClosingSectionTitle(
+    "Pemeriksaan Cash",
+    "Hitung uang fisik di laci kasir, lalu masukkan nominalnya di bawah ini."
+  ));
+
   const cashLabel = document.createElement("label");
   cashLabel.className = "cashier-closing-label";
   cashLabel.htmlFor = "cashierClosingCashActual";
-  cashLabel.textContent = "Uang Cash Aktual";
+  cashLabel.textContent = "Cash Aktual di Laci";
 
   const cashInput = document.createElement("input");
   cashInput.className = "cashier-closing-input";
@@ -3859,25 +3897,16 @@ function createCashierClosingPreviewElement(preview) {
   cashCheck.className = "cashier-closing-grid";
 
   [
-    ["Cash Sistem", formatCurrency(preview.cashExpected)],
-    ["Cash Aktual", formatCurrency(preview.cashActual)],
-    ["Selisih Cash", formatCurrency(preview.cashDifference), getCashDifferenceClass(preview.cashDifference)],
-  ].forEach(([labelText, valueText, modifierClass]) => {
-    const card = document.createElement("div");
-    card.className = modifierClass
-      ? `cashier-closing-card ${modifierClass}`
-      : "cashier-closing-card";
-
-    const label = document.createElement("p");
-    label.className = "cashier-closing-label";
-    label.textContent = labelText;
-
-    const value = document.createElement("p");
-    value.className = "cashier-closing-value";
-    value.textContent = valueText;
-
-    card.append(label, value);
-    cashCheck.appendChild(card);
+    ["Cash Sistem", formatCurrency(preview.cashExpected), "Uang cash yang seharusnya ada"],
+    ["Cash Aktual", formatCurrency(preview.cashActual), "Uang cash yang dihitung kasir"],
+    [
+      "Selisih Cash",
+      formatCurrency(preview.cashDifference),
+      "Selisih otomatis antara cash aktual dan cash sistem",
+      getCashDifferenceClass(preview.cashDifference),
+    ],
+  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
+    cashCheck.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
   });
 
   const difference = document.createElement("p");
@@ -3886,8 +3915,60 @@ function createCashierClosingPreviewElement(preview) {
 
   cashSection.append(cashLabel, cashInput, cashCheck, difference);
 
+  const transferSection = document.createElement("div");
+  transferSection.className = "cashier-closing-section cashier-closing-section--transfer";
+  transferSection.appendChild(createCashierClosingSectionTitle(
+    "Pemeriksaan Transfer",
+    "Cocokkan transaksi transfer dengan mutasi rekening, QRIS, atau bukti transfer sebelum closing disimpan."
+  ));
+
+  const transferGrid = document.createElement("div");
+  transferGrid.className = "cashier-closing-grid";
+
+  [
+    [
+      "Transfer Sistem",
+      formatCurrency(preview.transferRevenue),
+      `${preview.transferTransactions} transaksi transfer tercatat`,
+      preview.transferTransactions > 0 ? "equal" : "",
+    ],
+    [
+      "Yang Dicek Kasir",
+      preview.transferTransactions > 0 ? "Mutasi / QRIS" : "Tidak ada transfer",
+      preview.transferTransactions > 0
+        ? "Pastikan nominal dan jam pembayaran sesuai"
+        : "Tidak perlu cek transfer untuk shift ini",
+    ],
+    [
+      "Jika Belum Masuk",
+      "Tulis Catatan",
+      "Contoh: transfer pelanggan belum terlihat di mutasi",
+    ],
+  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
+    transferGrid.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
+  });
+
+  const transferChecklist = document.createElement("ul");
+  transferChecklist.className = "cashier-closing-checklist";
+
+  [
+    "Cocokkan total transfer sistem dengan bukti/mutasi.",
+    "Pastikan tidak ada transfer pending yang belum masuk.",
+    "Tulis masalah transfer di Catatan Kasir jika ada.",
+  ].forEach((itemText) => {
+    const item = document.createElement("li");
+    item.textContent = itemText;
+    transferChecklist.appendChild(item);
+  });
+
+  transferSection.append(transferGrid, transferChecklist);
+
   const noteSection = document.createElement("div");
   noteSection.className = "cashier-closing-section";
+  noteSection.appendChild(createCashierClosingSectionTitle(
+    "Catatan Closing",
+    "Isi hanya jika ada informasi penting untuk owner atau shift berikutnya."
+  ));
 
   const noteLabel = document.createElement("label");
   noteLabel.className = "cashier-closing-label";
@@ -3897,7 +3978,7 @@ function createCashierClosingPreviewElement(preview) {
   const noteInput = document.createElement("textarea");
   noteInput.className = "cashier-closing-textarea";
   noteInput.id = "cashierClosingNote";
-  noteInput.placeholder = "Contoh: ada pelanggan transfer manual, pending pembayaran, atau catatan operasional.";
+  noteInput.placeholder = "Contoh: transfer BCA pelanggan belum masuk, ada tagihan pending, atau cash lebih karena pelanggan memberi uang lebih.";
   noteInput.rows = 3;
   noteInput.dataset.action = "update-closing-note";
   noteInput.value = preview.note;
@@ -3925,7 +4006,7 @@ function createCashierClosingPreviewElement(preview) {
 
   actions.append(closeButton, saveButton);
 
-  closing.append(header, grid, cashSection, noteSection);
+  closing.append(header, grid, cashSection, transferSection, noteSection);
 
   if (lastCashierClosing) {
     closing.appendChild(createLastClosingSavedElement(lastCashierClosing));
@@ -3996,6 +4077,8 @@ function createLastClosingSavedElement(closing) {
     ["Waktu", closing?.created_at || "-"],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
+    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
     [
       "Selisih Cash",
       `${formatCurrency(closing?.cash_difference)} - ${getClosingDifferenceLabel(Number(closing?.cash_difference) || 0)}`,

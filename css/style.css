@@ -4881,6 +4881,30 @@ body::after {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.cashier-closing-section--transfer {
+  border-color: rgba(255, 215, 122, 0.26);
+  background:
+    radial-gradient(560px 180px at 0% 0%, rgba(255, 215, 122, 0.08), transparent 64%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.cashier-closing-section-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.cashier-closing-helper,
+.cashier-closing-card-detail {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .cashier-closing-input,
 .cashier-closing-textarea {
   width: 100%;
@@ -4943,6 +4967,24 @@ body::after {
 
 .cashier-closing-difference.negative {
   background: rgba(255, 193, 102, 0.1);
+}
+
+.cashier-closing-checklist {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px 12px 30px;
+  border: 1px solid rgba(255, 215, 122, 0.18);
+  border-radius: 8px;
+  background: rgba(10, 12, 18, 0.36);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.cashier-closing-checklist li::marker {
+  color: var(--gold-strong);
 }
 
 .cashier-closing-warning {
