@@ -255,12 +255,15 @@ Safe outcome:
 
 Backend impact: medium-high.
 
+Status: lifecycle gate implemented on 2026-07-20. Financial reporting still follows the existing close-then-pay transaction flow.
+
 Work:
 
 - Introduce a dedicated backend action such as `prepareRoomSession`.
 - Create or integrate `RoomSessions` row with status like `starting` or `paid_waiting_start`.
 - Mark room compatibility cache as `paid_waiting_start`.
-- Create a payment record or transaction draft for room duration.
+- Capture the selected payment method for operational traceability.
+- Start countdown through a separate activation action after room/device readiness.
 
 Safety requirements:
 
@@ -268,11 +271,13 @@ Safety requirements:
 - Use idempotency key.
 - Do not change `start_time` yet.
 - Do not allow two active/waiting sessions for one room.
-- Confirm reports do not count unpaid/draft session incorrectly.
+- Do not change finance reports until pre-start payment accounting is designed and tested.
 
 ### Phase 3: Start countdown after waiter confirmation
 
 Backend impact: medium.
+
+Status: basic activation action implemented with Phase 2 so manual testing can complete a room lifecycle.
 
 Work:
 

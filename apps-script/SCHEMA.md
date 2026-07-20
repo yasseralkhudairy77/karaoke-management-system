@@ -21,10 +21,18 @@ Menyimpan status room karaoke yang akan dibaca dashboard.
 Contoh `status`:
 
 - `available`
+- `paid_waiting_start`
 - `occupied`
+- `cleaning`
 - `maintenance`
 
 `start_time` adalah jangkar sesi dan tidak boleh diubah saat tambah waktu (extend). Hanya `booked_duration_minutes` dan `scheduled_end_time` yang bertambah.
+
+Catatan lifecycle operasional:
+
+- `paid_waiting_start` dipakai setelah booking disiapkan dan sebelum countdown dimulai.
+- `cleaning` direncanakan untuk fase setelah sesi selesai tetapi room belum siap dijual kembali.
+- Backend legacy masih mendukung `available`, `occupied`, dan `maintenance`; status baru diaktifkan bertahap melalui action lifecycle khusus.
 
 ### Fase 6A - Master Room
 

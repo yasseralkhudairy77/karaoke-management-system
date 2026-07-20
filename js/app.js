@@ -144,7 +144,7 @@ const ROOM_STATUS_CONFIG = {
     label: "Kosong",
     className: "available",
     tone: "success",
-    buttonLabel: "Mulai Sesi",
+    buttonLabel: "Buat Booking",
   },
   occupied: {
     label: "Terisi",
@@ -162,7 +162,7 @@ const ROOM_STATUS_CONFIG = {
     label: "Menunggu Mulai",
     className: "paid-waiting-start",
     tone: "info",
-    buttonLabel: "Menunggu Room Siap",
+    buttonLabel: "Mulai Countdown",
   },
   cleaning: {
     label: "Cleaning",
@@ -406,6 +406,9 @@ let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
+let durationPaymentMethod = "cash";
+let isPreparingRoomSession = false;
+let isActivatingPreparedSession = false;
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
@@ -5099,7 +5102,7 @@ function createRoomCard(room) {
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
   sessionButton.textContent = sessionButtonLabel;
-  sessionButton.disabled = room.status === "paid_waiting_start" || room.status === "cleaning";
+  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession || room.status === "cleaning";
 
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
@@ -5230,12 +5233,42 @@ function createDurationSelectionElement(room) {
     const button = document.createElement("button");
     button.className = "duration-option-button";
     button.type = "button";
-    button.dataset.action = "start-session-duration";
+    button.dataset.action = "prepare-room-session-duration";
     button.dataset.roomId = room.room_id;
     button.dataset.durationMinutes = String(minutes);
-    button.textContent = labelText;
+    button.disabled = isPreparingRoomSession;
+    button.textContent = isPreparingRoomSession ? "Menyiapkan..." : labelText;
     options.appendChild(button);
   });
+
+  const paymentField = document.createElement("label");
+  paymentField.className = "duration-payment-field";
+
+  const paymentLabel = document.createElement("span");
+  paymentLabel.className = "duration-payment-label";
+  paymentLabel.textContent = "Metode bayar";
+
+  const paymentSelect = document.createElement("select");
+  paymentSelect.className = "duration-payment-select";
+  paymentSelect.dataset.action = "update-duration-payment-method";
+  paymentSelect.disabled = isPreparingRoomSession;
+
+  [
+    ["cash", "Cash"],
+    ["transfer", "Transfer/QRIS"],
+  ].forEach(([value, labelText]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = labelText;
+    option.selected = durationPaymentMethod === value;
+    paymentSelect.appendChild(option);
+  });
+
+  paymentField.append(paymentLabel, paymentSelect);
+
+  const phaseNote = document.createElement("p");
+  phaseNote.className = "duration-phase-note";
+  phaseNote.textContent = "Tahap ini menyiapkan room sebelum countdown. Laporan kas tetap mengikuti transaksi saat sesi ditutup.";
 
   const custom = document.createElement("div");
   custom.className = "duration-custom";
@@ -5248,13 +5281,15 @@ function createDurationSelectionElement(room) {
   input.placeholder = "Custom menit";
   input.dataset.action = "update-custom-duration";
   input.value = customDurationMinutes;
+  input.disabled = isPreparingRoomSession;
 
   const customButton = document.createElement("button");
   customButton.className = "duration-custom-button";
   customButton.type = "button";
-  customButton.dataset.action = "start-session-custom-duration";
+  customButton.dataset.action = "prepare-room-session-custom-duration";
   customButton.dataset.roomId = room.room_id;
-  customButton.textContent = "Mulai Custom";
+  customButton.disabled = isPreparingRoomSession;
+  customButton.textContent = isPreparingRoomSession ? "Menyiapkan..." : "Booking Custom";
 
   custom.append(input, customButton);
 
@@ -5262,9 +5297,10 @@ function createDurationSelectionElement(room) {
   cancelButton.className = "duration-cancel-button";
   cancelButton.type = "button";
   cancelButton.dataset.action = "cancel-duration-selection";
+  cancelButton.disabled = isPreparingRoomSession;
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, cancelButton);
+  panel.append(title, paymentField, phaseNote, options, custom, cancelButton);
 
   return panel;
 }
@@ -11490,6 +11526,20 @@ function updateCustomDuration(value) {
   customDurationMinutes = value;
 }
 
+function updateDurationPaymentMethod(value) {
+  durationPaymentMethod = value === "transfer" ? "transfer" : "cash";
+}
+
+function createRoomSessionIdempotencyKey(roomId, durationMinutes) {
+  return [
+    "prepare",
+    roomId || "room",
+    String(durationMinutes || 0),
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2, 8),
+  ].join("-");
+}
+
 function showExtendSelection(roomId) {
   extendSelectionRoomId = roomId;
   customExtendMinutes = "";
@@ -11923,6 +11973,88 @@ async function startSession(roomId, durationMinutes) {
     showInlineNotice(error.message || "Gagal memulai sesi.", "error");
   } finally {
     setActionButtonsDisabled(false);
+  }
+}
+
+async function prepareRoomSession(roomId, durationMinutes) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  const selectedDuration = Number(durationMinutes);
+
+  if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
+    showInlineNotice("Durasi wajib berupa angka positif.", "error");
+    return;
+  }
+
+  if (selectedDuration < 15) {
+    showInlineNotice("Durasi minimal 15 menit.", "error");
+    return;
+  }
+
+  isPreparingRoomSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "prepareRoomSession",
+      room_id: roomId,
+      duration_minutes: selectedDuration,
+      payment_method: durationPaymentMethod,
+      cashier_name: getLoggedInOperatorName(),
+      idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal menyiapkan booking room.");
+    }
+
+    showInlineNotice(data.message || "Booking room berhasil disiapkan.");
+    durationSelectionRoomId = "";
+    customDurationMinutes = "";
+    durationPaymentMethod = "cash";
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyiapkan booking room.", "error");
+  } finally {
+    isPreparingRoomSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function activatePreparedSession(roomId) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  isActivatingPreparedSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "activatePreparedSession",
+      room_id: roomId,
+      cashier_name: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memulai countdown.");
+    }
+
+    showInlineNotice(data.message || "Countdown room berhasil dimulai.");
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulai countdown.", "error");
+  } finally {
+    isActivatingPreparedSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
   }
 }
 
@@ -13054,12 +13186,12 @@ async function handleRoomAction(event) {
     return;
   }
 
-  if (action === "start-session-duration") {
-    await startSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes));
+  if (action === "prepare-room-session-duration") {
+    await prepareRoomSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes));
     return;
   }
 
-  if (action === "start-session-custom-duration") {
+  if (action === "prepare-room-session-custom-duration") {
     const selectedDuration = Number(customDurationMinutes);
 
     if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
@@ -13072,7 +13204,7 @@ async function handleRoomAction(event) {
       return;
     }
 
-    await startSession(button.dataset.roomId || "", selectedDuration);
+    await prepareRoomSession(button.dataset.roomId || "", selectedDuration);
     return;
   }
 
@@ -13145,7 +13277,7 @@ async function handleRoomAction(event) {
   }
 
   if (room.status === "paid_waiting_start") {
-    showInlineNotice("Room sudah dibayar dan menunggu instruksi mulai. Tombol mulai countdown akan dibuat pada fase berikutnya.", "error");
+    await activatePreparedSession(roomId);
     return;
   }
 
@@ -13193,6 +13325,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-fnb-order-note") {
     updateFnbOrderNote(field.value);
+    return;
+  }
+
+  if (action === "update-duration-payment-method") {
+    updateDurationPaymentMethod(field.value);
     return;
   }
 
@@ -13266,6 +13403,13 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const durationPaymentField = event.target.closest("[data-action='update-duration-payment-method']");
+
+  if (durationPaymentField) {
+    updateDurationPaymentMethod(durationPaymentField.value);
+    return;
+  }
+
   const masterField = event.target.closest("[data-action='update-master-form']");
 
   if (masterField) {

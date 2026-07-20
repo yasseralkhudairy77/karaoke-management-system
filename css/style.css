@@ -6136,6 +6136,27 @@ body::after {
   gap: 8px;
 }
 
+.duration-payment-field {
+  display: grid;
+  gap: 6px;
+}
+
+.duration-payment-label {
+  color: var(--meta-text);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.duration-phase-note {
+  margin: 0;
+  color: rgba(255, 245, 223, 0.78);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .duration-option-button,
 .duration-custom-button,
 .duration-cancel-button {
@@ -6171,6 +6192,18 @@ body::after {
   min-height: 40px;
   width: 100%;
   min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #132238;
+  font: inherit;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.duration-payment-select {
+  min-height: 40px;
+  width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.94);

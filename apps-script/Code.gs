@@ -615,6 +615,14 @@ function doPost(e) {
       return jsonResponse(startSession_(payload.room_id, payload.duration_minutes));
     }
 
+    if (action === "prepareRoomSession") {
+      return jsonResponse(prepareRoomSession_(payload));
+    }
+
+    if (action === "activatePreparedSession") {
+      return jsonResponse(activatePreparedSession_(payload.room_id, payload.cashier_name));
+    }
+
     if (action === "extendSession") {
       return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name, payload.note));
     }
@@ -6619,6 +6627,233 @@ function startSession_(roomId, durationMinutes) {
   }
 }
 
+function prepareRoomSession_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+  var durationMinutes = Number(request.duration_minutes);
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+
+  if (!roomId) {
+    return {
+      ok: false,
+      success: false,
+      error: "room_id wajib diisi.",
+    };
+  }
+
+  if (!isFinite(durationMinutes) || durationMinutes <= 0 || Math.floor(durationMinutes) !== durationMinutes) {
+    return {
+      ok: false,
+      success: false,
+      error: "duration_minutes wajib berupa angka bulat positif.",
+    };
+  }
+
+  if (durationMinutes < 15) {
+    return {
+      ok: false,
+      success: false,
+      error: "Durasi minimal 15 menit.",
+    };
+  }
+
+  if (!getAllowedPaymentMethods_()[paymentMethod]) {
+    return {
+      ok: false,
+      success: false,
+      error: "Metode pembayaran tidak dikenal.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak ditemukan.",
+      };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "available") {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak tersedia untuk dibuat booking.",
+      };
+    }
+
+    var requestIdempotencyKey = String(request.idempotency_key || "").trim();
+    var activeSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active", "closing"]);
+
+    if (activeSession) {
+      if (
+        requestIdempotencyKey &&
+        String(activeSession.session.idempotency_key || "").trim() === requestIdempotencyKey
+      ) {
+        return {
+          ok: true,
+          success: true,
+          message: "Booking room sudah pernah disiapkan.",
+          room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+          session: activeSession.session,
+          idempotent_replay: true,
+        };
+      }
+
+      return {
+        ok: false,
+        success: false,
+        error: "Room masih memiliki session aktif atau menunggu mulai.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var ratePerHour = Number(room.rate_per_hour) || 0;
+    var session = {
+      session_id: generateRoomSessionId_(roomId),
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      booking_mode: FNB_V25A_BOOKING_MODE_REGULAR,
+      status: "starting",
+      start_time: "",
+      scheduled_end_time: "",
+      end_time: "",
+      booked_duration_minutes: durationMinutes,
+      package_included_minutes: 0,
+      promotion_free_minutes: 0,
+      billable_room_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      cashier_name: cashierName,
+      created_at: now,
+      updated_at: now,
+      closed_transaction_id: "",
+      idempotency_key: requestIdempotencyKey,
+      legacy_room_start_time: "",
+      note: buildPreparedSessionNote_(paymentMethod, request.note),
+    };
+
+    appendRoomSession_(session);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Booking room berhasil disiapkan. Mulai countdown setelah room dan perangkat siap.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      session: session,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function activatePreparedSession_(roomId, cashierName) {
+  var normalizedRoomId = String(roomId || "").trim();
+
+  if (!normalizedRoomId) {
+    return {
+      ok: false,
+      success: false,
+      error: "room_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak ditemukan.",
+      };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "paid_waiting_start") {
+      return {
+        ok: false,
+        success: false,
+        error: "Room belum berada pada status menunggu mulai.",
+      };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(normalizedRoomId, ["starting"]);
+
+    if (!sessionResult) {
+      return {
+        ok: false,
+        success: false,
+        error: "Session menunggu mulai tidak ditemukan.",
+      };
+    }
+
+    var session = sessionResult.session;
+    var durationMinutes = Number(session.booked_duration_minutes) || Number(room.booked_duration_minutes) || 0;
+
+    if (!isFinite(durationMinutes) || durationMinutes < 15) {
+      return {
+        ok: false,
+        success: false,
+        error: "Durasi booking tidak valid.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var scheduledEndTime = addMinutesToJakartaIsoString_(now, durationMinutes);
+    var actor = String(cashierName || session.cashier_name || "Kasir").trim() || "Kasir";
+    var sessionsSheet = sessionResult.sheet;
+    var sessionsHeaderMap = sessionResult.headerMap;
+
+    setRowValues_(sessionsSheet, sessionsHeaderMap, sessionResult.rowNumber, {
+      status: "active",
+      start_time: now,
+      scheduled_end_time: scheduledEndTime,
+      updated_at: now,
+      legacy_room_start_time: now,
+      cashier_name: actor,
+    });
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("occupied");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue(now);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue(scheduledEndTime);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Countdown room berhasil dimulai.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      session: getRowObject_(sessionsSheet, sessionsHeaderMap, sessionResult.rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function extendSession_(roomId, addMinutes, cashierName, note) {
   if (!roomId) {
     return {
@@ -6791,6 +7026,7 @@ function closeSession_(roomId, cashierName) {
     var endDate = new Date();
     var endTime = toJakartaIsoString_(endDate);
     var startTime = room.start_time instanceof Date ? toJakartaIsoString_(room.start_time) : room.start_time;
+    var activeRoomSession = findLatestRoomSessionForRoom_(room.room_id || "", ["active"]);
     var billing = resolveSessionBilling_(room, startDate, endDate);
     var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
@@ -6838,6 +7074,15 @@ function closeSession_(roomId, cashierName) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
     }
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(endTime);
+
+    if (activeRoomSession) {
+      setRowValues_(activeRoomSession.sheet, activeRoomSession.headerMap, activeRoomSession.rowNumber, {
+        status: "closed",
+        end_time: endTime,
+        updated_at: endTime,
+        closed_transaction_id: transaction.transaction_id,
+      });
+    }
 
     return {
       ok: true,
@@ -9716,6 +9961,10 @@ function ensurePackageDetailSheet_() {
   return ensureSheetColumns_("PackageDetail", PACKAGE_DETAIL_HEADERS);
 }
 
+function ensureRoomSessionsSheet_() {
+  return ensureSheetColumns_(ROOM_SESSIONS_SHEET, ROOM_SESSION_HEADERS);
+}
+
 function ensureRecipeBomSheet_() {
   return ensureSheetColumns_("RecipeBom", RECIPE_BOM_HEADERS);
 }
@@ -10050,6 +10299,99 @@ function appendTransaction_(transaction) {
   });
 
   sheet.appendRow(rowValues);
+}
+
+function generateRoomSessionId_(roomId) {
+  var safeRoomId = String(roomId || "ROOM").trim().replace(/[^A-Za-z0-9-]/g, "");
+
+  return safeRoomId + "-SESSION-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function appendRoomSession_(session) {
+  appendObjectRow_(ensureRoomSessionsSheet_(), session);
+}
+
+function buildPreparedSessionNote_(paymentMethod, note) {
+  var paymentLabel = paymentMethod === "transfer"
+    ? "Transfer/QRIS"
+    : "Cash";
+  var userNote = String(note || "").trim();
+  var parts = [
+    "Prepared session; payment method confirmed: " + paymentLabel,
+  ];
+
+  if (userNote) {
+    parts.push(userNote);
+  }
+
+  return parts.join(" | ");
+}
+
+function findLatestRoomSessionForRoom_(roomId, statuses) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return null;
+  }
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var allowedStatuses = {};
+
+  (statuses || []).forEach(function (status) {
+    allowedStatuses[String(status || "").trim().toLowerCase()] = true;
+  });
+
+  var sheet = ensureRoomSessionsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var latest = null;
+
+  values.slice(1).forEach(function (row, index) {
+    var isEmptyRow = row.every(function (cell) {
+      return cell === "" || cell === null;
+    });
+
+    if (isEmptyRow) {
+      return;
+    }
+
+    var session = {};
+
+    headers.forEach(function (header, headerIndex) {
+      if (header) {
+        session[header] = normalizeCellValue_(header, row[headerIndex]);
+      }
+    });
+
+    var matchesRoom = String(session.room_id || "").trim() === normalizedRoomId;
+    var normalizedStatus = String(session.status || "").trim().toLowerCase();
+
+    if (!matchesRoom || !allowedStatuses[normalizedStatus]) {
+      return;
+    }
+
+    var updatedAt = session.updated_at || session.created_at || "";
+    var updatedTime = new Date(updatedAt).getTime();
+
+    if (!latest || updatedTime >= latest.updatedTime) {
+      latest = {
+        session: session,
+        rowNumber: index + 2,
+        updatedTime: isNaN(updatedTime) ? 0 : updatedTime,
+      };
+    }
+  });
+
+  if (!latest) {
+    return null;
+  }
+
+  latest.sheet = sheet;
+  latest.headerMap = headerMap;
+  return latest;
 }
 
 function ensureTransactionsSheetColumns_() {
