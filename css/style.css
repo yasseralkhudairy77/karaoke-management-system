@@ -1137,6 +1137,156 @@ body::after {
   min-width: 0;
 }
 
+.finance-overview {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--panel-gap);
+  padding: var(--panel-padding);
+  border: 1px solid rgba(255, 215, 122, 0.32);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(700px 280px at 0% 0%, rgba(255, 215, 122, 0.11), transparent 62%),
+    linear-gradient(180deg, rgba(38, 29, 20, 0.94), rgba(13, 10, 7, 0.9));
+  box-shadow: var(--shadow-panel);
+}
+
+.finance-overview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid rgba(226, 184, 92, 0.18);
+}
+
+.finance-overview-title {
+  margin: 0;
+  color: var(--gold-strong);
+  font-size: clamp(1.35rem, 2.4vw, 1.8rem);
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.finance-overview-subtitle,
+.finance-overview-note,
+.finance-overview-detail,
+.finance-checklist-detail,
+.finance-checklist-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.finance-overview-note {
+  padding: 11px 13px;
+  border: 1px solid rgba(226, 184, 92, 0.22);
+  border-radius: var(--radius-sm);
+  background: rgba(13, 10, 7, 0.45);
+}
+
+.finance-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.finance-overview-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  min-height: 136px;
+  padding: var(--space-4);
+  border: 1px solid rgba(226, 184, 92, 0.2);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
+    rgba(13, 10, 7, 0.52);
+}
+
+.finance-overview-card--gold {
+  border-color: rgba(255, 215, 122, 0.46);
+  background:
+    linear-gradient(180deg, rgba(255, 215, 122, 0.16), rgba(201, 150, 50, 0.08)),
+    rgba(13, 10, 7, 0.56);
+}
+
+.finance-overview-card--success {
+  border-color: rgba(53, 183, 121, 0.36);
+}
+
+.finance-overview-card--warning {
+  border-color: rgba(240, 184, 79, 0.46);
+}
+
+.finance-overview-label,
+.finance-checklist-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.finance-overview-value {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: clamp(1.25rem, 2.7vw, 2rem);
+  font-weight: 950;
+  line-height: 1.1;
+}
+
+.finance-overview-card--gold .finance-overview-value,
+.finance-overview-card--warning .finance-overview-value {
+  color: var(--gold-strong);
+}
+
+.finance-overview-card--success .finance-overview-value {
+  color: #b9f8d8;
+}
+
+.finance-checklist {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid rgba(226, 184, 92, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(13, 10, 7, 0.45);
+}
+
+.finance-checklist-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.finance-checklist-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.finance-checklist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid rgba(226, 184, 92, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.finance-checklist-badge {
+  flex: 0 0 auto;
+}
+
 .owner-dashboard {
   grid-column: 1 / -1;
   display: grid;
@@ -1662,6 +1812,8 @@ body::after {
 }
 
 @media (max-width: 767px) {
+  .finance-overview-header,
+  .finance-checklist-row,
   .owner-dashboard-header,
   .room-occupancy-header,
   .settings-header,
@@ -1676,11 +1828,16 @@ body::after {
     width: 100%;
   }
 
+  .finance-overview-grid,
   .owner-dashboard-grid,
   .room-occupancy-summary,
   .room-usage-row,
   .room-usage-transaction-row {
     grid-template-columns: 1fr;
+  }
+
+  .finance-checklist-badge {
+    width: fit-content;
   }
 
   .owner-dashboard-mini-row {
@@ -6438,6 +6595,12 @@ body::after {
   .transaction-actions .transaction-pay-button {
     width: 100%;
     flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .finance-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

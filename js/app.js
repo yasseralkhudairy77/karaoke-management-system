@@ -7363,6 +7363,267 @@ function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, item
   return card;
 }
 
+function buildFinanceOverviewSummary() {
+  const transactionSummary = todayTransactionSummary || {};
+  const roomSummary = roomUsageSummary || ownerRoomUsageSummary || {};
+  const fnbOrderSummary = todayFnbOrderSummary || {};
+  const fnbSalesSummary = todayFnbSalesSummary || {};
+  const activeRoomCount = rooms.filter((room) => normalizeRoomStatus(room?.status) === "occupied").length;
+  const latestClosing = todayCashierClosings[0] || null;
+  const cashDifference = Number(latestClosing?.cash_difference) || 0;
+  const openFnbAmount = Number(fnbOrderSummary.open_amount) || calculateOpenFnbOrdersSummary(openFnbOrders).total_amount;
+
+  return {
+    totalPenjualan: Number(transactionSummary.total_revenue_all) || Number(roomSummary.total_grand_revenue) || 0,
+    sudahDibayar: Number(transactionSummary.paid_revenue) || Number(transactionSummary.total_revenue_paid) || Number(roomSummary.paid_revenue) || 0,
+    belumDibayar: Number(transactionSummary.unpaid_revenue) || Number(roomSummary.unpaid_revenue) || 0,
+    penjualanRoom: Number(roomSummary.total_room_revenue) || todayTransactions.reduce((total, transaction) => total + (Number(transaction.room_total) || 0), 0),
+    penjualanFnb: Number(fnbSalesSummary.total_fnb_sales) || Number(roomSummary.total_fnb_revenue) || todayTransactions.reduce((total, transaction) => total + (Number(transaction.fnb_total) || 0), 0),
+    pesananFnbBerjalan: openFnbAmount,
+    totalTransaksi: Number(transactionSummary.total_transactions) || todayTransactions.length,
+    transaksiBelumDibayar: Number(transactionSummary.unpaid_transactions) || todayTransactions.filter((transaction) => transaction.payment_status === "unpaid").length,
+    roomBerjalan: activeRoomCount,
+    totalSesi: Number(roomSummary.total_sessions) || 0,
+    roomTeraktif: roomSummary.top_room_name || "-",
+    menuTerlaris: fnbSalesSummary.top_menu_name || "-",
+    setoranKasirTersimpan: todayCashierClosings.length > 0,
+    latestClosing,
+    cashDifference,
+  };
+}
+
+function getFinanceCashStatus(summary) {
+  if (!summary.setoranKasirTersimpan) {
+    return {
+      label: "Belum Tutup Shift",
+      tone: "warning",
+      detail: "Kasir belum menyimpan laporan tutup shift.",
+    };
+  }
+
+  if (summary.cashDifference > 0) {
+    return {
+      label: "Kas Lebih",
+      tone: "warning",
+      detail: `Ada kelebihan uang kas ${formatCurrency(summary.cashDifference)}.`,
+    };
+  }
+
+  if (summary.cashDifference < 0) {
+    return {
+      label: "Kas Kurang",
+      tone: "danger",
+      detail: `Ada kekurangan uang kas ${formatCurrency(Math.abs(summary.cashDifference))}.`,
+    };
+  }
+
+  return {
+    label: "Kas Cocok",
+    tone: "success",
+    detail: "Setoran kasir terakhir tercatat cocok.",
+  };
+}
+
+function buildFinanceChecklist(summary) {
+  const checklist = [];
+
+  if (summary.belumDibayar > 0 || summary.transaksiBelumDibayar > 0) {
+    checklist.push({
+      label: "Tagihan belum dibayar",
+      value: formatCurrency(summary.belumDibayar),
+      tone: "warning",
+      detail: `${summary.transaksiBelumDibayar} transaksi perlu dicek.`,
+    });
+  }
+
+  if (summary.pesananFnbBerjalan > 0) {
+    checklist.push({
+      label: "F&B belum masuk tagihan",
+      value: formatCurrency(summary.pesananFnbBerjalan),
+      tone: "warning",
+      detail: "Masih ada pesanan F&B berjalan.",
+    });
+  }
+
+  if (summary.roomBerjalan > 0) {
+    checklist.push({
+      label: "Room masih berjalan",
+      value: `${summary.roomBerjalan} room`,
+      tone: "info",
+      detail: "Pastikan room selesai sebelum tutup shift final.",
+    });
+  }
+
+  const cashStatus = getFinanceCashStatus(summary);
+  if (cashStatus.tone !== "success") {
+    checklist.push({
+      label: cashStatus.label,
+      value: "Perlu dicek",
+      tone: cashStatus.tone,
+      detail: cashStatus.detail,
+    });
+  }
+
+  return checklist;
+}
+
+function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral" }) {
+  const card = document.createElement("article");
+  card.className = `finance-overview-card finance-overview-card--${tone}`;
+
+  const labelElement = document.createElement("p");
+  labelElement.className = "finance-overview-label";
+  labelElement.textContent = label;
+
+  const valueElement = document.createElement("p");
+  valueElement.className = "finance-overview-value";
+  valueElement.textContent = value;
+
+  card.append(labelElement, valueElement);
+
+  if (detail) {
+    const detailElement = document.createElement("p");
+    detailElement.className = "finance-overview-detail";
+    detailElement.textContent = detail;
+    card.appendChild(detailElement);
+  }
+
+  return card;
+}
+
+function createFinanceChecklistElement(items) {
+  const panel = document.createElement("section");
+  panel.className = "finance-checklist";
+  panel.setAttribute("aria-labelledby", "finance-checklist-title");
+
+  const title = document.createElement("h3");
+  title.className = "finance-checklist-title";
+  title.id = "finance-checklist-title";
+  title.textContent = "Hal yang Perlu Dicek";
+
+  const list = document.createElement("div");
+  list.className = "finance-checklist-list";
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "finance-checklist-empty";
+    empty.textContent = "Tidak ada hal penting yang perlu dicek untuk shift ini.";
+    list.appendChild(empty);
+  } else {
+    items.forEach((item) => {
+      const row = document.createElement("article");
+      row.className = "finance-checklist-row";
+
+      const info = document.createElement("div");
+
+      const label = document.createElement("p");
+      label.className = "finance-checklist-label";
+      label.textContent = item.label;
+
+      const detail = document.createElement("p");
+      detail.className = "finance-checklist-detail";
+      detail.textContent = item.detail;
+
+      info.append(label, detail);
+
+      const badge = document.createElement("span");
+      badge.className = withStatusBadge("finance-checklist-badge", item.tone);
+      badge.textContent = item.value;
+
+      row.append(info, badge);
+      list.appendChild(row);
+    });
+  }
+
+  panel.append(title, list);
+  return panel;
+}
+
+function createFinanceOverviewElement() {
+  const section = document.createElement("section");
+  section.className = "finance-overview";
+  section.setAttribute("aria-labelledby", "finance-overview-title");
+
+  const summary = buildFinanceOverviewSummary();
+  const cashStatus = getFinanceCashStatus(summary);
+  const checklist = buildFinanceChecklist(summary);
+
+  const header = document.createElement("div");
+  header.className = "finance-overview-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "finance-overview-title";
+  title.id = "finance-overview-title";
+  title.textContent = "Ringkasan Keuangan Harian";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "finance-overview-subtitle";
+  subtitle.textContent = "Pantau uang masuk, tagihan berjalan, penjualan room, dan penjualan F&B dalam satu layar.";
+
+  titleGroup.append(title, subtitle);
+
+  const status = document.createElement("span");
+  status.className = withStatusBadge("finance-overview-status", cashStatus.tone);
+  status.textContent = cashStatus.label;
+
+  header.append(titleGroup, status);
+
+  const grid = document.createElement("div");
+  grid.className = "finance-overview-grid";
+
+  [
+    {
+      label: "Total Penjualan",
+      value: formatCurrency(summary.totalPenjualan),
+      detail: `${summary.totalTransaksi} transaksi tercatat`,
+      tone: "gold",
+    },
+    {
+      label: "Sudah Dibayar",
+      value: formatCurrency(summary.sudahDibayar),
+      detail: "Uang yang sudah tercatat lunas",
+      tone: "success",
+    },
+    {
+      label: "Belum Dibayar",
+      value: formatCurrency(summary.belumDibayar),
+      detail: `${summary.transaksiBelumDibayar} transaksi belum lunas`,
+      tone: summary.belumDibayar > 0 ? "warning" : "success",
+    },
+    {
+      label: "Penjualan Room",
+      value: formatCurrency(summary.penjualanRoom),
+      detail: `${summary.totalSesi} sesi, room teraktif: ${summary.roomTeraktif}`,
+      tone: "neutral",
+    },
+    {
+      label: "Penjualan F&B",
+      value: formatCurrency(summary.penjualanFnb),
+      detail: `Menu terlaris: ${summary.menuTerlaris}`,
+      tone: "neutral",
+    },
+    {
+      label: "F&B Berjalan",
+      value: formatCurrency(summary.pesananFnbBerjalan),
+      detail: "Pesanan belum masuk tagihan akhir",
+      tone: summary.pesananFnbBerjalan > 0 ? "warning" : "success",
+    },
+  ].forEach((item) => {
+    grid.appendChild(createFinanceOverviewMetricCard(item));
+  });
+
+  section.append(
+    header,
+    createOperationalShiftNoteElement("finance-overview-note"),
+    grid,
+    createFinanceChecklistElement(checklist)
+  );
+
+  return section;
+}
+
 function createOwnerDashboardElement() {
   const section = document.createElement("section");
   section.className = "owner-dashboard";
@@ -10349,6 +10610,7 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "reports":
       panel.append(
+        createFinanceOverviewElement(),
         createOwnerDashboardElement(),
         createRoomOccupancyElement(),
         createTodayFnbSalesReportPanelElement(),
