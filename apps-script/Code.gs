@@ -6939,9 +6939,9 @@ function saveCashierClosing_(cashActual, note, cashierName) {
   try {
     var now = new Date();
     var createdAt = toJakartaIsoString_(now);
-    var todayDateString = getJakartaDateString_(now);
+    var operationalDateString = getOperationalDateString_(now);
     var existingClosings = readCashierClosingsOrEmpty_().filter(function (closing) {
-      return normalizeJakartaDateString_(closing.closing_date) === todayDateString;
+      return resolveClosingOperationalDateString_(closing) === operationalDateString;
     });
 
     if (existingClosings.length > 0) {
@@ -6962,7 +6962,7 @@ function saveCashierClosing_(cashActual, note, cashierName) {
 
     var closing = {
       closing_id: generateClosingId_(),
-      closing_date: getJakartaDateString_(now),
+      closing_date: operationalDateString,
       cashier_name: cashierName || "Kasir",
       total_transactions: summary.total_transactions,
       paid_transactions: summary.paid_transactions,
@@ -7001,9 +7001,12 @@ function saveCashierClosing_(cashActual, note, cashierName) {
 }
 
 function calculateCashierClosingSummary_() {
-  var today = new Date();
+  var periodResult = parseTransactionPeriod_("today", "", "");
   var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
-    return isSameJakartaDate_(transaction.created_at, today);
+    return matchesOperationalPeriod_(
+      resolveTransactionOperationalDateString_(transaction),
+      periodResult
+    );
   });
 
   return transactions.reduce(function (summary, transaction) {
