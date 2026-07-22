@@ -109,6 +109,7 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_total",
   "grand_total",
   "fnb_order_ids",
+  "transaction_type",
 ];
 var MENU_STOCK_HEADERS = [
   "stock_tracking",
@@ -142,6 +143,8 @@ var STOCK_MOVEMENTS_HEADERS = [
 var ROOMS_BOOKING_HEADERS = [
   "booked_duration_minutes",
   "scheduled_end_time",
+  "customer_name",
+  "package_id",
 ];
 var ROOM_TIME_LOGS_HEADERS = [
   "log_id",
@@ -333,6 +336,9 @@ var ROOM_SESSION_HEADERS = [
   "idempotency_key",
   "legacy_room_start_time",
   "note",
+  "customer_name",
+  "package_id",
+  "prepayment_transaction_id",
 ];
 var SESSION_PACKAGE_HEADERS = [
   "session_package_id",
@@ -619,12 +625,39 @@ function doPost(e) {
       return jsonResponse(prepareRoomSession_(payload));
     }
 
+    if (action === "payAndStartSession") {
+      return jsonResponse(payAndStartSession_(payload));
+    }
+
+    if (action === "completeCleaning") {
+      return jsonResponse(completeCleaning_(payload));
+    }
+
+    if (action === "cancelBooking") {
+      return jsonResponse(cancelBooking_(payload));
+    }
+
+    if (action === "bulkImportPackages") {
+      return jsonResponse(bulkImportPackages_(payload));
+    }
+
+    if (action === "seedReceptionistEmployee") {
+      return jsonResponse(seedReceptionistEmployee_());
+    }
+
     if (action === "activatePreparedSession") {
       return jsonResponse(activatePreparedSession_(payload.room_id, payload.cashier_name));
     }
 
     if (action === "extendSession") {
-      return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name, payload.note));
+      return jsonResponse(extendSession_(
+        payload.room_id,
+        payload.add_minutes,
+        payload.cashier_name,
+        payload.note,
+        payload.payment_method,
+        payload.payment_status
+      ));
     }
 
     if (action === "closeSession") {
@@ -640,7 +673,14 @@ function doPost(e) {
     }
 
     if (action === "saveFnbOrder") {
-      return jsonResponse(saveFnbOrder_(payload.room_id, payload.items, payload.cashier_name, payload.note));
+      return jsonResponse(saveFnbOrder_(
+        payload.room_id,
+        payload.items,
+        payload.cashier_name,
+        payload.note,
+        payload.payment_method,
+        payload.payment_status
+      ));
     }
 
     if (action === "previewSessionPricing") {
@@ -852,6 +892,8 @@ function getRooms_() {
       tv_device_id: room.tv_device_id || "",
       tv_device: buildRoomTvSummary_(room, tvDevice, latestTvLog),
       updated_at: room.updated_at || null,
+      customer_name: room.customer_name || "",
+      package_id: room.package_id || "",
     };
   });
 }
@@ -2444,6 +2486,20 @@ function appendTvControlLogFromResponse_(response, triggerSource, cashierName, t
 
 function getMenuItems_() {
   ensureMenuStockColumns_();
+  var inventoryMap = {};
+  try {
+    var inventoryItems = getInventoryItems_();
+    for (var i = 0; i < inventoryItems.length; i++) {
+      var inv = inventoryItems[i];
+      if (inv && inv.stock_item_id) {
+        var key = String(inv.stock_item_id).trim().toLowerCase();
+        inventoryMap[key] = inv;
+      }
+    }
+  } catch (err) {
+    // Fallback if Inventory sheet is empty or unavailable
+  }
+
   var menuItems = readSheetAsObjects_("Menu")
     .filter(function (menuItem) {
       return menuItem.menu_id && menuItem.menu_name;
@@ -2459,6 +2515,11 @@ function getMenuItems_() {
       if (!status && menuItem.is_active !== "" && menuItem.is_active !== null && menuItem.is_active !== undefined) {
         status = String(menuItem.is_active).toUpperCase() === "TRUE" ? "active" : "inactive";
       }
+
+      var stockItemId = String(menuItem.stock_item_id || "").trim();
+      var stockTracking = menuItem.stock_tracking || (stockItemId ? "yes" : "no");
+      var lookupKey = stockItemId.toLowerCase();
+      var stockItem = stockItemId ? inventoryMap[lookupKey] : null;
 
       return {
         menu_id: menuItem.menu_id || "",
@@ -6027,8 +6088,12 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
     var fnbRevenue = Number(transaction.fnb_total) || 0;
     var grandRevenue = Number(transaction.grand_total) || 0;
     var isPaid = isTransactionPaidForReport_(transaction);
+    var type = String(transaction.transaction_type || "").trim().toLowerCase();
+    var isMainSession = (type === "" || type === "session_checkout");
 
-    summary.total_sessions += 1;
+    if (isMainSession) {
+      summary.total_sessions += 1;
+    }
     summary.total_duration_minutes += durationMinutes;
     summary.total_room_revenue += roomRevenue;
     summary.total_fnb_revenue += fnbRevenue;
@@ -6036,10 +6101,14 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
 
     if (isPaid) {
       summary.paid_revenue += grandRevenue;
-      summary.paid_sessions += 1;
+      if (isMainSession) {
+        summary.paid_sessions += 1;
+      }
     } else {
       summary.unpaid_revenue += grandRevenue;
-      summary.unpaid_sessions += 1;
+      if (isMainSession) {
+        summary.unpaid_sessions += 1;
+      }
     }
 
     if (!roomUsageMap[roomKey]) {
@@ -6058,7 +6127,9 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
 
     var roomUsage = roomUsageMap[roomKey];
 
-    roomUsage.session_count += 1;
+    if (isMainSession) {
+      roomUsage.session_count += 1;
+    }
     roomUsage.duration_minutes += durationMinutes;
     roomUsage.room_revenue += roomRevenue;
     roomUsage.fnb_revenue += fnbRevenue;
@@ -6644,6 +6715,8 @@ function prepareRoomSession_(payload) {
   var durationMinutes = Number(request.duration_minutes);
   var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
   var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var customerName = String(request.customer_name || "").trim();
+  var packageId = String(request.package_id || "").trim();
 
   if (!roomId) {
     return {
@@ -6669,7 +6742,7 @@ function prepareRoomSession_(payload) {
     };
   }
 
-  if (!getAllowedPaymentMethods_()[paymentMethod]) {
+  if (paymentMethod && !getAllowedPaymentMethods_()[paymentMethod]) {
     return {
       ok: false,
       success: false,
@@ -6704,6 +6777,27 @@ function prepareRoomSession_(payload) {
       };
     }
 
+    var bookingMode = "regular";
+    if (packageId) {
+      var packagesList = readSheetAsObjects_("PackageMaster");
+      var selectedPackage = null;
+      for (var i = 0; i < packagesList.length; i++) {
+        if (String(packagesList[i].package_id || "").trim() === packageId) {
+          selectedPackage = packagesList[i];
+          break;
+        }
+      }
+      if (!selectedPackage) {
+        return {
+          ok: false,
+          success: false,
+          error: "Paket tidak ditemukan.",
+        };
+      }
+      bookingMode = "package";
+      durationMinutes = Number(selectedPackage.duration_minutes) || durationMinutes;
+    }
+
     var requestIdempotencyKey = String(request.idempotency_key || "").trim();
     var activeSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active", "closing"]);
 
@@ -6735,15 +6829,15 @@ function prepareRoomSession_(payload) {
       session_id: generateRoomSessionId_(roomId),
       room_id: room.room_id || "",
       room_name: room.room_name || "",
-      booking_mode: FNB_V25A_BOOKING_MODE_REGULAR,
+      booking_mode: bookingMode,
       status: "starting",
       start_time: "",
       scheduled_end_time: "",
       end_time: "",
       booked_duration_minutes: durationMinutes,
-      package_included_minutes: 0,
+      package_included_minutes: bookingMode === "package" ? durationMinutes : 0,
       promotion_free_minutes: 0,
-      billable_room_minutes: durationMinutes,
+      billable_room_minutes: bookingMode === "package" ? 0 : durationMinutes,
       rate_per_hour: ratePerHour,
       cashier_name: cashierName,
       created_at: now,
@@ -6752,9 +6846,130 @@ function prepareRoomSession_(payload) {
       idempotency_key: requestIdempotencyKey,
       legacy_room_start_time: "",
       note: buildPreparedSessionNote_(paymentMethod, request.note),
+      customer_name: customerName,
+      package_id: packageId,
+      prepayment_transaction_id: "",
     };
 
     appendRoomSession_(session);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("waiting_payment");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue(customerName);
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue(packageId);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Booking room berhasil disiapkan. Silakan arahkan pelanggan melakukan pembayaran ke kasir.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      session: session,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function payAndStartSession_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  if (!paymentMethod || !getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib diisi dengan benar." };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "waiting_payment") {
+      return { ok: false, success: false, error: "Room tidak berstatus menunggu pembayaran." };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
+    if (!sessionResult) {
+      return { ok: false, success: false, error: "Sesi booking tidak ditemukan." };
+    }
+
+    var session = sessionResult.session;
+    var durationMinutes = Number(session.booked_duration_minutes) || 0;
+    var ratePerHour = Number(room.rate_per_hour) || 0;
+    var upfrontCharge = 0;
+
+    if (session.booking_mode === "package") {
+      var packagesList = readSheetAsObjects_("PackageMaster");
+      for (var i = 0; i < packagesList.length; i++) {
+        if (String(packagesList[i].package_id || "").trim() === session.package_id) {
+          upfrontCharge = Number(packagesList[i].selling_price) || 0;
+          break;
+        }
+      }
+    } else {
+      upfrontCharge = Math.ceil(durationMinutes / 60 * ratePerHour);
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var scheduledEndTime = addMinutesToJakartaIsoString_(now, durationMinutes);
+    var transactionId = generateTransactionId_();
+
+    // Create Transaction 1 (Upfront)
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      start_time: now,
+      end_time: now,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      room_total: upfrontCharge,
+      fnb_total: 0,
+      grand_total: upfrontCharge,
+      fnb_order_ids: "",
+      payment_method: paymentMethod,
+      payment_status: "paid",
+      cashier_name: cashierName,
+      created_at: now,
+      billing_basis: "upfront_prepay",
+    };
+    appendTransaction_(transaction);
+
+    // Deduct stock for package F&B
+    if (session.booking_mode === "package" && session.package_id) {
+      deductPackageStock_(session.package_id, transactionId, cashierName, now);
+    }
+
+    // Update session
+    setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
+      updated_at: now,
+      cashier_name: cashierName,
+      prepayment_transaction_id: transactionId,
+    });
+
+    // Update Room
     roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
@@ -6764,13 +6979,248 @@ function prepareRoomSession_(payload) {
     return {
       ok: true,
       success: true,
-      message: "Booking room berhasil disiapkan. Mulai countdown setelah room dan perangkat siap.",
+      message: "Pembayaran awal lunas. Room menunggu siap diaktifkan waiters.",
       room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
-      session: session,
+      transaction: transaction,
     };
   } finally {
     lock.releaseLock();
   }
+}
+
+function deductPackageStock_(packageId, transactionId, cashierName, now) {
+  try {
+    var detailsSheet = ensurePackageDetailSheet_();
+    var details = readSheetAsObjects_("PackageDetail");
+    var packageDetails = details.filter(function (detail) {
+      return String(detail.package_id || "").trim() === packageId;
+    });
+
+    var inventorySheet = getSheet_("Inventory");
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var movementsSheet = ensureStockMovementsSheet_();
+
+    packageDetails.forEach(function (detail) {
+      if (String(detail.component_type || "").trim().toLowerCase() === "menu" || String(detail.component_type || "").trim().toLowerCase() === "inventory") {
+        var refId = String(detail.component_ref_id || "").trim();
+        var qty = Number(detail.qty) || 0;
+        if (refId && qty > 0) {
+          var rowNumber = findRowByValue_(inventorySheet, inventoryHeaderMap, "stock_item_id", refId);
+          if (rowNumber) {
+            var stockBefore = Number(inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).getValue()) || 0;
+            var stockAfter = stockBefore - qty;
+
+            inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).setValue(stockAfter);
+            inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+
+            var movement = {
+              movement_id: "MVT-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000),
+              created_at: now,
+              stock_item_id: refId,
+              stock_item_name: String(detail.component_name || "").trim(),
+              movement_type: "out",
+              reference_type: "transaction",
+              reference_id: transactionId,
+              qty_change: -qty,
+              stock_before: stockBefore,
+              stock_after: stockAfter,
+              note: "Pengurangan otomatis paket " + packageId,
+              cashier_name: cashierName,
+            };
+            appendObjectRow_(movementsSheet, movement);
+          }
+        }
+      }
+    });
+  } catch (err) {
+    Logger.log("Gagal mengurangi stok paket: " + err.message);
+  }
+}
+
+function completeCleaning_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "cleaning") {
+      return { ok: false, success: false, error: "Room tidak berstatus cleaning." };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Room siap digunakan kembali.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cancelBooking_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "waiting_payment") {
+      return { ok: false, success: false, error: "Hanya booking belum bayar yang bisa dibatalkan." };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
+    var now = toJakartaIsoString_(new Date());
+
+    if (sessionResult) {
+      setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
+        status: "cancelled",
+        updated_at: now,
+      });
+    }
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Pemesanan berhasil dibatalkan.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function bulkImportPackages_(payload) {
+  var packages = payload.packages || [];
+  if (!packages.length) {
+    return { ok: false, success: false, error: "packages array wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+
+  try {
+    var masterSheet = ensurePackageMasterSheet_();
+    var detailSheet = ensurePackageDetailSheet_();
+
+    // Clear sheets keeping headers
+    var lastRowMaster = masterSheet.getLastRow();
+    if (lastRowMaster > 1) masterSheet.deleteRows(2, lastRowMaster - 1);
+    
+    var lastRowDetail = detailSheet.getLastRow();
+    if (lastRowDetail > 1) detailSheet.deleteRows(2, lastRowDetail - 1);
+
+    var masterHeaderMap = getHeaderMap_(masterSheet);
+    var detailHeaderMap = getHeaderMap_(detailSheet);
+    var now = toJakartaIsoString_(new Date());
+
+    packages.forEach(function (pkg) {
+      var master = pkg.package_master;
+      master.updated_at = now;
+      appendObjectRow_(masterSheet, master);
+
+      var details = pkg.package_details || [];
+      details.forEach(function (detail) {
+        detail.updated_at = now;
+        appendObjectRow_(detailSheet, detail);
+      });
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Impor paket berhasil. Total " + packages.length + " paket dimasukkan.",
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function seedReceptionistEmployee_() {
+  var sheet = getSheet_("Employees");
+  var headerMap = getHeaderMap_(sheet);
+  var employees = readSheetAsObjects_("Employees");
+  
+  var exists = employees.some(function (emp) {
+    return String(emp.role || "").trim().toLowerCase() === "receptionist";
+  });
+  
+  if (!exists) {
+    var nextEmpId = "EMP-004";
+    var receptionist = {
+      employee_id: nextEmpId,
+      employee_name: "Resepsionis 1",
+      role: "receptionist",
+      pin: "4444",
+      status: "active",
+      created_at: toJakartaIsoString_(new Date()),
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+    appendObjectRow_(sheet, receptionist);
+    return { ok: true, success: true, message: "Karyawan resepsionis berhasil dibuat. PIN: 4444" };
+  }
+  
+  return { ok: true, success: true, message: "Karyawan resepsionis sudah terdaftar." };
 }
 
 function activatePreparedSession_(roomId, cashierName) {
@@ -6865,7 +7315,7 @@ function activatePreparedSession_(roomId, cashierName) {
   }
 }
 
-function extendSession_(roomId, addMinutes, cashierName, note) {
+function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, paymentStatus) {
   if (!roomId) {
     return {
       ok: false,
@@ -6936,6 +7386,9 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
     var newScheduledEndTime = addMinutesToJakartaIsoString_(oldScheduledEndTime, addedMinutes);
     var now = toJakartaIsoString_(new Date());
 
+    var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
+    var method = String(paymentMethod || "").trim().toLowerCase();
+
     sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(newBookedDurationMinutes);
     sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(newScheduledEndTime);
     sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
@@ -6969,9 +7422,34 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
       };
     }
 
+    if (isPaid) {
+      var ratePerHour = Number(room.rate_per_hour) || 0;
+      var extensionCost = Math.ceil((addedMinutes / 60) * ratePerHour);
+
+      var transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        start_time: oldScheduledEndTime,
+        end_time: newScheduledEndTime,
+        duration_minutes: addedMinutes,
+        rate_per_hour: ratePerHour,
+        room_total: extensionCost,
+        fnb_total: 0,
+        grand_total: extensionCost,
+        fnb_order_ids: "",
+        payment_method: method || "cash",
+        payment_status: "paid",
+        cashier_name: cashierName || "Kasir",
+        created_at: now,
+        transaction_type: "room_extension",
+      };
+      appendTransaction_(transaction);
+    }
+
     return {
       ok: true,
-      message: "Waktu room berhasil ditambahkan.",
+      message: isPaid ? "Waktu room berhasil ditambahkan & dibayar." : "Waktu room berhasil ditambahkan.",
       room: getRoomFromRow_(sheet, headerMap, rowNumber),
       audit_log: {
         log_id: logId,
@@ -7042,47 +7520,101 @@ function closeSession_(roomId, cashierName) {
     var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
     var roomTotal = billing.room_total;
+
+    var isPrepay = false;
+    var prepayTxId = "";
+    if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.prepayment_transaction_id) {
+      isPrepay = true;
+      prepayTxId = activeRoomSession.session.prepayment_transaction_id;
+      roomTotal = 0; // Room fee was prepaid!
+    }
+
+    var prepaidExtensionsAmount = 0;
+    try {
+      var sessionStartTimeMs = new Date(startTime).getTime();
+      var sessionEndTimeMs = endDate.getTime();
+      
+      var relatedExtensionTxs = readSheetAsObjects_("Transactions").filter(function (tx) {
+        if (String(tx.room_id || "").trim() !== String(room.room_id || "").trim()) {
+          return false;
+        }
+        if (String(tx.transaction_type || "").trim() !== "room_extension") {
+          return false;
+        }
+        var txTimeText = tx.created_at || tx.end_time || "";
+        if (!txTimeText) return false;
+        
+        var txTimeMs = new Date(txTimeText).getTime();
+        return txTimeMs >= sessionStartTimeMs && txTimeMs <= sessionEndTimeMs;
+      });
+      
+      prepaidExtensionsAmount = relatedExtensionTxs.reduce(function (sum, tx) {
+        return sum + (Number(tx.grand_total) || 0);
+      }, 0);
+    } catch (err) {
+      // Safe fallback
+    }
+
+    roomTotal = Math.max(0, roomTotal - prepaidExtensionsAmount);
+
     var fnbOrders = getOpenFnbOrdersForSession_(room.room_id || "", startTime || "");
     var fnbTotal = calculateFnbTotal_(fnbOrders);
     var fnbOrderIds = fnbOrders.map(function (order) {
       return order.order_id;
     }).join(",");
     var detailedFnbOrders = getFnbOrdersWithItemsByIds_(parseCommaSeparatedIds_(fnbOrderIds));
-    var transaction = {
-      transaction_id: generateTransactionId_(),
-      room_id: room.room_id || "",
-      room_name: room.room_name || "",
-      start_time: startTime || "",
-      end_time: endTime,
-      duration_minutes: durationMinutes,
-      rate_per_hour: ratePerHour,
-      room_total: roomTotal,
-      fnb_total: fnbTotal,
-      grand_total: roomTotal + fnbTotal,
-      fnb_order_ids: fnbOrderIds,
-      payment_method: "",
-      payment_status: "unpaid",
-      cashier_name: cashierName || "Kasir",
-      created_at: endTime,
-      billing_basis: billing.billing_basis,
-    };
 
-    appendTransaction_(transaction);
-    var stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
-    markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
-    fnbOrders = detailedFnbOrders.map(function (order) {
-      order.order_status = "billed";
-      order.updated_at = endTime;
-      return order;
-    });
+    var transaction = null;
+    var stockResult = { movements: [], warnings: [] };
 
-    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    if (!isPrepay || fnbTotal > 0 || roomTotal > 0) {
+      transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        start_time: startTime || "",
+        end_time: endTime,
+        duration_minutes: durationMinutes,
+        rate_per_hour: ratePerHour,
+        room_total: roomTotal,
+        fnb_total: fnbTotal,
+        grand_total: roomTotal + fnbTotal,
+        fnb_order_ids: fnbOrderIds,
+        payment_method: "",
+        payment_status: "unpaid",
+        cashier_name: cashierName || "Kasir",
+        created_at: endTime,
+        billing_basis: isPrepay ? "prepay_add_on" : billing.billing_basis,
+        transaction_type: "session_checkout",
+      };
+
+      appendTransaction_(transaction);
+      stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
+      fnbOrders = detailedFnbOrders.map(function (order) {
+        order.order_status = "billed";
+        order.updated_at = endTime;
+        return order;
+      });
+    } else {
+      if (fnbOrderIds) {
+        markFnbOrdersAsBilled_(fnbOrderIds.split(","), endTime);
+      }
+    }
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("cleaning");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     if (roomsHeaderMap.booked_duration_minutes) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
     }
     if (roomsHeaderMap.scheduled_end_time) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    }
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
     }
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(endTime);
 
@@ -7091,7 +7623,7 @@ function closeSession_(roomId, cashierName) {
         status: "closed",
         end_time: endTime,
         updated_at: endTime,
-        closed_transaction_id: transaction.transaction_id,
+        closed_transaction_id: transaction ? transaction.transaction_id : prepayTxId,
       });
     }
 
@@ -7308,7 +7840,7 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus) {
   if (!roomId) {
     return {
       ok: false,
@@ -7355,6 +7887,9 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
       };
     }
 
+    var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
+    var method = String(paymentMethod || "").trim().toLowerCase();
+
     var menuMap = getMenuItemsMap_();
     var normalizedItems = normalizeFnbOrderItems_(items, menuMap);
     var orderTotal = normalizedItems.reduce(function (total, item) {
@@ -7370,7 +7905,7 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       room_start_time: roomStartTime || "",
-      order_status: "open",
+      order_status: isPaid ? "paid" : "open",
       order_total: orderTotal,
       cashier_name: cashierName || "Kasir",
       note: note || "",
@@ -7395,9 +7930,34 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
 
+    if (isPaid) {
+      var transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        start_time: "",
+        end_time: timestamp,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: orderTotal,
+        grand_total: orderTotal,
+        fnb_order_ids: order.order_id,
+        payment_method: method || "cash",
+        payment_status: "paid",
+        cashier_name: cashierName || "Kasir",
+        created_at: timestamp,
+        transaction_type: "fnb_addon",
+      };
+      appendTransaction_(transaction);
+
+      var detailedOrder = Object.assign({}, order, { items: orderItems });
+      deductStockForFnbOrders_([detailedOrder], transaction.transaction_id, transaction.cashier_name, timestamp);
+    }
+
     return {
       ok: true,
-      message: "Order F&B berhasil disimpan.",
+      message: isPaid ? "Order F&B berhasil dibayar & disimpan." : "Order F&B berhasil disimpan.",
       order: order,
       items: orderItems,
     };
@@ -7507,7 +8067,7 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
       };
     }
 
-    if (currentStatus !== "open") {
+    if (currentStatus !== "open" && currentStatus !== "paid") {
       return {
         ok: false,
         error: "Status order F&B tidak bisa dibatalkan.",
@@ -7517,6 +8077,47 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
     var now = toJakartaIsoString_(new Date());
     var reason = String(cancelReason || "").trim() || "Tanpa alasan";
     var user = String(cancelledBy || "").trim() || "Kasir";
+
+    var order = getFnbOrderObjectFromRow_(sheet, rowNumber);
+
+    if (currentStatus === "paid") {
+      var detailedOrders = getFnbOrdersWithItemsByIds_([normalizedOrderId]);
+      var orderTotal = Number(order.order_total) || 0;
+
+      var paymentMethod = "cash";
+      try {
+        var originalTx = readSheetAsObjects_("Transactions").find(function (tx) {
+          return String(tx.fnb_order_ids || "").trim() === normalizedOrderId;
+        });
+        if (originalTx && originalTx.payment_method) {
+          paymentMethod = originalTx.payment_method;
+        }
+      } catch (err) {
+        // Fallback to cash
+      }
+
+      var refundTransaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: order.room_id || "",
+        room_name: order.room_name || "",
+        start_time: "",
+        end_time: now,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: -orderTotal,
+        grand_total: -orderTotal,
+        fnb_order_ids: order.order_id,
+        payment_method: paymentMethod,
+        payment_status: "paid",
+        cashier_name: user,
+        created_at: now,
+        transaction_type: "fnb_refund",
+      };
+      appendTransaction_(refundTransaction);
+
+      restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+    }
 
     sheet.getRange(rowNumber, headerMap.order_status).setValue("cancelled");
     sheet.getRange(rowNumber, headerMap.cancel_reason).setValue(reason);
@@ -7773,7 +8374,7 @@ function getTodayFnbSalesReportByPeriod_(period, startDate, endDate) {
       var operationalDate = resolveFnbOrderOperationalDateString_(order);
 
       if (
-        orderStatus === "billed" &&
+        (orderStatus === "billed" || orderStatus === "paid") &&
         orderId &&
         matchesOperationalPeriod_(operationalDate, periodResult)
       ) {
@@ -8216,6 +8817,49 @@ function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
   };
 }
 
+function restoreStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
+  if (!fnbOrders || fnbOrders.length === 0) {
+    return;
+  }
+
+  var stockPlan = calculateStockRequirementsFromFnbOrders_(fnbOrders);
+  var inventoryMap = getInventoryMap_();
+
+  stockPlan.requirements.forEach(function (requirement) {
+    var inventory = inventoryMap[requirement.stock_item_id];
+
+    if (!inventory) {
+      return;
+    }
+
+    var stockBefore = toStockNumber_(inventory.stock_qty);
+    var stockAfter = stockBefore + requirement.required_qty;
+
+    inventory.sheet.getRange(inventory.row_number, inventory.header_map.stock_qty).setValue(stockAfter);
+
+    if (inventory.header_map.updated_at) {
+      inventory.sheet.getRange(inventory.row_number, inventory.header_map.updated_at).setValue(now);
+    }
+
+    var movement = {
+      movement_id: generateStockMovementId_(),
+      created_at: now,
+      stock_item_id: inventory.stock_item_id,
+      stock_item_name: inventory.stock_item_name,
+      movement_type: "in",
+      reference_type: "transaction",
+      reference_id: transactionId,
+      qty_change: requirement.required_qty,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      note: "F&B refund dari pembatalan transaksi " + transactionId,
+      cashier_name: cashierName || "Kasir",
+    };
+
+    appendStockMovement_(movement);
+  });
+}
+
 function calculateStockRequirementsFromFnbOrders_(fnbOrders) {
   var menuStockMap = getMenuStockMap_();
   var requirementMap = {};
@@ -8331,7 +8975,7 @@ function getInventoryMap_() {
       return map;
     }
 
-    map[stockItemId] = {
+    var invObj = {
       sheet: sheet,
       header_map: headerMap,
       row_number: index + 2,
@@ -8341,6 +8985,9 @@ function getInventoryMap_() {
       min_stock: Number(item.min_stock) || 0,
       status: item.status || "",
     };
+
+    map[stockItemId] = invObj;
+    map[String(stockItemId).trim().toLowerCase()] = invObj;
 
     return map;
   }, {});

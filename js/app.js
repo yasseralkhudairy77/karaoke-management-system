@@ -83,6 +83,16 @@ const FNB_CATEGORY_LABELS = {
   Anggur: "Anggur",
   Cigarette: "Cigarette",
 };
+const FNB_CATEGORY_ICONS = {
+  all: "📋",
+  favorites: "⭐",
+  Food: "🍔",
+  Beverage: "🍹",
+  Beer: "🍺",
+  Spirit: "🍾",
+  Anggur: "🍷",
+  Cigarette: "🚬",
+};
 const FNB_FAVORITE_ITEM_NAMES = new Set([
   "es teh manis",
   "mineral water 600ml",
@@ -190,7 +200,13 @@ const ROOM_STATUS_CONFIG = {
     label: "Cleaning",
     className: "cleaning",
     tone: "warning",
-    buttonLabel: "Menunggu Siap",
+    buttonLabel: "Selesai Bersihkan",
+  },
+  waiting_payment: {
+    label: "Menunggu Bayar",
+    className: "waiting-payment",
+    tone: "warning",
+    buttonLabel: "Detail Sesi",
   },
 };
 const VALID_ROOM_STATUS_KEYS = new Set(Object.keys(ROOM_STATUS_CONFIG));
@@ -457,6 +473,9 @@ let lastFnbOrder = null;
 let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
+let fnbOrderPaymentMethod = "cash";
+let activeFnbSubTab = "order";
+let activeTransactionsSubTab = "history";
 let openFnbOrders = [];
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
@@ -472,11 +491,18 @@ let selectedReceiptTransaction = null;
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
 let durationPaymentMethod = "cash";
+let paymentSelectionRoomId = "";
+let paymentMethodSelection = "cash";
+let bookingTypeSelection = "regular";
+let bookingPackageSelection = "";
+let customerNameInput = "";
+let packages = [];
 let isPreparingRoomSession = false;
 let isActivatingPreparedSession = false;
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
+let extendPaymentMethod = "cash";
 let isExtendingSession = false;
 let roomRecoveryCandidates = [];
 let roomRecoverySummary = null;
@@ -948,6 +974,11 @@ async function fetchMenuItemsFromApi() {
       price: Number(menuItem.price) || 0,
       status: menuItem.status || "",
       updated_at: menuItem.updated_at || "",
+      stock_tracking: menuItem.stock_tracking || "",
+      stock_item_id: menuItem.stock_item_id || "",
+      stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
+      stock_qty: menuItem.stock_qty !== null && menuItem.stock_qty !== undefined ? Number(menuItem.stock_qty) : null,
+      unit: menuItem.unit || "",
     })),
   };
 }
@@ -1226,6 +1257,7 @@ async function submitStockAdjustment() {
       note: "",
     };
     await loadInventoryItems();
+    await loadMenuItems();
     await loadTodayStockMovements();
     await loadTodayFnbSalesReport();
   } catch (error) {
@@ -1803,6 +1835,7 @@ function showReceiptPrint(transaction) {
   selectedReceiptTransaction = transaction;
   receiptPrintVisible = true;
   renderRooms();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function hideReceiptPrint() {
@@ -2177,6 +2210,8 @@ function normalizeRooms(rawRooms) {
       scheduled_end_time: room.scheduled_end_time || null,
       rate_per_hour: Number.isNaN(ratePerHour) ? 0 : ratePerHour,
       updated_at: room.updated_at || null,
+      customer_name: room.customer_name || "",
+      package_id: room.package_id || "",
     };
   });
 }
@@ -2314,6 +2349,54 @@ function setSelectedFbRoom(roomId) {
   renderRooms();
 }
 
+function getDynamicMenuStockInfo(menuItem) {
+  if (!menuItem || menuItem.stock_tracking !== "yes" || !menuItem.stock_item_id) {
+    return { hasTracking: false, availablePortions: Infinity, unit: "", stockQty: null };
+  }
+
+  const normalizedTargetId = String(menuItem.stock_item_id).trim().toLowerCase();
+  let invItem = (inventoryItems || []).find(
+    (inv) => String(inv.stock_item_id || "").trim().toLowerCase() === normalizedTargetId
+  );
+
+  // Fallback tolerance for prefix mismatch (e.g. ITEM-034 vs MENU-034)
+  if (!invItem) {
+    const targetSuffix = normalizedTargetId.replace(/^\D+/, "");
+    if (targetSuffix) {
+      invItem = (inventoryItems || []).find(
+        (inv) => String(inv.stock_item_id || "").trim().toLowerCase().replace(/^\D+/, "") === targetSuffix
+      );
+    }
+  }
+
+  let rawStockQty = null;
+  let unit = menuItem.unit || "";
+
+  if (invItem && invItem.stock_qty !== null && invItem.stock_qty !== undefined) {
+    rawStockQty = Number(invItem.stock_qty);
+    if (invItem.unit) {
+      unit = invItem.unit;
+    }
+  } else if (menuItem.stock_qty !== null && menuItem.stock_qty !== undefined) {
+    rawStockQty = Number(menuItem.stock_qty);
+  }
+
+  if (rawStockQty === null || !Number.isFinite(rawStockQty)) {
+    return { hasTracking: true, availablePortions: Infinity, unit, stockQty: null };
+  }
+
+  const stockQty = rawStockQty;
+  const qtyPerUnit = Number(menuItem.stock_qty_per_unit) || 1;
+  const availablePortions = Math.floor(stockQty / qtyPerUnit);
+
+  return { hasTracking: true, availablePortions, unit, stockQty };
+}
+
+function getAvailableMenuPortions(menuItem) {
+  const stockInfo = getDynamicMenuStockInfo(menuItem);
+  return stockInfo.availablePortions;
+}
+
 function addMenuItemToCart(menuId) {
   const menuItem = findMenuItemById(menuId);
 
@@ -2322,7 +2405,14 @@ function addMenuItemToCart(menuId) {
     return;
   }
 
+  const availablePortions = getAvailableMenuPortions(menuItem);
   const existingItem = fbCartItems.find((item) => item.menu_id === menuItem.menu_id);
+  const currentQty = existingItem ? existingItem.quantity : 0;
+
+  if (currentQty + 1 > availablePortions) {
+    showInlineNotice(`Stok tidak mencukupi (Sisa stok: ${availablePortions}).`, "error");
+    return;
+  }
 
   if (existingItem) {
     existingItem.quantity += 1;
@@ -2347,6 +2437,14 @@ function increaseCartItemQuantity(menuId) {
   const cartItem = fbCartItems.find((item) => item.menu_id === menuId);
 
   if (!cartItem) {
+    return;
+  }
+
+  const menuItem = findMenuItemById(menuId);
+  const availablePortions = getAvailableMenuPortions(menuItem);
+
+  if (cartItem.quantity + 1 > availablePortions) {
+    showInlineNotice(`Stok tidak mencukupi (Sisa stok: ${availablePortions}).`, "error");
     return;
   }
 
@@ -2546,6 +2644,8 @@ function buildFnbOrderPayload() {
     })),
     cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
+    payment_method: fnbOrderPaymentMethod,
+    payment_status: "paid",
   };
 }
 
@@ -2592,9 +2692,40 @@ async function saveFnbOrder() {
     };
     fbCartItems = [];
     fnbOrderNote = "";
+    const originalPaymentMethod = fnbOrderPaymentMethod;
+    fnbOrderPaymentMethod = "cash";
     showInlineNotice("Order F&B berhasil disimpan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
+    await loadInventoryItems();
+
+    if (data.order && data.order.order_status === "paid") {
+      const detailedOrder = Object.assign({}, data.order, {
+        items: lastFnbOrder.items
+      });
+      transactionFnbDetails[data.order.order_id] = [detailedOrder];
+
+      const tempTransaction = {
+        transaction_id: data.order.order_id,
+        room_id: data.order.room_id,
+        room_name: data.order.room_name,
+        start_time: "",
+        end_time: data.order.created_at,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: data.order.order_total,
+        grand_total: data.order.order_total,
+        fnb_order_ids: data.order.order_id,
+        payment_method: originalPaymentMethod || "cash",
+        payment_status: "paid",
+        cashier_name: data.order.cashier_name,
+        created_at: data.order.created_at,
+        transaction_type: "fnb_addon"
+      };
+      
+      showReceiptPrint(tempTransaction);
+    }
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan order F&B.", "error");
   } finally {
@@ -2684,6 +2815,7 @@ async function cancelFnbOrder(orderId, reason) {
     showInlineNotice("Order F&B berhasil dibatalkan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
+    await loadInventoryItems();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan order F&B.", "error");
   } finally {
@@ -3006,6 +3138,28 @@ function getRoomTimeLabel(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).trim();
+  }
+
+  const pad = (num) => String(num).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 function getElapsedSeconds(startTime) {
@@ -3678,7 +3832,7 @@ function createLastClosingSavedElement(closing) {
 
   [
     ["ID Closing", closing?.closing_id || "-"],
-    ["Waktu", closing?.created_at || "-"],
+    ["Waktu", formatDateTimeLabel(closing?.created_at)],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
     ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
@@ -4176,7 +4330,7 @@ function createReceiptFnbDetailElement(receiptData) {
 
     const orderTitle = document.createElement("p");
     orderTitle.className = "receipt-print-fnb-order-title";
-    orderTitle.textContent = `${order?.order_id || "-"} - ${formatCurrency(order?.order_total)}`;
+    orderTitle.textContent = `${order?.id || "-"} - ${formatCurrency(order?.total)}`;
 
     orderElement.appendChild(orderTitle);
 
@@ -4193,7 +4347,7 @@ function createReceiptFnbDetailElement(receiptData) {
 
       const name = document.createElement("p");
       name.className = "receipt-print-value";
-      name.textContent = item?.menu_name || "-";
+      name.textContent = item?.name || "-";
 
       const meta = document.createElement("p");
       meta.className = "receipt-print-meta";
@@ -4368,7 +4522,14 @@ function createRoomCard(room) {
   }
 
   const statusLabel = getStatusLabel(room.status);
-  const sessionButtonLabel = getSessionButtonLabel(room.status);
+  let sessionButtonLabel = getSessionButtonLabel(room.status);
+  if (room.status === "waiting_payment") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      sessionButtonLabel = "Detail / Batal";
+    } else {
+      sessionButtonLabel = "Bayar & Mulai";
+    }
+  }
 
   const topLine = document.createElement("div");
   topLine.className = "room-topline";
@@ -4388,7 +4549,9 @@ function createRoomCard(room) {
 
   if (room.status === "occupied") {
     meta.appendChild(createRoomBookingInfoElement(room));
-  } else if (room.status === "paid_waiting_start" || room.status === "cleaning") {
+  } else if (room.status === "waiting_payment" || room.status === "paid_waiting_start") {
+    meta.appendChild(createRoomWaitingPaymentInfoElement(room));
+  } else if (room.status === "cleaning") {
     meta.appendChild(createRoomOperationalStatusInfoElement(room.status));
   } else {
     const durationLabel = document.createElement("p");
@@ -4416,7 +4579,12 @@ function createRoomCard(room) {
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
   sessionButton.textContent = sessionButtonLabel;
-  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession || room.status === "cleaning";
+  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession;
+
+  if (room.status === "paid_waiting_start" && getCurrentOperatorRole() === "receptionist") {
+    sessionButton.disabled = true;
+    sessionButton.title = "Resepsionis tidak diizinkan memulai sesi";
+  }
 
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
@@ -4427,6 +4595,13 @@ function createRoomCard(room) {
     extendButton.dataset.action = "show-extend-selection";
     extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
 
+    if (getCurrentOperatorRole() === "receptionist") {
+      sessionButton.disabled = true;
+      sessionButton.title = "Resepsionis tidak diizinkan menyelesaikan sesi";
+      extendButton.disabled = true;
+      extendButton.title = "Resepsionis tidak diizinkan menambah waktu";
+    }
+
     actions.append(sessionButton, extendButton);
   } else {
     actions.append(sessionButton);
@@ -4436,6 +4611,10 @@ function createRoomCard(room) {
 
   if (durationSelectionRoomId === room.room_id && room.status === "available") {
     card.appendChild(createDurationSelectionElement(room));
+  }
+
+  if (paymentSelectionRoomId === room.room_id && room.status === "waiting_payment") {
+    card.appendChild(createPaymentSelectionElement(room));
   }
 
   if (extendSelectionRoomId === room.room_id && room.status === "occupied") {
@@ -4469,6 +4648,39 @@ function createRoomOperationalStatusInfoElement(status) {
     : "Room sedang dibersihkan dan belum bisa dijual kembali.";
 
   info.append(title, helper);
+  return info;
+}
+
+function createRoomWaitingPaymentInfoElement(room) {
+  const info = document.createElement("div");
+  info.className = "room-booking-info";
+
+  const items = [
+    ["Pelanggan", room.customer_name || "-"],
+  ];
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    items.push(["Paket", pkg ? pkg.package_name : room.package_id]);
+  } else {
+    items.push(["Durasi", `${room.booked_duration_minutes || "-"} menit (Regular)`]);
+  }
+
+  items.forEach(([labelText, valueText]) => {
+    const row = document.createElement("p");
+    row.className = "room-booking-row";
+
+    const label = document.createElement("span");
+    label.className = "room-booking-label";
+    label.textContent = `${labelText}:`;
+
+    const value = document.createElement("span");
+    value.className = "room-booking-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+    info.appendChild(row);
+  });
+
   return info;
 }
 
@@ -4534,87 +4746,289 @@ function createDurationSelectionElement(room) {
 
   const title = document.createElement("p");
   title.className = "duration-selection-title";
-  title.textContent = `Pilih durasi untuk ${room.room_name}`;
+  title.textContent = `Pilih durasi/paket untuk ${room.room_name}`;
 
-  const options = document.createElement("div");
-  options.className = "duration-options";
+  // Customer Name input
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
 
+  const nameLabel = document.createElement("span");
+  nameLabel.className = "duration-payment-label";
+  nameLabel.textContent = "Nama Pelanggan:";
+
+  const nameInput = document.createElement("input");
+  nameInput.className = "duration-custom-input";
+  nameInput.type = "text";
+  nameInput.placeholder = "Nama Pelanggan (Opsional)";
+  nameInput.dataset.action = "update-customer-name";
+  nameInput.value = customerNameInput;
+
+  nameField.append(nameLabel, nameInput);
+  panel.appendChild(nameField);
+
+  // Booking Type select
+  const typeField = document.createElement("div");
+  typeField.style.display = "flex";
+  typeField.style.flexDirection = "column";
+  typeField.style.gap = "4px";
+
+  const typeLabel = document.createElement("span");
+  typeLabel.className = "duration-payment-label";
+  typeLabel.textContent = "Jenis Booking:";
+
+  const typeSelect = document.createElement("select");
+  typeSelect.className = "duration-payment-select";
+  typeSelect.style.width = "100%";
+  
   [
-    [60, "1 jam"],
-    [120, "2 jam"],
-    [180, "3 jam"],
-  ].forEach(([minutes, labelText]) => {
-    const button = document.createElement("button");
-    button.className = "duration-option-button";
-    button.type = "button";
-    button.dataset.action = "prepare-room-session-duration";
-    button.dataset.roomId = room.room_id;
-    button.dataset.durationMinutes = String(minutes);
-    button.disabled = isPreparingRoomSession;
-    button.textContent = isPreparingRoomSession ? "Menyiapkan..." : labelText;
-    options.appendChild(button);
+    ["regular", "Regular (Jam/Menit)"],
+    ["package", "Paket F&B All-In"],
+  ].forEach(([val, label]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = label;
+    opt.selected = bookingTypeSelection === val;
+    typeSelect.appendChild(opt);
   });
 
-  const paymentField = document.createElement("label");
-  paymentField.className = "duration-payment-field";
+  typeSelect.onchange = (e) => {
+    bookingTypeSelection = e.target.value;
+    renderRooms();
+  };
 
-  const paymentLabel = document.createElement("span");
-  paymentLabel.className = "duration-payment-label";
-  paymentLabel.textContent = "Metode bayar";
+  typeField.append(typeLabel, typeSelect);
+  panel.appendChild(typeField);
 
-  const paymentSelect = document.createElement("select");
-  paymentSelect.className = "duration-payment-select";
-  paymentSelect.dataset.action = "update-duration-payment-method";
-  paymentSelect.disabled = isPreparingRoomSession;
+  if (bookingTypeSelection === "package") {
+    // Package selector
+    const pkgField = document.createElement("div");
+    pkgField.style.display = "flex";
+    pkgField.style.flexDirection = "column";
+    pkgField.style.gap = "4px";
 
-  [
-    ["cash", "Cash"],
-    ["transfer", "Transfer/QRIS"],
-  ].forEach(([value, labelText]) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = labelText;
-    option.selected = durationPaymentMethod === value;
-    paymentSelect.appendChild(option);
-  });
+    const pkgLabel = document.createElement("span");
+    pkgLabel.className = "duration-payment-label";
+    pkgLabel.textContent = "Pilih Paket Karaoke:";
 
-  paymentField.append(paymentLabel, paymentSelect);
+    const pkgSelect = document.createElement("select");
+    pkgSelect.className = "duration-payment-select";
+    pkgSelect.style.width = "100%";
 
-  const phaseNote = document.createElement("p");
-  phaseNote.className = "duration-phase-note";
-  phaseNote.textContent = "Tahap ini menyiapkan room sebelum countdown. Laporan kas tetap mengikuti transaksi saat sesi ditutup.";
+    packages.forEach((pkg) => {
+      const opt = document.createElement("option");
+      opt.value = pkg.package_id;
+      opt.textContent = `${pkg.package_name} (${formatCurrency(pkg.selling_price)} - ${pkg.duration_minutes}m)`;
+      opt.selected = bookingPackageSelection === pkg.package_id;
+      pkgSelect.appendChild(opt);
+    });
 
-  const custom = document.createElement("div");
-  custom.className = "duration-custom";
+    if (packages.length > 0 && !bookingPackageSelection) {
+      bookingPackageSelection = packages[0].package_id;
+    }
 
-  const input = document.createElement("input");
-  input.className = "duration-custom-input";
-  input.type = "number";
-  input.min = "15";
-  input.step = "1";
-  input.placeholder = "Custom menit";
-  input.dataset.action = "update-custom-duration";
-  input.value = customDurationMinutes;
-  input.disabled = isPreparingRoomSession;
+    pkgSelect.onchange = (e) => {
+      bookingPackageSelection = e.target.value;
+    };
 
-  const customButton = document.createElement("button");
-  customButton.className = "duration-custom-button";
-  customButton.type = "button";
-  customButton.dataset.action = "prepare-room-session-custom-duration";
-  customButton.dataset.roomId = room.room_id;
-  customButton.disabled = isPreparingRoomSession;
-  customButton.textContent = isPreparingRoomSession ? "Menyiapkan..." : "Booking Custom";
+    pkgField.append(pkgLabel, pkgSelect);
+    panel.appendChild(pkgField);
 
-  custom.append(input, customButton);
+    const savePkgButton = document.createElement("button");
+    savePkgButton.className = "duration-custom-button";
+    savePkgButton.type = "button";
+    savePkgButton.style.backgroundColor = "var(--color-success)";
+    savePkgButton.style.color = "#fff";
+    savePkgButton.style.width = "100%";
+    savePkgButton.disabled = isPreparingRoomSession;
+    savePkgButton.textContent = isPreparingRoomSession ? "Menyimpan..." : "Simpan Booking Paket";
+    savePkgButton.onclick = async () => {
+      const selectedPkgId = pkgSelect.value || bookingPackageSelection;
+      const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
+      if (selectedPkg) {
+        await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId);
+        customerNameInput = "";
+        bookingTypeSelection = "regular";
+      } else {
+        showInlineNotice("Pilih paket terlebih dahulu.", "error");
+      }
+    };
+
+    savePkgButton.style.backgroundColor = "var(--available)";
+    savePkgButton.style.color = "#ffffff";
+    savePkgButton.style.fontWeight = "800";
+    savePkgButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    panel.appendChild(savePkgButton);
+  } else {
+    // Regular durations selector
+    const options = document.createElement("div");
+    options.className = "duration-options";
+
+    [
+      [60, "1 jam"],
+      [120, "2 jam"],
+      [180, "3 jam"],
+    ].forEach(([minutes, labelText]) => {
+      const button = document.createElement("button");
+      button.className = "duration-option-button";
+      button.type = "button";
+      button.dataset.action = "prepare-room-session-duration";
+      button.dataset.roomId = room.room_id;
+      button.dataset.durationMinutes = String(minutes);
+      button.disabled = isPreparingRoomSession;
+      button.textContent = isPreparingRoomSession ? "Menyiapkan..." : labelText;
+      options.appendChild(button);
+    });
+
+    const custom = document.createElement("div");
+    custom.className = "duration-custom";
+
+    const input = document.createElement("input");
+    input.className = "duration-custom-input";
+    input.type = "number";
+    input.min = "15";
+    input.step = "1";
+    input.placeholder = "Custom mnt";
+    input.dataset.action = "update-custom-duration";
+    input.value = customDurationMinutes;
+    input.disabled = isPreparingRoomSession;
+
+    const customButton = document.createElement("button");
+    customButton.className = "duration-custom-button";
+    customButton.type = "button";
+    customButton.dataset.action = "prepare-room-session-custom-duration";
+    customButton.dataset.roomId = room.room_id;
+    customButton.disabled = isPreparingRoomSession;
+    customButton.style.backgroundColor = "var(--available)";
+    customButton.style.color = "#ffffff";
+    customButton.style.fontWeight = "800";
+    customButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    customButton.textContent = isPreparingRoomSession ? "Menyiapkan..." : "Custom";
+
+    custom.append(input, customButton);
+    panel.append(options, custom);
+  }
 
   const cancelButton = document.createElement("button");
   cancelButton.className = "duration-cancel-button";
   cancelButton.type = "button";
   cancelButton.dataset.action = "cancel-duration-selection";
   cancelButton.disabled = isPreparingRoomSession;
+  cancelButton.style.backgroundColor = "rgba(255,255,255,0.1)";
+  cancelButton.style.color = "#ffffff";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, paymentField, phaseNote, options, custom, cancelButton);
+  panel.appendChild(cancelButton);
+
+  return panel;
+}
+
+function createPaymentSelectionElement(room) {
+  const panel = document.createElement("div");
+  panel.className = "duration-selection";
+
+  const title = document.createElement("p");
+  title.className = "duration-selection-title";
+  title.textContent = `Proses Booking untuk ${room.room_name}`;
+
+  const infoBlock = document.createElement("div");
+  infoBlock.className = "duration-phase-note";
+  infoBlock.style.margin = "8px 0";
+  infoBlock.style.padding = "6px";
+  infoBlock.style.backgroundColor = "rgba(255,255,255,0.05)";
+  infoBlock.style.borderRadius = "4px";
+  
+  let infoHtml = `<strong>Nama Pelanggan:</strong> ${room.customer_name || "-"}<br>`;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    infoHtml += `<strong>Paket:</strong> ${pkg ? pkg.package_name : room.package_id}`;
+  } else {
+    infoHtml += `<strong>Durasi:</strong> ${room.booked_duration_minutes || "-"} menit (Regular)`;
+  }
+  infoBlock.innerHTML = infoHtml;
+  panel.appendChild(title);
+  panel.appendChild(infoBlock);
+
+  const role = getCurrentOperatorRole();
+  
+  if (role !== "receptionist") {
+    const paymentField = document.createElement("label");
+    paymentField.className = "duration-payment-field";
+
+    const paymentLabel = document.createElement("span");
+    paymentLabel.className = "duration-payment-label";
+    paymentLabel.textContent = "Metode Pembayaran:";
+
+    const paymentSelect = document.createElement("select");
+    paymentSelect.className = "duration-payment-select";
+    paymentSelect.id = `payment-method-select-${room.room_id}`;
+    
+    [
+      ["cash", "Cash"],
+      ["transfer", "Transfer/QRIS"],
+    ].forEach(([value, labelText]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = labelText;
+      paymentSelect.appendChild(option);
+    });
+
+    paymentField.append(paymentLabel, paymentSelect);
+    panel.appendChild(paymentField);
+
+    const startButton = document.createElement("button");
+    startButton.className = "duration-custom-button";
+    startButton.type = "button";
+    startButton.style.backgroundColor = "var(--available)";
+    startButton.style.color = "#fff";
+    startButton.style.fontWeight = "800";
+    startButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    startButton.style.width = "100%";
+    startButton.style.marginBottom = "8px";
+    startButton.textContent = "Terima Pembayaran & Mulai";
+    startButton.onclick = async () => {
+      const method = paymentSelect.value;
+      await payAndStartSession(room.room_id, method);
+    };
+    panel.appendChild(startButton);
+  } else {
+    const notice = document.createElement("p");
+    notice.className = "duration-phase-note";
+    notice.style.color = "var(--color-warning)";
+    notice.style.marginBottom = "8px";
+    notice.textContent = "Menunggu pembayaran pelanggan di kasir.";
+    panel.appendChild(notice);
+  }
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "duration-cancel-button";
+  cancelButton.type = "button";
+  cancelButton.style.backgroundColor = "var(--occupied)";
+  cancelButton.style.color = "#fff";
+  cancelButton.style.fontWeight = "800";
+  cancelButton.style.boxShadow = "0 4px 12px rgba(216, 106, 95, 0.25)";
+  cancelButton.style.width = "100%";
+  cancelButton.style.marginBottom = "8px";
+  cancelButton.textContent = "Batalkan Booking";
+  cancelButton.onclick = async () => {
+    if (confirm("Apakah Anda yakin ingin membatalkan booking room ini?")) {
+      await cancelBooking(room.room_id);
+    }
+  };
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "duration-cancel-button";
+  closeButton.type = "button";
+  closeButton.style.backgroundColor = "rgba(255,255,255,0.1)";
+  closeButton.style.color = "#fff";
+  closeButton.style.width = "100%";
+  closeButton.textContent = "Tutup";
+  closeButton.onclick = () => {
+    cancelPaymentSelection();
+  };
+
+  panel.append(cancelButton, closeButton);
 
   return panel;
 }
@@ -4641,6 +5055,9 @@ function createExtendSelectionElement(room) {
     button.dataset.action = "extend-session-duration";
     button.dataset.roomId = room.room_id;
     button.dataset.addMinutes = String(minutes);
+    if (getCurrentOperatorRole() === "receptionist") {
+      button.disabled = true;
+    }
     button.textContent = labelText;
     options.appendChild(button);
   });
@@ -4656,15 +5073,47 @@ function createExtendSelectionElement(room) {
   input.placeholder = "Custom menit";
   input.dataset.action = "update-custom-extend";
   input.value = customExtendMinutes;
+  if (getCurrentOperatorRole() === "receptionist") {
+    input.disabled = true;
+  }
 
   const customButton = document.createElement("button");
   customButton.className = "extend-custom-button";
   customButton.type = "button";
   customButton.dataset.action = "extend-session-custom-duration";
   customButton.dataset.roomId = room.room_id;
+  if (getCurrentOperatorRole() === "receptionist") {
+    customButton.disabled = true;
+  }
   customButton.textContent = "Tambah Custom";
 
   custom.append(input, customButton);
+
+  const paymentField = document.createElement("div");
+  paymentField.className = "extend-note-field";
+
+  const paymentLabel = document.createElement("label");
+  paymentLabel.className = "extend-note-label";
+  paymentLabel.textContent = "Metode Pembayaran (Wajib Bayar di Muka)";
+
+  const paymentSelect = document.createElement("select");
+  paymentSelect.className = "extend-note-input";
+  paymentSelect.id = "extendPaymentMethodSelect";
+  paymentSelect.dataset.action = "update-extend-payment-method";
+  paymentSelect.disabled = isExtendingSession || getCurrentOperatorRole() === "receptionist";
+
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Tunai / Cash";
+  if (extendPaymentMethod === "cash") cashOpt.selected = true;
+
+  const transferOpt = document.createElement("option");
+  transferOpt.value = "transfer";
+  transferOpt.textContent = "Transfer / QRIS";
+  if (extendPaymentMethod === "transfer") transferOpt.selected = true;
+
+  paymentSelect.append(cashOpt, transferOpt);
+  paymentField.append(paymentLabel, paymentSelect);
 
   const noteField = document.createElement("div");
   noteField.className = "extend-note-field";
@@ -4689,7 +5138,7 @@ function createExtendSelectionElement(room) {
   cancelButton.dataset.action = "cancel-extend-selection";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, noteField, cancelButton);
+  panel.append(title, options, custom, paymentField, noteField, cancelButton);
 
   return panel;
 }
@@ -4727,7 +5176,7 @@ function createMenuPanelElement() {
   search.dataset.action = "search-menu";
   search.setAttribute("aria-label", "Cari menu F&B");
 
-  toolbar.append(search, createMenuCategoryFilterElement(), createMenuSpiritFilterElement());
+  toolbar.append(search);
 
   const list = document.createElement("div");
   list.className = "menu-list";
@@ -4752,7 +5201,7 @@ function createMenuPanelElement() {
     }
   }
 
-  panel.append(header, toolbar, list);
+  panel.append(header, createMenuCategoryFilterElement(), createMenuSpiritFilterElement(), toolbar, list);
 
   return panel;
 }
@@ -4761,19 +5210,23 @@ function createMenuCategoryFilterElement() {
   const filter = document.createElement("div");
   filter.className = "menu-category-filter";
   filter.setAttribute("aria-label", "Filter kategori Menu F&B");
+  filter.setAttribute("role", "tablist");
 
   getMenuCategories().forEach(
     (value) => {
       const labelText = FNB_CATEGORY_LABELS[value] || value;
+      const icon = FNB_CATEGORY_ICONS[value] || "🏷️";
       const button = document.createElement("button");
       button.className =
         value === menuCategoryFilter
           ? "menu-category-button active"
           : "menu-category-button";
       button.type = "button";
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", String(value === menuCategoryFilter));
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
-      button.innerHTML = `<span>${labelText}</span><strong>${getFnbMenuCategoryCount(value)}</strong>`;
+      button.innerHTML = `<span class="category-tab-icon">${icon}</span><span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
       filter.appendChild(button);
     }
   );
@@ -4813,8 +5266,20 @@ function createMenuSpiritFilterElement() {
 
 function createMenuCardElement(menuItem) {
   const card = document.createElement("article");
-  card.className =
-    menuItem.status === "inactive" ? "menu-card inactive" : "menu-card";
+  const isInactive = menuItem.status === "inactive";
+  const stockInfo = getDynamicMenuStockInfo(menuItem);
+  const hasStockTracking = stockInfo.hasTracking;
+  const availablePortions = stockInfo.availablePortions;
+  const isOutOfStock = hasStockTracking && availablePortions <= 0;
+
+  let cardClass = "menu-card";
+  if (isInactive) {
+    cardClass += " inactive";
+  } else if (isOutOfStock) {
+    cardClass += " out-of-stock";
+  }
+  card.className = cardClass;
+
   const classification = getFnbMenuClassification(menuItem);
   const isFavorite = isFavoriteFnbMenuItem(menuItem);
 
@@ -4842,23 +5307,47 @@ function createMenuCardElement(menuItem) {
   price.textContent = formatCurrency(menuItem.price);
 
   const status = document.createElement("span");
-  const statusClass = menuItem.status === "active" ? "active" : "inactive";
+  const statusClass = isInactive ? "inactive" : "active";
   status.className = withStatusBadge(
     `menu-status ${statusClass}`,
     statusClass === "active" ? "success" : "neutral"
   );
   status.textContent = getMenuStatusLabel(menuItem.status);
 
+  card.append(badge, info, price);
+
+  if (hasStockTracking) {
+    const stockBadge = document.createElement("span");
+    const unitStr = stockInfo.unit ? ` ${stockInfo.unit}` : "";
+    if (isOutOfStock) {
+      stockBadge.className = "menu-stock-badge out-of-stock";
+      stockBadge.textContent = "Stok Habis";
+    } else {
+      stockBadge.className = availablePortions <= 5 ? "menu-stock-badge low-stock" : "menu-stock-badge";
+      stockBadge.textContent = `Stok: ${availablePortions}${unitStr}`;
+    }
+    card.appendChild(stockBadge);
+  }
+
+  card.appendChild(status);
+
   const addButton = document.createElement("button");
-  const isActive = menuItem.status === "active";
-  addButton.className = isActive ? "menu-add-button" : "menu-add-button disabled";
+  const canAdd = !isInactive && !isOutOfStock;
+  addButton.className = canAdd ? "menu-add-button" : "menu-add-button disabled";
   addButton.type = "button";
   addButton.dataset.action = "add-menu-to-cart";
   addButton.dataset.menuId = menuItem.menu_id || "";
-  addButton.disabled = !isActive;
-  addButton.textContent = isActive ? "+ Tambah" : "Tidak Aktif";
+  addButton.disabled = !canAdd;
 
-  card.append(badge, info, price, status, addButton);
+  if (isInactive) {
+    addButton.textContent = "Tidak Aktif";
+  } else if (isOutOfStock) {
+    addButton.textContent = "Stok Habis";
+  } else {
+    addButton.textContent = "+ Tambah";
+  }
+
+  card.appendChild(addButton);
 
   return card;
 }
@@ -4903,6 +5392,7 @@ function createFbOrderPanelElement() {
     createFbRoomInfoElement(),
     createFbCartElement(),
     createFbCartTotalElement(),
+    createFbPaymentMethodElement(),
     createFnbOrderNoteElement(),
     lastFnbOrder
       ? createLastFnbOrderElement(lastFnbOrder.order, lastFnbOrder.items)
@@ -5083,6 +5573,41 @@ function createFbCartTotalElement() {
   return total;
 }
 
+function createFbPaymentMethodElement() {
+  const selectedRoom = getSelectedFbRoom();
+  if (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom) || fbCartItems.length === 0) {
+    return document.createDocumentFragment();
+  }
+
+  const control = document.createElement("div");
+  control.className = "fb-room-control";
+
+  const label = document.createElement("label");
+  label.className = "transaction-label";
+  label.setAttribute("for", "fbPaymentMethodSelect");
+  label.textContent = "Metode Pembayaran (Wajib Bayar di Muka)";
+
+  const select = document.createElement("select");
+  select.className = "fb-room-select";
+  select.id = "fbPaymentMethodSelect";
+  select.dataset.action = "update-fb-payment-method";
+
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Tunai / Cash";
+  if (fnbOrderPaymentMethod === "cash") cashOpt.selected = true;
+
+  const transferOpt = document.createElement("option");
+  transferOpt.value = "transfer";
+  transferOpt.textContent = "Transfer / QRIS";
+  if (fnbOrderPaymentMethod === "transfer") transferOpt.selected = true;
+
+  select.append(cashOpt, transferOpt);
+  control.append(label, select);
+
+  return control;
+}
+
 function createFnbOrderNoteElement() {
   const control = document.createElement("div");
   control.className = "fb-room-control";
@@ -5154,6 +5679,10 @@ function getFnbOrderStatusLabel(status) {
     return "Billed";
   }
 
+  if (status === "paid") {
+    return "Lunas";
+  }
+
   if (status === "cancelled") {
     return "Dibatalkan";
   }
@@ -5162,7 +5691,7 @@ function getFnbOrderStatusLabel(status) {
 }
 
 function getFnbOrderStatusClass(status) {
-  if (status === "open" || status === "billed" || status === "cancelled") {
+  if (status === "open" || status === "billed" || status === "paid" || status === "cancelled") {
     return status;
   }
 
@@ -5193,7 +5722,7 @@ function createFbOrderActionsElement() {
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Menyimpan..." : "Simpan Order";
+  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Bayar & Kirim Order";
 
   actions.append(clearButton, saveButton);
 
@@ -5328,7 +5857,7 @@ function createOpenFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "open-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${order.created_at || "-"} - Sesi: ${order.room_start_time || "-"}`;
+  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -5593,7 +6122,7 @@ function createTodayFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "today-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${order.created_at || "-"} - Sesi: ${order.room_start_time || "-"}`;
+  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -5696,22 +6225,22 @@ function getTodayFnbEmptyMessage() {
 
 function createInventoryPanelElement() {
   const panel = document.createElement("section");
-  panel.className = "inventory-panel";
+  panel.className = "inventory-panel erp-inventory-view";
   panel.setAttribute("aria-labelledby", "inventory-title");
 
   const header = document.createElement("div");
-  header.className = "inventory-header";
+  header.className = "inventory-header erp-header";
 
   const titleGroup = document.createElement("div");
 
   const title = document.createElement("h2");
   title.className = "inventory-title";
   title.id = "inventory-title";
-  title.textContent = "Stok F&B";
+  title.textContent = "Material Management & Stok";
 
   const subtitle = document.createElement("p");
   subtitle.className = "inventory-subtitle";
-  subtitle.textContent = "Pantauan stok dasar menu makanan dan minuman.";
+  subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
 
   titleGroup.append(title, subtitle);
 
@@ -5719,39 +6248,36 @@ function createInventoryPanelElement() {
   actions.className = "inventory-actions";
 
   const refreshButton = document.createElement("button");
-  refreshButton.className = "inventory-button";
+  refreshButton.className = "inventory-button erp-btn-secondary";
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory";
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "Refresh Stok";
+  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
 
   actions.appendChild(refreshButton);
   header.append(titleGroup, actions);
 
-  const list = document.createElement("div");
-  list.className = "inventory-list";
+  const tableContainer = document.createElement("div");
+  tableContainer.className = "inventory-table-container erp-table-wrap";
 
   if (!API_BASE_URL.trim()) {
-    list.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
+    tableContainer.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
   } else if (isLoadingInventory) {
-    list.appendChild(createStateMessage("Memuat stok F&B..."));
+    tableContainer.appendChild(createStateMessage("Memuat katalog stok SAP/Odoo ERP..."));
   } else if (inventoryItems.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.textContent = "Belum ada data stok F&B.";
-    list.appendChild(empty);
+    empty.textContent = "Belum ada data materi stok.";
+    tableContainer.appendChild(empty);
   } else {
-    const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
-    paginatedInventory.items.forEach((item) => {
-      list.appendChild(createInventoryItemRowElement(item));
-    });
-    list.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
+    tableContainer.appendChild(createInventoryErpTableElement());
+    tableContainer.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
   }
 
   panel.append(
     header,
     createInventorySummaryElement(),
-    list,
+    tableContainer,
     createStockAdjustmentPanelElement(),
     lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment()
   );
@@ -5767,23 +6293,23 @@ function createInventorySummaryElement() {
     negative_items: 0,
   };
   const grid = document.createElement("div");
-  grid.className = "inventory-summary";
+  grid.className = "inventory-summary erp-kpi-grid";
 
   [
-    ["Total Item", Number(summary.total_items) || 0],
-    ["Aman", Number(summary.safe_items) || 0],
-    ["Stok Rendah", Number(summary.low_items) || 0],
-    ["Minus", Number(summary.negative_items) || 0],
-  ].forEach(([labelText, valueText]) => {
+    ["Total SKU Material", Number(summary.total_items) || 0, "neutral"],
+    ["Stok Safe / Normal", Number(summary.safe_items) || 0, "success"],
+    ["Alert Stok Rendah", Number(summary.low_items) || 0, "warning"],
+    ["Stok Out / Minus", Number(summary.negative_items) || 0, "critical"],
+  ].forEach(([labelText, valueText, tone]) => {
     const card = document.createElement("div");
-    card.className = "inventory-summary-card";
+    card.className = `inventory-summary-card erp-kpi-card tone-${tone}`;
 
     const label = document.createElement("p");
-    label.className = "transaction-label";
+    label.className = "transaction-label erp-kpi-label";
     label.textContent = labelText;
 
     const value = document.createElement("p");
-    value.className = "transaction-value";
+    value.className = "transaction-value erp-kpi-val";
     value.textContent = valueText;
 
     card.append(label, value);
@@ -5793,36 +6319,78 @@ function createInventorySummaryElement() {
   return grid;
 }
 
-function createInventoryItemRowElement(item) {
-  const row = document.createElement("article");
-  row.className = "inventory-row";
+function createInventoryErpTableElement() {
+  const table = document.createElement("table");
+  table.className = "erp-inventory-table";
 
-  const info = document.createElement("div");
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>SKU / Item Code</th>
+      <th>Nama Material</th>
+      <th>Kategori</th>
+      <th>Stok Aktual</th>
+      <th>Min. Stok</th>
+      <th>Status</th>
+      <th style="text-align: right;">Aksi</th>
+    </tr>
+  `;
 
-  const name = document.createElement("h3");
-  name.className = "inventory-name";
-  name.textContent = item.stock_item_name || item.stock_item_id || "-";
+  const tbody = document.createElement("tbody");
+  const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
 
-  const meta = document.createElement("p");
-  meta.className = "inventory-meta";
-  meta.textContent = `${item.category || "-"} - Min stok: ${Number(item.min_stock) || 0}`;
+  paginatedInventory.items.forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.className = "erp-inventory-tr";
 
-  info.append(name, meta);
+    const skuTd = document.createElement("td");
+    skuTd.innerHTML = `<span class="erp-sku-badge">${item.stock_item_id || "-"}</span>`;
 
-  const qty = document.createElement("p");
-  qty.className = "inventory-qty";
-  qty.textContent = `${Number(item.stock_qty) || 0} ${item.unit || ""}`.trim();
+    const nameTd = document.createElement("td");
+    nameTd.className = "erp-name-cell";
+    nameTd.textContent = item.stock_item_name || item.stock_item_id || "-";
 
-  const status = document.createElement("span");
-  status.className = withStatusBadge(
-    `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
-    getInventoryStockStatusTone(item.stock_status)
-  );
-  status.textContent = getInventoryStockStatusLabel(item.stock_status);
+    const catTd = document.createElement("td");
+    catTd.className = "erp-cat-cell";
+    catTd.textContent = item.category || "General";
 
-  row.append(info, qty, status);
+    const qtyTd = document.createElement("td");
+    qtyTd.className = "erp-qty-cell";
+    const qtyVal = Number(item.stock_qty) || 0;
+    const unitStr = item.unit ? ` ${item.unit}` : "";
+    qtyTd.innerHTML = `<strong>${qtyVal}</strong><small>${unitStr}</small>`;
 
-  return row;
+    const minTd = document.createElement("td");
+    minTd.className = "erp-min-cell";
+    minTd.textContent = `${Number(item.min_stock) || 0} ${item.unit || ""}`.trim();
+
+    const statusTd = document.createElement("td");
+    const statusSpan = document.createElement("span");
+    statusSpan.className = withStatusBadge(
+      `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
+      getInventoryStockStatusTone(item.stock_status)
+    );
+    statusSpan.textContent = getInventoryStockStatusLabel(item.stock_status);
+    statusTd.appendChild(statusSpan);
+
+    const actionTd = document.createElement("td");
+    actionTd.style.textAlign = "right";
+    const adjustBtn = document.createElement("button");
+    adjustBtn.className = "erp-quick-adjust-btn";
+    adjustBtn.type = "button";
+    adjustBtn.textContent = "Adjust / Restock";
+    adjustBtn.onclick = () => {
+      updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
+      focusStockAdjustmentField(".stock-adjustment-quantity");
+    };
+    actionTd.appendChild(adjustBtn);
+
+    tr.append(skuTd, nameTd, catTd, qtyTd, minTd, statusTd, actionTd);
+    tbody.appendChild(tr);
+  });
+
+  table.append(thead, tbody);
+  return table;
 }
 
 function getInventoryStockStatusLabel(status) {
@@ -6274,7 +6842,7 @@ function createTodayStockMovementRowElement(movement) {
 
   const meta = document.createElement("p");
   meta.className = "stock-movements-meta";
-  meta.textContent = `${movement.created_at || "-"} - ${movement.movement_id || "-"}`;
+  meta.textContent = `${formatDateTimeLabel(movement.created_at)} - ${movement.movement_id || "-"}`;
 
   titleGroup.append(itemName, meta);
 
@@ -7442,7 +8010,7 @@ function createOwnerReportPrintPreviewElement() {
 
   const closingSummary = createOwnerReportPrintSection("Status Tutup Shift", [
     ["Status Kas", cashStatus.label, cashStatus.detail],
-    ["Closing Terakhir", latestClosing.closing_id || "-", latestClosing.created_at || "Belum ada closing pada periode ini."],
+    ["Closing Terakhir", latestClosing.closing_id || "-", formatDateTimeLabel(latestClosing.created_at) || "Belum ada closing pada periode ini."],
     ["Selisih Cash", formatCurrency(summary.cashDifference), "Selisih dari closing kasir terakhir pada periode ini."],
     ["Jumlah Closing", `${summary.jumlahClosing} closing`, "Jumlah laporan tutup shift yang tercatat."],
   ]);
@@ -8139,7 +8707,7 @@ function createClosingPrintPreviewElement(closing) {
   const identity = createClosingPrintSection("Data Closing", [
     ["ID Closing", closing?.closing_id || "-"],
     ["Tanggal Closing", closing?.closing_date || "-"],
-    ["Waktu Closing", closing?.created_at || "-"],
+    ["Waktu Closing", formatDateTimeLabel(closing?.created_at)],
     ["Kasir", closing?.cashier_name || "-"],
   ]);
 
@@ -8270,7 +8838,7 @@ function createCashierClosingRowElement(closing) {
 
   [
     ["ID Closing", closing?.closing_id || "-"],
-    ["Waktu Closing", closing?.created_at || "-"],
+    ["Waktu Closing", formatDateTimeLabel(closing?.created_at)],
     ["Kasir", closing?.cashier_name || "-"],
     ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
@@ -8809,15 +9377,24 @@ function createMasterDataFormElement() {
   }
 
   if (masterDataForm.type === "menu") {
-    if (masterDataForm.mode === "edit") {
-      grid.appendChild(createMasterField({ label: "Menu ID", field: "menu_id", disabled: true }));
-    }
+    const stockItemOptions = [
+      ["", "-- Tanpa Tracking Stok --"],
+      ...inventoryItems.map((item) => [
+        item.stock_item_id,
+        `${item.stock_item_id} - ${item.stock_item_name || item.stock_item_id} (${item.unit || "unit"})`,
+      ]),
+    ];
 
     grid.append(
       createMasterField({ label: "Nama Menu", field: "menu_name" }),
       createMasterField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Harga", field: "price", type: "number" }),
-      createMasterField({ label: "Stock Item ID", field: "stock_item_id", helper: "Kosongkan jika stok tidak otomatis berkurang." }),
+      createMasterField({
+        label: "Item Stok Terhubung",
+        field: "stock_item_id",
+        helper: "Pilih item stok dari Inventory yang berkurang saat menu terjual.",
+        options: stockItemOptions,
+      }),
       createMasterField({ label: "Qty per Unit", field: "qty_per_unit", type: "number" }),
       createMasterField({
         label: "Status",
@@ -9633,7 +10210,7 @@ function createMasterAuditLogSection() {
   header.append(titleGroup, refreshButton);
 
   const rows = masterAuditLogs.map((log) => [
-    log.created_at || "-",
+    formatDateTimeLabel(log.created_at),
     log.entity_type || "-",
     log.entity_id || "-",
     log.entity_name || "-",
@@ -10468,6 +11045,7 @@ function refreshActiveTabData() {
       loadRoomRecoveryCandidates();
       break;
     case "fnb":
+      loadInventoryItems();
       loadMenuItems();
       loadOpenFnbOrders();
       loadTodayFnbOrders();
@@ -10597,6 +11175,67 @@ function renderAppTabs() {
   appTabsNav.replaceChildren(fragment);
 }
 
+function createFnbSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "fnb-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu F&B");
+
+  [
+    ["order", "🛒 Pesan Menu", "Input order F&B baru untuk room"],
+    ["open", "⏳ Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
+    ["history", "📜 Riwayat F&B", "Lihat rekapan penjualan F&B hari ini"],
+  ].forEach(([key, label, description]) => {
+    const button = document.createElement("button");
+    button.className = activeFnbSubTab === key
+      ? "fnb-subnav-button active"
+      : "fnb-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-fnb-subtab";
+    button.dataset.fnbSubtab = key;
+    button.setAttribute("aria-pressed", activeFnbSubTab === key ? "true" : "false");
+    button.title = description;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "fnb-subnav-label";
+    labelSpan.textContent = label;
+
+    button.appendChild(labelSpan);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
+function createTransactionsSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "transactions-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu Transaksi");
+
+  [
+    ["history", "📑 Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
+    ["closing", "💵 Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
+  ].forEach(([key, label, description]) => {
+    const button = document.createElement("button");
+    button.className = activeTransactionsSubTab === key
+      ? "transactions-subnav-button active"
+      : "transactions-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-transactions-subtab";
+    button.dataset.transactionsSubtab = key;
+    button.setAttribute("aria-pressed", activeTransactionsSubTab === key ? "true" : "false");
+    button.title = description;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "transactions-subnav-label";
+    labelSpan.textContent = label;
+
+    button.appendChild(labelSpan);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
 function createReportsSubNavElement() {
   const wrapper = document.createElement("section");
   wrapper.className = "reports-subnav";
@@ -10664,10 +11303,12 @@ function createReportsSubTabContentElement() {
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
-      ensureRoomRecoveryCandidatesLoaded();
+      if (getCurrentOperatorRole() !== "receptionist") {
+        ensureRoomRecoveryCandidatesLoaded();
 
-      if (hasRoomRecoveryCandidates()) {
-        panel.appendChild(createRoomRecoveryPanelElement());
+        if (hasRoomRecoveryCandidates()) {
+          panel.appendChild(createRoomRecoveryPanelElement());
+        }
       }
 
       const roomsContainer = document.createElement("div");
@@ -10684,14 +11325,35 @@ function appendDashboardTabContent(panel, tabKey) {
       panel.appendChild(roomsContainer);
       break;
     }
-    case "fnb":
-      panel.append(
-        createMenuPanelElement(),
-        createFbOrderPanelElement(),
-        createOpenFnbOrdersPanelElement(),
-        createTodayFnbOrdersPanelElement()
-      );
-      break;
+    case "fnb": {
+        // Insert sub-navigation for F&B
+        panel.appendChild(createFnbSubNavElement());
+        // Render content based on selected sub-tab
+        if (activeFnbSubTab === "order") {
+          panel.append(
+            createMenuPanelElement(),
+            createFbOrderPanelElement()
+          );
+        } else if (activeFnbSubTab === "open") {
+          panel.appendChild(createOpenFnbOrdersPanelElement());
+        } else if (activeFnbSubTab === "history") {
+          panel.appendChild(createTodayFnbOrdersPanelElement());
+        }
+        break;
+      }
+      case "transactions": {
+        // Insert sub-navigation for Transactions
+        panel.appendChild(createTransactionsSubNavElement());
+        // Render based on selected sub-tab (history or closing)
+        if (activeTransactionsSubTab === "history") {
+          // Existing transaction history UI
+          panel.appendChild(renderTransactionHistory());
+        } else if (activeTransactionsSubTab === "closing") {
+          // Shift Kasir UI – reuse the same transaction history which already includes closing components
+          panel.appendChild(renderTransactionHistory());
+        }
+        break;
+      }
     case "stock":
       panel.append(
         createInventoryPanelElement(),
@@ -10703,14 +11365,6 @@ function appendDashboardTabContent(panel, tabKey) {
         createReportsSubNavElement(),
         createReportsSubTabContentElement()
       );
-      break;
-    case "transactions":
-      try {
-        panel.appendChild(renderTransactionHistory());
-      } catch (error) {
-        console.warn("Gagal merender riwayat transaksi.", error);
-        panel.appendChild(createStateMessage("Riwayat transaksi gagal ditampilkan.", "error"));
-      }
       break;
     case "audit":
       panel.appendChild(createTodayRoomTimeLogsPanelElement());
@@ -10812,6 +11466,10 @@ function updateCustomDuration(value) {
   customDurationMinutes = value;
 }
 
+function updateCustomerName(value) {
+  customerNameInput = value;
+}
+
 function updateDurationPaymentMethod(value) {
   durationPaymentMethod = value === "transfer" ? "transfer" : "cash";
 }
@@ -10837,6 +11495,7 @@ function cancelExtendSelection() {
   extendSelectionRoomId = "";
   customExtendMinutes = "";
   extendSessionNote = "";
+  extendPaymentMethod = "cash";
   renderRooms();
 }
 
@@ -11097,7 +11756,7 @@ function createRoomTimeLogRowElement(log) {
 
   const meta = document.createElement("p");
   meta.className = "room-time-logs-meta";
-  meta.textContent = `${log.created_at || "-"} - ${log.log_id || "-"}`;
+  meta.textContent = `${formatDateTimeLabel(log.created_at)} - ${log.log_id || "-"}`;
 
   titleGroup.append(roomName, meta);
 
@@ -11164,6 +11823,11 @@ function getExtendSuccessMessage(roomName, addMinutes) {
 }
 
 async function extendSession(roomId, addMinutes) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan menambah waktu sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11194,6 +11858,8 @@ async function extendSession(roomId, addMinutes) {
       room_id: roomId,
       add_minutes: selectedMinutes,
       cashier_name: getLoggedInOperatorName(),
+      payment_method: extendPaymentMethod,
+      payment_status: "paid",
     };
 
     if (extendSessionNote.trim()) {
@@ -11210,6 +11876,7 @@ async function extendSession(roomId, addMinutes) {
     extendSelectionRoomId = "";
     customExtendMinutes = "";
     extendSessionNote = "";
+    extendPaymentMethod = "cash";
     await loadRooms();
     await loadTodayRoomTimeLogs();
   } catch (error) {
@@ -11221,6 +11888,11 @@ async function extendSession(roomId, addMinutes) {
 }
 
 async function startSession(roomId, durationMinutes) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11262,7 +11934,7 @@ async function startSession(roomId, durationMinutes) {
   }
 }
 
-async function prepareRoomSession(roomId, durationMinutes) {
+async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "") {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11289,8 +11961,10 @@ async function prepareRoomSession(roomId, durationMinutes) {
       action: "prepareRoomSession",
       room_id: roomId,
       duration_minutes: selectedDuration,
-      payment_method: durationPaymentMethod,
+      payment_method: "cash",
       cashier_name: getLoggedInOperatorName(),
+      customer_name: customerName,
+      package_id: packageId,
       idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
     });
 
@@ -11312,7 +11986,118 @@ async function prepareRoomSession(roomId, durationMinutes) {
   }
 }
 
+async function loadPackages() {
+  if (!API_BASE_URL.trim()) return;
+  try {
+    const response = await fetch(`${API_BASE_URL}?action=getPackages`);
+    const data = await response.json();
+    if (data && data.ok) {
+      packages = Array.isArray(data.packages) ? data.packages : [];
+    }
+  } catch (error) {
+    console.error("Gagal memuat paket:", error);
+  }
+}
+
+async function payAndStartSession(roomId, paymentMethod) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+  isActivatingPreparedSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+  try {
+    const data = await postApiAction({
+      action: "payAndStartSession",
+      room_id: roomId,
+      payment_method: paymentMethod,
+      cashier_name: getLoggedInOperatorName(),
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memproses pembayaran.");
+    }
+    showInlineNotice(data.message || "Pembayaran berhasil diproses.");
+    paymentSelectionRoomId = "";
+    if (data.transaction) {
+      showBillingSummary(data.transaction);
+    }
+    await loadRooms();
+    await loadTodayTransactions();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memproses pembayaran.", "error");
+  } finally {
+    isActivatingPreparedSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function cancelBooking(roomId) {
+  if (!API_BASE_URL.trim()) return;
+  setActionButtonsDisabled(true);
+  try {
+    const data = await postApiAction({
+      action: "cancelBooking",
+      room_id: roomId,
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal membatalkan booking.");
+    }
+    showInlineNotice("Pemesanan berhasil dibatalkan.");
+    paymentSelectionRoomId = "";
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membatalkan booking.", "error");
+  } finally {
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function completeCleaning(roomId) {
+  if (!API_BASE_URL.trim()) return;
+  setActionButtonsDisabled(true);
+  try {
+    const data = await postApiAction({
+      action: "completeCleaning",
+      room_id: roomId,
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal menyelesaikan cleaning.");
+    }
+    showInlineNotice("Room siap digunakan kembali.");
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyelesaikan cleaning.", "error");
+  } finally {
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+function showPaymentSelection(roomId) {
+  paymentSelectionRoomId = roomId;
+  paymentMethodSelection = "cash";
+  renderRooms();
+}
+
+function cancelPaymentSelection() {
+  paymentSelectionRoomId = "";
+  renderRooms();
+}
+
 async function activatePreparedSession(roomId) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai countdown sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11345,6 +12130,11 @@ async function activatePreparedSession(roomId) {
 }
 
 async function closeSession(roomId) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan menyelesaikan sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11375,11 +12165,16 @@ async function closeSession(roomId) {
     }
 
     showInlineNotice("Sesi berhasil diselesaikan.");
-    showBillingSummary(transaction);
+    if (transaction.transaction_id) {
+      showBillingSummary(transaction);
+    } else {
+      clearBillingSummary();
+    }
     await loadRooms();
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
+    await loadMenuItems();
     await loadTodayFnbSalesReport();
     await loadTodayTransactions();
   } catch (error) {
@@ -11997,8 +12792,30 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "switch-fnb-subtab") {
+    const subtab = button.dataset.fnbSubtab;
+    if (subtab && ["order", "open", "history"].includes(subtab)) {
+      activeFnbSubTab = subtab;
+      renderDashboardTabPanels();
+    }
+    return;
+  }
+
+  if (action === "switch-transactions-subtab") {
+    const subtab = button.dataset.transactionsSubtab;
+    if (subtab && ["history", "closing"].includes(subtab)) {
+      activeTransactionsSubTab = subtab;
+      renderDashboardTabPanels();
+    }
+    return;
+  }
+
   if (action === "switch-report-subtab") {
-    setActiveReportSubTab(button.dataset.reportTab || "owner");
+    const subtab = button.dataset.reportTab;
+    if (subtab && REPORT_SUB_TABS.some((t) => t.key === subtab)) {
+      activeReportSubTab = subtab;
+      renderDashboardTabPanels();
+    }
     return;
   }
 
@@ -12180,6 +12997,7 @@ async function handleRoomAction(event) {
 
   if (action === "refresh-inventory") {
     await loadInventoryItems();
+    await loadMenuItems();
     return;
   }
 
@@ -12291,7 +13109,8 @@ async function handleRoomAction(event) {
   }
 
   if (action === "prepare-room-session-duration") {
-    await prepareRoomSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes));
+    await prepareRoomSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes), customerNameInput, "");
+    customerNameInput = "";
     return;
   }
 
@@ -12308,7 +13127,8 @@ async function handleRoomAction(event) {
       return;
     }
 
-    await prepareRoomSession(button.dataset.roomId || "", selectedDuration);
+    await prepareRoomSession(button.dataset.roomId || "", selectedDuration, customerNameInput, "");
+    customerNameInput = "";
     return;
   }
 
@@ -12370,6 +13190,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (room.status === "waiting_payment") {
+    showPaymentSelection(roomId);
+    return;
+  }
+
   if (room.status === "occupied") {
     await closeSession(roomId);
     return;
@@ -12386,7 +13211,7 @@ async function handleRoomAction(event) {
   }
 
   if (room.status === "cleaning") {
-    showInlineNotice("Room sedang cleaning. Tunggu waiter menandai room siap sebelum dijual lagi.", "error");
+    await completeCleaning(roomId);
     return;
   }
 
@@ -12427,8 +13252,18 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-customer-name") {
+    updateCustomerName(field.value);
+    return;
+  }
+
   if (action === "update-fnb-order-note") {
     updateFnbOrderNote(field.value);
+    return;
+  }
+
+  if (action === "update-fb-payment-method") {
+    fnbOrderPaymentMethod = field.value;
     return;
   }
 
@@ -12449,6 +13284,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-extend-session-note") {
     updateExtendSessionNote(field.value);
+    return;
+  }
+
+  if (action === "update-extend-payment-method") {
+    extendPaymentMethod = field.value;
     return;
   }
 
@@ -12657,15 +13497,20 @@ async function initializeDashboard() {
   dashboardDataInitialized = true;
   renderRooms();
   await loadRooms();
+  await loadPackages();
 
   const initialLoads = [];
+
+  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock")) {
+    initialLoads.push(loadInventoryItems());
+  }
 
   if (canAccessDashboardTab("fnb")) {
     initialLoads.push(loadMenuItems(), loadOpenFnbOrders(), loadTodayFnbOrders());
   }
 
   if (canAccessDashboardTab("stock")) {
-    initialLoads.push(loadInventoryItems(), loadTodayStockMovements());
+    initialLoads.push(loadTodayStockMovements());
   }
 
   if (canAccessDashboardTab("reports")) {

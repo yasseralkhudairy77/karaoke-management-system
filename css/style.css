@@ -153,6 +153,8 @@ body::after {
 .menu-status.active,
 .open-fnb-status.open,
 .today-fnb-status.open,
+.open-fnb-status.paid,
+.today-fnb-status.paid,
 .low-stock-report-badge.safe,
 .transaction-cell.transaction-status-paid .transaction-value.status-badge {
   border-color: rgba(24, 199, 135, 0.45);
@@ -1143,12 +1145,95 @@ body::after {
   min-width: 0;
 }
 
-.reports-subnav {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3);
-}
+  .fnb-subnav {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .fnb-subnav-button {
+    display: grid;
+    gap: 6px;
+    min-height: 92px;
+    padding: var(--space-4);
+    border: 1px solid rgba(226, 184, 92, 0.2);
+    border-radius: var(--radius-md);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018)),
+      rgba(13, 10, 7, 0.55);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+  }
+
+  .fnb-subnav-button:hover,
+  .fnb-subnav-button:focus-visible,
+  .fnb-subnav-button.active {
+    border-color: rgba(255, 215, 122, 0.58);
+    background:
+      linear-gradient(180deg, rgba(255, 215, 122, 0.15), rgba(201, 150, 50, 0.08)),
+      rgba(13, 10, 7, 0.68);
+    outline: 3px solid rgba(226, 184, 92, 0.14);
+    outline-offset: 2px;
+  }
+
+  .fnb-subnav-button:active {
+    transform: translateY(1px);
+  }
+
+  .fnb-subnav-label {
+    color: var(--gold-strong);
+    font-size: 1rem;
+    font-weight: 950;
+  }
+
+  .transactions-subnav {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .transactions-subnav-button {
+    display: grid;
+    gap: 6px;
+    min-height: 92px;
+    padding: var(--space-4);
+    border: 1px solid rgba(226, 184, 92, 0.2);
+    border-radius: var(--radius-md);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018)),
+      rgba(13, 10, 7, 0.55);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+  }
+
+  .transactions-subnav-button:hover,
+  .transactions-subnav-button:focus-visible,
+  .transactions-subnav-button.active {
+    border-color: rgba(255, 215, 122, 0.58);
+    background:
+      linear-gradient(180deg, rgba(255, 215, 122, 0.15), rgba(201, 150, 50, 0.08)),
+      rgba(13, 10, 7, 0.68);
+    outline: 3px solid rgba(226, 184, 92, 0.14);
+    outline-offset: 2px;
+  }
+
+  .transactions-subnav-button:active {
+    transform: translateY(1px);
+  }
+
+  .transactions-subnav-label {
+    color: var(--gold-strong);
+    font-size: 1rem;
+    font-weight: 950;
+  }
 
 .reports-subnav-button {
   display: grid;
@@ -2121,6 +2206,11 @@ body::after {
   box-shadow: var(--shadow), var(--cleaning-glow);
 }
 
+.room-card.waiting-payment {
+  background: linear-gradient(160deg, #d4981c, #734f07);
+  box-shadow: var(--shadow), 0 0 20px rgba(212, 152, 28, 0.35);
+}
+
 .state-message {
   grid-column: 1 / -1;
   margin: 0;
@@ -2562,58 +2652,99 @@ body::after {
 
 .menu-category-filter {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 2px solid var(--border);
+  gap: var(--space-4);
+  scrollbar-width: none;
+}
+
+.menu-category-filter::-webkit-scrollbar {
+  display: none;
 }
 
 .menu-category-button {
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 46px;
-  min-width: 104px;
-  padding: 0 13px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: rgba(26, 20, 14, 0.72);
+  gap: 8px;
+  padding: 12px 6px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  font-size: 0.9rem;
-  font-weight: 900;
-}
-
-.menu-category-button strong {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: rgba(226, 184, 92, 0.12);
-  color: var(--gold-strong);
-  font-size: 0.76rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  transition: all 0.2s ease-in-out;
+  white-space: nowrap;
 }
 
 .menu-category-button:hover,
-.menu-category-button:focus-visible,
-.menu-category-button.active {
-  border-color: rgba(255, 215, 122, 0.58);
-  background: linear-gradient(180deg, rgba(255, 215, 122, 0.18), rgba(201, 150, 50, 0.12));
+.menu-category-button:focus-visible {
   color: var(--gold-strong);
-  outline: 0;
+  border-bottom-color: rgba(226, 184, 92, 0.35);
+  background: transparent;
+  outline: none;
+}
+
+.menu-category-button.active {
+  color: var(--gold-strong);
+  border-bottom-color: var(--billing-accent);
+  background: transparent;
+  text-shadow: 0 0 8px rgba(226, 184, 92, 0.4);
+}
+
+.category-tab-icon {
+  font-size: 1.15rem;
+}
+
+.category-tab-text {
+  font-weight: 700;
+}
+
+.category-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: rgba(226, 184, 92, 0.12);
+  color: var(--gold-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+  margin-left: 2px;
+}
+
+.menu-category-button.active .category-tab-count {
+  background: var(--billing-accent);
+  color: #0d0a07;
+  box-shadow: 0 0 6px rgba(226, 184, 92, 0.4);
 }
 
 .menu-spirit-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px;
-  border: 1px dashed rgba(226, 184, 92, 0.24);
-  border-radius: 14px;
-  background: rgba(13, 10, 7, 0.45);
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(226, 184, 92, 0.15);
+  border-radius: var(--radius-md);
+  background: rgba(13, 10, 7, 0.35);
+  margin-top: -6px;
+  animation: slideDownFade 0.25s ease-in-out forwards;
+}
+
+@keyframes slideDownFade {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .menu-spirit-filter.is-hidden {
@@ -2621,24 +2752,26 @@ body::after {
 }
 
 .menu-spirit-button {
-  min-height: 36px;
-  padding: 0 12px;
-  border: 1px solid rgba(226, 184, 92, 0.2);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(226, 184, 92, 0.15);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  font-size: 0.84rem;
-  font-weight: 900;
+  font-size: 0.8rem;
+  font-weight: 700;
+  transition: all 0.18s ease;
 }
 
 .menu-spirit-button:hover,
 .menu-spirit-button:focus-visible,
 .menu-spirit-button.active {
-  border-color: rgba(255, 215, 122, 0.56);
-  background: rgba(226, 184, 92, 0.15);
+  border-color: var(--billing-accent);
+  background: rgba(226, 184, 92, 0.12);
   color: var(--gold-strong);
+  outline: none;
 }
 
 .menu-list {
@@ -2747,6 +2880,213 @@ body::after {
   border: 1px solid rgba(139, 150, 168, 0.45);
   background: rgba(139, 150, 168, 0.12);
   color: #d6deea;
+}
+
+.menu-stock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  border: 1px solid rgba(226, 184, 92, 0.35);
+  background: rgba(226, 184, 92, 0.1);
+  color: var(--gold-strong);
+  width: fit-content;
+}
+
+.menu-stock-badge.low-stock {
+  border-color: rgba(255, 179, 71, 0.55);
+  background: rgba(255, 179, 71, 0.15);
+  color: #ffd180;
+}
+
+.menu-stock-badge.out-of-stock {
+  border-color: rgba(255, 99, 132, 0.55);
+  background: rgba(255, 99, 132, 0.15);
+  color: #ff99aa;
+}
+
+.menu-card.out-of-stock {
+  border-color: rgba(255, 99, 132, 0.3);
+  background: rgba(255, 99, 132, 0.04);
+}
+
+/* SAP / Odoo ERP Inventory View Styles */
+.erp-inventory-view {
+  background: rgba(13, 10, 7, 0.45);
+  border: 1px solid rgba(226, 184, 92, 0.22);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.erp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.erp-btn-secondary {
+  background: rgba(226, 184, 92, 0.12);
+  border: 1px solid rgba(226, 184, 92, 0.35);
+  color: var(--gold-strong);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.erp-btn-secondary:hover {
+  background: rgba(226, 184, 92, 0.25);
+  border-color: var(--gold-strong);
+}
+
+.erp-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.erp-kpi-card {
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.erp-kpi-card.tone-success {
+  border-left: 4px solid #18c787;
+}
+
+.erp-kpi-card.tone-warning {
+  border-left: 4px solid #ffb347;
+}
+
+.erp-kpi-card.tone-critical {
+  border-left: 4px solid #ff6384;
+}
+
+.erp-kpi-card.tone-neutral {
+  border-left: 4px solid var(--gold-strong);
+}
+
+.erp-kpi-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0;
+  font-weight: 800;
+}
+
+.erp-kpi-val {
+  font-size: 1.45rem;
+  font-weight: 900;
+  color: var(--text);
+  margin: 0;
+}
+
+.erp-table-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(226, 184, 92, 0.18);
+  border-radius: 12px;
+  background: rgba(10, 8, 6, 0.6);
+  margin-bottom: 24px;
+}
+
+.erp-inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.erp-inventory-table th {
+  background: rgba(226, 184, 92, 0.08);
+  color: var(--gold-strong);
+  padding: 14px 16px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 900;
+  border-bottom: 1px solid rgba(226, 184, 92, 0.2);
+}
+
+.erp-inventory-tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.12s ease;
+}
+
+.erp-inventory-tr:hover {
+  background: rgba(226, 184, 92, 0.05);
+}
+
+.erp-inventory-table td {
+  padding: 14px 16px;
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.erp-sku-badge {
+  font-family: monospace;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e2b85c;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.erp-name-cell {
+  font-weight: 800;
+  color: var(--text-bright);
+}
+
+.erp-cat-cell {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.erp-qty-cell strong {
+  font-size: 1.05rem;
+  color: var(--gold-strong);
+  margin-right: 4px;
+}
+
+.erp-qty-cell small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.erp-min-cell {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.erp-quick-adjust-btn {
+  background: rgba(226, 184, 92, 0.1);
+  border: 1px solid rgba(226, 184, 92, 0.3);
+  color: var(--gold-strong);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.erp-quick-adjust-btn:hover {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
 }
 
 .menu-add-button {
@@ -3287,6 +3627,12 @@ body::after {
   color: #fca5a5;
 }
 
+.open-fnb-status.paid {
+  border-color: rgba(92, 213, 155, 0.52);
+  background: rgba(92, 213, 155, 0.13);
+  color: #5cd59b;
+}
+
 .open-fnb-total {
   margin: 0;
   color: var(--billing-amber);
@@ -3560,6 +3906,12 @@ body::after {
   border-color: rgba(248, 113, 113, 0.5);
   background: rgba(127, 29, 29, 0.24);
   color: #fca5a5;
+}
+
+.today-fnb-status.paid {
+  border-color: rgba(92, 213, 155, 0.52);
+  background: rgba(92, 213, 155, 0.13);
+  color: #5cd59b;
 }
 
 .today-fnb-total {
@@ -5838,6 +6190,7 @@ body::after {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
+  flex-wrap: wrap;
 }
 
 .room-name {
