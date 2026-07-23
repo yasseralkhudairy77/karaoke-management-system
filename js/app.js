@@ -13820,8 +13820,10 @@ async function extendSession(roomId, addMinutes) {
     customExtendMinutes = "";
     extendSessionNote = "";
     extendPaymentMethod = "cash";
-    await loadRooms();
-    await loadTodayRoomTimeLogs();
+    await Promise.all([
+      loadRooms(),
+      loadTodayRoomTimeLogs()
+    ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menambah waktu sesi.", "error");
   } finally {
@@ -13971,8 +13973,10 @@ async function payAndStartSession(roomId, paymentMethod) {
     if (data.transaction) {
       showBillingSummary(data.transaction);
     }
-    await loadRooms();
-    await loadTodayTransactions();
+    await Promise.all([
+      loadRooms(),
+      loadTodayTransactions()
+    ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal memproses pembayaran.", "error");
   } finally {
@@ -14114,13 +14118,15 @@ async function closeSession(roomId) {
     } else {
       clearBillingSummary();
     }
-    await loadRooms();
-    await loadOpenFnbOrders();
-    await loadTodayFnbOrders();
-    await loadInventoryItems();
-    await loadMenuItems();
-    await loadTodayFnbSalesReport();
-    await loadTodayTransactions();
+    await Promise.all([
+      loadRooms(),
+      loadOpenFnbOrders(),
+      loadTodayFnbOrders(),
+      loadInventoryItems(),
+      loadMenuItems(),
+      loadTodayFnbSalesReport(),
+      loadTodayTransactions()
+    ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan sesi.", "error");
   } finally {
