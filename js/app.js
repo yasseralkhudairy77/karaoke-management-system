@@ -11503,8 +11503,13 @@ function refreshActiveTabData() {
       loadSettingsTabData();
       break;
     case "lc":
-      loadLcs();
-      loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+      if (activeLcSubTab === "master") {
+        loadLcs();
+      } else if (activeLcSubTab === "reports") {
+        loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+      } else if (activeLcSubTab === "payroll") {
+        loadLcPayrollData();
+      }
       break;
     default:
       break;
@@ -11526,6 +11531,9 @@ async function loadLcs() {
   }
 
   isLoadingLcs = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
   try {
     const response = await fetch(`${API_BASE_URL}?action=getLcMasterList`);
     const data = await response.json();
@@ -11551,6 +11559,9 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
   }
 
   isLoadingLcWorkReports = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
   try {
     const response = await fetch(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
     const data = await response.json();
@@ -11561,6 +11572,108 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
     console.error("Error loading LC work reports:", error);
   } finally {
     isLoadingLcWorkReports = false;
+  }
+}
+
+// Payroll states for LC
+let lcPayrollPendingReports = [];
+let lcPayrollHistory = [];
+let isLoadingLcPayroll = false;
+let isProcessingLcPayroll = false;
+let lcPayrollStartDate = "";
+let lcPayrollEndDate = "";
+
+async function loadLcPayrollData(startDate = "", endDate = "") {
+  if (!API_BASE_URL.trim()) {
+    lcPayrollPendingReports = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 4, total_earnings: 700000 },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 2, total_earnings: 350000 },
+    ];
+    lcPayrollHistory = [
+      { payroll_id: "LCPAY-20260710-1002", start_date: "2026-06-26", end_date: "2026-07-09", total_amount: 1050000, total_sessions: 6, total_lcs_paid: 2, processed_at: "2026-07-10T10:02:00Z", processed_by: "Manager" }
+    ];
+    lcPayrollStartDate = startDate || "2026-07-10";
+    lcPayrollEndDate = endDate || "2026-07-23";
+    return;
+  }
+
+  isLoadingLcPayroll = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+
+  try {
+    const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${startDate}&end_date=${endDate}`;
+    const pendingRes = await fetch(pendingUrl);
+    const pendingData = await pendingRes.json();
+    if (pendingData && pendingData.success) {
+      lcPayrollPendingReports = pendingData.reports || [];
+      lcPayrollStartDate = pendingData.current_range.startDate;
+      lcPayrollEndDate = pendingData.current_range.endDate;
+    }
+
+    const historyUrl = `${API_BASE_URL}?action=getLcPayrollHistory`;
+    const historyRes = await fetch(historyUrl);
+    const historyData = await historyRes.json();
+    if (historyData && historyData.success) {
+      lcPayrollHistory = historyData.history || [];
+    }
+  } catch (error) {
+    console.error("Error loading LC payroll data:", error);
+  } finally {
+    isLoadingLcPayroll = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+async function executeProcessLcPayroll() {
+  if (!API_BASE_URL.trim()) {
+    const mockRecord = {
+      payroll_id: "LCPAY-MOCK-" + Math.floor(Math.random() * 9000 + 1000),
+      start_date: lcPayrollStartDate,
+      end_date: lcPayrollEndDate,
+      total_amount: lcPayrollPendingReports.reduce((sum, r) => sum + r.total_earnings, 0),
+      total_sessions: lcPayrollPendingReports.reduce((sum, r) => sum + r.total_sessions, 0),
+      total_lcs_paid: lcPayrollPendingReports.length,
+      processed_at: new Date().toISOString(),
+      processed_by: getLoggedInOperatorName() || "Manager",
+    };
+    lcPayrollHistory.unshift(mockRecord);
+    lcPayrollPendingReports = [];
+    alert("Payroll berhasil diproses (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  isProcessingLcPayroll = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+
+  try {
+    const operator = getLoggedInOperatorName() || "Manager";
+    const response = await fetch(API_BASE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `action=processLcPayroll&start_date=${lcPayrollStartDate}&end_date=${lcPayrollEndDate}&cashier_name=${encodeURIComponent(operator)}`
+    });
+    const result = await response.json();
+    if (result && result.success) {
+      alert(result.message || "Payroll berhasil diproses.");
+      await loadLcPayrollData();
+    } else {
+      alert("Gagal memproses payroll: " + (result.error || "Unknown error"));
+    }
+  } catch (error) {
+    console.error("Error processing LC payroll:", error);
+    alert("Terjadi kesalahan koneksi saat memproses payroll.");
+  } finally {
+    isProcessingLcPayroll = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
   }
 }
 
@@ -11609,6 +11722,7 @@ function createLcPanelElement() {
   const tabsConfig = [
     { key: "master", label: "Master LC" },
     { key: "reports", label: "Laporan Kerja & Gaji" },
+    { key: "payroll", label: "Payroll LC" },
   ];
 
   tabsConfig.forEach(tab => {
@@ -11625,6 +11739,13 @@ function createLcPanelElement() {
     btn.textContent = tab.label;
     btn.onclick = () => {
       activeLcSubTab = tab.key;
+      if (tab.key === "master") {
+        loadLcs();
+      } else if (tab.key === "reports") {
+        loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+      } else if (tab.key === "payroll") {
+        loadLcPayrollData();
+      }
       renderRooms();
     };
     subNav.appendChild(btn);
@@ -11636,6 +11757,8 @@ function createLcPanelElement() {
     panel.appendChild(createLcMasterSubTabElement());
   } else if (activeLcSubTab === "reports") {
     panel.appendChild(createLcReportsSubTabElement());
+  } else if (activeLcSubTab === "payroll") {
+    panel.appendChild(createLcPayrollSubTabElement());
   }
 
   if (addLcForm) {
@@ -12035,6 +12158,236 @@ function createLcReportsSubTabElement() {
     container.appendChild(createLcDetailLogsOverlay());
   }
 
+  return container;
+}
+
+function createLcPayrollSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-payroll-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "24px";
+
+  const pendingSection = document.createElement("div");
+  pendingSection.className = "erp-card";
+  pendingSection.style.padding = "16px";
+  pendingSection.style.backgroundColor = "var(--surface-raised)";
+  pendingSection.style.borderRadius = "var(--radius-md)";
+  pendingSection.style.border = "1px solid var(--border)";
+  pendingSection.style.display = "flex";
+  pendingSection.style.flexDirection = "column";
+  pendingSection.style.gap = "16px";
+
+  const secHeader = document.createElement("div");
+  secHeader.style.display = "flex";
+  secHeader.style.justifyContent = "space-between";
+  secHeader.style.alignItems = "center";
+  secHeader.style.flexWrap = "wrap";
+  secHeader.style.gap = "12px";
+
+  const secTitleGroup = document.createElement("div");
+  const secTitle = document.createElement("h3");
+  secTitle.style.margin = "0";
+  secTitle.textContent = "Pembayaran Payroll LC (2 Mingguan)";
+  const secDesc = document.createElement("p");
+  secDesc.style.margin = "4px 0 0 0";
+  secDesc.style.fontSize = "13px";
+  secDesc.style.color = "var(--muted)";
+  secDesc.textContent = "Tentukan periode payroll dan proses pembayaran instan untuk sesi kerja done yang belum dibayar.";
+  secTitleGroup.append(secTitle, secDesc);
+  secHeader.appendChild(secTitleGroup);
+
+  const dateFilters = document.createElement("div");
+  dateFilters.style.display = "flex";
+  dateFilters.style.gap = "12px";
+  dateFilters.style.alignItems = "center";
+
+  const startCol = document.createElement("div");
+  startCol.style.display = "flex";
+  startCol.style.flexDirection = "column";
+  startCol.style.gap = "4px";
+  const startLbl = document.createElement("label");
+  startLbl.style.fontSize = "11px";
+  startLbl.style.color = "var(--muted)";
+  startLbl.textContent = "Dari Tanggal:";
+  const startIn = document.createElement("input");
+  startIn.type = "date";
+  startIn.className = "duration-custom-input";
+  startIn.value = lcPayrollStartDate;
+  startCol.append(startLbl, startIn);
+
+  const endCol = document.createElement("div");
+  endCol.style.display = "flex";
+  endCol.style.flexDirection = "column";
+  endCol.style.gap = "4px";
+  const endLbl = document.createElement("label");
+  endLbl.style.fontSize = "11px";
+  endLbl.style.color = "var(--muted)";
+  endLbl.textContent = "Sampai Tanggal:";
+  const endIn = document.createElement("input");
+  endIn.type = "date";
+  endIn.className = "duration-custom-input";
+  endIn.value = lcPayrollEndDate;
+  endCol.append(endLbl, endIn);
+
+  const filterBtn = document.createElement("button");
+  filterBtn.type = "button";
+  filterBtn.className = "erp-btn erp-btn-secondary";
+  filterBtn.style.padding = "8px 12px";
+  filterBtn.style.alignSelf = "flex-end";
+  filterBtn.textContent = "Filter";
+  filterBtn.onclick = async () => {
+    await loadLcPayrollData(startIn.value, endIn.value);
+  };
+
+  dateFilters.append(startCol, endCol, filterBtn);
+  secHeader.appendChild(dateFilters);
+  pendingSection.appendChild(secHeader);
+
+  if (isLoadingLcPayroll) {
+    pendingSection.appendChild(createStateMessage("Memuat data payroll..."));
+    container.appendChild(pendingSection);
+    return container;
+  }
+
+  const summaryBox = document.createElement("div");
+  summaryBox.style.display = "grid";
+  summaryBox.style.gridTemplateColumns = "repeat(auto-fit, minmax(180px, 1fr))";
+  summaryBox.style.gap = "12px";
+  summaryBox.style.backgroundColor = "var(--bg)";
+  summaryBox.style.padding = "12px";
+  summaryBox.style.borderRadius = "var(--radius-sm)";
+  summaryBox.style.border = "1px solid var(--border)";
+
+  const totalAmount = lcPayrollPendingReports.reduce((sum, r) => sum + r.total_earnings, 0);
+  const totalSessions = lcPayrollPendingReports.reduce((sum, r) => sum + r.total_sessions, 0);
+  const totalLcs = lcPayrollPendingReports.length;
+
+  summaryBox.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Total Pembayaran Gaji:</span>
+      <strong style="font-size:18px; color:var(--gold)">${formatCurrency(totalAmount)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Total Sesi / Job:</span>
+      <strong style="font-size:18px;">${totalSessions} Sesi</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Jumlah LC Dibayar:</span>
+      <strong style="font-size:18px;">${totalLcs} Orang</strong>
+    </div>
+  `;
+  pendingSection.appendChild(summaryBox);
+
+  if (lcPayrollPendingReports.length === 0) {
+    const noPending = createStateMessage("Tidak ada sesi kerja LC yang belum dibayar pada periode ini.", "info");
+    pendingSection.appendChild(noPending);
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "table-responsive";
+    
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>ID LC</th>
+          <th>Nama Panggilan</th>
+          <th>Tarif per Sesi</th>
+          <th style="text-align: center;">Total Sesi Pending</th>
+          <th>Total Gaji</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lcPayrollPendingReports.map(rep => `
+          <tr>
+            <td><strong>${rep.lc_id}</strong></td>
+            <td>${escapeHtml(rep.lc_name)}</td>
+            <td>${formatCurrency(rep.rate_per_room)}</td>
+            <td style="text-align: center;">${rep.total_sessions}</td>
+            <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    tableWrapper.appendChild(table);
+    pendingSection.appendChild(tableWrapper);
+
+    const processBtn = document.createElement("button");
+    processBtn.type = "button";
+    processBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+    processBtn.style.padding = "10px 20px";
+    processBtn.style.alignSelf = "flex-end";
+    processBtn.style.fontWeight = "bold";
+    processBtn.textContent = isProcessingLcPayroll ? "Memproses..." : "Proses Pembayaran Payroll";
+    processBtn.disabled = isProcessingLcPayroll;
+    processBtn.onclick = async () => {
+      if (confirm(`Konfirmasi pembayaran payroll sebesar ${formatCurrency(totalAmount)} untuk periode ini?`)) {
+        await executeProcessLcPayroll();
+      }
+    };
+    pendingSection.appendChild(processBtn);
+  }
+
+  container.appendChild(pendingSection);
+
+  const historySection = document.createElement("div");
+  historySection.className = "erp-card";
+  historySection.style.padding = "16px";
+  historySection.style.display = "flex";
+  historySection.style.flexDirection = "column";
+  historySection.style.gap = "12px";
+
+  const historyTitle = document.createElement("h3");
+  historyTitle.style.margin = "0";
+  historyTitle.textContent = "Riwayat Pembayaran Payroll";
+  historySection.appendChild(historyTitle);
+
+  if (lcPayrollHistory.length === 0) {
+    historySection.appendChild(createStateMessage("Belum ada riwayat pembayaran payroll.", "info"));
+  } else {
+    const histTableWrapper = document.createElement("div");
+    histTableWrapper.className = "table-responsive";
+
+    const histTable = document.createElement("table");
+    histTable.className = "erp-table";
+    histTable.style.width = "100%";
+    histTable.style.borderCollapse = "collapse";
+
+    histTable.innerHTML = `
+      <thead>
+        <tr>
+          <th>ID Payroll</th>
+          <th>Periode Kerja</th>
+          <th>Total Payout</th>
+          <th style="text-align: center;">Total Sesi</th>
+          <th style="text-align: center;">LC Terbayar</th>
+          <th>Tanggal Diproses</th>
+          <th>Operator</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lcPayrollHistory.map(row => `
+          <tr>
+            <td><strong>${row.payroll_id}</strong></td>
+            <td>${row.start_date} s.d. ${row.end_date}</td>
+            <td><strong>${formatCurrency(row.total_amount)}</strong></td>
+            <td style="text-align: center;">${row.total_sessions} Sesi</td>
+            <td style="text-align: center;">${row.total_lcs_paid} LC</td>
+            <td>${new Date(row.processed_at).toLocaleString("id-ID")}</td>
+            <td>${escapeHtml(row.processed_by || "Manager")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    histTableWrapper.appendChild(histTable);
+    historySection.appendChild(histTableWrapper);
+  }
+
+  container.appendChild(historySection);
   return container;
 }
 

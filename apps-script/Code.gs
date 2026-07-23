@@ -132,6 +132,17 @@ var LC_WORK_LOG_HEADERS = [
   "status",
   "created_at",
   "closed_at",
+  "payroll_id",
+];
+var LC_PAYROLL_HISTORY_HEADERS = [
+  "payroll_id",
+  "start_date",
+  "end_date",
+  "total_amount",
+  "total_sessions",
+  "total_lcs_paid",
+  "processed_at",
+  "processed_by",
 ];
 var MENU_STOCK_HEADERS = [
   "stock_tracking",
@@ -624,6 +635,17 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getLcPayrollHistory") {
+      return jsonResponse(getLcPayrollHistory_());
+    }
+
+    if (action === "getPendingLcPayroll") {
+      return jsonResponse(getPendingLcPayroll_(
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
     if (action === "getExpiredRoomRecoveryList") {
       return jsonResponse(getExpiredRoomRecoveryList_(e.parameter));
     }
@@ -839,6 +861,10 @@ function doPost(e) {
 
     if (action === "assignSessionLcs") {
       return jsonResponse(assignSessionLcs_(payload));
+    }
+
+    if (action === "processLcPayroll") {
+      return jsonResponse(processLcPayroll_(payload));
     }
 
     return jsonResponse({
@@ -6069,7 +6095,24 @@ function ensureLcMasterSheet_() {
 }
 
 function ensureLcWorkLogsSheet_() {
-  return ensureSheetWithHeaders_("LcWorkLogs", LC_WORK_LOG_HEADERS);
+  var sheet = ensureSheetWithHeaders_("LcWorkLogs", LC_WORK_LOG_HEADERS);
+  var lastCol = sheet.getLastColumn();
+  if (lastCol > 0) {
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+      return String(h).trim();
+    });
+    LC_WORK_LOG_HEADERS.forEach(function (h) {
+      if (headers.indexOf(h) === -1) {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue(h);
+        headers.push(h);
+      }
+    });
+  }
+  return sheet;
+}
+
+function ensureLcPayrollHistorySheet_() {
+  return ensureSheetWithHeaders_("LcPayrollHistory", LC_PAYROLL_HISTORY_HEADERS);
 }
 
 function getLcMasterList_() {
@@ -6319,6 +6362,214 @@ function getLcWorkReports_(period, startDate, endDate) {
     reports: reports,
     range: range,
   };
+}
+
+function getLcPayrollHistory_() {
+  ensureLcPayrollHistorySheet_();
+  var history = readSheetAsObjects_("LcPayrollHistory");
+  history.sort(function(a, b) {
+    var dateA = new Date(a.processed_at || 0).getTime();
+    var dateB = new Date(b.processed_at || 0).getTime();
+    return dateB - dateA;
+  });
+  return {
+    ok: true,
+    success: true,
+    history: history,
+  };
+}
+
+function getPendingLcPayroll_(startDate, endDate) {
+  ensureLcPayrollHistorySheet_();
+  ensureLcWorkLogsSheet_();
+
+  var history = readSheetAsObjects_("LcPayrollHistory");
+  var suggestedStartDate = "";
+  var suggestedEndDate = "";
+
+  if (history.length > 0) {
+    var sortedHistory = history.slice().sort(function(a, b) {
+      return String(b.end_date || "").localeCompare(String(a.end_date || ""));
+    });
+    var lastPayroll = sortedHistory[0];
+    suggestedStartDate = addDaysToOperationalDateString_(lastPayroll.end_date, 1);
+    suggestedEndDate = addDaysToOperationalDateString_(suggestedStartDate, 13);
+  } else {
+    var activeOpDate = getCurrentOperationalDateString_();
+    suggestedStartDate = getOperationalMonthStartDateString_(activeOpDate);
+    suggestedEndDate = activeOpDate;
+  }
+
+  var startVal = startDate || suggestedStartDate;
+  var endVal = endDate || suggestedEndDate;
+
+  var range = {
+    period: "custom",
+    startDate: startVal,
+    endDate: endVal
+  };
+
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  var lcs = readSheetAsObjects_("LcMaster");
+
+  var filteredLogs = logs.filter(function(log) {
+    var status = String(log.status || "").trim().toLowerCase();
+    if (status !== "done") {
+      return false;
+    }
+    if (log.payroll_id && String(log.payroll_id).trim() !== "") {
+      return false;
+    }
+    var effectiveTime = log.closed_at || log.created_at || "";
+    if (!effectiveTime) {
+      return false;
+    }
+    var logOperationalDate = getOperationalDateString_(effectiveTime);
+    return matchesOperationalPeriod_(logOperationalDate, range);
+  });
+
+  var reports = lcs.map(function(lc) {
+    var lcLogs = filteredLogs.filter(function(log) {
+      return String(log.lc_id || "").trim() === String(lc.lc_id || "").trim();
+    });
+
+    var totalEarnings = lcLogs.reduce(function(sum, log) {
+      return sum + (Number(log.rate) || 0);
+    }, 0);
+
+    return {
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      rate_per_room: Number(lc.rate_per_room) || 0,
+      total_sessions: lcLogs.length,
+      total_earnings: totalEarnings,
+    };
+  }).filter(function(report) {
+    return report.total_sessions > 0;
+  });
+
+  var summaryTotalAmount = reports.reduce(function(sum, r) {
+    return sum + r.total_earnings;
+  }, 0);
+
+  var summaryTotalSessions = reports.reduce(function(sum, r) {
+    return sum + r.total_sessions;
+  }, 0);
+
+  return {
+    ok: true,
+    success: true,
+    reports: reports,
+    suggested_range: {
+      startDate: suggestedStartDate,
+      endDate: suggestedEndDate,
+    },
+    current_range: {
+      startDate: startVal,
+      endDate: endVal,
+    },
+    summary: {
+      total_amount: summaryTotalAmount,
+      total_sessions: summaryTotalSessions,
+      total_lcs: reports.length,
+    }
+  };
+}
+
+function processLcPayroll_(payload) {
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      return { ok: false, error: "Sistem sedang sibuk. Silakan coba beberapa saat lagi." };
+    }
+
+    var startDate = String(payload.start_date || "").trim();
+    var endDate = String(payload.end_date || "").trim();
+    var cashierName = String(payload.cashier_name || "Manager").trim();
+
+    if (!startDate || !endDate) {
+      return { ok: false, error: "Tanggal mulai dan tanggal akhir wajib ditentukan." };
+    }
+
+    ensureLcPayrollHistorySheet_();
+    var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+    var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+
+    var range = {
+      period: "custom",
+      startDate: startDate,
+      endDate: endDate
+    };
+
+    var logs = readSheetAsObjects_("LcWorkLogs");
+    
+    var matchingLogIndices = [];
+    var matchedLogs = [];
+
+    for (var i = 0; i < logs.length; i++) {
+      var log = logs[i];
+      var status = String(log.status || "").trim().toLowerCase();
+      var isUnpaid = !log.payroll_id || String(log.payroll_id).trim() === "";
+      var effectiveTime = log.closed_at || log.created_at || "";
+
+      if (status === "done" && isUnpaid && effectiveTime) {
+        var logOperationalDate = getOperationalDateString_(effectiveTime);
+        if (matchesOperationalPeriod_(logOperationalDate, range)) {
+          matchingLogIndices.push(i);
+          matchedLogs.push(log);
+        }
+      }
+    }
+
+    if (matchedLogs.length === 0) {
+      return { ok: false, error: "Tidak ada sesi kerja LC yang belum dibayar pada periode ini." };
+    }
+
+    var todayStr = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd");
+    var payrollId = "LCPAY-" + todayStr + "-" + Math.floor(Math.random() * 9000 + 1000);
+
+    var uniqueLcIds = {};
+    var totalAmount = 0;
+    var totalSessions = matchedLogs.length;
+
+    matchedLogs.forEach(function(log) {
+      uniqueLcIds[log.lc_id] = true;
+      totalAmount += (Number(log.rate) || 0);
+    });
+
+    var totalLcsPaid = Object.keys(uniqueLcIds).length;
+
+    matchingLogIndices.forEach(function(origIdx) {
+      var rowNum = origIdx + 2;
+      lcWorkLogsSheet.getRange(rowNum, lcWorkLogsHeaders.payroll_id).setValue(payrollId);
+    });
+
+    var payrollRecord = {
+      payroll_id: payrollId,
+      start_date: startDate,
+      end_date: endDate,
+      total_amount: totalAmount,
+      total_sessions: totalSessions,
+      total_lcs_paid: totalLcsPaid,
+      processed_at: toJakartaIsoString_(new Date()),
+      processed_by: cashierName
+    };
+    
+    var historySheet = ensureLcPayrollHistorySheet_();
+    appendObjectRow_(historySheet, payrollRecord);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Payroll berhasil diproses.",
+      payroll: payrollRecord
+    };
+
+  } catch(e) {
+    return { ok: false, error: "Gagal memproses payroll: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getTodayTransactions_() {
