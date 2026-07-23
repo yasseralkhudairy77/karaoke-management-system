@@ -22,6 +22,7 @@ const DASHBOARD_TABS = [
   { key: "rooms", label: "Ruangan" },
   { key: "fnb", label: "F&B" },
   { key: "stock", label: "Stok" },
+  { key: "lc", label: "LC" },
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
   { key: "audit", label: "Audit" },
@@ -38,9 +39,9 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "stock", "reports", "transactions", "audit", "settings"],
-  manager: ["rooms", "fnb", "stock", "reports", "transactions", "audit", "settings"],
-  cashier: ["rooms", "fnb", "reports", "transactions"],
+  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "settings"],
+  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "settings"],
+  cashier: ["rooms", "fnb", "lc", "reports", "transactions"],
   receptionist: ["rooms"],
 };
 const ROLE_REPORT_SUB_TABS = {
@@ -109,6 +110,23 @@ const currencyFormatter = new Intl.NumberFormat("id-ID", {
 });
 const ROOM_WARNING_SOUND_DURATION_MS = 180;
 const ROOM_WARNING_SOUND_FREQUENCY_HZ = 880;
+
+function buildApiUrl(action, params = null) {
+  const url = new URL(API_BASE_URL);
+  url.searchParams.set("action", action);
+  url.searchParams.set("_cb", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      url.searchParams.set(key, String(value));
+    });
+  }
+
+  return url.toString();
+}
 
 let rooms = [];
 let errorMessage = "";
@@ -447,6 +465,21 @@ let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
 let stockWarningMessages = [];
+let addInventoryItemForm = null;
+let isSavingAddInventoryItem = false;
+let lcs = [];
+let isLoadingLcs = false;
+let lcWorkReports = [];
+let isLoadingLcWorkReports = false;
+let activeLcSubTab = "master";
+let lcMasterPage = 1;
+let lcReportsPage = 1;
+let addLcForm = null;
+let editLcForm = null;
+let isSavingLc = false;
+let deleteLcConfirmation = null;
+let isDeletingLc = false;
+let selectedLcIdsForRoom = {};
 let stockAdjustmentForm = {
   stock_item_id: "",
   adjustment_type: "restock",
@@ -502,6 +535,8 @@ let isActivatingPreparedSession = false;
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
+let lcSelectionRoomId = "";
+let isSavingSessionLcs = false;
 let extendPaymentMethod = "cash";
 let isExtendingSession = false;
 let roomRecoveryCandidates = [];
@@ -556,6 +591,7 @@ async function loadRooms() {
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
+    await loadLcs();
     roomsLoading = false;
     setDataSourceBadge("Mode Data Contoh", "mock");
     console.info("Memakai data contoh karena API_BASE_URL masih kosong.");
@@ -564,7 +600,11 @@ async function loadRooms() {
   }
 
   try {
-    rooms = normalizeRooms(await fetchRoomsFromApi());
+    const [roomsData, _] = await Promise.all([
+      fetchRoomsFromApi(),
+      loadLcs()
+    ]);
+    rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Terhubung ke Server", "live");
@@ -585,7 +625,9 @@ async function loadRooms() {
 }
 
 async function fetchRoomsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getRooms`);
+  const response = await fetch(buildApiUrl("getRooms"), {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -819,7 +861,9 @@ async function applyOwnerReportCustomPeriod() {
 
 async function fetchOwnerReportEndpoint(action) {
   const params = buildOwnerReportPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=${action}&${params.toString()}`);
+  const response = await fetch(buildApiUrl(action, Object.fromEntries(params.entries())), {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1266,6 +1310,255 @@ async function submitStockAdjustment() {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+function openAddInventoryItemModal() {
+  addInventoryItemForm = {
+    name: "",
+    category: "Snack",
+    price: "",
+    unit: "pcs",
+    min_stock: "5",
+    initial_stock: "0"
+  };
+  renderRooms();
+}
+
+function closeAddInventoryItemModal() {
+  addInventoryItemForm = null;
+  renderRooms();
+}
+
+function updateAddInventoryItemForm(field, value) {
+  if (!addInventoryItemForm) {
+    return;
+  }
+  addInventoryItemForm = {
+    ...addInventoryItemForm,
+    [field]: value
+  };
+}
+
+function submitAddInventoryItem() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  const name = String(addInventoryItemForm?.name || "").trim();
+  const category = String(addInventoryItemForm?.category || "").trim();
+  const price = Number(addInventoryItemForm?.price);
+  const unit = String(addInventoryItemForm?.unit || "").trim();
+  const minStock = Number(addInventoryItemForm?.min_stock);
+  const initialStock = Number(addInventoryItemForm?.initial_stock || 0);
+
+  if (!name) {
+    showInlineNotice("Nama Item F&B wajib diisi.", "error");
+    return;
+  }
+  if (!category) {
+    showInlineNotice("Kategori wajib diisi.", "error");
+    return;
+  }
+  if (!Number.isFinite(price) || price < 0) {
+    showInlineNotice("Harga jual wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+  if (!unit) {
+    showInlineNotice("Satuan (Unit) wajib diisi.", "error");
+    return;
+  }
+  if (!Number.isFinite(minStock) || minStock < 0) {
+    showInlineNotice("Minimum stok wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+  if (!Number.isFinite(initialStock) || initialStock < 0) {
+    showInlineNotice("Stok awal wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Manager Tambah Item F&B",
+    message: "Masukkan PIN owner/manager untuk mendaftarkan item F&B baru.",
+    requestedAction: "add_inventory_item",
+    requiredRole: "manager",
+    onSuccess: async (authData, adminPin) => {
+      await executeAddInventoryItemSubmit(adminPin);
+    }
+  });
+}
+
+async function executeAddInventoryItemSubmit(adminPin) {
+  if (isSavingAddInventoryItem || !addInventoryItemForm) {
+    return;
+  }
+
+  isSavingAddInventoryItem = true;
+  renderRooms();
+
+  try {
+    const invResponse = await postApiAction({
+      action: "saveInventoryMaster",
+      stock_item_name: addInventoryItemForm.name.trim(),
+      category: addInventoryItemForm.category,
+      unit: addInventoryItemForm.unit.trim(),
+      min_stock: Number(addInventoryItemForm.min_stock) || 0,
+      status: "active",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!invResponse || invResponse.ok !== true) {
+      throw new Error(invResponse?.message || invResponse?.error || "Gagal mendaftarkan item stok.");
+    }
+
+    const savedInventory = invResponse.data || {};
+    const stockItemId = savedInventory.stock_item_id;
+
+    if (!stockItemId) {
+      throw new Error("Gagal memperoleh ID item stok baru dari backend.");
+    }
+
+    const menuResponse = await postApiAction({
+      action: "saveMenuMaster",
+      menu_name: addInventoryItemForm.name.trim(),
+      category: addInventoryItemForm.category,
+      price: Number(addInventoryItemForm.price) || 0,
+      stock_item_id: stockItemId,
+      qty_per_unit: 1,
+      status: "active",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!menuResponse || menuResponse.ok !== true) {
+      throw new Error(menuResponse?.message || menuResponse?.error || "Data stok terbuat, namun gagal membuat menu F&B.");
+    }
+
+    const initialStockVal = Number(addInventoryItemForm.initial_stock) || 0;
+    if (initialStockVal > 0) {
+      const adjustResponse = await postApiAction({
+        action: "adjustInventoryStock",
+        stock_item_id: stockItemId,
+        adjustment_type: "restock",
+        quantity: initialStockVal,
+        note: "Stok awal pendaftaran barang baru",
+        cashier_name: getLoggedInOperatorName()
+      });
+
+      if (!adjustResponse || adjustResponse.ok !== true) {
+        showInlineNotice(`Item "${addInventoryItemForm.name}" berhasil dibuat, namun inisialisasi stok fisik gagal: ${adjustResponse?.message || adjustResponse?.error || 'Unknown Error'}`, "warning");
+      }
+    }
+
+    showInlineNotice(`Item "${addInventoryItemForm.name}" berhasil didaftarkan ke stok dan menu penjualan.`);
+    addInventoryItemForm = null;
+
+    await Promise.all([
+      loadInventoryItems(),
+      loadMenuItems()
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Terjadi kesalahan saat menambahkan item baru.", "error");
+  } finally {
+    isSavingAddInventoryItem = false;
+    renderRooms();
+  }
+}
+
+function createAddInventoryItemModalElement() {
+  if (!addInventoryItemForm) {
+    return document.createDocumentFragment();
+  }
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal add-inventory-item-modal";
+  overlay.setAttribute("aria-labelledby", "add-inventory-item-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "add-inventory-item-title";
+  title.textContent = "Tambah Item Makanan / Minuman Baru";
+
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gridTemplateColumns = "repeat(auto-fit, minmax(200px, 1fr))";
+  grid.style.gap = "var(--space-3)";
+  grid.style.margin = "var(--space-3) 0";
+
+  const createField = (label, fieldName, type = "text", placeholder = "", options = null) => {
+    const fieldEl = document.createElement("label");
+    fieldEl.className = "master-form-field";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "master-form-label";
+    labelEl.textContent = label;
+
+    let input;
+    if (options) {
+      input = document.createElement("select");
+      input.className = "master-form-input";
+      options.forEach(([val, lbl]) => {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = lbl;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement("input");
+      input.className = "master-form-input";
+      input.type = type;
+      input.placeholder = placeholder;
+      if (type === "number") {
+        input.min = "0";
+      }
+    }
+
+    input.dataset.action = "update-add-inventory-item-form";
+    input.dataset.field = fieldName;
+    input.value = addInventoryItemForm[fieldName] || "";
+    input.disabled = isSavingAddInventoryItem;
+
+    fieldEl.append(labelEl, input);
+    return fieldEl;
+  };
+
+  grid.appendChild(createField("Nama Item F&B", "name", "text", "Contoh: Keripik Pisang"));
+  grid.appendChild(createField("Kategori", "category", "select", "", [
+    ["Snack", "Snack"],
+    ["Makanan", "Makanan"],
+    ["Minuman", "Minuman"]
+  ]));
+  grid.appendChild(createField("Harga Jual (Rp)", "price", "number", "Contoh: 15000"));
+  grid.appendChild(createField("Satuan (Unit)", "unit", "text", "Contoh: pcs, porsi, botol"));
+  grid.appendChild(createField("Minimum Stok", "min_stock", "number", "Contoh: 5"));
+  grid.appendChild(createField("Stok Awal Fisik", "initial_stock", "number", "Contoh: 20"));
+
+  const actions = document.createElement("div");
+  actions.className = "master-form-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-add-inventory-item-modal";
+  cancelButton.disabled = isSavingAddInventoryItem;
+  cancelButton.textContent = "Batal";
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "master-button primary";
+  saveButton.type = "button";
+  saveButton.dataset.action = "submit-add-inventory-item";
+  saveButton.disabled = isSavingAddInventoryItem;
+  saveButton.textContent = isSavingAddInventoryItem ? "Menyimpan..." : "Simpan";
+
+  actions.append(cancelButton, saveButton);
+  dialog.append(title, grid, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
 }
 
 function normalizeRoomUsagePeriodForApi(period) {
@@ -2212,6 +2505,9 @@ function normalizeRooms(rawRooms) {
       updated_at: room.updated_at || null,
       customer_name: room.customer_name || "",
       package_id: room.package_id || "",
+      lc_ids: String(room.lc_ids || "").trim(),
+      lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
+      _debug_lc_info: room._debug_lc_info || null,
     };
   });
 }
@@ -4039,11 +4335,19 @@ function createBillingBreakdownElement(transaction) {
   const breakdown = document.createElement("div");
   breakdown.className = "billing-breakdown";
 
-  [
+  const rows = [
     ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
-    ["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))],
-    ["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"],
-  ].forEach(([labelText, valueText, type]) => {
+  ];
+
+  const lcTotal = Number(transaction?.lc_total || 0);
+  if (lcTotal > 0) {
+    rows.push(["Jasa LC", formatCurrency(lcTotal)]);
+  }
+
+  rows.push(["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))]);
+  rows.push(["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"]);
+
+  rows.forEach(([labelText, valueText, type]) => {
     const row = document.createElement("div");
     row.className = type === "total"
       ? "billing-breakdown-row billing-breakdown-total"
@@ -4202,11 +4506,19 @@ function createReceiptPrintElement(transaction) {
 
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
-  const billingSection = createReceiptSection("Rincian Tagihan", [
+  const billingRows = [
     ["Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
-    ["Total F&B", formatCurrency(receiptData.totals.fnbTotal)],
-    ["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"],
-  ]);
+  ];
+
+  const lcTotal = Number(transaction?.lc_total || 0);
+  if (lcTotal > 0) {
+    billingRows.push(["Jasa LC", formatCurrency(lcTotal)]);
+  }
+
+  billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal)]);
+  billingRows.push(["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"]);
+
+  const billingSection = createReceiptSection("Rincian Tagihan", billingRows);
 
   const paymentSection = createReceiptSection("Status Pembayaran", [
     ["Status", getPaymentStatusLabel(receiptData.payment.status)],
@@ -4595,14 +4907,27 @@ function createRoomCard(room) {
     extendButton.dataset.action = "show-extend-selection";
     extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
 
+    const selectLcButton = document.createElement("button");
+    selectLcButton.className = "room-button room-button-lc";
+    selectLcButton.type = "button";
+    selectLcButton.dataset.action = "show-lc-selection";
+    selectLcButton.textContent = "Pilih LC";
+
     if (getCurrentOperatorRole() === "receptionist") {
       sessionButton.disabled = true;
       sessionButton.title = "Resepsionis tidak diizinkan menyelesaikan sesi";
       extendButton.disabled = true;
       extendButton.title = "Resepsionis tidak diizinkan menambah waktu";
+      selectLcButton.disabled = true;
+      selectLcButton.title = "Resepsionis tidak diizinkan memilih LC";
     }
 
-    actions.append(sessionButton, extendButton);
+    const lcIds = String(room.lc_ids || "").trim();
+    if (lcIds) {
+      actions.append(sessionButton, extendButton, selectLcButton);
+    } else {
+      actions.append(sessionButton, extendButton);
+    }
   } else {
     actions.append(sessionButton);
   }
@@ -4619,6 +4944,10 @@ function createRoomCard(room) {
 
   if (extendSelectionRoomId === room.room_id && room.status === "occupied") {
     card.appendChild(createExtendSelectionElement(room));
+  }
+
+  if (lcSelectionRoomId === room.room_id && room.status === "occupied") {
+    card.appendChild(createSelectLcModalOverlay(room));
   }
 
   return card;
@@ -4689,11 +5018,41 @@ function createRoomBookingInfoElement(room) {
   info.className = "room-booking-info";
   const timeState = getRoomTimeState(room);
 
-  [
+  const rows = [
     ["Durasi", formatDurationMinutes(room.booked_duration_minutes)],
     ["Mulai", getRoomTimeLabel(room.start_time)],
     ["Selesai", getRoomTimeLabel(room.scheduled_end_time)],
-  ].forEach(([labelText, valueText]) => {
+  ];
+
+  const lcIds = String(room.lc_ids || "").trim();
+  if (lcIds) {
+    const ids = lcIds.split(",").map(id => id.trim()).filter(Boolean);
+    const pendingCount = ids.filter(id => id === "PENDING").length;
+    const resolvedIds = ids.filter(id => id !== "PENDING");
+    
+    let displayStr = "";
+    if (pendingCount > 0) {
+      const resolvedNames = resolvedIds.map(id => {
+        const found = lcs.find(l => l.lc_id === id);
+        return found ? found.lc_name : id.replace("LC-", "");
+      });
+      const parts = [];
+      if (resolvedNames.length > 0) {
+        parts.push(resolvedNames.join(", "));
+      }
+      parts.push(`${pendingCount} Orang (Belum Dipilih)`);
+      displayStr = parts.join(" + ");
+    } else {
+      displayStr = resolvedIds.map(id => {
+        const found = lcs.find(l => l.lc_id === id);
+        return found ? found.lc_name : id.replace("LC-", "");
+      }).join(", ");
+    }
+    
+    rows.push(["LC Sesi", displayStr]);
+  }
+
+  rows.forEach(([labelText, valueText]) => {
     const row = document.createElement("p");
     row.className = "room-booking-row";
 
@@ -4767,6 +5126,44 @@ function createDurationSelectionElement(room) {
 
   nameField.append(nameLabel, nameInput);
   panel.appendChild(nameField);
+
+  // Lady Companion (LC) Selection
+  const lcField = document.createElement("div");
+  lcField.style.display = "flex";
+  lcField.style.flexDirection = "column";
+  lcField.style.gap = "4px";
+  lcField.style.marginTop = "8px";
+
+  const lcLabel = document.createElement("span");
+  lcLabel.className = "duration-payment-label";
+  lcLabel.textContent = "Jumlah LC (Orang):";
+
+  const lcSelect = document.createElement("select");
+  lcSelect.className = "duration-payment-select";
+  lcSelect.style.width = "100%";
+
+  const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
+  const currentLcCount = activeLcIds.length;
+
+  for (let i = 0; i <= 10; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = i === 0 ? "Tanpa LC" : `${i} Orang`;
+    opt.selected = currentLcCount === i;
+    lcSelect.appendChild(opt);
+  }
+
+  lcSelect.onchange = (e) => {
+    const count = parseInt(e.target.value) || 0;
+    const placeholderArray = [];
+    for (let i = 0; i < count; i++) {
+      placeholderArray.push("PENDING");
+    }
+    selectedLcIdsForRoom[room.room_id] = placeholderArray;
+  };
+
+  lcField.append(lcLabel, lcSelect);
+  panel.appendChild(lcField);
 
   // Booking Type select
   const typeField = document.createElement("div");
@@ -4847,9 +5244,11 @@ function createDurationSelectionElement(room) {
       const selectedPkgId = pkgSelect.value || bookingPackageSelection;
       const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
       if (selectedPkg) {
-        await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId);
+        const activeLcIds = (selectedLcIdsForRoom[room.room_id] || []).join(",");
+        await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId, activeLcIds);
         customerNameInput = "";
         bookingTypeSelection = "regular";
+        selectedLcIdsForRoom[room.room_id] = [];
       } else {
         showInlineNotice("Pilih paket terlebih dahulu.", "error");
       }
@@ -6254,7 +6653,15 @@ function createInventoryPanelElement() {
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
   refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
 
-  actions.appendChild(refreshButton);
+  const addButton = document.createElement("button");
+  addButton.className = "inventory-button erp-btn-primary";
+  addButton.type = "button";
+  addButton.dataset.action = "open-add-inventory-item-modal";
+  addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
+  addButton.textContent = "+ Tambah Item F&B Baru";
+  addButton.style.marginLeft = "8px";
+
+  actions.append(refreshButton, addButton);
   header.append(titleGroup, actions);
 
   const tableContainer = document.createElement("div");
@@ -6279,7 +6686,9 @@ function createInventoryPanelElement() {
     createInventorySummaryElement(),
     tableContainer,
     createStockAdjustmentPanelElement(),
-    lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment()
+    lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment(),
+    createAdminPinModalElement(),
+    addInventoryItemForm ? createAddInventoryItemModalElement() : document.createDocumentFragment()
   );
 
   return panel;
@@ -10650,13 +11059,16 @@ function syncAdminPinModalControls() {
 }
 
 async function submitAdminPinModal() {
+  console.log("submitAdminPinModal: triggered");
   if (!adminPinModal || isValidatingAdminPin) {
+    console.log("submitAdminPinModal: skipped, adminPinModal is null or already validating", { adminPinModal, isValidatingAdminPin });
     return;
   }
 
   const adminPin = String(adminPinModal.pin || "").trim();
 
   if (!adminPin) {
+    console.log("submitAdminPinModal: failed, empty pin");
     adminPinModal = {
       ...adminPinModal,
       error: "PIN wajib diisi.",
@@ -10666,8 +11078,10 @@ async function submitAdminPinModal() {
   }
 
   const pendingAction = adminPinModal.onSuccess;
+  console.log("submitAdminPinModal: pendingAction is", typeof pendingAction);
 
   if (adminPinModal.validatePin === false) {
+    console.log("submitAdminPinModal: bypassing validation");
     isValidatingAdminPin = true;
     renderRooms();
 
@@ -10695,6 +11109,7 @@ async function submitAdminPinModal() {
     return;
   }
 
+  console.log("submitAdminPinModal: starting API validation request...");
   isValidatingAdminPin = true;
   renderRooms();
 
@@ -10707,19 +11122,24 @@ async function submitAdminPinModal() {
       changed_by: getLoggedInOperatorName(),
     });
 
+    console.log("submitAdminPinModal: validation API response received", data);
+
     if (!data || (data.ok !== true && data.success !== true)) {
       throw new Error(data?.message || data?.error || "PIN owner/manager tidak valid.");
     }
 
     const authData = data.data || {};
+    console.log("submitAdminPinModal: validation successful, authData:", authData);
     adminPinModal = null;
     isValidatingAdminPin = false;
     renderRooms();
 
     if (typeof pendingAction === "function") {
+      console.log("submitAdminPinModal: executing pending success action...");
       await pendingAction(authData, adminPin);
     }
   } catch (error) {
+    console.error("submitAdminPinModal: error validated PIN", error);
     adminPinModal = {
       ...adminPinModal,
       pin: "",
@@ -11082,9 +11502,1022 @@ function refreshActiveTabData() {
     case "settings":
       loadSettingsTabData();
       break;
+    case "lc":
+      loadLcs();
+      loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+      break;
     default:
       break;
   }
+}
+
+// ==========================================
+// LADY COMPANION (LC) INTEGRATION FUNCTIONS
+// ==========================================
+
+async function loadLcs() {
+  if (!API_BASE_URL.trim()) {
+    lcs = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, status: "active", availability: "available", updated_at: "2026-07-23T09:00:00Z" },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, status: "active", availability: "available", updated_at: "2026-07-23T09:00:00Z" },
+      { lc_id: "LC-003", lc_name: "Amel", rate_per_room: 200000, status: "active", availability: "busy", updated_at: "2026-07-23T09:00:00Z" },
+    ];
+    return;
+  }
+
+  isLoadingLcs = true;
+  try {
+    const response = await fetch(`${API_BASE_URL}?action=getLcMasterList`);
+    const data = await response.json();
+    if (data && data.success) {
+      lcs = data.lcs || [];
+    }
+  } catch (error) {
+    console.error("Error loading LCs:", error);
+  } finally {
+    isLoadingLcs = false;
+  }
+}
+
+async function loadLcWorkReports(period = "today", startDate = "", endDate = "") {
+  if (!API_BASE_URL.trim()) {
+    lcWorkReports = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 5, total_earnings: 875000, logs: [
+        { log_id: "LWL-1", session_id: "ROOM-001-SESSION-1", lc_id: "LC-001", lc_name: "Siska", rate: 175000, status: "done", created_at: "2026-07-23T01:00:00Z", closed_at: "2026-07-23T03:00:00Z" }
+      ] },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 3, total_earnings: 525000, logs: [] },
+    ];
+    return;
+  }
+
+  isLoadingLcWorkReports = true;
+  try {
+    const response = await fetch(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
+    const data = await response.json();
+    if (data && data.success) {
+      lcWorkReports = data.reports || [];
+    }
+  } catch (error) {
+    console.error("Error loading LC work reports:", error);
+  } finally {
+    isLoadingLcWorkReports = false;
+  }
+}
+
+// Filter states for LC Reports
+let lcReportPeriod = "today";
+let lcReportStartDate = "";
+let lcReportEndDate = "";
+let selectedLcDetailForLogs = null;
+
+function createLcPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "lc-panel erp-card";
+  panel.style.display = "flex";
+  panel.style.flexDirection = "column";
+  panel.style.gap = "16px";
+
+  const header = document.createElement("div");
+  header.className = "lc-header";
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.flexWrap = "wrap";
+  header.style.gap = "12px";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h2");
+  title.className = "lc-title font-title";
+  title.style.margin = "0";
+  title.textContent = "Pengelolaan Lady Companion (LC)";
+  const subtitle = document.createElement("p");
+  subtitle.className = "lc-subtitle";
+  subtitle.style.margin = "4px 0 0 0";
+  subtitle.style.fontSize = "14px";
+  subtitle.style.color = "var(--muted)";
+  subtitle.textContent = "Manajemen data master LC dan laporan gaji sesi.";
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const subNav = document.createElement("div");
+  subNav.className = "lc-sub-nav";
+  subNav.style.display = "flex";
+  subNav.style.gap = "8px";
+  subNav.style.borderBottom = "1px solid var(--border)";
+  subNav.style.paddingBottom = "8px";
+
+  const tabsConfig = [
+    { key: "master", label: "Master LC" },
+    { key: "reports", label: "Laporan Kerja & Gaji" },
+  ];
+
+  tabsConfig.forEach(tab => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = activeLcSubTab === tab.key ? "erp-btn erp-btn-secondary active" : "erp-btn erp-btn-secondary";
+    btn.style.padding = "8px 16px";
+    btn.style.fontSize = "14px";
+    btn.style.fontWeight = "bold";
+    if (activeLcSubTab === tab.key) {
+      btn.style.backgroundColor = "var(--gold)";
+      btn.style.color = "var(--bg)";
+    }
+    btn.textContent = tab.label;
+    btn.onclick = () => {
+      activeLcSubTab = tab.key;
+      renderRooms();
+    };
+    subNav.appendChild(btn);
+  });
+
+  panel.append(header, subNav);
+
+  if (activeLcSubTab === "master") {
+    panel.appendChild(createLcMasterSubTabElement());
+  } else if (activeLcSubTab === "reports") {
+    panel.appendChild(createLcReportsSubTabElement());
+  }
+
+  if (addLcForm) {
+    panel.appendChild(createAddLcModalOverlay());
+  }
+  if (editLcForm) {
+    panel.appendChild(createEditLcModalOverlay());
+  }
+  if (deleteLcConfirmation) {
+    panel.appendChild(createDeleteLcModalOverlay());
+  }
+  if (adminPinModal) {
+    const pinModalEl = createAdminPinModalElement();
+    if (pinModalEl && pinModalEl.style) {
+      pinModalEl.style.position = "fixed";
+      pinModalEl.style.top = "0";
+      pinModalEl.style.left = "0";
+      pinModalEl.style.width = "100%";
+      pinModalEl.style.height = "100%";
+      pinModalEl.style.backgroundColor = "rgba(0,0,0,0.7)";
+      pinModalEl.style.display = "flex";
+      pinModalEl.style.justifyContent = "center";
+      pinModalEl.style.alignItems = "center";
+      pinModalEl.style.zIndex = "1010";
+
+      const dialog = pinModalEl.querySelector(".master-delete-dialog");
+      if (dialog) {
+        dialog.style.width = "400px";
+        dialog.style.backgroundColor = "var(--surface-raised)";
+        dialog.style.padding = "24px";
+        dialog.style.borderRadius = "var(--radius-md)";
+        dialog.style.border = "1px solid var(--border)";
+      }
+    }
+    panel.appendChild(pinModalEl);
+  }
+
+  return panel;
+}
+
+function createLcMasterSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-master-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "12px";
+
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.justifyContent = "flex-end";
+  
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  addBtn.style.padding = "8px 16px";
+  addBtn.style.fontWeight = "bold";
+  addBtn.textContent = "+ Tambah LC Baru";
+  addBtn.onclick = () => {
+    addLcForm = { lc_name: "", rate_per_room: 175000, status: "active" };
+    renderRooms();
+  };
+  toolbar.appendChild(addBtn);
+  container.appendChild(toolbar);
+
+  if (isLoadingLcs) {
+    container.appendChild(createStateMessage("Memuat data master LC..."));
+    return container;
+  }
+
+  if (lcs.length === 0) {
+    container.appendChild(createStateMessage("Belum ada data LC terdaftar.", "info"));
+    return container;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID LC</th>
+      <th>Nama Panggilan</th>
+      <th>Tarif Flat</th>
+      <th>Status Keaktifan</th>
+      <th>Ketersediaan</th>
+      <th style="text-align: center;">Aksi</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(lcs.length / itemsPerPage);
+  if (lcMasterPage > totalPages && totalPages > 0) {
+    lcMasterPage = totalPages;
+  }
+  const startIndex = (lcMasterPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedLcs = lcs.slice(startIndex, endIndex);
+
+  paginatedLcs.forEach(lc => {
+    const tr = document.createElement("tr");
+    
+    const statusText = lc.status === "active" ? "Aktif" : "Tidak Aktif";
+    const statusClass = lc.status === "active" ? "badge badge-success" : "badge badge-danger";
+    
+    const availText = lc.availability === "busy" ? "Sedang Nge-room" : "Tersedia";
+    const availClass = lc.availability === "busy" ? "badge badge-danger" : "badge badge-success";
+
+    tr.innerHTML = `
+      <td><strong>${lc.lc_id}</strong></td>
+      <td>${escapeHtml(lc.lc_name)}</td>
+      <td>${formatCurrency(lc.rate_per_room)}</td>
+      <td><span class="${statusClass}">${statusText}</span></td>
+      <td><span class="${availClass}">${availText}</span></td>
+      <td style="text-align: center; display: flex; justify-content: center; gap: 8px;">
+        <button type="button" class="erp-btn erp-btn-secondary btn-edit-lc" style="padding: 4px 8px; font-size: 12px;" data-id="${lc.lc_id}">Edit</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" style="padding: 4px 8px; font-size: 12px; background-color: var(--color-danger); color: #fff;" data-id="${lc.lc_id}">Hapus</button>
+      </td>
+    `;
+
+    tr.querySelector(".btn-edit-lc").onclick = () => {
+      editLcForm = { ...lc };
+      renderRooms();
+    };
+    
+    tr.querySelector(".btn-delete-lc").onclick = () => {
+      deleteLcConfirmation = { ...lc };
+      renderRooms();
+    };
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.appendChild(tableWrapper);
+
+  if (totalPages > 1) {
+    const pagination = document.createElement("div");
+    pagination.className = "erp-pagination";
+    pagination.style.display = "flex";
+    pagination.style.justifyContent = "center";
+    pagination.style.alignItems = "center";
+    pagination.style.gap = "12px";
+    pagination.style.marginTop = "12px";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "erp-btn erp-btn-secondary";
+    prevBtn.textContent = "«";
+    prevBtn.disabled = lcMasterPage === 1;
+    prevBtn.onclick = () => {
+      lcMasterPage--;
+      renderRooms();
+    };
+
+    const label = document.createElement("span");
+    label.style.fontSize = "14px";
+    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages}`;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "erp-btn erp-btn-secondary";
+    nextBtn.textContent = "»";
+    nextBtn.disabled = lcMasterPage === totalPages;
+    nextBtn.onclick = () => {
+      lcMasterPage++;
+      renderRooms();
+    };
+
+    pagination.append(prevBtn, label, nextBtn);
+    container.appendChild(pagination);
+  }
+
+  return container;
+}
+
+function createLcReportsSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-reports-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "16px";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "lc-reports-filter-toolbar";
+  toolbar.style.display = "flex";
+  toolbar.style.flexWrap = "wrap";
+  toolbar.style.alignItems = "center";
+  toolbar.style.gap = "12px";
+  toolbar.style.backgroundColor = "var(--surface-raised)";
+  toolbar.style.padding = "12px";
+  toolbar.style.borderRadius = "var(--radius-md)";
+  toolbar.style.border = "1px solid var(--border)";
+
+  const periodSelectGroup = document.createElement("div");
+  periodSelectGroup.style.display = "flex";
+  periodSelectGroup.style.flexDirection = "column";
+  periodSelectGroup.style.gap = "4px";
+
+  const periodLabel = document.createElement("label");
+  periodLabel.style.fontSize = "12px";
+  periodLabel.style.color = "var(--muted)";
+  periodLabel.textContent = "Periode:";
+
+  const periodSelect = document.createElement("select");
+  periodSelect.className = "duration-payment-select";
+  periodSelect.style.padding = "6px";
+  periodSelect.style.borderRadius = "var(--radius-sm)";
+  
+  [
+    ["today", "Hari Ini"],
+    ["yesterday", "Kemarin"],
+    ["this_week", "Minggu Ini"],
+    ["last_week", "Minggu Lalu"],
+    ["this_month", "Bulan Ini"],
+    ["last_month", "Bulan Lalu"],
+    ["custom", "Kustom Tanggal"]
+  ].forEach(([val, lbl]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = lcReportPeriod === val;
+    periodSelect.appendChild(opt);
+  });
+
+  periodSelectGroup.append(periodLabel, periodSelect);
+  toolbar.appendChild(periodSelectGroup);
+
+  const customGroup = document.createElement("div");
+  customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  customGroup.style.gap = "8px";
+  customGroup.style.alignItems = "center";
+
+  const startField = document.createElement("div");
+  startField.style.display = "flex";
+  startField.style.flexDirection = "column";
+  startField.style.gap = "4px";
+  const startLbl = document.createElement("label");
+  startLbl.style.fontSize = "12px";
+  startLbl.style.color = "var(--muted)";
+  startLbl.textContent = "Dari:";
+  const startInput = document.createElement("input");
+  startInput.type = "date";
+  startInput.className = "duration-custom-input";
+  startInput.value = lcReportStartDate;
+  startField.append(startLbl, startInput);
+
+  const endField = document.createElement("div");
+  endField.style.display = "flex";
+  endField.style.flexDirection = "column";
+  endField.style.gap = "4px";
+  const endLbl = document.createElement("label");
+  endLbl.style.fontSize = "12px";
+  endLbl.style.color = "var(--muted)";
+  endLbl.textContent = "Sampai:";
+  const endInput = document.createElement("input");
+  endInput.type = "date";
+  endInput.className = "duration-custom-input";
+  endInput.value = lcReportEndDate;
+  endField.append(endLbl, endInput);
+
+  customGroup.append(startField, endField);
+  toolbar.appendChild(customGroup);
+
+  periodSelect.onchange = (e) => {
+    lcReportPeriod = e.target.value;
+    customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  };
+
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  applyBtn.style.padding = "8px 16px";
+  applyBtn.style.alignSelf = "flex-end";
+  applyBtn.style.fontWeight = "bold";
+  applyBtn.textContent = "Terapkan Filter";
+  applyBtn.onclick = async () => {
+    lcReportStartDate = startInput.value;
+    lcReportEndDate = endInput.value;
+    await loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+    renderRooms();
+  };
+  toolbar.appendChild(applyBtn);
+  container.appendChild(toolbar);
+
+  if (isLoadingLcWorkReports) {
+    container.appendChild(createStateMessage("Memuat laporan kerja & gaji LC..."));
+    return container;
+  }
+
+  if (lcWorkReports.length === 0) {
+    container.appendChild(createStateMessage("Tidak ada transaksi kerja LC pada periode ini.", "info"));
+    return container;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID LC</th>
+      <th>Nama Panggilan</th>
+      <th>Tarif Default</th>
+      <th style="text-align: center;">Total Sesi / Job</th>
+      <th>Total Pendapatan (Gaji)</th>
+      <th style="text-align: center;">Aksi</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(lcWorkReports.length / itemsPerPage);
+  if (lcReportsPage > totalPages && totalPages > 0) {
+    lcReportsPage = totalPages;
+  }
+  const startIndex = (lcReportsPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedReports = lcWorkReports.slice(startIndex, endIndex);
+
+  paginatedReports.forEach(rep => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${rep.lc_id}</strong></td>
+      <td>${escapeHtml(rep.lc_name)}</td>
+      <td>${formatCurrency(rep.rate_per_room)}</td>
+      <td style="text-align: center;">${rep.total_sessions}</td>
+      <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+      <td style="text-align: center;">
+        <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
+      </td>
+    `;
+
+    tr.querySelector(".btn-detail-lc-logs").onclick = () => {
+      selectedLcDetailForLogs = rep;
+      renderRooms();
+    };
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.appendChild(tableWrapper);
+
+  if (totalPages > 1) {
+    const pagination = document.createElement("div");
+    pagination.className = "erp-pagination";
+    pagination.style.display = "flex";
+    pagination.style.justifyContent = "center";
+    pagination.style.alignItems = "center";
+    pagination.style.gap = "12px";
+    pagination.style.marginTop = "12px";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "erp-btn erp-btn-secondary";
+    prevBtn.textContent = "«";
+    prevBtn.disabled = lcReportsPage === 1;
+    prevBtn.onclick = () => {
+      lcReportsPage--;
+      renderRooms();
+    };
+
+    const label = document.createElement("span");
+    label.style.fontSize = "14px";
+    label.textContent = `Halaman ${lcReportsPage} dari ${totalPages}`;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "erp-btn erp-btn-secondary";
+    nextBtn.textContent = "»";
+    nextBtn.disabled = lcReportsPage === totalPages;
+    nextBtn.onclick = () => {
+      lcReportsPage++;
+      renderRooms();
+    };
+
+    pagination.append(prevBtn, label, nextBtn);
+    container.appendChild(pagination);
+  }
+
+  if (selectedLcDetailForLogs) {
+    container.appendChild(createLcDetailLogsOverlay());
+  }
+
+  return container;
+}
+
+function createAddLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = "Tambah Lady Companion (LC) Baru";
+
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
+  nameField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Nama Panggilan:</label>
+    <input type="text" class="duration-custom-input text-input-name" placeholder="Nama Panggilan LC" value="${escapeHtml(addLcForm.lc_name || "")}">
+  `;
+
+  const rateField = document.createElement("div");
+  rateField.style.display = "flex";
+  rateField.style.flexDirection = "column";
+  rateField.style.gap = "4px";
+  rateField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Tarif Flat (Rp) per Sesi:</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="175000" value="${addLcForm.rate_per_room || 175000}">
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    addLcForm = null;
+    renderRooms();
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingLc ? "Menyimpan..." : "Simpan";
+  saveBtn.disabled = isSavingLc;
+  saveBtn.onclick = () => {
+    const name = formEl.querySelector(".text-input-name").value.trim();
+    const rate = Number(formEl.querySelector(".text-input-rate").value) || 0;
+    console.log("saveBtn.onclick: clicked", { name, rate });
+    if (!name) {
+      showInlineNotice("Nama panggilan wajib diisi.", "error");
+      return;
+    }
+    
+    addLcForm.lc_name = name;
+    addLcForm.rate_per_room = rate;
+    
+    console.log("saveBtn.onclick: opening PIN modal...");
+    openAdminPinModal({
+      title: "PIN Manager Tambah LC",
+      message: "Masukkan PIN owner/manager untuk mendaftarkan LC baru.",
+      requestedAction: "save_lc_master",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        console.log("saveBtn.onclick onSuccess: PIN validated, starting executeSaveLcMaster...");
+        await executeSaveLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, saveBtn);
+  formEl.append(title, nameField, rateField, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeSaveLcMaster(adminPin) {
+  console.log("executeSaveLcMaster: triggered", { addLcForm, isSavingLc });
+  if (isSavingLc || !addLcForm) {
+    console.log("executeSaveLcMaster: skipped, isSavingLc is true or addLcForm is null");
+    return;
+  }
+
+  isSavingLc = true;
+  renderRooms();
+
+  console.log("executeSaveLcMaster: sending saveLcMaster request to API...");
+  try {
+    const response = await postApiAction({
+      action: "saveLcMaster",
+      lc_name: addLcForm.lc_name,
+      rate_per_room: addLcForm.rate_per_room,
+      status: addLcForm.status || "active",
+      availability: "available",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    console.log("executeSaveLcMaster: API response received", response);
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal menyimpan data LC.");
+    }
+
+    console.log("executeSaveLcMaster: save successful, clearing form and reloading LCs...");
+    showInlineNotice("LC berhasil didaftarkan.");
+    addLcForm = null;
+    await loadLcs();
+    console.log("executeSaveLcMaster: LCs reloaded successfully");
+  } catch (error) {
+    console.error("executeSaveLcMaster: error occurred", error);
+    showInlineNotice(error.message || "Gagal mendaftarkan LC.", "error");
+  } finally {
+    console.log("executeSaveLcMaster: resetting isSavingLc to false and rendering");
+    isSavingLc = false;
+    renderRooms();
+  }
+}
+
+function createEditLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Edit Lady Companion (LC) - ${editLcForm.lc_id}`;
+
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
+  nameField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Nama Panggilan:</label>
+    <input type="text" class="duration-custom-input text-input-name" placeholder="Nama Panggilan LC" value="${escapeHtml(editLcForm.lc_name || "")}">
+  `;
+
+  const rateField = document.createElement("div");
+  rateField.style.display = "flex";
+  rateField.style.flexDirection = "column";
+  rateField.style.gap = "4px";
+  rateField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Tarif Flat (Rp) per Sesi:</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="175000" value="${editLcForm.rate_per_room}">
+  `;
+
+  const statusField = document.createElement("div");
+  statusField.style.display = "flex";
+  statusField.style.flexDirection = "column";
+  statusField.style.gap = "4px";
+  statusField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Status Keaktifan:</label>
+    <select class="duration-payment-select text-select-status" style="width: 100%;">
+      <option value="active" ${editLcForm.status === "active" ? "selected" : ""}>Aktif</option>
+      <option value="inactive" ${editLcForm.status === "inactive" ? "selected" : ""}>Tidak Aktif</option>
+    </select>
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    editLcForm = null;
+    renderRooms();
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingLc ? "Menyimpan..." : "Simpan Perubahan";
+  saveBtn.disabled = isSavingLc;
+  saveBtn.onclick = () => {
+    const name = formEl.querySelector(".text-input-name").value.trim();
+    const rate = Number(formEl.querySelector(".text-input-rate").value) || 0;
+    const status = formEl.querySelector(".text-select-status").value;
+    
+    if (!name) {
+      showInlineNotice("Nama panggilan wajib diisi.", "error");
+      return;
+    }
+    
+    editLcForm.lc_name = name;
+    editLcForm.rate_per_room = rate;
+    editLcForm.status = status;
+    
+    openAdminPinModal({
+      title: "PIN Manager Edit LC",
+      message: "Masukkan PIN owner/manager untuk mengubah data LC.",
+      requestedAction: "update_lc_master",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        await executeUpdateLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, saveBtn);
+  formEl.append(title, nameField, rateField, statusField, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeUpdateLcMaster(adminPin) {
+  if (isSavingLc || !editLcForm) return;
+
+  isSavingLc = true;
+  renderRooms();
+
+  try {
+    const response = await postApiAction({
+      action: "updateLcMaster",
+      lc_id: editLcForm.lc_id,
+      lc_name: editLcForm.lc_name,
+      rate_per_room: editLcForm.rate_per_room,
+      status: editLcForm.status,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal memperbarui data LC.");
+    }
+
+    showInlineNotice("Data LC berhasil diperbarui.");
+    editLcForm = null;
+    await loadLcs();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memperbarui data LC.", "error");
+  } finally {
+    isSavingLc = false;
+    renderRooms();
+  }
+}
+
+function createDeleteLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Hapus Lady Companion - ${deleteLcConfirmation.lc_id}`;
+
+  const msg = document.createElement("p");
+  msg.style.margin = "0";
+  msg.style.fontSize = "14px";
+  msg.style.color = "var(--text)";
+  msg.textContent = `Apakah Anda yakin ingin menghapus ${deleteLcConfirmation.lc_name} secara permanen? Tindakan ini tidak bisa dibatalkan.`;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    deleteLcConfirmation = null;
+    renderRooms();
+  };
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "erp-btn";
+  deleteBtn.style.backgroundColor = "var(--color-danger)";
+  deleteBtn.style.color = "#fff";
+  deleteBtn.style.fontWeight = "bold";
+  deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen";
+  deleteBtn.disabled = isDeletingLc;
+  deleteBtn.onclick = () => {
+    openAdminPinModal({
+      title: "PIN Manager Hapus LC",
+      message: "Masukkan PIN owner/manager untuk menghapus data LC secara permanen.",
+      requestedAction: "delete_lc_master",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        await executeDeleteLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, deleteBtn);
+  formEl.append(title, msg, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeDeleteLcMaster(adminPin) {
+  if (isDeletingLc || !deleteLcConfirmation) return;
+
+  isDeletingLc = true;
+  renderRooms();
+
+  try {
+    const response = await postApiAction({
+      action: "deleteLcMaster",
+      lc_id: deleteLcConfirmation.lc_id,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal menghapus data LC.");
+    }
+
+    showInlineNotice("LC berhasil dihapus secara permanen.");
+    deleteLcConfirmation = null;
+    await loadLcs();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menghapus LC.", "error");
+  } finally {
+    isDeletingLc = false;
+    renderRooms();
+  }
+}
+
+function createLcDetailLogsOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "650px";
+  formEl.style.maxWidth = "90%";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Riwayat Sesi Kerja LC - ${selectedLcDetailForLogs.lc_name}`;
+
+  const infoText = document.createElement("p");
+  infoText.style.margin = "0";
+  infoText.style.fontSize = "14px";
+  infoText.style.color = "var(--muted)";
+  infoText.textContent = `Menampilkan log kerja untuk ${selectedLcDetailForLogs.lc_id}. Total Sesi: ${selectedLcDetailForLogs.total_sessions}, Total Gaji: ${formatCurrency(selectedLcDetailForLogs.total_earnings)}`;
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  tableWrapper.style.maxHeight = "300px";
+  tableWrapper.style.overflowY = "auto";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID Log</th>
+      <th>ID Sesi Room</th>
+      <th>Tarif (Rp)</th>
+      <th>Status Kerja</th>
+      <th>Waktu Mulai</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const logs = selectedLcDetailForLogs.logs || [];
+  
+  if (logs.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--muted);">Tidak ada riwayat sesi.</td>`;
+    tbody.appendChild(tr);
+  } else {
+    logs.forEach(log => {
+      const tr = document.createElement("tr");
+      const statusText = log.status === "active" ? "Aktif" : (log.status === "done" ? "Selesai" : "Batal");
+      const statusClass = log.status === "active" ? "badge badge-primary" : (log.status === "done" ? "badge badge-success" : "badge badge-danger");
+
+      tr.innerHTML = `
+        <td><small>${log.log_id}</small></td>
+        <td><small>${log.session_id}</small></td>
+        <td>${formatCurrency(log.rate)}</td>
+        <td><span class="${statusClass}">${statusText}</span></td>
+        <td><small>${formatDateTimeLabel(log.created_at)}</small></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.textContent = "Tutup";
+  closeBtn.onclick = () => {
+    selectedLcDetailForLogs = null;
+    renderRooms();
+  };
+  actions.appendChild(closeBtn);
+
+  formEl.append(title, infoText, tableWrapper, actions);
+  overlay.appendChild(formEl);
+  return overlay;
 }
 
 function renderDashboardGlobal() {
@@ -11372,6 +12805,9 @@ function appendDashboardTabContent(panel, tabKey) {
     case "settings":
       panel.appendChild(createSettingsPanelElement());
       break;
+    case "lc":
+      panel.appendChild(createLcPanelElement());
+      break;
     default:
       break;
   }
@@ -11505,6 +12941,160 @@ function updateCustomExtendMinutes(value) {
 
 function updateExtendSessionNote(value) {
   extendSessionNote = value;
+}
+
+// ── LC Mid-Session Selection ──
+
+let pendingLcSelections = {};
+
+function showLcSelection(roomId) {
+  lcSelectionRoomId = roomId;
+  pendingLcSelections = {};
+  const room = rooms.find(r => r.room_id === roomId);
+  if (room) {
+    const lcIds = String(room.lc_ids || "").trim();
+    if (lcIds) {
+      lcIds.split(",").map(id => id.trim()).filter(Boolean).forEach(id => {
+        if (id !== "PENDING") {
+          pendingLcSelections[id] = true;
+        }
+      });
+    }
+  }
+  renderRooms();
+}
+
+function cancelLcSelection() {
+  lcSelectionRoomId = "";
+  pendingLcSelections = {};
+  renderRooms();
+}
+
+function createSelectLcModalOverlay(room) {
+  const panel = document.createElement("div");
+  panel.className = "lc-selection-panel";
+
+  const title = document.createElement("p");
+  title.className = "lc-selection-title";
+  title.textContent = `Pilih LC untuk ${room.room_name}`;
+
+  const lcIdsRaw = String(room.lc_ids || "").trim();
+  const allIds = lcIdsRaw.split(",").map(id => id.trim()).filter(Boolean);
+  const bookedCount = allIds.length;
+  const selectedCount = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]).length;
+
+  const counter = document.createElement("p");
+  counter.className = "lc-selection-counter";
+  counter.textContent = `Terpilih: ${selectedCount} / ${bookedCount} orang`;
+  if (selectedCount > bookedCount) {
+    counter.style.color = "var(--danger)";
+  }
+
+  const availableLcs = lcs.filter(lc => lc.status === "active" && (lc.availability === "available" || pendingLcSelections[lc.lc_id]));
+
+  const listContainer = document.createElement("div");
+  listContainer.className = "lc-selection-list";
+
+  if (availableLcs.length === 0) {
+    const noLcMsg = document.createElement("p");
+    noLcMsg.className = "lc-selection-empty";
+    noLcMsg.textContent = "Tidak ada LC yang tersedia saat ini.";
+    listContainer.appendChild(noLcMsg);
+  } else {
+    availableLcs.forEach(lc => {
+      const itemLabel = document.createElement("label");
+      itemLabel.className = "lc-selection-item";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = lc.lc_id;
+      cb.checked = !!pendingLcSelections[lc.lc_id];
+      cb.dataset.action = "toggle-lc-checkbox";
+      cb.onchange = () => {
+        if (cb.checked) {
+          const currentSelected = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]).length;
+          if (currentSelected >= bookedCount) {
+            cb.checked = false;
+            showInlineNotice(`Maksimal ${bookedCount} LC sesuai pesanan awal.`, "error");
+            return;
+          }
+          pendingLcSelections[lc.lc_id] = true;
+        } else {
+          delete pendingLcSelections[lc.lc_id];
+        }
+        renderRooms();
+      };
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = lc.lc_name;
+
+      const rateSpan = document.createElement("span");
+      rateSpan.className = "lc-selection-rate";
+      rateSpan.textContent = currencyFormatter.format(Number(lc.rate_per_room) || 175000);
+
+      itemLabel.append(cb, nameSpan, rateSpan);
+      listContainer.appendChild(itemLabel);
+    });
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "lc-selection-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "room-button lc-selection-save";
+  saveBtn.type = "button";
+  saveBtn.dataset.action = "save-lc-selection";
+  saveBtn.dataset.roomId = room.room_id;
+  saveBtn.textContent = isSavingSessionLcs ? "Menyimpan..." : "Simpan Pilihan";
+  saveBtn.disabled = isSavingSessionLcs || selectedCount === 0;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "room-button lc-selection-cancel";
+  cancelBtn.type = "button";
+  cancelBtn.dataset.action = "cancel-lc-selection";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.disabled = isSavingSessionLcs;
+
+  actions.append(saveBtn, cancelBtn);
+  panel.append(title, counter, listContainer, actions);
+
+  return panel;
+}
+
+async function saveSessionLcSelection(roomId) {
+  const selectedIds = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]);
+
+  if (selectedIds.length === 0) {
+    showInlineNotice("Pilih minimal 1 LC.", "error");
+    return;
+  }
+
+  isSavingSessionLcs = true;
+  renderRooms();
+
+  try {
+    const result = await postApiAction({
+      action: "assignSessionLcs",
+      room_id: roomId,
+      lc_ids: selectedIds.join(","),
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (result?.ok || result?.success) {
+      showInlineNotice("Pilihan LC berhasil disimpan.", "success");
+      lcSelectionRoomId = "";
+      pendingLcSelections = {};
+      await loadRooms();
+    } else {
+      showInlineNotice(result?.error || result?.message || "Gagal menyimpan pilihan LC.", "error");
+    }
+  } catch (err) {
+    console.error("Error saving LC selection:", err);
+    showInlineNotice(err.message || "Gagal menghubungi server. Coba lagi.", "error");
+  } finally {
+    isSavingSessionLcs = false;
+    renderRooms();
+  }
 }
 
 async function loadTodayRoomTimeLogs() {
@@ -11934,7 +13524,7 @@ async function startSession(roomId, durationMinutes) {
   }
 }
 
-async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "") {
+async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "", lcIds = "") {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -11965,6 +13555,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       cashier_name: getLoggedInOperatorName(),
       customer_name: customerName,
       package_id: packageId,
+      lc_ids: lcIds,
       idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
     });
 
@@ -12480,6 +14071,7 @@ async function postApiAction(payload) {
     headers: {
       "Content-Type": "text/plain;charset=utf-8",
     },
+    cache: "no-store",
     body: JSON.stringify(payload),
   });
 
@@ -12774,6 +14366,21 @@ async function handleRoomAction(event) {
 
   if (action === "submit-admin-pin-modal") {
     await submitAdminPinModal();
+    return;
+  }
+
+  if (action === "open-add-inventory-item-modal") {
+    openAddInventoryItemModal();
+    return;
+  }
+
+  if (action === "close-add-inventory-item-modal") {
+    closeAddInventoryItemModal();
+    return;
+  }
+
+  if (action === "submit-add-inventory-item") {
+    submitAddInventoryItem();
     return;
   }
 
@@ -13109,8 +14716,11 @@ async function handleRoomAction(event) {
   }
 
   if (action === "prepare-room-session-duration") {
-    await prepareRoomSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes), customerNameInput, "");
+    const roomId = button.dataset.roomId || "";
+    const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
+    await prepareRoomSession(roomId, Number(button.dataset.durationMinutes), customerNameInput, "", activeLcIds);
     customerNameInput = "";
+    selectedLcIdsForRoom[roomId] = [];
     return;
   }
 
@@ -13127,8 +14737,11 @@ async function handleRoomAction(event) {
       return;
     }
 
-    await prepareRoomSession(button.dataset.roomId || "", selectedDuration, customerNameInput, "");
+    const roomId = button.dataset.roomId || "";
+    const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
+    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", activeLcIds);
     customerNameInput = "";
+    selectedLcIdsForRoom[roomId] = [];
     return;
   }
 
@@ -13139,6 +14752,26 @@ async function handleRoomAction(event) {
 
   if (action === "show-extend-selection") {
     showExtendSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "show-lc-selection") {
+    showLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "cancel-lc-selection") {
+    cancelLcSelection();
+    return;
+  }
+
+  if (action === "save-lc-selection") {
+    await saveSessionLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "toggle-lc-checkbox") {
+    // handled inline by onchange — no-op
     return;
   }
 
@@ -13314,6 +14947,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-master-form") {
     updateMasterDataForm(field.dataset.field, field.value);
+    return;
+  }
+
+  if (action === "update-add-inventory-item-form") {
+    updateAddInventoryItemForm(field.dataset.field, field.value);
     return;
   }
 
@@ -13498,6 +15136,7 @@ async function initializeDashboard() {
   renderRooms();
   await loadRooms();
   await loadPackages();
+  await loadLcs();
 
   const initialLoads = [];
 

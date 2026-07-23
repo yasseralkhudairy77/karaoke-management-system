@@ -63,6 +63,9 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Durasi", `${getNumber(room.durationMinutes)} menit`, width);
   lines.push(separator);
   pushReceiptField(lines, "Room", formatReceiptCurrency(totals.roomTotal), width);
+  if (totals.lcTotal > 0) {
+    pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
+  }
   pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
   lines.push(strongSeparator);
   lines.push(formatReceiptLine("TOTAL", formatReceiptCurrency(totals.grandTotal), width));
@@ -398,12 +401,14 @@ function normalizePayment(transaction) {
 function normalizeTotals(transaction) {
   const roomTotal = getNumber(transaction.room_total);
   const fnbTotal = getNumber(transaction.fnb_total);
+  const lcTotal = getNumber(transaction.lc_total);
   const grandTotal = getNumber(transaction.grand_total);
 
   return {
     roomTotal,
     fnbTotal,
-    grandTotal: grandTotal > 0 ? grandTotal : roomTotal + fnbTotal,
+    lcTotal,
+    grandTotal: grandTotal > 0 ? grandTotal : roomTotal + fnbTotal + lcTotal,
   };
 }
 
