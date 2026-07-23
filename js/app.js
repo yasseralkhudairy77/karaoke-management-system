@@ -580,6 +580,106 @@ const ROOM_USAGE_PERIOD_OPTIONS = [
   ["custom", "Custom"],
 ];
 
+function isUserBusy() {
+  const activeEl = document.activeElement;
+  const isTyping = activeEl && (
+    activeEl.tagName === "INPUT" ||
+    activeEl.tagName === "TEXTAREA" ||
+    activeEl.tagName === "SELECT" ||
+    activeEl.isContentEditable
+  );
+  if (isTyping) {
+    return true;
+  }
+
+  if (
+    durationSelectionRoomId ||
+    paymentSelectionRoomId ||
+    extendSelectionRoomId ||
+    lcSelectionRoomId
+  ) {
+    return true;
+  }
+
+  if (
+    cashierClosingPreviewVisible ||
+    cashierClosingConfirmationVisible ||
+    closingPrintPreviewVisible ||
+    receiptPrintVisible ||
+    adminPinModal ||
+    deleteMasterConfirmation ||
+    deleteLcConfirmation ||
+    roomRecoveryConfirmation
+  ) {
+    return true;
+  }
+
+  if (
+    isPreparingRoomSession ||
+    isActivatingPreparedSession ||
+    isSavingSessionLcs ||
+    isExtendingSession ||
+    isSavingFnbOrder ||
+    isCancellingFnbOrder ||
+    isSavingStockAdjustment ||
+    isSavingAddInventoryItem ||
+    isSavingLc ||
+    isDeletingLc ||
+    isDeletingMasterData
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function silentReloadRooms() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  try {
+    const promises = [fetchRoomsFromApi()];
+    const isReceptionist = getCurrentOperatorRole() === "receptionist";
+    if (!isReceptionist) {
+      promises.push(
+        postApiAction({
+          action: "getExpiredRoomRecoveryList",
+          grace_minutes: 5,
+          include_invalid_end_time: true,
+        }).catch((err) => {
+          console.warn("Gagal memuat kandidat recovery di background", err);
+          return null;
+        })
+      );
+    }
+
+    const [roomsData, recoveryData] = await Promise.all(promises);
+
+    rooms = normalizeRooms(roomsData);
+    syncSelectedFbRoomWithRooms();
+
+    if (recoveryData && recoveryData.ok === true) {
+      roomRecoveryCandidates = Array.isArray(recoveryData.candidates) ? recoveryData.candidates : [];
+      roomRecoverySummary = {
+        expired_count: Number(recoveryData.expired_count) || 0,
+        invalid_count: Number(recoveryData.invalid_count) || 0,
+        total_rooms_checked: Number(recoveryData.total_rooms_checked) || 0,
+      };
+    }
+
+    if (isUserBusy() || activeDashboardTab !== "rooms") {
+      console.info("Silent refresh: Data diperbarui di memori, re-render DOM ditunda karena user sedang sibuk.");
+      return;
+    }
+
+    renderRooms();
+    console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
+  } catch (error) {
+    console.warn("Silent refresh gagal:", error);
+  }
+}
+
 async function loadRooms() {
   roomsLoading = true;
   renderRooms();
@@ -11451,6 +11551,10 @@ function setActiveDashboardTab(tabKey) {
   saveActiveDashboardTab(tabKey);
   renderRooms();
   refreshActiveTabData();
+
+  if (tabKey === "rooms" && isOperatorLoggedIn() && !isUserBusy()) {
+    silentReloadRooms();
+  }
 }
 
 function refreshActiveTabData() {
@@ -15477,6 +15581,18 @@ if (dashboardShell) {
 }
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
+
+// Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
+setInterval(async () => {
+  if (!isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
+    return;
+  }
+  if (isUserBusy()) {
+    console.info("Auto-refresh ditunda: Pengguna sedang sibuk.");
+    return;
+  }
+  await silentReloadRooms();
+}, 10000);
 
 async function initializeDashboard() {
   renderOperatorHeader();
