@@ -83,7 +83,7 @@ const FNB_CATEGORY_LABELS = {
   Beer: "Beer",
   Spirit: "Spirit",
   Anggur: "Anggur",
-  Cigarette: "Cigarette",
+  Cigarette: "Rokok",
 };
 const FNB_CATEGORY_ICONS = {
   all: "📋",
@@ -7028,15 +7028,16 @@ function createMenuCardElement(menuItem) {
 
   const meta = document.createElement("p");
   meta.className = "menu-meta";
+  const primaryLabel = FNB_CATEGORY_LABELS[classification.primary] || classification.primary || "Tanpa kategori";
   meta.textContent = classification.subcategory
-    ? `${classification.primary} / ${classification.subcategory}`
-    : classification.primary || "Tanpa kategori";
+    ? `${primaryLabel} / ${classification.subcategory}`
+    : primaryLabel;
 
   info.append(name, meta);
 
   const badge = document.createElement("span");
   badge.className = isFavorite ? "menu-category-chip favorite" : "menu-category-chip";
-  badge.textContent = isFavorite ? "Favorit" : classification.primary;
+  badge.textContent = isFavorite ? "Favorit" : (FNB_CATEGORY_LABELS[classification.primary] || classification.primary);
 
   const price = document.createElement("p");
   price.className = "menu-price";
@@ -7247,7 +7248,7 @@ function createFbCartRowElement(item) {
 
   const meta = document.createElement("p");
   meta.className = "fb-cart-meta";
-  meta.textContent = item.category || "Tanpa kategori";
+  meta.textContent = FNB_CATEGORY_LABELS[item.category] || item.category || "Tanpa kategori";
 
   info.append(name, meta);
 
