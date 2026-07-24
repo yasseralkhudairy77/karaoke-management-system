@@ -141,17 +141,18 @@ function pushReceiptField(lines, label, value, width = DEFAULT_PAPER.width) {
   const safeLabel = getText(label);
   const safeValue = getText(value) || "-";
   const labelWidth = Math.min(8, Math.max(5, safeLabel.length));
-  const valueWidth = Math.max(1, safeWidth - labelWidth - 1);
+  const actualLabelWidth = Math.max(labelWidth, safeLabel.length);
+  const valueWidth = Math.max(1, safeWidth - actualLabelWidth - 1);
 
   if (safeValue.length <= valueWidth) {
-    lines.push(`${safeLabel.padEnd(labelWidth, " ")} ${safeValue.padStart(valueWidth, " ")}`);
+    lines.push(`${safeLabel.padEnd(actualLabelWidth, " ")} ${safeValue.padStart(valueWidth, " ")}`);
     return;
   }
 
   const wrappedValue = wrapReceiptText(safeValue, valueWidth);
-  lines.push(`${safeLabel.padEnd(labelWidth, " ")} ${wrappedValue.shift() || "-"}`);
+  lines.push(`${safeLabel.padEnd(actualLabelWidth, " ")} ${wrappedValue.shift() || "-"}`);
   wrappedValue.forEach((line) => {
-    lines.push(`${" ".repeat(labelWidth + 1)}${line}`);
+    lines.push(`${" ".repeat(actualLabelWidth + 1)}${line}`);
   });
 }
 
