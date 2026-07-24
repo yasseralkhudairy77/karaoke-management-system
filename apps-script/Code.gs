@@ -7535,6 +7535,15 @@ function prepareRoomSession_(payload) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
     }
 
+    SpreadsheetApp.flush();
+    var fnbItems = request.fnb_items;
+    if (Array.isArray(fnbItems) && fnbItems.length > 0) {
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dipesan via Resepsionis", "", "unpaid");
+      if (!fnbResult.ok) {
+        throw new Error("Gagal menyimpan pesanan F&B: " + fnbResult.error);
+      }
+    }
+
     return {
       ok: true,
       success: true,
@@ -7644,6 +7653,28 @@ function payAndStartSession_(payload) {
     var scheduledEndTime = addMinutesToJakartaIsoString_(now, durationMinutes);
     var transactionId = generateTransactionId_();
 
+    // Hapus order F&B prepay lama
+    deleteOpenFnbOrdersForPrepay_(roomId);
+
+    var fnbTotal = 0;
+    var fnbOrderIds = "";
+    var fnbItems = request.fnb_items;
+    if (Array.isArray(fnbItems) && fnbItems.length > 0) {
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dibayar via Prepayment Kasir", "", "unpaid");
+      if (!fnbResult.ok) {
+        throw new Error("Gagal memproses F&B Prepayment: " + fnbResult.error);
+      }
+      fnbTotal = Number(fnbResult.order.order_total) || 0;
+      fnbOrderIds = String(fnbResult.order.order_id || "");
+      
+      // Ubah status order F&B menjadi paid
+      markFnbOrdersAsPaid_([fnbOrderIds], now);
+      
+      // Potong stok F&B
+      var detailedOrder = Object.assign({}, fnbResult.order, { items: fnbResult.items });
+      deductStockForFnbOrders_([detailedOrder], transactionId, cashierName, now);
+    }
+
     // Create Transaction 1 (Upfront)
     var transaction = {
       transaction_id: transactionId,
@@ -7654,10 +7685,10 @@ function payAndStartSession_(payload) {
       duration_minutes: durationMinutes,
       rate_per_hour: ratePerHour,
       room_total: upfrontCharge,
-      fnb_total: 0,
+      fnb_total: fnbTotal,
       lc_total: lcFeeTotal,
-      grand_total: upfrontCharge + lcFeeTotal,
-      fnb_order_ids: "",
+      grand_total: upfrontCharge + lcFeeTotal + fnbTotal,
+      fnb_order_ids: fnbOrderIds,
       payment_method: paymentMethod,
       payment_status: "paid",
       cashier_name: cashierName,
@@ -7874,6 +7905,9 @@ function cancelBooking_(payload) {
       }
     }
 
+    // Hapus order F&B prepay yang belum dibayar jika booking dibatalkan
+    deleteOpenFnbOrdersForPrepay_(roomId);
+
     roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
@@ -8057,6 +8091,9 @@ function activatePreparedSession_(roomId, cashierName) {
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue(scheduledEndTime);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    // Sinkronkan start_time F&B orders yang dibayar prepayment
+    syncPrepaidFnbOrdersStartTime_(normalizedRoomId, now);
 
     return {
       ok: true,
@@ -8846,16 +8883,16 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
     }
 
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
-    var status = String(room.status || "").trim();
+    var status = String(room.status || "").trim().toLowerCase();
 
-    if (status !== "occupied") {
+    if (status !== "occupied" && status !== "waiting_payment") {
       return {
         ok: false,
-        error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.",
+        error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau menunggu pembayaran.",
       };
     }
 
-    if (!room.start_time) {
+    if (status === "occupied" && !room.start_time) {
       return {
         ok: false,
         error: "Sesi ruangan belum memiliki waktu mulai.",
@@ -12185,4 +12222,89 @@ function getRoomFromRow_(sheet, headerMap, rowNumber) {
     updated_at: room.updated_at || null,
     lc_ids: lcIds,
   };
+}
+
+function deleteOpenFnbOrdersForPrepay_(roomId) {
+  var ordersSheet = getSheet_("FnbOrders");
+  if (!ordersSheet) return;
+  var ordersHeaderMap = getHeaderMap_(ordersSheet);
+  var itemsSheet = getSheet_("FnbOrderItems");
+  if (!itemsSheet) return;
+  var itemsHeaderMap = getHeaderMap_(itemsSheet);
+  
+  var orders = readSheetAsObjects_("FnbOrders");
+  var orderIdsToDelete = [];
+  
+  for (var i = 0; i < orders.length; i++) {
+    var order = orders[i];
+    if (
+      String(order.room_id || "").trim() === String(roomId || "").trim() &&
+      !order.room_start_time &&
+      String(order.order_status || "").trim() === "open"
+    ) {
+      orderIdsToDelete.push(order.order_id);
+    }
+  }
+  
+  if (orderIdsToDelete.length === 0) return;
+  
+  // Delete from FnbOrders
+  var ordersData = ordersSheet.getDataRange().getValues();
+  for (var r = ordersData.length - 1; r >= 1; r--) {
+    var id = String(ordersData[r][ordersHeaderMap.order_id - 1] || "").trim();
+    if (orderIdsToDelete.indexOf(id) !== -1) {
+      ordersSheet.deleteRow(r + 1);
+    }
+  }
+  
+  // Delete from FnbOrderItems
+  var itemsData = itemsSheet.getDataRange().getValues();
+  for (var r = itemsData.length - 1; r >= 1; r--) {
+    var id = String(itemsData[r][itemsHeaderMap.order_id - 1] || "").trim();
+    if (orderIdsToDelete.indexOf(id) !== -1) {
+      itemsSheet.deleteRow(r + 1);
+    }
+  }
+}
+
+function markFnbOrdersAsPaid_(orderIds, now) {
+  if (!orderIds || orderIds.length === 0) {
+    return;
+  }
+
+  var sheet = getSheet_("FnbOrders");
+  var headerMap = getHeaderMap_(sheet);
+
+  orderIds.forEach(function (orderId) {
+    var rowNumber = findRowByValue_(sheet, headerMap, "order_id", orderId);
+
+    if (!rowNumber) {
+      throw new Error("Order F&B tidak ditemukan: " + orderId);
+    }
+
+    sheet.getRange(rowNumber, headerMap.order_status).setValue("paid");
+
+    if (headerMap.updated_at) {
+      sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
+    }
+  });
+}
+
+function syncPrepaidFnbOrdersStartTime_(roomId, startTime) {
+  var sheet = getSheet_("FnbOrders");
+  if (!sheet) return;
+  
+  var headerMap = getHeaderMap_(sheet);
+  var orders = readSheetAsObjects_("FnbOrders");
+  
+  orders.forEach(function (order, index) {
+    if (
+      String(order.room_id || "").trim() === String(roomId || "").trim() &&
+      !order.room_start_time
+    ) {
+      var rowRowNum = index + 2;
+      sheet.getRange(rowRowNum, headerMap.room_start_time).setValue(startTime);
+      sheet.getRange(rowRowNum, headerMap.updated_at).setValue(startTime);
+    }
+  });
 }

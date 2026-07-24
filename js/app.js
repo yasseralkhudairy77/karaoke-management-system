@@ -529,6 +529,10 @@ let paymentMethodSelection = "cash";
 let bookingTypeSelection = "regular";
 let bookingPackageSelection = "";
 let customerNameInput = "";
+let bookingCartItems = [];
+let prepayCartItems = [];
+let isLoadingPrepayFnb = false;
+let prepayFnbError = "";
 let packages = [];
 let isPreparingRoomSession = false;
 let isActivatingPreparedSession = false;
@@ -581,6 +585,9 @@ const ROOM_USAGE_PERIOD_OPTIONS = [
 ];
 
 function isUserBusy() {
+  if (document.querySelector(".admin-pin-modal-overlay")) {
+    return true;
+  }
   const activeEl = document.activeElement;
   const isTyping = activeEl && (
     activeEl.tagName === "INPUT" ||
@@ -5265,6 +5272,118 @@ function createDurationSelectionElement(room) {
   lcField.append(lcLabel, lcSelect);
   panel.appendChild(lcField);
 
+  // F&B Selection Section
+  const fnbField = document.createElement("div");
+  fnbField.style.display = "flex";
+  fnbField.style.flexDirection = "column";
+  fnbField.style.gap = "6px";
+  fnbField.style.marginTop = "8px";
+  fnbField.style.padding = "8px";
+  fnbField.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+  fnbField.style.borderRadius = "6px";
+  fnbField.style.border = "1px dashed rgba(255, 255, 255, 0.1)";
+
+  const fnbHeader = document.createElement("div");
+  fnbHeader.style.display = "flex";
+  fnbHeader.style.justifyContent = "space-between";
+  fnbHeader.style.alignItems = "center";
+
+  const fnbLabel = document.createElement("span");
+  fnbLabel.className = "duration-payment-label";
+  fnbLabel.style.fontWeight = "bold";
+  fnbLabel.textContent = "Pesanan F&B (Optional):";
+
+  const addFnbButton = document.createElement("button");
+  addFnbButton.className = "room-button";
+  addFnbButton.type = "button";
+  addFnbButton.style.padding = "4px 8px";
+  addFnbButton.style.fontSize = "0.75rem";
+  addFnbButton.style.backgroundColor = "var(--available)";
+  addFnbButton.style.color = "#fff";
+  addFnbButton.style.border = "none";
+  addFnbButton.style.borderRadius = "4px";
+  addFnbButton.textContent = bookingCartItems.length > 0 ? "✏️ Ubah F&B" : "➕ Tambah F&B";
+  addFnbButton.onclick = () => {
+    showBookingFnbSelectorModal(room, "booking");
+  };
+
+  fnbHeader.append(fnbLabel, addFnbButton);
+  fnbField.appendChild(fnbHeader);
+
+  if (bookingCartItems.length > 0) {
+    const fnbList = document.createElement("div");
+    fnbList.style.display = "flex";
+    fnbList.style.flexDirection = "column";
+    fnbList.style.gap = "4px";
+    fnbList.style.marginTop = "4px";
+    fnbList.style.fontSize = "0.8rem";
+    fnbList.style.color = "rgba(255, 255, 255, 0.7)";
+
+    let totalAmount = 0;
+    bookingCartItems.forEach((cartItem) => {
+      const itemRow = document.createElement("div");
+      itemRow.style.display = "flex";
+      itemRow.style.justifyContent = "space-between";
+      
+      const itemText = document.createElement("span");
+      itemText.textContent = `${cartItem.menu_name} x${cartItem.quantity}`;
+      
+      const itemPrice = document.createElement("span");
+      const itemSubtotal = cartItem.price * cartItem.quantity;
+      totalAmount += itemSubtotal;
+      itemPrice.textContent = formatCurrency(itemSubtotal);
+      
+      itemRow.append(itemText, itemPrice);
+      fnbList.appendChild(itemRow);
+    });
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "4px 0";
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Total F&B:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(totalAmount);
+
+    totalRow.append(totalLabel, totalVal);
+    
+    // Hapus button
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.style.background = "none";
+    clearButton.style.border = "none";
+    clearButton.style.color = "var(--occupied)";
+    clearButton.style.fontSize = "0.75rem";
+    clearButton.style.cursor = "pointer";
+    clearButton.style.alignSelf = "flex-end";
+    clearButton.style.padding = "0";
+    clearButton.style.marginTop = "2px";
+    clearButton.textContent = "🗑️ Bersihkan F&B";
+    clearButton.onclick = () => {
+      bookingCartItems = [];
+      renderRooms();
+    };
+
+    fnbList.append(divider, totalRow, clearButton);
+    fnbField.appendChild(fnbList);
+  } else {
+    const emptyNote = document.createElement("span");
+    emptyNote.style.fontSize = "0.75rem";
+    emptyNote.style.color = "rgba(255, 255, 255, 0.4)";
+    emptyNote.textContent = "Belum ada pesanan makanan/minuman.";
+    fnbField.appendChild(emptyNote);
+  }
+
+  panel.appendChild(fnbField);
+
   // Booking Type select
   const typeField = document.createElement("div");
   typeField.style.display = "flex";
@@ -5423,6 +5542,563 @@ function createDurationSelectionElement(room) {
   return panel;
 }
 
+let currentBookingFnbModalSearchQuery = "";
+let currentBookingFnbModalMainTab = "all"; // "all", "favorites", "makanan", "minuman", "rokok"
+let currentBookingFnbModalSubTab = "all";  // "all" or specific category e.g. "Beverage", "Beer", "Spirit", "Anggur"
+let currentBookingFnbModalSpiritFilter = "all";
+
+function showBookingFnbSelectorModal(room, targetCartType) {
+  // Reset modal state variables on open
+  currentBookingFnbModalSearchQuery = "";
+  currentBookingFnbModalMainTab = "all";
+  currentBookingFnbModalSubTab = "all";
+  currentBookingFnbModalSpiritFilter = "all";
+
+  console.log("showBookingFnbSelectorModal: Open for room", room.room_id, "Target:", targetCartType, "menuItems count:", menuItems.length);
+
+  // targetCartType is either "booking" or "prepay"
+  const cart = targetCartType === "booking" ? bookingCartItems : prepayCartItems;
+
+  const modalOverlay = document.createElement("div");
+  modalOverlay.className = "admin-pin-modal-overlay"; // reuse overlay styling for modal
+  modalOverlay.style.position = "fixed";
+  modalOverlay.style.top = "0";
+  modalOverlay.style.left = "0";
+  modalOverlay.style.width = "100%";
+  modalOverlay.style.height = "100%";
+  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+  modalOverlay.style.zIndex = "1000";
+  modalOverlay.style.display = "flex";
+  modalOverlay.style.alignItems = "center";
+  modalOverlay.style.justifyContent = "center";
+
+  const modalContainer = document.createElement("div");
+  modalContainer.className = "admin-pin-modal";
+  modalContainer.style.width = "90vw";
+  modalContainer.style.maxWidth = "1000px";
+  modalContainer.style.height = "85vh";
+  modalContainer.style.display = "flex";
+  modalContainer.style.flexDirection = "column";
+  modalContainer.style.padding = "20px";
+  modalContainer.style.backgroundColor = "var(--color-bg-lounge, #1a1a2e)";
+  modalContainer.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+
+  // Header
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "15px";
+
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "1.5rem";
+  title.style.color = "#ffffff";
+  title.textContent = `POS F&B - Booking ${room.room_name}`;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.style.background = "none";
+  closeBtn.style.border = "none";
+  closeBtn.style.color = "#ffffff";
+  closeBtn.style.fontSize = "1.5rem";
+  closeBtn.style.cursor = "pointer";
+  closeBtn.textContent = "✕";
+  closeBtn.onclick = () => {
+    modalOverlay.remove();
+  };
+
+  header.append(title, closeBtn);
+  modalContainer.appendChild(header);
+
+  // Content Area (Two Columns)
+  const body = document.createElement("div");
+  body.style.display = "flex";
+  body.style.flex = "1";
+  body.style.gap = "20px";
+  body.style.overflow = "hidden";
+  body.style.minHeight = "0"; // crucial for nested scroll behavior
+
+  // Left Column (Catalog)
+  const catalogCol = document.createElement("div");
+  catalogCol.style.flex = "7";
+  catalogCol.style.display = "flex";
+  catalogCol.style.flexDirection = "column";
+  catalogCol.style.overflow = "hidden";
+  catalogCol.style.minHeight = "0";
+
+  // Right Column (Cart)
+  const cartCol = document.createElement("div");
+  cartCol.style.flex = "3";
+  cartCol.style.display = "flex";
+  cartCol.style.flexDirection = "column";
+  cartCol.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  cartCol.style.borderRadius = "8px";
+  cartCol.style.padding = "15px";
+  cartCol.style.overflow = "hidden";
+  cartCol.style.minHeight = "0";
+
+  body.append(catalogCol, cartCol);
+  modalContainer.appendChild(body);
+  modalOverlay.appendChild(modalContainer);
+  document.body.appendChild(modalOverlay);
+
+  // Render POS Catalog and Cart inside modal
+  const renderModalCatalog = () => {
+    catalogCol.innerHTML = "";
+
+    // Search bar
+    const searchBar = document.createElement("input");
+    searchBar.className = "menu-search";
+    searchBar.style.marginBottom = "10px";
+    searchBar.placeholder = "Cari item: bintang, fries, soju, marlboro...";
+    searchBar.value = currentBookingFnbModalSearchQuery;
+    searchBar.oninput = (e) => {
+      currentBookingFnbModalSearchQuery = e.target.value;
+      updateFilteredList();
+    };
+    catalogCol.appendChild(searchBar);
+
+    // Main Tabs Container
+    const mainTabsContainer = document.createElement("div");
+    mainTabsContainer.className = "menu-category-filter";
+    mainTabsContainer.style.marginBottom = "10px";
+    mainTabsContainer.style.borderBottom = "2px solid rgba(255, 255, 255, 0.1)";
+
+    const mainTabs = [
+      { id: "all", label: "Semua", icon: "🌐" },
+      { id: "favorites", label: "Terlaris", icon: "⭐" },
+      { id: "makanan", label: "Makanan", icon: "🍔" },
+      { id: "minuman", label: "Minuman", icon: "🍹" },
+      { id: "rokok", label: "Rokok & Lainnya", icon: "🚬" },
+    ];
+
+    mainTabs.forEach((tab) => {
+      const button = document.createElement("button");
+      button.className = tab.id === currentBookingFnbModalMainTab ? "menu-category-button active" : "menu-category-button";
+      button.style.padding = "10px 15px";
+      button.style.fontSize = "0.9rem";
+      button.textContent = `${tab.icon} ${tab.label}`;
+      button.onclick = () => {
+        currentBookingFnbModalMainTab = tab.id;
+        currentBookingFnbModalSubTab = "all"; // reset sub tab
+        currentBookingFnbModalSpiritFilter = "all"; // reset spirit filter
+        renderModalCatalog();
+      };
+      mainTabsContainer.appendChild(button);
+    });
+    catalogCol.appendChild(mainTabsContainer);
+
+    // Sub Tabs Container (only shown if needed, e.g., for Minuman)
+    if (currentBookingFnbModalMainTab === "minuman") {
+      const subTabsContainer = document.createElement("div");
+      subTabsContainer.className = "menu-category-filter";
+      subTabsContainer.style.marginBottom = "10px";
+      subTabsContainer.style.padding = "4px 0";
+
+      const subTabs = [
+        { id: "all", label: "Semua Minuman" },
+        { id: "Beverage", label: "Soft Drink" },
+        { id: "Beer", label: "Bir" },
+        { id: "Spirit", label: "Spirit / Liquors" },
+        { id: "Anggur", label: "Wine / Anggur" },
+      ];
+
+      subTabs.forEach((tab) => {
+        const button = document.createElement("button");
+        button.className = tab.id === currentBookingFnbModalSubTab ? "menu-category-button active" : "menu-category-button";
+        button.style.padding = "6px 12px";
+        button.style.fontSize = "0.8rem";
+        button.textContent = tab.label;
+        button.onclick = () => {
+          currentBookingFnbModalSubTab = tab.id;
+          currentBookingFnbModalSpiritFilter = "all"; // reset spirit filter
+          renderModalCatalog();
+        };
+        subTabsContainer.appendChild(button);
+      });
+      catalogCol.appendChild(subTabsContainer);
+    }
+
+    // Spirit Sub-classification (if Minuman -> Spirit is active)
+    if (currentBookingFnbModalMainTab === "minuman" && currentBookingFnbModalSubTab === "Spirit") {
+      const spiritContainer = document.createElement("div");
+      spiritContainer.className = "menu-category-filter spirit-filter";
+      spiritContainer.style.marginBottom = "10px";
+      spiritContainer.style.padding = "2px 0";
+
+      const subcategories = ["all", ...FNB_SPIRIT_SUBCATEGORY_ORDER];
+      subcategories.forEach((sub) => {
+        const button = document.createElement("button");
+        button.className = sub === currentBookingFnbModalSpiritFilter ? "menu-category-button active" : "menu-category-button";
+        button.style.padding = "4px 10px";
+        button.style.fontSize = "0.75rem";
+        button.textContent = sub === "all" ? "Semua Spirit" : sub;
+        button.onclick = () => {
+          currentBookingFnbModalSpiritFilter = sub;
+          renderModalCatalog();
+        };
+        spiritContainer.appendChild(button);
+      });
+      catalogCol.appendChild(spiritContainer);
+    }
+
+    // Menu list scroll area
+    const listScroll = document.createElement("div");
+    listScroll.className = "menu-list";
+    listScroll.style.flex = "1";
+    listScroll.style.overflowY = "auto";
+    listScroll.style.minHeight = "0"; // prevent flexbox layout break
+    listScroll.style.display = "flex";
+    listScroll.style.flexWrap = "wrap";
+    listScroll.style.gap = "12px";
+    listScroll.style.padding = "10px 5px";
+    listScroll.style.alignContent = "start"; // avoid vertical stretching
+
+    catalogCol.appendChild(listScroll);
+
+    const updateFilteredList = () => {
+      listScroll.innerHTML = "";
+      
+      let filtered = menuItems;
+
+      // Filter by Search
+      if (currentBookingFnbModalSearchQuery.trim()) {
+        const query = currentBookingFnbModalSearchQuery.toLowerCase().trim();
+        filtered = filtered.filter(item => 
+          String(item.menu_name || "").toLowerCase().includes(query) ||
+          String(item.category || "").toLowerCase().includes(query) ||
+          String(item.subcategory || "").toLowerCase().includes(query)
+        );
+      }
+
+      // Filter by Main Group Tab
+      if (currentBookingFnbModalMainTab === "favorites") {
+        filtered = filtered.filter(item => isFavoriteFnbMenuItem(item));
+      } else if (currentBookingFnbModalMainTab === "makanan") {
+        filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === "food");
+      } else if (currentBookingFnbModalMainTab === "minuman") {
+        const minumanCats = ["beverage", "beer", "spirit", "anggur"];
+        filtered = filtered.filter(item => minumanCats.includes(String(item.category || "").trim().toLowerCase()));
+        
+        // Filter by Sub Tab
+        if (currentBookingFnbModalSubTab !== "all") {
+          filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === currentBookingFnbModalSubTab.toLowerCase());
+        }
+
+        // Filter by Spirit classification
+        if (currentBookingFnbModalSubTab === "Spirit" && currentBookingFnbModalSpiritFilter !== "all") {
+          filtered = filtered.filter(item => {
+            const itemSub = String(item.subcategory || "").trim().toLowerCase();
+            const targetSub = currentBookingFnbModalSpiritFilter.trim().toLowerCase();
+            return itemSub === targetSub;
+          });
+        }
+      } else if (currentBookingFnbModalMainTab === "rokok") {
+        filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === "cigarette");
+      }
+
+      if (filtered.length === 0) {
+        listScroll.appendChild(createStateMessage("Item tidak ditemukan."));
+        return;
+      }
+
+      filtered.forEach((menuItem) => {
+        const card = createMenuCardElement(menuItem);
+        
+        // Inline Reset Styles to ensure absolute visual consistency and prevent overlap
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.justifyContent = "space-between";
+        card.style.position = "relative";
+        card.style.padding = "12px";
+        card.style.minHeight = "130px";
+        card.style.width = "calc(50% - 6px)";
+        card.style.boxSizing = "border-box";
+        card.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+        card.style.borderRadius = "12px";
+        card.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+        
+        const badge = card.querySelector(".menu-category-chip");
+        if (badge) {
+          badge.style.position = "absolute";
+          badge.style.top = "8px";
+          badge.style.left = "8px";
+          badge.style.fontSize = "0.65rem";
+          badge.style.padding = "2px 6px";
+          badge.style.margin = "0";
+        }
+
+        const status = card.querySelector(".menu-status");
+        if (status) {
+          status.style.position = "absolute";
+          status.style.top = "8px";
+          status.style.right = "8px";
+          status.style.fontSize = "0.65rem";
+          status.style.padding = "2px 6px";
+          status.style.borderRadius = "4px";
+          status.style.margin = "0";
+        }
+
+        const info = card.querySelector(".menu-card-info");
+        if (info) {
+          info.style.marginTop = "22px"; // clear room for top absolute badges
+          info.style.marginBottom = "4px";
+          info.style.minWidth = "0";
+        }
+
+        const name = card.querySelector(".menu-name");
+        if (name) {
+          name.style.fontSize = "0.95rem";
+          name.style.fontWeight = "bold";
+          name.style.color = "#ffffff";
+          name.style.margin = "0 0 2px 0";
+          name.style.lineHeight = "1.2";
+          name.style.whiteSpace = "normal";
+          name.style.wordBreak = "break-word";
+        }
+
+        const meta = card.querySelector(".menu-meta");
+        if (meta) {
+          meta.style.fontSize = "0.75rem";
+          meta.style.color = "rgba(255, 255, 255, 0.4)";
+          meta.style.margin = "0";
+        }
+
+        const price = card.querySelector(".menu-price");
+        if (price) {
+          price.style.fontSize = "0.95rem";
+          price.style.color = "var(--color-success, #35b779)";
+          price.style.fontWeight = "bold";
+          price.style.margin = "2px 0 6px 0";
+        }
+
+        // Bottom row container for stock and add button
+        const bottomRow = document.createElement("div");
+        bottomRow.style.display = "flex";
+        bottomRow.style.justifyContent = "space-between";
+        bottomRow.style.alignItems = "center";
+        bottomRow.style.marginTop = "auto"; // push to bottom
+        bottomRow.style.gap = "8px";
+
+        const stockBadge = card.querySelector(".menu-stock-badge");
+        if (stockBadge) {
+          stockBadge.style.fontSize = "0.75rem";
+          stockBadge.style.padding = "2px 6px";
+          stockBadge.style.borderRadius = "4px";
+          stockBadge.style.margin = "0";
+          stockBadge.style.alignSelf = "center";
+          bottomRow.appendChild(stockBadge);
+        } else {
+          // Add a dummy spacer to align the button to the right if there's no stock badge
+          const spacer = document.createElement("div");
+          bottomRow.appendChild(spacer);
+        }
+
+        const addButton = card.querySelector(".menu-add-button");
+        if (addButton) {
+          addButton.style.width = "auto";
+          addButton.style.minWidth = "75px";
+          addButton.style.height = "26px";
+          addButton.style.minHeight = "26px";
+          addButton.style.fontSize = "0.75rem";
+          addButton.style.margin = "0";
+          addButton.style.borderRadius = "6px";
+          addButton.style.padding = "0 8px";
+          addButton.style.display = "inline-flex";
+          addButton.style.alignItems = "center";
+          addButton.style.justifyContent = "center";
+          addButton.style.alignSelf = "center";
+
+          addButton.onclick = (e) => {
+            e.stopPropagation();
+            addMenuItemToLocalCart(menuItem);
+          };
+          bottomRow.appendChild(addButton);
+        }
+
+        card.appendChild(bottomRow);
+        listScroll.appendChild(card);
+      });
+    };
+
+    updateFilteredList();
+  };
+
+  const addMenuItemToLocalCart = (menuItem) => {
+    const existing = cart.find(item => item.menu_id === menuItem.menu_id);
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      cart.push({
+        menu_id: menuItem.menu_id,
+        menu_name: menuItem.menu_name,
+        price: menuItem.price,
+        quantity: 1,
+      });
+    }
+    renderModalCart();
+  };
+
+  const renderModalCart = () => {
+    cartCol.innerHTML = "";
+
+    const cartTitle = document.createElement("h4");
+    cartTitle.style.margin = "0 0 10px 0";
+    cartTitle.style.color = "#ffffff";
+    cartTitle.textContent = "Tray Pesanan";
+    cartCol.appendChild(cartTitle);
+
+    const itemsList = document.createElement("div");
+    itemsList.style.flex = "1";
+    itemsList.style.overflowY = "auto";
+    itemsList.style.display = "flex";
+    itemsList.style.flexDirection = "column";
+    itemsList.style.gap = "8px";
+    cartCol.appendChild(itemsList);
+
+    let totalAmount = 0;
+
+    if (cart.length === 0) {
+      const emptyMsg = document.createElement("div");
+      emptyMsg.style.color = "rgba(255, 255, 255, 0.4)";
+      emptyMsg.style.fontSize = "0.9rem";
+      emptyMsg.style.textAlign = "center";
+      emptyMsg.style.marginTop = "20px";
+      emptyMsg.textContent = "Tray masih kosong.";
+      itemsList.appendChild(emptyMsg);
+    } else {
+      cart.forEach((cartItem) => {
+        const itemRow = document.createElement("div");
+        itemRow.style.display = "flex";
+        itemRow.style.justifyContent = "space-between";
+        itemRow.style.alignItems = "center";
+        itemRow.style.padding = "6px 8px";
+        itemRow.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+        itemRow.style.borderRadius = "4px";
+
+        const textGroup = document.createElement("div");
+        textGroup.style.display = "flex";
+        textGroup.style.flexDirection = "column";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.style.fontWeight = "bold";
+        nameSpan.style.fontSize = "0.85rem";
+        nameSpan.style.color = "#fff";
+        nameSpan.textContent = cartItem.menu_name;
+
+        const subtotal = cartItem.price * cartItem.quantity;
+        totalAmount += subtotal;
+
+        const priceSpan = document.createElement("span");
+        priceSpan.style.fontSize = "0.75rem";
+        priceSpan.style.color = "rgba(255, 255, 255, 0.5)";
+        priceSpan.textContent = `${formatCurrency(cartItem.price)} x ${cartItem.quantity} = ${formatCurrency(subtotal)}`;
+
+        textGroup.append(nameSpan, priceSpan);
+
+        const ctrlGroup = document.createElement("div");
+        ctrlGroup.style.display = "flex";
+        ctrlGroup.style.alignItems = "center";
+        ctrlGroup.style.gap = "4px";
+
+        const decBtn = document.createElement("button");
+        decBtn.type = "button";
+        decBtn.style.padding = "2px 6px";
+        decBtn.textContent = "-";
+        decBtn.onclick = () => {
+          cartItem.quantity -= 1;
+          if (cartItem.quantity <= 0) {
+            const index = cart.indexOf(cartItem);
+            cart.splice(index, 1);
+          }
+          renderModalCart();
+        };
+
+        const incBtn = document.createElement("button");
+        incBtn.type = "button";
+        incBtn.style.padding = "2px 6px";
+        incBtn.textContent = "+";
+        incBtn.onclick = () => {
+          cartItem.quantity += 1;
+          renderModalCart();
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.style.background = "none";
+        delBtn.style.border = "none";
+        delBtn.style.color = "var(--occupied)";
+        delBtn.style.cursor = "pointer";
+        delBtn.textContent = "🗑️";
+        delBtn.onclick = () => {
+          const index = cart.indexOf(cartItem);
+          cart.splice(index, 1);
+          renderModalCart();
+        };
+
+        ctrlGroup.append(decBtn, incBtn, delBtn);
+        itemRow.append(textGroup, ctrlGroup);
+        itemsList.appendChild(itemRow);
+      });
+    }
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "10px 0";
+    cartCol.appendChild(divider);
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+    totalRow.style.marginBottom = "15px";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Total Amount:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(totalAmount);
+
+    totalRow.append(totalLabel, totalVal);
+    cartCol.appendChild(totalRow);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "duration-custom-button";
+    confirmBtn.style.width = "100%";
+    confirmBtn.style.backgroundColor = "var(--available)";
+    confirmBtn.style.color = "#fff";
+    confirmBtn.style.fontWeight = "bold";
+    confirmBtn.textContent = "Konfirmasi Pesanan F&B";
+    confirmBtn.onclick = () => {
+      modalOverlay.remove();
+      renderRooms(); // trigger room re-render to display the F&B summary
+    };
+    cartCol.appendChild(confirmBtn);
+  };
+
+  // If menuItems is empty, try to load it dynamically and show a spinner
+  if (menuItems.length === 0) {
+    catalogCol.innerHTML = "<div style='color:rgba(255,255,255,0.6); padding:20px; text-align:center;'>⏳ Memuat daftar menu F&B...</div>";
+    Promise.all([
+      loadMenuItems(),
+      loadInventoryItems()
+    ]).then(() => {
+      console.log("showBookingFnbSelectorModal: Dynamic load success, menuItems count:", menuItems.length);
+      renderModalCatalog();
+    }).catch((err) => {
+      console.error("showBookingFnbSelectorModal: Dynamic load error:", err);
+      catalogCol.innerHTML = `<div style='color:var(--occupied); padding:20px; text-align:center;'>❌ Gagal memuat menu: ${err.message || err}</div>`;
+    });
+  } else {
+    renderModalCatalog();
+  }
+
+  renderModalCart();
+}
+
 function createPaymentSelectionElement(room) {
   const panel = document.createElement("div");
   panel.className = "duration-selection";
@@ -5450,6 +6126,220 @@ function createPaymentSelectionElement(room) {
   panel.appendChild(infoBlock);
 
   const role = getCurrentOperatorRole();
+
+  // Prepayment F&B Section
+  const fnbPrepayField = document.createElement("div");
+  fnbPrepayField.style.display = "flex";
+  fnbPrepayField.style.flexDirection = "column";
+  fnbPrepayField.style.gap = "6px";
+  fnbPrepayField.style.marginTop = "8px";
+  fnbPrepayField.style.marginBottom = "8px";
+  fnbPrepayField.style.padding = "8px";
+  fnbPrepayField.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+  fnbPrepayField.style.borderRadius = "6px";
+  fnbPrepayField.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+
+  const fnbHeader = document.createElement("div");
+  fnbHeader.style.display = "flex";
+  fnbHeader.style.justifyContent = "space-between";
+  fnbHeader.style.alignItems = "center";
+
+  const fnbLabel = document.createElement("span");
+  fnbLabel.className = "duration-payment-label";
+  fnbLabel.style.fontWeight = "bold";
+  fnbLabel.textContent = "Detail Pesanan F&B:";
+
+  fnbHeader.appendChild(fnbLabel);
+
+  if (role !== "receptionist") {
+    const addFnbBtn = document.createElement("button");
+    addFnbBtn.className = "room-button";
+    addFnbBtn.type = "button";
+    addFnbBtn.style.padding = "2px 6px";
+    addFnbBtn.style.fontSize = "0.75rem";
+    addFnbBtn.style.backgroundColor = "var(--available)";
+    addFnbBtn.style.color = "#fff";
+    addFnbBtn.style.border = "none";
+    addFnbBtn.style.borderRadius = "4px";
+    addFnbBtn.textContent = "➕ Tambah Menu";
+    addFnbBtn.onclick = () => {
+      showBookingFnbSelectorModal(room, "prepay");
+    };
+    fnbHeader.appendChild(addFnbBtn);
+  }
+
+  fnbPrepayField.appendChild(fnbHeader);
+
+  let fnbTotal = 0;
+
+  if (isLoadingPrepayFnb) {
+    const loadingMsg = document.createElement("span");
+    loadingMsg.style.fontSize = "0.8rem";
+    loadingMsg.style.color = "rgba(255, 255, 255, 0.5)";
+    loadingMsg.textContent = "⏳ Memuat data F&B...";
+    fnbPrepayField.appendChild(loadingMsg);
+  } else if (prepayFnbError) {
+    const errorMsg = document.createElement("span");
+    errorMsg.style.fontSize = "0.8rem";
+    errorMsg.style.color = "var(--occupied)";
+    errorMsg.textContent = `❌ ${prepayFnbError}`;
+    fnbPrepayField.appendChild(errorMsg);
+  } else if (prepayCartItems.length > 0) {
+    const itemsList = document.createElement("div");
+    itemsList.style.display = "flex";
+    itemsList.style.flexDirection = "column";
+    itemsList.style.gap = "6px";
+    itemsList.style.marginTop = "6px";
+
+    prepayCartItems.forEach((cartItem) => {
+      const itemRow = document.createElement("div");
+      itemRow.style.display = "flex";
+      itemRow.style.justifyContent = "space-between";
+      itemRow.style.alignItems = "center";
+      itemRow.style.fontSize = "0.85rem";
+
+      const textSpan = document.createElement("span");
+      textSpan.textContent = `${cartItem.menu_name} x${cartItem.quantity}`;
+
+      const rightGroup = document.createElement("div");
+      rightGroup.style.display = "flex";
+      rightGroup.style.alignItems = "center";
+      rightGroup.style.gap = "8px";
+
+      const priceSpan = document.createElement("span");
+      const subtotal = cartItem.price * cartItem.quantity;
+      fnbTotal += subtotal;
+      priceSpan.textContent = formatCurrency(subtotal);
+      rightGroup.appendChild(priceSpan);
+
+      if (role !== "receptionist") {
+        const decBtn = document.createElement("button");
+        decBtn.type = "button";
+        decBtn.style.padding = "1px 4px";
+        decBtn.style.fontSize = "0.75rem";
+        decBtn.textContent = "-";
+        decBtn.onclick = () => {
+          cartItem.quantity -= 1;
+          if (cartItem.quantity <= 0) {
+            const idx = prepayCartItems.indexOf(cartItem);
+            prepayCartItems.splice(idx, 1);
+          }
+          renderRooms();
+        };
+
+        const incBtn = document.createElement("button");
+        incBtn.type = "button";
+        incBtn.style.padding = "1px 4px";
+        incBtn.style.fontSize = "0.75rem";
+        incBtn.textContent = "+";
+        incBtn.onclick = () => {
+          cartItem.quantity += 1;
+          renderRooms();
+        };
+
+        rightGroup.append(decBtn, incBtn);
+      }
+
+      itemRow.append(textSpan, rightGroup);
+      itemsList.appendChild(itemRow);
+    });
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "4px 0";
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Subtotal F&B:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(fnbTotal);
+
+    totalRow.append(totalLabel, totalVal);
+    itemsList.append(divider, totalRow);
+    fnbPrepayField.appendChild(itemsList);
+  } else {
+    const emptyNote = document.createElement("span");
+    emptyNote.style.fontSize = "0.75rem";
+    emptyNote.style.color = "rgba(255, 255, 255, 0.4)";
+    emptyNote.textContent = "Tidak ada pesanan makanan/minuman.";
+    fnbPrepayField.appendChild(emptyNote);
+  }
+
+  panel.appendChild(fnbPrepayField);
+
+  // Kalkulasi Room Prepay + LC Fee
+  let roomPrepayCharge = 0;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    roomPrepayCharge = pkg ? pkg.selling_price : 0;
+  } else {
+    roomPrepayCharge = Math.ceil((Number(room.booked_duration_minutes) || 0) / 60 * (Number(room.rate_per_hour) || 0));
+  }
+
+  let lcFeeTotal = 0;
+  const activeLcIds = selectedLcIdsForRoom[room.room_id] || (room.lc_ids ? room.lc_ids.split(",") : []);
+  if (activeLcIds && activeLcIds.length > 0) {
+    lcFeeTotal = activeLcIds.filter(id => id !== "PENDING").length * 175000;
+  }
+
+  const grandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
+
+  // Ringkasan Pembayaran (Billing Summary)
+  const billingSummary = document.createElement("div");
+  billingSummary.style.marginTop = "8px";
+  billingSummary.style.marginBottom = "12px";
+  billingSummary.style.padding = "10px";
+  billingSummary.style.backgroundColor = "rgba(53, 183, 121, 0.08)";
+  billingSummary.style.borderRadius = "6px";
+  billingSummary.style.border = "1px solid rgba(53, 183, 121, 0.2)";
+
+  const summaryTitle = document.createElement("p");
+  summaryTitle.style.margin = "0 0 6px 0";
+  summaryTitle.style.fontWeight = "bold";
+  summaryTitle.style.color = "var(--color-success)";
+  summaryTitle.textContent = "Ringkasan Pembayaran Awal:";
+  billingSummary.appendChild(summaryTitle);
+
+  const lines = [
+    ["Sewa Room", roomPrepayCharge],
+    ["Biaya LC", lcFeeTotal],
+    ["Pesanan F&B", fnbTotal]
+  ];
+
+  lines.forEach(([lbl, val]) => {
+    if (val > 0) {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.fontSize = "0.85rem";
+      row.style.color = "rgba(255, 255, 255, 0.8)";
+      row.innerHTML = `<span>${lbl}:</span> <span>${formatCurrency(val)}</span>`;
+      billingSummary.appendChild(row);
+    }
+  });
+
+  const sumDivider = document.createElement("div");
+  sumDivider.style.height = "1px";
+  sumDivider.style.backgroundColor = "rgba(53, 183, 121, 0.2)";
+  sumDivider.style.margin = "6px 0";
+  billingSummary.appendChild(sumDivider);
+
+  const grandTotalRow = document.createElement("div");
+  grandTotalRow.style.display = "flex";
+  grandTotalRow.style.justifyContent = "space-between";
+  grandTotalRow.style.fontWeight = "bold";
+  grandTotalRow.style.fontSize = "1rem";
+  grandTotalRow.style.color = "#ffffff";
+  grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(grandTotal)}</span>`;
+  billingSummary.appendChild(grandTotalRow);
+
+  panel.appendChild(billingSummary);
   
   if (role !== "receptionist") {
     const paymentField = document.createElement("label");
@@ -5485,11 +6375,18 @@ function createPaymentSelectionElement(room) {
     startButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
     startButton.style.width = "100%";
     startButton.style.marginBottom = "8px";
-    startButton.textContent = "Terima Pembayaran & Mulai";
-    startButton.onclick = async () => {
-      const method = paymentSelect.value;
-      await payAndStartSession(room.room_id, method);
-    };
+    if (isLoadingPrepayFnb) {
+      startButton.disabled = true;
+      startButton.style.opacity = "0.5";
+      startButton.style.cursor = "not-allowed";
+      startButton.textContent = "⏳ Memuat data F&B...";
+    } else {
+      startButton.textContent = "Terima Pembayaran & Mulai";
+      startButton.onclick = async () => {
+        const method = paymentSelect.value;
+        await payAndStartSession(room.room_id, method);
+      };
+    }
     panel.appendChild(startButton);
   } else {
     const notice = document.createElement("p");
@@ -13346,12 +14243,14 @@ function updateRunningTimers() {
 function showDurationSelection(roomId) {
   durationSelectionRoomId = roomId;
   customDurationMinutes = "";
+  bookingCartItems = []; // reset cart for new booking
   renderRooms();
 }
 
 function cancelDurationSelection() {
   durationSelectionRoomId = "";
   customDurationMinutes = "";
+  bookingCartItems = []; // clear cart
   renderRooms();
 }
 
@@ -14015,6 +14914,10 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       customer_name: customerName,
       package_id: packageId,
       lc_ids: lcIds,
+      fnb_items: bookingCartItems.map(item => ({
+        menu_id: item.menu_id,
+        quantity: item.quantity
+      })),
       idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
     });
 
@@ -14023,6 +14926,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
     }
 
     showInlineNotice(data.message || "Booking room berhasil disiapkan.");
+    bookingCartItems = []; // clear receptionist cart on success
     durationSelectionRoomId = "";
     customDurationMinutes = "";
     durationPaymentMethod = "cash";
@@ -14068,11 +14972,16 @@ async function payAndStartSession(roomId, paymentMethod) {
       room_id: roomId,
       payment_method: paymentMethod,
       cashier_name: getLoggedInOperatorName(),
+      fnb_items: prepayCartItems.map(item => ({
+        menu_id: item.menu_id,
+        quantity: item.quantity
+      })),
     });
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal memproses pembayaran.");
     }
     showInlineNotice(data.message || "Pembayaran berhasil diproses.");
+    prepayCartItems = []; // clear cashier cart on success
     paymentSelectionRoomId = "";
     if (data.transaction) {
       showBillingSummary(data.transaction);
@@ -14133,14 +15042,64 @@ async function completeCleaning(roomId) {
   }
 }
 
-function showPaymentSelection(roomId) {
+async function showPaymentSelection(roomId) {
   paymentSelectionRoomId = roomId;
   paymentMethodSelection = "cash";
+  prepayCartItems = []; // reset cashier cart
+  isLoadingPrepayFnb = true;
+  prepayFnbError = "";
   renderRooms();
+
+  try {
+    const result = await fetchOpenFnbOrdersFromApi(roomId, "");
+    console.log("showPaymentSelection: fetchOpenFnbOrdersFromApi result:", result);
+    if (paymentSelectionRoomId !== roomId) return; // user closed it
+    
+    if (result.orders.length > 0) {
+      showInlineNotice(`Ditemukan ${result.orders.length} pesanan F&B open. Memuat rincian...`, "info");
+      const orderIds = result.orders.map(o => o.order_id);
+      const detailedOrders = await fetchFnbOrdersByIds(orderIds);
+      console.log("showPaymentSelection: detailedOrders:", detailedOrders);
+      if (paymentSelectionRoomId !== roomId) return; // check again
+      
+      const itemsList = [];
+      detailedOrders.forEach(order => {
+        if (Array.isArray(order.items)) {
+          order.items.forEach(item => {
+            const existing = itemsList.find(x => x.menu_id === item.menu_id);
+            if (existing) {
+              existing.quantity += item.quantity;
+            } else {
+              itemsList.push({
+                menu_id: item.menu_id,
+                menu_name: item.menu_name,
+                price: item.price,
+                quantity: item.quantity,
+              });
+            }
+          });
+        }
+      });
+      prepayCartItems = itemsList;
+      showInlineNotice(`Berhasil memuat ${prepayCartItems.length} menu F&B ke bil pembayaran Kasir.`, "success");
+    } else {
+      console.log("showPaymentSelection: result.orders is empty");
+      showInlineNotice("Penyelidikan F&B: 0 pesanan F&B aktif ditemukan untuk room ini.", "warning");
+    }
+  } catch (error) {
+    console.warn("Gagal memuat F&B prepay", error);
+    prepayFnbError = "Gagal memuat detail pesanan F&B dari server.";
+  } finally {
+    isLoadingPrepayFnb = false;
+    renderRooms();
+  }
 }
 
 function cancelPaymentSelection() {
   paymentSelectionRoomId = "";
+  prepayCartItems = [];
+  isLoadingPrepayFnb = false;
+  prepayFnbError = "";
   renderRooms();
 }
 
@@ -15615,12 +16574,16 @@ async function initializeDashboard() {
 
   const initialLoads = [];
 
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock")) {
+  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock") || canAccessDashboardTab("rooms")) {
     initialLoads.push(loadInventoryItems());
   }
 
+  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("rooms")) {
+    initialLoads.push(loadMenuItems());
+  }
+
   if (canAccessDashboardTab("fnb")) {
-    initialLoads.push(loadMenuItems(), loadOpenFnbOrders(), loadTodayFnbOrders());
+    initialLoads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
   }
 
   if (canAccessDashboardTab("stock")) {
