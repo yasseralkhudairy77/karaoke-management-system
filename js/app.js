@@ -440,6 +440,7 @@ let cashierClosingNote = "";
 let cashierClosingConfirmationVisible = false;
 let lastCashierClosing = null;
 let isSavingCashierClosing = false;
+const markingTransactionPaidIds = new Set(); // track per-transactionId mark-paid in progress
 let todayCashierClosings = [];
 let todayCashierClosingSummary = null;
 let selectedClosingForPrint = null;
@@ -536,6 +537,8 @@ let prepayFnbError = "";
 let packages = [];
 let isPreparingRoomSession = false;
 let isActivatingPreparedSession = false;
+let isCancellingBooking = false;
+let isCompletingCleaning = false;
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
@@ -3565,6 +3568,43 @@ function formatDateTimeLabel(value) {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+function formatTransactionDateTime(value) {
+  if (!value) return "-";
+  if (/^\d{2}-\d{2}-\d{4} - \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value)
+      .replace("T", " ")
+      .replace(/\.\d{3}/, "")
+      .replace(/\+\d{2}:?\d{2}$/, "")
+      .replace(/Z$/, "");
+  }
+  const pad = (num) => String(num).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  return `${day}-${month}-${year} - ${hours}:${minutes}:${seconds}`;
+}
+
+function formatSimpleDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    // Fallback: hapus T dan bagian jam jika bukan date object valid
+    return String(value).split("T")[0].split(" ")[0];
+  }
+  const pad = (num) => String(num).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
 function getElapsedSeconds(startTime) {
   if (!startTime) {
     return 0;
@@ -4382,8 +4422,8 @@ function createBillingSummaryElement(transaction) {
   const items = [
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
-    ["Waktu Mulai", transaction?.start_time || "-"],
-    ["Waktu Selesai", transaction?.end_time || "-"],
+    ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
+    ["Waktu Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
     ["Tarif per Jam", formatCurrency(transaction?.rate_per_hour)],
     [
@@ -4594,14 +4634,14 @@ function createReceiptPrintElement(transaction) {
 
   const meta = document.createElement("p");
   meta.className = "receipt-print-meta";
-  meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${receiptData.transaction.createdAt || "-"} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
+  meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${formatTransactionDateTime(receiptData.transaction.createdAt)} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
 
   header.append(brand, title, meta);
 
   const roomRows = [
     ["Nama Ruangan", receiptData.room.name || receiptData.room.id || "-"],
-    ["Waktu Mulai", receiptData.room.startTime || "-"],
-    ["Waktu Selesai", receiptData.room.endTime || "-"],
+    ["Waktu Mulai", formatTransactionDateTime(receiptData.room.startTime)],
+    ["Waktu Selesai", formatTransactionDateTime(receiptData.room.endTime)],
     ["Durasi", `${receiptData.room.durationMinutes} menit`],
     ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
   ];
@@ -8503,8 +8543,8 @@ function createRoomUsageTransactionRowElement(transaction) {
   [
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Room", transaction?.room_name || transaction?.room_id || "-"],
-    ["Mulai", transaction?.start_time || "-"],
-    ["Selesai", transaction?.end_time || "-"],
+    ["Mulai", formatTransactionDateTime(transaction?.start_time)],
+    ["Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", formatDurationMinutes(transaction?.duration_minutes)],
     ["Total Room", formatCurrency(transaction?.room_total)],
     ["F&B", formatCurrency(transaction?.fnb_total)],
@@ -12521,7 +12561,11 @@ function refreshActiveTabData() {
 // LADY COMPANION (LC) INTEGRATION FUNCTIONS
 // ==========================================
 
-async function loadLcs() {
+async function loadLcs(force = false) {
+  if (lcs.length > 0 && !force) {
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     lcs = [
       { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, status: "active", availability: "available", updated_at: "2026-07-23T09:00:00Z" },
@@ -12545,6 +12589,9 @@ async function loadLcs() {
     console.error("Error loading LCs:", error);
   } finally {
     isLoadingLcs = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
   }
 }
 
@@ -12573,6 +12620,9 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
     console.error("Error loading LC work reports:", error);
   } finally {
     isLoadingLcWorkReports = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
   }
 }
 
@@ -12583,6 +12633,88 @@ let isLoadingLcPayroll = false;
 let isProcessingLcPayroll = false;
 let lcPayrollStartDate = "";
 let lcPayrollEndDate = "";
+
+let selectedLcPayrollDetail = null;
+let isLoadingLcPayrollDetail = false;
+let selectedLcForSlip = null;
+
+async function loadLcPayrollDetail(payrollId) {
+  if (!API_BASE_URL.trim()) {
+    selectedLcPayrollDetail = {
+      payroll_id: payrollId,
+      details: [
+        {
+          lc_id: "LC-001",
+          lc_name: "Siska",
+          rate_per_room: 175000,
+          total_sessions: 4,
+          total_earnings: 700000,
+          logs: [
+            { log_id: "LWL-1", session_id: "ROOM-001-SESSION-1", rate: 175000, created_at: "2026-07-24T10:00:00Z" }
+          ]
+        }
+      ]
+    };
+    renderRooms();
+    return;
+  }
+
+  isLoadingLcPayrollDetail = true;
+  renderRooms();
+
+  try {
+    const url = `${API_BASE_URL}?action=getLcPayrollDetails&payroll_id=${payrollId}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.success) {
+      selectedLcPayrollDetail = data;
+    } else {
+      showInlineNotice(data.error || "Gagal memuat rincian payroll.", "error");
+    }
+  } catch (error) {
+    console.error("Error loading LC payroll detail:", error);
+    showInlineNotice("Terjadi kesalahan saat memuat rincian payroll.", "error");
+  } finally {
+    isLoadingLcPayrollDetail = false;
+    renderRooms();
+  }
+}
+
+function downloadPendingPayrollCsv() {
+  if (lcPayrollPendingReports.length === 0) {
+    showInlineNotice("Tidak ada data payroll untuk diunduh.", "error");
+    return;
+  }
+  
+  // CSV headers
+  const headers = ["ID LC", "Nama Panggilan", "Tarif per Sesi", "Total Sesi Pending", "Total Gaji"];
+  
+  // CSV rows
+  const rows = lcPayrollPendingReports.map(rep => [
+    rep.lc_id,
+    rep.lc_name,
+    rep.rate_per_room,
+    rep.total_sessions,
+    rep.total_earnings
+  ]);
+  
+  // Build CSV content
+  const csvContent = [
+    headers.join(","),
+    ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))
+  ].join("\n");
+  
+  // Trigger file download
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `pengajuan_payroll_${lcPayrollStartDate}_sd_${lcPayrollEndDate}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 async function loadLcPayrollData(startDate = "", endDate = "") {
   if (!API_BASE_URL.trim()) {
@@ -12655,12 +12787,12 @@ async function executeProcessLcPayroll() {
 
   try {
     const operator = getLoggedInOperatorName() || "Manager";
-    const response = await fetch(API_BASE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `action=processLcPayroll&start_date=${lcPayrollStartDate}&end_date=${lcPayrollEndDate}&cashier_name=${encodeURIComponent(operator)}`
+    const result = await postApiAction({
+      action: "processLcPayroll",
+      start_date: lcPayrollStartDate,
+      end_date: lcPayrollEndDate,
+      cashier_name: operator
     });
-    const result = await response.json();
     if (result && result.success) {
       alert(result.message || "Payroll berhasil diproses.");
       await loadLcPayrollData();
@@ -12669,7 +12801,7 @@ async function executeProcessLcPayroll() {
     }
   } catch (error) {
     console.error("Error processing LC payroll:", error);
-    alert("Terjadi kesalahan koneksi saat memproses payroll.");
+    alert(error.message || "Terjadi kesalahan koneksi saat memproses payroll.");
   } finally {
     isProcessingLcPayroll = false;
     if (activeDashboardTab === "lc") {
@@ -12741,7 +12873,7 @@ function createLcPanelElement() {
     btn.onclick = () => {
       activeLcSubTab = tab.key;
       if (tab.key === "master") {
-        loadLcs();
+        loadLcs(true);
       } else if (tab.key === "reports") {
         loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
       } else if (tab.key === "payroll") {
@@ -12760,6 +12892,10 @@ function createLcPanelElement() {
     panel.appendChild(createLcReportsSubTabElement());
   } else if (activeLcSubTab === "payroll") {
     panel.appendChild(createLcPayrollSubTabElement());
+  }
+
+  if (selectedLcForSlip) {
+    panel.appendChild(createLcSlipModalOverlay());
   }
 
   if (addLcForm) {
@@ -13235,13 +13371,27 @@ function createLcPayrollSubTabElement() {
   filterBtn.type = "button";
   filterBtn.className = "erp-btn erp-btn-secondary";
   filterBtn.style.padding = "8px 12px";
-  filterBtn.style.alignSelf = "flex-end";
   filterBtn.textContent = "Filter";
   filterBtn.onclick = async () => {
     await loadLcPayrollData(startIn.value, endIn.value);
   };
 
-  dateFilters.append(startCol, endCol, filterBtn);
+  const downloadCsvBtn = document.createElement("button");
+  downloadCsvBtn.type = "button";
+  downloadCsvBtn.className = "erp-btn erp-btn-secondary";
+  downloadCsvBtn.style.padding = "8px 12px";
+  downloadCsvBtn.textContent = "Download CSV Pengajuan";
+  downloadCsvBtn.onclick = () => {
+    downloadPendingPayrollCsv();
+  };
+
+  const buttonGroup = document.createElement("div");
+  buttonGroup.style.display = "flex";
+  buttonGroup.style.gap = "8px";
+  buttonGroup.style.alignSelf = "flex-end";
+  buttonGroup.append(downloadCsvBtn, filterBtn);
+
+  dateFilters.append(startCol, endCol, buttonGroup);
   secHeader.appendChild(dateFilters);
   pendingSection.appendChild(secHeader);
 
@@ -13357,7 +13507,6 @@ function createLcPayrollSubTabElement() {
     histTable.className = "erp-table";
     histTable.style.width = "100%";
     histTable.style.borderCollapse = "collapse";
-
     histTable.innerHTML = `
       <thead>
         <tr>
@@ -13368,28 +13517,286 @@ function createLcPayrollSubTabElement() {
           <th style="text-align: center;">LC Terbayar</th>
           <th>Tanggal Diproses</th>
           <th>Operator</th>
+          <th style="text-align: center;">Aksi</th>
         </tr>
       </thead>
       <tbody>
         ${lcPayrollHistory.map(row => `
           <tr>
             <td><strong>${row.payroll_id}</strong></td>
-            <td>${row.start_date} s.d. ${row.end_date}</td>
+            <td>${formatSimpleDate(row.start_date)} s.d. ${formatSimpleDate(row.end_date)}</td>
             <td><strong>${formatCurrency(row.total_amount)}</strong></td>
             <td style="text-align: center;">${row.total_sessions} Sesi</td>
             <td style="text-align: center;">${row.total_lcs_paid} LC</td>
             <td>${new Date(row.processed_at).toLocaleString("id-ID")}</td>
             <td>${escapeHtml(row.processed_by || "Manager")}</td>
+            <td style="text-align: center;">
+              <button type="button" class="erp-btn erp-btn-secondary btn-detail-payroll" style="padding: 4px 8px; font-size: 12px; border-color: var(--gold);" data-id="${row.payroll_id}">Detail</button>
+            </td>
           </tr>
         `).join("")}
       </tbody>
     `;
+
+    histTable.querySelectorAll(".btn-detail-payroll").forEach(btn => {
+      const payrollId = btn.dataset.id;
+      btn.onclick = () => {
+        loadLcPayrollDetail(payrollId);
+      };
+    });
+
     histTableWrapper.appendChild(histTable);
     historySection.appendChild(histTableWrapper);
   }
 
+  if (isLoadingLcPayrollDetail) {
+    historySection.appendChild(createStateMessage("Memuat rincian payroll..."));
+  } else if (selectedLcPayrollDetail) {
+    historySection.appendChild(createLcPayrollDetailElement());
+  }
+
   container.appendChild(historySection);
   return container;
+}
+
+function createLcPayrollDetailElement() {
+  const detailsContainer = document.createElement("div");
+  detailsContainer.className = "lc-payroll-detail-panel erp-card";
+  detailsContainer.style.padding = "16px";
+  detailsContainer.style.backgroundColor = "var(--surface-raised)";
+  detailsContainer.style.borderRadius = "var(--radius-md)";
+  detailsContainer.style.border = "1px solid var(--gold)";
+  detailsContainer.style.display = "flex";
+  detailsContainer.style.flexDirection = "column";
+  detailsContainer.style.gap = "12px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+
+  const title = document.createElement("h4");
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = `Rincian Pembayaran LC - Payroll ${selectedLcPayrollDetail.payroll_id}`;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.style.padding = "4px 8px";
+  closeBtn.style.fontSize = "12px";
+  closeBtn.textContent = "Tutup Rincian";
+  closeBtn.onclick = () => {
+    selectedLcPayrollDetail = null;
+    renderRooms();
+  };
+
+  header.append(title, closeBtn);
+  detailsContainer.appendChild(header);
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>ID LC</th>
+        <th>Nama Panggilan</th>
+        <th>Tarif Sesi</th>
+        <th style="text-align: center;">Total Sesi Kerja</th>
+        <th>Total Pembayaran Gaji</th>
+        <th style="text-align: center;">Aksi</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${selectedLcPayrollDetail.details.map(rep => `
+        <tr>
+          <td><strong>${rep.lc_id}</strong></td>
+          <td>${escapeHtml(rep.lc_name)}</td>
+          <td>${formatCurrency(rep.rate_per_room)}</td>
+          <td style="text-align: center;">${rep.total_sessions} Sesi</td>
+          <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+          <td style="text-align: center;">
+            <button type="button" class="erp-btn erp-btn-secondary btn-slip-lc" style="padding: 4px 8px; font-size: 12px; border-color: var(--gold);" data-id="${rep.lc_id}">Slip Gaji</button>
+          </td>
+        </tr>
+      `).join("")}
+    </tbody>
+  `;
+
+  table.querySelectorAll(".btn-slip-lc").forEach(btn => {
+    const lcId = btn.dataset.id;
+    const lcData = selectedLcPayrollDetail.details.find(d => d.lc_id === lcId);
+    btn.onclick = () => {
+      selectedLcForSlip = {
+        payroll_id: selectedLcPayrollDetail.payroll_id,
+        ...lcData
+      };
+      renderRooms();
+    };
+  });
+
+  tableWrapper.appendChild(table);
+  detailsContainer.appendChild(tableWrapper);
+
+  return detailsContainer;
+}
+
+function createLcSlipModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const container = document.createElement("div");
+  container.className = "erp-card";
+  container.style.width = "400px";
+  container.style.maxHeight = "90vh";
+  container.style.overflowY = "auto";
+  container.style.padding = "24px";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "16px";
+  container.style.backgroundColor = "var(--surface-raised)";
+  container.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.textAlign = "center";
+  title.style.color = "var(--gold)";
+  title.textContent = "SLIP GAJI LADY COMPANION";
+
+  const content = document.createElement("div");
+  content.className = "thermal-slip-preview";
+  content.style.fontFamily = "monospace";
+  content.style.fontSize = "12px";
+  content.style.backgroundColor = "#fff";
+  content.style.color = "#000";
+  content.style.padding = "16px";
+  content.style.borderRadius = "4px";
+  content.style.border = "1px dashed #aaa";
+  content.style.whiteSpace = "pre-wrap";
+
+  const divider = "--------------------------------";
+  const doubleDivider = "================================";
+
+  const lc = selectedLcForSlip;
+  const lines = [
+    centerText("HAPPY SONG KARAOKE", 32),
+    centerText("SLIP GAJI PARTNER (LC)", 32),
+    divider,
+    padText("ID Payroll", lc.payroll_id, 32),
+    padText("ID LC", lc.lc_id, 32),
+    padText("Nama", lc.lc_name, 32),
+    divider,
+    "Rincian Sesi Kerja:",
+  ];
+
+  (lc.logs || []).forEach((log, index) => {
+    const dateStr = formatTransactionDateTime(log.created_at).split(" - ")[0];
+    lines.push(padText(`${index + 1}. Room: ${log.session_id.split("-")[0]} (${dateStr})`, formatCurrency(log.rate), 32));
+  });
+
+  lines.push(
+    divider,
+    padText("Total Sesi", `${lc.total_sessions} Sesi`, 32),
+    padText("Tarif Sesi", formatCurrency(lc.rate_per_room), 32),
+    doubleDivider,
+    padText("TOTAL GAJI", formatCurrency(lc.total_earnings), 32),
+    doubleDivider,
+    "",
+    centerText("TANDA TERIMA", 32),
+    "",
+    "",
+    centerText("( ______________________ )", 32),
+    centerText(lc.lc_name, 32),
+  );
+
+  content.textContent = lines.join("\n");
+  container.appendChild(title);
+  container.appendChild(content);
+
+  const actionGroup = document.createElement("div");
+  actionGroup.style.display = "flex";
+  actionGroup.style.gap = "8px";
+  actionGroup.style.justifyContent = "flex-end";
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printBtn.style.padding = "8px 16px";
+  printBtn.style.fontWeight = "bold";
+  printBtn.textContent = "Cetak Slip";
+  printBtn.onclick = () => {
+    const printWindow = window.open("", "_blank");
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Cetak Slip Gaji ${lc.lc_name}</title>
+          <style>
+            body {
+              font-family: monospace;
+              font-size: 14px;
+              white-space: pre-wrap;
+              padding: 20px;
+              width: 300px;
+            }
+            @media print {
+              body { padding: 0; margin: 0; width: 58mm; }
+            }
+          </style>
+        </head>
+        <body>${content.textContent}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.style.padding = "8px 16px";
+  closeBtn.textContent = "Tutup";
+  closeBtn.onclick = () => {
+    selectedLcForSlip = null;
+    renderRooms();
+  };
+
+  actionGroup.append(printBtn, closeBtn);
+  container.appendChild(actionGroup);
+  overlay.appendChild(container);
+
+  return overlay;
+}
+
+function centerText(text, width) {
+  const clean = String(text).slice(0, width);
+  const padLeft = Math.floor((width - clean.length) / 2);
+  return " ".repeat(padLeft) + clean;
+}
+
+function padText(left, right, width) {
+  const l = String(left);
+  const r = String(right);
+  const space = width - l.length - r.length;
+  return l + " ".repeat(Math.max(1, space)) + r;
 }
 
 function createAddLcModalOverlay() {
@@ -13519,7 +13926,7 @@ async function executeSaveLcMaster(adminPin) {
     console.log("executeSaveLcMaster: save successful, clearing form and reloading LCs...");
     showInlineNotice("LC berhasil didaftarkan.");
     addLcForm = null;
-    await loadLcs();
+    await loadLcs(true);
     console.log("executeSaveLcMaster: LCs reloaded successfully");
   } catch (error) {
     console.error("executeSaveLcMaster: error occurred", error);
@@ -13662,7 +14069,7 @@ async function executeUpdateLcMaster(adminPin) {
 
     showInlineNotice("Data LC berhasil diperbarui.");
     editLcForm = null;
-    await loadLcs();
+    await loadLcs(true);
   } catch (error) {
     showInlineNotice(error.message || "Gagal memperbarui data LC.", "error");
   } finally {
@@ -13764,7 +14171,7 @@ async function executeDeleteLcMaster(adminPin) {
 
     showInlineNotice("LC berhasil dihapus secara permanen.");
     deleteLcConfirmation = null;
-    await loadLcs();
+    await loadLcs(true);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menghapus LC.", "error");
   } finally {
@@ -14275,6 +14682,31 @@ function createRoomSessionIdempotencyKey(roomId, durationMinutes) {
     Math.random().toString(36).slice(2, 8),
   ].join("-");
 }
+
+// Idempotency key untuk payAndStartSession — di-cache per roomId agar
+// retry dalam satu sesi pembayaran menggunakan key yang SAMA, sehingga
+// server bisa mendeteksi duplikat dan tidak membuat transaksi ganda.
+const _payAndStartIdempotencyKeys = {};
+function createPayAndStartIdempotencyKey(roomId, paymentMethod) {
+  const cacheKey = `${roomId}__${paymentMethod}`;
+  if (!_payAndStartIdempotencyKeys[cacheKey]) {
+    _payAndStartIdempotencyKeys[cacheKey] = [
+      "pay",
+      roomId || "room",
+      paymentMethod || "cash",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 8),
+    ].join("-");
+  }
+  return _payAndStartIdempotencyKeys[cacheKey];
+}
+
+// Hapus cache idempotency setelah pembayaran berhasil atau room reset
+function clearPayAndStartIdempotencyKey(roomId, paymentMethod) {
+  const cacheKey = `${roomId}__${paymentMethod}`;
+  delete _payAndStartIdempotencyKeys[cacheKey];
+}
+
 
 function showExtendSelection(roomId) {
   extendSelectionRoomId = roomId;
@@ -14963,6 +15395,11 @@ async function payAndStartSession(roomId, paymentMethod) {
     showInlineNotice("API belum dikonfigurasi.", "error");
     return;
   }
+
+  if (isActivatingPreparedSession) {
+    return;
+  }
+
   isActivatingPreparedSession = true;
   setActionButtonsDisabled(true);
   renderRooms();
@@ -14976,11 +15413,13 @@ async function payAndStartSession(roomId, paymentMethod) {
         menu_id: item.menu_id,
         quantity: item.quantity
       })),
+      idempotency_key: createPayAndStartIdempotencyKey(roomId, paymentMethod),
     });
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal memproses pembayaran.");
     }
     showInlineNotice(data.message || "Pembayaran berhasil diproses.");
+    clearPayAndStartIdempotencyKey(roomId, paymentMethod); // bersihkan cache key setelah sukses
     prepayCartItems = []; // clear cashier cart on success
     paymentSelectionRoomId = "";
     if (data.transaction) {
@@ -15001,6 +15440,8 @@ async function payAndStartSession(roomId, paymentMethod) {
 
 async function cancelBooking(roomId) {
   if (!API_BASE_URL.trim()) return;
+  if (isCancellingBooking) return;
+  isCancellingBooking = true;
   setActionButtonsDisabled(true);
   try {
     const data = await postApiAction({
@@ -15016,6 +15457,7 @@ async function cancelBooking(roomId) {
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan booking.", "error");
   } finally {
+    isCancellingBooking = false;
     setActionButtonsDisabled(false);
     renderRooms();
   }
@@ -15023,6 +15465,8 @@ async function cancelBooking(roomId) {
 
 async function completeCleaning(roomId) {
   if (!API_BASE_URL.trim()) return;
+  if (isCompletingCleaning) return;
+  isCompletingCleaning = true;
   setActionButtonsDisabled(true);
   try {
     const data = await postApiAction({
@@ -15037,6 +15481,7 @@ async function completeCleaning(roomId) {
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan cleaning.", "error");
   } finally {
+    isCompletingCleaning = false;
     setActionButtonsDisabled(false);
     renderRooms();
   }
@@ -15416,6 +15861,11 @@ async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
     return;
   }
 
+  if (markingTransactionPaidIds.has(transactionId)) {
+    return; // sudah dalam proses mark paid untuk transaksi ini
+  }
+
+  markingTransactionPaidIds.add(transactionId);
   setActionButtonsDisabled(true);
 
   try {
@@ -15441,6 +15891,7 @@ async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
   } catch (error) {
     showInlineNotice(error.message || "Gagal menandai pembayaran lunas.", "error");
   } finally {
+    markingTransactionPaidIds.delete(transactionId);
     setActionButtonsDisabled(false);
   }
 }

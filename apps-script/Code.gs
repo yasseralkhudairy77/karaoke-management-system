@@ -639,6 +639,10 @@ function doGet(e) {
       return jsonResponse(getLcPayrollHistory_());
     }
 
+    if (action === "getLcPayrollDetails") {
+      return jsonResponse(getLcPayrollDetails_(e.parameter.payroll_id));
+    }
+
     if (action === "getPendingLcPayroll") {
       return jsonResponse(getPendingLcPayroll_(
         e.parameter.start_date,
@@ -5544,37 +5548,58 @@ function validateRoomMasterPayload_(payload, isUpdate) {
 
 function saveRoomMaster_(payload) {
   var data = validateRoomMasterPayload_(payload, false);
-  var sheet = ensureRoomsMasterColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var roomId = generateSequentialId_(sheet, headerMap, "room_id", "ROOM");
-  var room = {
-    room_id: roomId,
-    room_name: data.room_name,
-    status: data.status,
-    start_time: "",
-    booked_duration_minutes: "",
-    scheduled_end_time: "",
-    rate_per_hour: data.rate_per_hour,
-    tv_device_id: data.tv_device_id,
-    updated_at: toJakartaIsoString_(new Date()),
-  };
 
-  appendObjectRow_(sheet, room);
-  var savedRoom = getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "room",
-    entity_id: savedRoom.room_id,
-    entity_name: savedRoom.room_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedRoom,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureRoomsMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data room berhasil disimpan.", savedRoom);
+    // Cek duplikasi nama room
+    var existingRooms = readSheetAsObjects_("Rooms");
+    var nameLower = data.room_name.toLowerCase();
+    var duplicateName = existingRooms.some(function(r) {
+      return String(r.room_name || "").trim().toLowerCase() === nameLower;
+    });
+    if (duplicateName) {
+      return masterError_("Nama room \"" + data.room_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var roomId = generateSequentialId_(sheet, headerMap, "room_id", "ROOM");
+    var room = {
+      room_id: roomId,
+      room_name: data.room_name,
+      status: data.status,
+      start_time: "",
+      booked_duration_minutes: "",
+      scheduled_end_time: "",
+      rate_per_hour: data.rate_per_hour,
+      tv_device_id: data.tv_device_id,
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+
+    appendObjectRow_(sheet, room);
+    var savedRoom = getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "room",
+      entity_id: savedRoom.room_id,
+      entity_name: savedRoom.room_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedRoom,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data room berhasil disimpan.", savedRoom);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateRoomMaster_(payload) {
@@ -5675,37 +5700,59 @@ function getMenuMasterRow_(sheet, headerMap, rowNumber) {
 
 function saveMenuMaster_(payload) {
   var data = validateMenuMasterPayload_(payload, false);
-  var sheet = ensureMenuMasterColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var menuId = generateSequentialId_(sheet, headerMap, "menu_id", "MENU");
-  var menu = {
-    menu_id: menuId,
-    menu_name: data.menu_name,
-    category: data.category,
-    price: data.price,
-    status: data.status,
-    updated_at: toJakartaIsoString_(new Date()),
-    stock_tracking: data.stock_tracking,
-    stock_item_id: data.stock_item_id,
-    stock_qty_per_unit: data.stock_qty_per_unit,
-  };
 
-  appendObjectRow_(sheet, menu);
-  var savedMenu = getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "menu",
-    entity_id: savedMenu.menu_id,
-    entity_name: savedMenu.menu_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedMenu,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureMenuMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data menu berhasil disimpan.", savedMenu);
+    // Cek duplikasi nama menu (hanya untuk menu yang masih aktif)
+    var existingMenus = readSheetAsObjects_("MenuMaster");
+    var nameLower = data.menu_name.toLowerCase();
+    var duplicateName = existingMenus.some(function(m) {
+      return String(m.menu_name || "").trim().toLowerCase() === nameLower
+        && String(m.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama menu \"" + data.menu_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var menuId = generateSequentialId_(sheet, headerMap, "menu_id", "MENU");
+    var menu = {
+      menu_id: menuId,
+      menu_name: data.menu_name,
+      category: data.category,
+      price: data.price,
+      status: data.status,
+      updated_at: toJakartaIsoString_(new Date()),
+      stock_tracking: data.stock_tracking,
+      stock_item_id: data.stock_item_id,
+      stock_qty_per_unit: data.stock_qty_per_unit,
+    };
+
+    appendObjectRow_(sheet, menu);
+    var savedMenu = getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "menu",
+      entity_id: savedMenu.menu_id,
+      entity_name: savedMenu.menu_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedMenu,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data menu berhasil disimpan.", savedMenu);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateMenuMaster_(payload) {
@@ -5785,36 +5832,58 @@ function validateInventoryMasterPayload_(payload, isUpdate) {
 
 function saveInventoryMaster_(payload) {
   var data = validateInventoryMasterPayload_(payload, false);
-  var sheet = ensureInventorySheetColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var stockItemId = generateSequentialId_(sheet, headerMap, "stock_item_id", "ITEM");
-  var item = {
-    stock_item_id: stockItemId,
-    stock_item_name: data.stock_item_name,
-    category: data.category,
-    unit: data.unit,
-    stock_qty: 0,
-    min_stock: data.min_stock,
-    status: data.status,
-    updated_at: toJakartaIsoString_(new Date()),
-  };
 
-  appendObjectRow_(sheet, item);
-  var savedItem = buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "inventory",
-    entity_id: savedItem.stock_item_id,
-    entity_name: savedItem.stock_item_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedItem,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureInventorySheetColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data inventory berhasil disimpan.", savedItem);
+    // Cek duplikasi nama item inventory
+    var existingItems = readSheetAsObjects_("Inventory");
+    var nameLower = data.stock_item_name.toLowerCase();
+    var duplicateName = existingItems.some(function(inv) {
+      return String(inv.stock_item_name || "").trim().toLowerCase() === nameLower
+        && String(inv.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama item inventory \"" + data.stock_item_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var stockItemId = generateSequentialId_(sheet, headerMap, "stock_item_id", "ITEM");
+    var item = {
+      stock_item_id: stockItemId,
+      stock_item_name: data.stock_item_name,
+      category: data.category,
+      unit: data.unit,
+      stock_qty: 0,
+      min_stock: data.min_stock,
+      status: data.status,
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+
+    appendObjectRow_(sheet, item);
+    var savedItem = buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "inventory",
+      entity_id: savedItem.stock_item_id,
+      entity_name: savedItem.stock_item_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedItem,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data inventory berhasil disimpan.", savedItem);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateInventoryMaster_(payload) {
@@ -6152,36 +6221,57 @@ function validateLcMasterPayload_(payload, isUpdate) {
 
 function saveLcMaster_(payload) {
   var data = validateLcMasterPayload_(payload, false);
-  var sheet = ensureLcMasterSheet_();
-  var headerMap = getHeaderMap_(sheet);
-  var lcId = generateSequentialId_(sheet, headerMap, "lc_id", "LC");
-  var now = toJakartaIsoString_(new Date());
-  
-  var lc = {
-    lc_id: lcId,
-    lc_name: data.lc_name,
-    rate_per_room: data.rate_per_room,
-    status: data.status,
-    availability: data.availability,
-    updated_at: now,
-  };
 
-  appendObjectRow_(sheet, lc);
-  var savedLc = getLcMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "lc",
-    entity_id: savedLc.lc_id,
-    entity_name: savedLc.lc_name,
-    action_type: "create",
-    old_value_json: "",
-    new_value_json: JSON.stringify(savedLc),
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureLcMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var now = toJakartaIsoString_(new Date());
 
-  return masterSuccessResponse_("Data LC berhasil disimpan.", savedLc);
+    // Cek duplikasi nama LC
+    var existingLcs = readSheetAsObjects_("LcMaster");
+    var nameLower = data.lc_name.toLowerCase();
+    var duplicateName = existingLcs.some(function(lc) {
+      return String(lc.lc_name || "").trim().toLowerCase() === nameLower
+        && String(lc.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama LC \"" + data.lc_name + "\" sudah terdaftar. Gunakan nama lain.");
+    }
+
+    var lcId = generateSequentialId_(sheet, headerMap, "lc_id", "LC");
+    var lc = {
+      lc_id: lcId,
+      lc_name: data.lc_name,
+      rate_per_room: data.rate_per_room,
+      status: data.status,
+      availability: data.availability,
+      updated_at: now,
+    };
+
+    appendObjectRow_(sheet, lc);
+    var savedLc = getLcMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "lc",
+      entity_id: savedLc.lc_id,
+      entity_name: savedLc.lc_name,
+      action_type: "create",
+      old_value_json: "",
+      new_value_json: JSON.stringify(savedLc),
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data LC berhasil disimpan.", savedLc);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getLcMasterRow_(sheet, headerMap, rowNumber) {
@@ -6311,14 +6401,12 @@ function getLcWorkReports_(period, startDate, endDate) {
   var lcs = readSheetAsObjects_("LcMaster");
   
   var range = getOperationalDateRangeForPeriod_(period, startDate, endDate);
-  var startMs = new Date(range.start_date + "T00:00:00").getTime();
-  var endMs = new Date(range.end_date + "T23:59:59").getTime();
   
   var filteredLogs = logs.filter(function(log) {
     var createdTime = log.created_at || log.closed_at || "";
     if (!createdTime) return false;
-    var logMs = new Date(createdTime).getTime();
-    return logMs >= startMs && logMs <= endMs;
+    var logOperationalDate = getOperationalDateString_(createdTime);
+    return matchesOperationalPeriod_(logOperationalDate, range);
   });
 
   var reports = lcs.map(function(lc) {
@@ -6376,6 +6464,53 @@ function getLcPayrollHistory_() {
     ok: true,
     success: true,
     history: history,
+  };
+}
+
+function getLcPayrollDetails_(payrollId) {
+  if (!payrollId) {
+    return { ok: false, success: false, error: "payroll_id wajib diisi." };
+  }
+
+  ensureLcWorkLogsSheet_();
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  
+  var payrollLogs = logs.filter(function(log) {
+    return String(log.payroll_id || "").trim() === String(payrollId).trim();
+  });
+
+  // Grouping per LC untuk summary
+  var lcGroups = {};
+  payrollLogs.forEach(function(log) {
+    var lcId = String(log.lc_id || "").trim();
+    if (!lcId) return;
+
+    if (!lcGroups[lcId]) {
+      lcGroups[lcId] = {
+        lc_id: lcId,
+        lc_name: log.lc_name || ("LC " + lcId),
+        rate_per_room: Number(log.rate) || 175000, // fallback/tarif sesi itu
+        total_sessions: 0,
+        total_earnings: 0,
+        logs: []
+      };
+    }
+    lcGroups[lcId].total_sessions++;
+    lcGroups[lcId].total_earnings += (Number(log.rate) || 0);
+    lcGroups[lcId].logs.push({
+      log_id: log.log_id,
+      session_id: log.session_id,
+      rate: Number(log.rate) || 0,
+      created_at: log.created_at,
+      closed_at: log.closed_at
+    });
+  });
+
+  return {
+    ok: true,
+    success: true,
+    payroll_id: payrollId,
+    details: Object.values(lcGroups)
   };
 }
 
@@ -6491,7 +6626,29 @@ function processLcPayroll_(payload) {
       return { ok: false, error: "Tanggal mulai dan tanggal akhir wajib ditentukan." };
     }
 
+    // Cek duplikasi: apakah periode ini sudah pernah di-payroll?
     ensureLcPayrollHistorySheet_();
+    var existingPayrolls = readSheetAsObjects_("LcPayrollHistory");
+    var duplicatePayroll = null;
+    for (var p = 0; p < existingPayrolls.length; p++) {
+      var prev = existingPayrolls[p];
+      var prevStart = String(prev.start_date || "").trim();
+      var prevEnd = String(prev.end_date || "").trim();
+      if (prevStart === startDate && prevEnd === endDate) {
+        duplicatePayroll = prev;
+        break;
+      }
+    }
+    if (duplicatePayroll) {
+      return {
+        ok: false,
+        error: "Payroll untuk periode " + startDate + " s/d " + endDate +
+          " sudah pernah diproses (ID: " + duplicatePayroll.payroll_id +
+          ", diproses oleh: " + (duplicatePayroll.processed_by || "?") +
+          "). Hubungi manager jika terjadi kesalahan.",
+      };
+    }
+
     var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
     var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
 
@@ -7561,6 +7718,7 @@ function payAndStartSession_(payload) {
   var roomId = String(request.room_id || "").trim();
   var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
   var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var requestIdempotencyKey = String(request.idempotency_key || "").trim();
 
   if (!roomId) {
     return { ok: false, success: false, error: "room_id wajib diisi." };
@@ -7591,6 +7749,24 @@ function payAndStartSession_(payload) {
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
     var status = String(room.status || "").trim().toLowerCase();
 
+    // Idempotency check: jika room sudah paid_waiting_start dan key cocok,
+    // kembalikan sukses tanpa membuat transaksi baru (replay aman)
+    if (requestIdempotencyKey && (status === "paid_waiting_start" || status === "occupied")) {
+      var paidSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active"]);
+      if (
+        paidSession &&
+        String(paidSession.session.pay_idempotency_key || "").trim() === requestIdempotencyKey
+      ) {
+        return {
+          ok: true,
+          success: true,
+          message: "Pembayaran awal sudah pernah diproses.",
+          room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+          idempotent_replay: true,
+        };
+      }
+    }
+
     if (status !== "waiting_payment") {
       return { ok: false, success: false, error: "Room tidak berstatus menunggu pembayaran." };
     }
@@ -7598,6 +7774,7 @@ function payAndStartSession_(payload) {
     var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
     if (!sessionResult) {
       return { ok: false, success: false, error: "Sesi booking tidak ditemukan." };
+
     }
 
     var session = sessionResult.session;
@@ -7681,7 +7858,7 @@ function payAndStartSession_(payload) {
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       start_time: now,
-      end_time: now,
+      end_time: scheduledEndTime,
       duration_minutes: durationMinutes,
       rate_per_hour: ratePerHour,
       room_total: upfrontCharge,
@@ -7702,11 +7879,12 @@ function payAndStartSession_(payload) {
       deductPackageStock_(session.package_id, transactionId, cashierName, now);
     }
 
-    // Update session
+    // Update session — simpan pay_idempotency_key untuk deteksi replay
     setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
       updated_at: now,
       cashier_name: cashierName,
       prepayment_transaction_id: transactionId,
+      pay_idempotency_key: requestIdempotencyKey,
     });
 
     // Update Room
@@ -11999,7 +12177,10 @@ function createLockBusyResponse_(message) {
 }
 
 function generateTransactionId_() {
-  return "TRX-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
+  const prefix = "TRX-";
+  const uuidPart = Utilities.getUuid().slice(0, 8).toUpperCase(); // 8 karakter unik
+  const ts = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmssSSS"); // hingga milidetik
+  return `${prefix}${ts}-${uuidPart}`;
 }
 
 function appendTransaction_(transaction) {
@@ -12007,6 +12188,19 @@ function appendTransaction_(transaction) {
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
     return String(header).trim();
   });
+
+  // Pastikan transaction_id unik; jika duplikat, buat yang baru
+  var idIndex = headers.indexOf('transaction_id');
+  if (idIndex !== -1 && transaction['transaction_id']) {
+    var existingIds = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getValues()
+                       .flat()
+                       .map(String);
+    if (existingIds.includes(transaction['transaction_id'])) {
+      // Ganti dengan ID baru yang unik
+      transaction['transaction_id'] = generateTransactionId_();
+    }
+  }
+
   var rowValues = headers.map(function (header) {
     return transaction[header] !== undefined ? transaction[header] : "";
   });
