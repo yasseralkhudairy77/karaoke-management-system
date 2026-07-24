@@ -5239,22 +5239,21 @@ function createRoomCard(room) {
     actions.append(sessionButton);
   }
 
-  card.append(topLine, meta, actions);
+  const isDurationActive = durationSelectionRoomId === room.room_id && room.status === "available";
+  const isPaymentActive = paymentSelectionRoomId === room.room_id && room.status === "waiting_payment";
+  const isExtendActive = extendSelectionRoomId === room.room_id && room.status === "occupied";
+  const isLcActive = lcSelectionRoomId === room.room_id && room.status === "occupied";
 
-  if (durationSelectionRoomId === room.room_id && room.status === "available") {
+  if (isDurationActive) {
     card.appendChild(createDurationSelectionElement(room));
-  }
-
-  if (paymentSelectionRoomId === room.room_id && room.status === "waiting_payment") {
+  } else if (isPaymentActive) {
     card.appendChild(createPaymentSelectionElement(room));
-  }
-
-  if (extendSelectionRoomId === room.room_id && room.status === "occupied") {
+  } else if (isExtendActive) {
     card.appendChild(createExtendSelectionElement(room));
-  }
-
-  if (lcSelectionRoomId === room.room_id && room.status === "occupied") {
+  } else if (isLcActive) {
     card.appendChild(createSelectLcModalOverlay(room));
+  } else {
+    card.append(topLine, meta, actions);
   }
 
   return card;
@@ -6578,6 +6577,8 @@ function createPaymentSelectionElement(room) {
     promoInput.type = "text";
     promoInput.placeholder = "Masukkan kode...";
     promoInput.style.flex = "1";
+    promoInput.style.minWidth = "0";
+    promoInput.style.width = "100%";
     promoInput.style.padding = "6px";
     promoInput.style.fontSize = "12px";
     promoInput.style.backgroundColor = "var(--surface)";

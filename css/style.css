@@ -6403,6 +6403,10 @@ body::after {
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 8px;
   background: rgba(5, 16, 33, 0.2);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .duration-selection-title {
@@ -6507,6 +6511,10 @@ body::after {
   border: 1px solid rgba(255, 193, 102, 0.45);
   border-radius: 8px;
   background: rgba(74, 42, 0, 0.22);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .extend-selection-title {
@@ -6611,6 +6619,10 @@ body::after {
   border-radius: 8px;
   background: rgba(48, 20, 80, 0.28);
   margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .lc-selection-title {
