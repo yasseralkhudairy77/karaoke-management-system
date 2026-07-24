@@ -114,6 +114,18 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_order_ids",
   "transaction_type",
   "lc_total",
+  "promo_code",
+  "promo_discount",
+];
+var PROMO_MASTER_HEADERS = [
+  "code",
+  "type",
+  "discount_type",
+  "discount_value",
+  "status",
+  "used_in_transaction_id",
+  "used_at",
+  "created_at",
 ];
 var LC_MASTER_HEADERS = [
   "lc_id",
@@ -650,6 +662,14 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getPromos") {
+      return jsonResponse(getPromos_());
+    }
+
+    if (action === "validatePromoCode") {
+      return jsonResponse(validatePromoCode_(e.parameter));
+    }
+
     if (action === "getExpiredRoomRecoveryList") {
       return jsonResponse(getExpiredRoomRecoveryList_(e.parameter));
     }
@@ -727,7 +747,7 @@ function doPost(e) {
     }
 
     if (action === "markTransactionPaid") {
-      return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method));
+      return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
     }
 
     if (action === "saveCashierClosing") {
@@ -869,6 +889,18 @@ function doPost(e) {
 
     if (action === "processLcPayroll") {
       return jsonResponse(processLcPayroll_(payload));
+    }
+
+    if (action === "savePromo") {
+      return jsonResponse(savePromo_(payload));
+    }
+
+    if (action === "updatePromoStatus") {
+      return jsonResponse(updatePromoStatus_(payload));
+    }
+
+    if (action === "deletePromo") {
+      return jsonResponse(deletePromo_(payload));
     }
 
     return jsonResponse({
@@ -5846,7 +5878,7 @@ function saveInventoryMaster_(payload) {
     var existingItems = readSheetAsObjects_("Inventory");
     var nameLower = data.stock_item_name.toLowerCase();
     var duplicateName = existingItems.some(function(inv) {
-      return String(inv.stock_item_name || "").trim().toLowerCase() === nameLower
+      return String(inv.stock_item_name || inv.item_name || "").trim().toLowerCase() === nameLower
         && String(inv.status || "").trim().toLowerCase() !== "deleted";
     });
     if (duplicateName) {
@@ -6182,6 +6214,10 @@ function ensureLcWorkLogsSheet_() {
 
 function ensureLcPayrollHistorySheet_() {
   return ensureSheetWithHeaders_("LcPayrollHistory", LC_PAYROLL_HISTORY_HEADERS);
+}
+
+function ensurePromoMasterSheet_() {
+  return ensureSheetWithHeaders_("PromoMaster", PROMO_MASTER_HEADERS);
 }
 
 function getLcMasterList_() {
@@ -6632,9 +6668,11 @@ function processLcPayroll_(payload) {
     var duplicatePayroll = null;
     for (var p = 0; p < existingPayrolls.length; p++) {
       var prev = existingPayrolls[p];
-      var prevStart = String(prev.start_date || "").trim();
-      var prevEnd = String(prev.end_date || "").trim();
-      if (prevStart === startDate && prevEnd === endDate) {
+      var prevStart = normalizeCompareDate_(prev.start_date);
+      var prevEnd = normalizeCompareDate_(prev.end_date);
+      var targetStart = normalizeCompareDate_(startDate);
+      var targetEnd = normalizeCompareDate_(endDate);
+      if (prevStart === targetStart && prevEnd === targetEnd) {
         duplicatePayroll = prev;
         break;
       }
@@ -7795,6 +7833,24 @@ function payAndStartSession_(payload) {
     }
 
     var now = toJakartaIsoString_(new Date());
+
+    var promoCode = String(request.promo_code || "").trim().toUpperCase();
+    var promoDiscount = 0;
+    var appliedPromo = null;
+
+    if (promoCode) {
+      var promoRes = validatePromoCode_({ code: promoCode, room_total: upfrontCharge });
+      if (!promoRes.ok || !promoRes.success) {
+        return { ok: false, success: false, error: promoRes.error || "Gagal menerapkan kode promo." };
+      }
+      promoDiscount = promoRes.discount;
+      appliedPromo = promoRes;
+      
+      upfrontCharge = upfrontCharge - promoDiscount;
+      if (upfrontCharge < 0) {
+        upfrontCharge = 0;
+      }
+    }
     
     var lcFeeTotal = 0;
     var lcIds = String(session.lc_ids || "").trim();
@@ -7871,8 +7927,24 @@ function payAndStartSession_(payload) {
       cashier_name: cashierName,
       created_at: now,
       billing_basis: "upfront_prepay",
+      promo_code: promoCode,
+      promo_discount: promoDiscount
     };
     appendTransaction_(transaction);
+
+    // Mark voucher as used in database
+    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+      var promoSheet = ensurePromoMasterSheet_();
+      var promoHeaderMap = getHeaderMap_(promoSheet);
+      var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", promoCode);
+      if (promoRowNum) {
+        setRowValues_(promoSheet, promoHeaderMap, promoRowNum, {
+          used_in_transaction_id: transactionId,
+          used_at: now,
+          status: "inactive"
+        });
+      }
+    }
 
     // Deduct stock for package F&B
     if (session.booking_mode === "package" && session.package_id) {
@@ -8824,7 +8896,7 @@ function assignSessionLcs_(payload) {
   }
 }
 
-function markTransactionPaid_(transactionId, paymentMethod) {
+function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
   if (!transactionId) {
     return {
       ok: false,
@@ -8875,8 +8947,62 @@ function markTransactionPaid_(transactionId, paymentMethod) {
       };
     }
 
+    var roomTotal = Number(transaction.room_total) || 0;
+    var fnbTotal = Number(transaction.fnb_total) || 0;
+    var lcTotal = Number(transaction.lc_total) || 0;
+
+    var prCode = String(promoCode || "").trim().toUpperCase();
+    var promoDiscount = 0;
+    var appliedPromo = null;
+
+    if (prCode) {
+      var promoRes = validatePromoCode_({ code: prCode, room_total: roomTotal });
+      if (!promoRes.ok || !promoRes.success) {
+        return { ok: false, error: promoRes.error || "Gagal menerapkan kode promo." };
+      }
+      promoDiscount = promoRes.discount;
+      appliedPromo = promoRes;
+
+      roomTotal = roomTotal - promoDiscount;
+      if (roomTotal < 0) {
+        roomTotal = 0;
+      }
+    }
+
+    var grandTotal = roomTotal + fnbTotal + lcTotal;
+
     sheet.getRange(rowNumber, headerMap.payment_method).setValue(paymentMethod);
     sheet.getRange(rowNumber, headerMap.payment_status).setValue("paid");
+
+    if (prCode) {
+      if (headerMap.room_total) {
+        sheet.getRange(rowNumber, headerMap.room_total).setValue(roomTotal);
+      }
+      if (headerMap.grand_total) {
+        sheet.getRange(rowNumber, headerMap.grand_total).setValue(grandTotal);
+      }
+      if (headerMap.promo_code) {
+        sheet.getRange(rowNumber, headerMap.promo_code).setValue(prCode);
+      }
+      if (headerMap.promo_discount) {
+        sheet.getRange(rowNumber, headerMap.promo_discount).setValue(promoDiscount);
+      }
+    }
+
+    // Tandai voucher terpakai
+    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+      var promoSheet = ensurePromoMasterSheet_();
+      var promoHeaderMap = getHeaderMap_(promoSheet);
+      var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", prCode);
+      if (promoRowNum) {
+        var now = toJakartaIsoString_(new Date());
+        setRowValues_(promoSheet, promoHeaderMap, promoRowNum, {
+          used_in_transaction_id: transactionId,
+          used_at: now,
+          status: "inactive"
+        });
+      }
+    }
 
     return {
       ok: true,
@@ -12501,4 +12627,194 @@ function syncPrepaidFnbOrdersStartTime_(roomId, startTime) {
       sheet.getRange(rowRowNum, headerMap.updated_at).setValue(startTime);
     }
   });
+}
+
+function getPromos_() {
+  ensurePromoMasterSheet_();
+  var promos = readSheetAsObjects_("PromoMaster");
+  return {
+    ok: true,
+    success: true,
+    promos: promos
+  };
+}
+
+function savePromo_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var type = String(payload.type || "promo").trim().toLowerCase(); // "promo" atau "voucher"
+  var discountType = String(payload.discount_type || "percentage").trim().toLowerCase(); // "percentage" atau "nominal"
+  var discountValue = Number(payload.discount_value) || 0;
+  
+  if (!code) {
+    return { ok: false, success: false, error: "Kode promosi wajib diisi." };
+  }
+  if (discountValue <= 0) {
+    return { ok: false, success: false, error: "Nilai potongan diskon wajib lebih dari 0." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+
+  try {
+    var sheet = ensurePromoMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    
+    // Cek duplikasi kode
+    var existing = readSheetAsObjects_("PromoMaster");
+    var isDuplicate = existing.some(function(p) {
+      return String(p.code || "").trim().toUpperCase() === code;
+    });
+    if (isDuplicate) {
+      return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" sudah terdaftar." };
+    }
+
+    var promo = {
+      code: code,
+      type: type,
+      discount_type: discountType,
+      discount_value: discountValue,
+      status: "active",
+      used_in_transaction_id: "",
+      used_at: "",
+      created_at: toJakartaIsoString_(new Date())
+    };
+
+    appendObjectRow_(sheet, promo);
+    return {
+      ok: true,
+      success: true,
+      message: "Kode promosi berhasil ditambahkan.",
+      promo: promo
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updatePromoStatus_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var status = String(payload.status || "active").trim().toLowerCase(); // "active" atau "inactive"
+  
+  if (!code) {
+    return { ok: false, success: false, error: "Kode wajib ditentukan." };
+  }
+
+  var sheet = ensurePromoMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "code", code);
+  
+  if (!rowNumber) {
+    return { ok: false, success: false, error: "Kode promosi tidak ditemukan." };
+  }
+
+  sheet.getRange(rowNumber, headerMap.status).setValue(status);
+  return {
+    ok: true,
+    success: true,
+    message: "Status promo berhasil diperbarui."
+  };
+}
+
+function deletePromo_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  if (!code) {
+    return { ok: false, success: false, error: "Kode wajib ditentukan." };
+  }
+
+  var sheet = ensurePromoMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "code", code);
+  
+  if (!rowNumber) {
+    return { ok: false, success: false, error: "Kode promosi tidak ditemukan." };
+  }
+
+  sheet.deleteRow(rowNumber);
+  return {
+    ok: true,
+    success: true,
+    message: "Kode promosi berhasil dihapus permanen."
+  };
+}
+
+function validatePromoCode_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var roomTotal = Number(payload.room_total) || 0;
+
+  if (!code) {
+    return { ok: false, success: false, error: "Kode promo/voucher wajib diisi." };
+  }
+
+  ensurePromoMasterSheet_();
+  var promos = readSheetAsObjects_("PromoMaster");
+  var foundPromo = null;
+  
+  for (var i = 0; i < promos.length; i++) {
+    if (String(promos[i].code || "").trim().toUpperCase() === code) {
+      foundPromo = promos[i];
+      break;
+    }
+  }
+
+  if (!foundPromo) {
+    return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" tidak terdaftar." };
+  }
+
+  if (String(foundPromo.status || "").trim().toLowerCase() !== "active") {
+    return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" sedang dinonaktifkan." };
+  }
+
+  // Cek jika tipe voucher sekali pakai dan sudah terpakai
+  if (String(foundPromo.type || "").trim().toLowerCase() === "voucher") {
+    if (String(foundPromo.used_in_transaction_id || "").trim() !== "") {
+      return { ok: false, success: false, error: "Voucher \"" + code + "\" sudah digunakan di transaksi " + foundPromo.used_in_transaction_id };
+    }
+  }
+
+  // Hitung diskon
+  var discount = 0;
+  var val = Number(foundPromo.discount_value) || 0;
+  
+  if (String(foundPromo.discount_type || "").trim().toLowerCase() === "percentage") {
+    discount = Math.ceil((val / 100) * roomTotal);
+  } else {
+    discount = val;
+  }
+
+  // Batasi agar diskon tidak melebihi total sewa room
+  if (discount > roomTotal) {
+    discount = roomTotal;
+  }
+
+  return {
+    ok: true,
+    success: true,
+    code: foundPromo.code,
+    type: foundPromo.type,
+    discount_type: foundPromo.discount_type,
+    discount_value: foundPromo.discount_value,
+    discount: discount
+  };
+}
+
+function normalizeCompareDate_(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    var y = val.getFullYear();
+    var m = String(val.getMonth() + 1);
+    if (m.length < 2) m = "0" + m;
+    var d = String(val.getDate());
+    if (d.length < 2) d = "0" + d;
+    return y + "-" + m + "-" + d;
+  }
+  var clean = String(val).trim();
+  if (clean.indexOf("T") !== -1) {
+    return clean.split("T")[0];
+  }
+  if (clean.indexOf(" ") !== -1) {
+    return clean.split(" ")[0];
+  }
+  return clean;
 }

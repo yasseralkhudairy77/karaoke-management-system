@@ -26,6 +26,7 @@ const DASHBOARD_TABS = [
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
   { key: "audit", label: "Audit" },
+  { key: "promosi", label: "Promosi" },
   { key: "settings", label: "Pengaturan" },
 ];
 const ROLE_ALIASES = {
@@ -39,8 +40,8 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "settings"],
-  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "settings"],
+  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
   cashier: ["rooms", "fnb", "lc", "reports", "transactions"],
   receptionist: ["rooms"],
 };
@@ -4352,7 +4353,158 @@ function createPaymentControlElement(transaction) {
   button.textContent = "Tandai Lunas";
 
   control.append(select, button);
-  payment.append(label, control);
+
+  // Promo / Voucher Input Group
+  const promoContainer = document.createElement("div");
+  promoContainer.style.display = "flex";
+  promoContainer.style.flexDirection = "column";
+  promoContainer.style.gap = "6px";
+  promoContainer.style.marginTop = "12px";
+  promoContainer.style.marginBottom = "12px";
+  promoContainer.style.padding = "8px";
+  promoContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  promoContainer.style.border = "1px solid var(--border)";
+  promoContainer.style.borderRadius = "6px";
+
+  const promoLabel = document.createElement("span");
+  promoLabel.style.fontSize = "12px";
+  promoLabel.style.color = "var(--muted)";
+  promoLabel.textContent = "Kode Promo / Voucher (Opsional):";
+
+  const promoInputRow = document.createElement("div");
+  promoInputRow.style.display = "flex";
+  promoInputRow.style.gap = "8px";
+
+  const promoInput = document.createElement("input");
+  promoInput.type = "text";
+  promoInput.className = "billing-payment-promo-input";
+  promoInput.placeholder = "Masukkan kode...";
+  promoInput.style.flex = "1";
+  promoInput.style.padding = "6px";
+  promoInput.style.fontSize = "12px";
+  promoInput.style.backgroundColor = "var(--surface)";
+  promoInput.style.color = "var(--text)";
+  promoInput.style.border = "1px solid var(--border)";
+  promoInput.style.borderRadius = "4px";
+  promoInput.oninput = (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+  };
+
+  const promoBtn = document.createElement("button");
+  promoBtn.type = "button";
+  promoBtn.className = "erp-btn erp-btn-secondary";
+  promoBtn.style.padding = "6px 12px";
+  promoBtn.style.fontSize = "12px";
+  promoBtn.textContent = "Terapkan";
+
+  const promoNotice = document.createElement("div");
+  promoNotice.style.fontSize = "11px";
+  promoNotice.style.marginTop = "4px";
+  promoNotice.style.display = "none";
+
+  let appliedPromoCode = "";
+  let appliedDiscountVal = 0;
+
+  const roomTotal = Number(transaction?.room_total || 0);
+  const fnbTotal = Number(transaction?.fnb_total || 0);
+  const lcTotal = Number(transaction?.lc_total || 0);
+
+  promoBtn.onclick = async () => {
+    const code = promoInput.value.trim().toUpperCase();
+    if (!code) {
+      appliedPromoCode = "";
+      appliedDiscountVal = 0;
+      promoInput.removeAttribute("data-applied-promo-code");
+      promoNotice.style.color = "var(--muted)";
+      promoNotice.textContent = "Kode dikosongkan.";
+      promoNotice.style.display = "block";
+      updateCheckoutTotals();
+      return;
+    }
+
+    promoBtn.disabled = true;
+    promoBtn.textContent = "⌛ Check...";
+
+    try {
+      if (!API_BASE_URL.trim()) {
+        if (code === "MERDEKA50") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.ceil(0.5 * roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+        } else if (code === "VCH100K") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.min(100000, roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
+        } else {
+          appliedPromoCode = "";
+          appliedDiscountVal = 0;
+          promoNotice.style.color = "var(--error)";
+          promoNotice.textContent = `❌ Kode promo "${code}" tidak valid.`;
+        }
+        
+        if (appliedPromoCode) {
+          promoInput.setAttribute("data-applied-promo-code", appliedPromoCode);
+        } else {
+          promoInput.removeAttribute("data-applied-promo-code");
+        }
+        
+        promoNotice.style.display = "block";
+        updateCheckoutTotals();
+        return;
+      }
+
+      const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomTotal}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.success) {
+        appliedPromoCode = data.code;
+        appliedDiscountVal = data.discount;
+        promoInput.setAttribute("data-applied-promo-code", appliedPromoCode);
+        promoNotice.style.color = "var(--success)";
+        promoNotice.innerHTML = `✅ Terpasang: Potongan sewa room <strong>${formatCurrency(data.discount)}</strong>`;
+        promoNotice.style.display = "block";
+      } else {
+        appliedPromoCode = "";
+        appliedDiscountVal = 0;
+        promoInput.removeAttribute("data-applied-promo-code");
+        promoNotice.style.color = "var(--error)";
+        promoNotice.textContent = `❌ ${data.error || "Kode tidak valid"}`;
+        promoNotice.style.display = "block";
+      }
+    } catch (error) {
+      console.error(error);
+      promoNotice.style.color = "var(--error)";
+      promoNotice.textContent = "❌ Gagal memvalidasi kode.";
+      promoNotice.style.display = "block";
+    } finally {
+      promoBtn.disabled = false;
+      promoBtn.textContent = "Terapkan";
+      updateCheckoutTotals();
+    }
+  };
+
+  function updateCheckoutTotals() {
+    const discountedRoomTotal = Math.max(0, roomTotal - appliedDiscountVal);
+    const newGrandTotal = discountedRoomTotal + fnbTotal + lcTotal;
+
+    const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
+    if (breakdownEl) {
+      const rows = breakdownEl.children;
+      if (rows && rows[0]) {
+        rows[0].querySelector("p:last-child").textContent = formatCurrency(discountedRoomTotal);
+      }
+      if (rows && rows[rows.length - 1]) {
+        rows[rows.length - 1].querySelector("p:last-child").textContent = formatCurrency(newGrandTotal);
+      }
+    }
+  }
+
+  promoInputRow.append(promoInput, promoBtn);
+  promoContainer.append(promoLabel, promoInputRow, promoNotice);
+
+  payment.append(label, control, promoContainer);
 
   return payment;
 }
@@ -4482,9 +4634,17 @@ function createBillingBreakdownElement(transaction) {
   const breakdown = document.createElement("div");
   breakdown.className = "billing-breakdown";
 
+  const roomTotal = Number(transaction?.room_total) || 0;
+  const promoDiscount = Number(transaction?.promo_discount) || 0;
+  const originalRoomTotal = roomTotal + promoDiscount;
+
   const rows = [
-    ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
+    ["Biaya Room", formatCurrency(originalRoomTotal)],
   ];
+
+  if (promoDiscount > 0) {
+    rows.push([`Diskon (${transaction.promo_code})`, `-${formatCurrency(promoDiscount)}`]);
+  }
 
   const lcTotal = Number(transaction?.lc_total || 0);
   if (lcTotal > 0) {
@@ -6346,23 +6506,33 @@ function createPaymentSelectionElement(room) {
   summaryTitle.textContent = "Ringkasan Pembayaran Awal:";
   billingSummary.appendChild(summaryTitle);
 
-  const lines = [
-    ["Sewa Room", roomPrepayCharge],
-    ["Biaya LC", lcFeeTotal],
-    ["Pesanan F&B", fnbTotal]
-  ];
+  const roomRow = document.createElement("div");
+  roomRow.style.display = "flex";
+  roomRow.style.justifyContent = "space-between";
+  roomRow.style.fontSize = "0.85rem";
+  roomRow.style.color = "rgba(255, 255, 255, 0.8)";
+  roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(roomPrepayCharge)}</span>`;
+  billingSummary.appendChild(roomRow);
 
-  lines.forEach(([lbl, val]) => {
-    if (val > 0) {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.justifyContent = "space-between";
-      row.style.fontSize = "0.85rem";
-      row.style.color = "rgba(255, 255, 255, 0.8)";
-      row.innerHTML = `<span>${lbl}:</span> <span>${formatCurrency(val)}</span>`;
-      billingSummary.appendChild(row);
-    }
-  });
+  const lcRow = document.createElement("div");
+  lcRow.style.display = "flex";
+  lcRow.style.justifyContent = "space-between";
+  lcRow.style.fontSize = "0.85rem";
+  lcRow.style.color = "rgba(255, 255, 255, 0.8)";
+  lcRow.innerHTML = `<span>Biaya LC:</span> <span>${formatCurrency(lcFeeTotal)}</span>`;
+  if (lcFeeTotal > 0) {
+    billingSummary.appendChild(lcRow);
+  }
+
+  const fnbRow = document.createElement("div");
+  fnbRow.style.display = "flex";
+  fnbRow.style.justifyContent = "space-between";
+  fnbRow.style.fontSize = "0.85rem";
+  fnbRow.style.color = "rgba(255, 255, 255, 0.8)";
+  fnbRow.innerHTML = `<span>Pesanan F&B:</span> <span>${formatCurrency(fnbTotal)}</span>`;
+  if (fnbTotal > 0) {
+    billingSummary.appendChild(fnbRow);
+  }
 
   const sumDivider = document.createElement("div");
   sumDivider.style.height = "1px";
@@ -6378,6 +6548,135 @@ function createPaymentSelectionElement(room) {
   grandTotalRow.style.color = "#ffffff";
   grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(grandTotal)}</span>`;
   billingSummary.appendChild(grandTotalRow);
+
+  // Promo / Voucher Input Group (Hanya Kasir)
+  let appliedPromoCode = "";
+  let appliedDiscountVal = 0;
+
+  if (role !== "receptionist") {
+    const promoGroup = document.createElement("div");
+    promoGroup.style.display = "flex";
+    promoGroup.style.flexDirection = "column";
+    promoGroup.style.gap = "6px";
+    promoGroup.style.marginTop = "12px";
+    promoGroup.style.marginBottom = "12px";
+    promoGroup.style.padding = "8px";
+    promoGroup.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+    promoGroup.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+    promoGroup.style.borderRadius = "6px";
+
+    const promoLabel = document.createElement("span");
+    promoLabel.style.fontSize = "12px";
+    promoLabel.style.color = "var(--muted)";
+    promoLabel.textContent = "Kode Promo / Voucher (Opsional):";
+
+    const promoInputRow = document.createElement("div");
+    promoInputRow.style.display = "flex";
+    promoInputRow.style.gap = "8px";
+
+    const promoInput = document.createElement("input");
+    promoInput.type = "text";
+    promoInput.placeholder = "Masukkan kode...";
+    promoInput.style.flex = "1";
+    promoInput.style.padding = "6px";
+    promoInput.style.fontSize = "12px";
+    promoInput.style.backgroundColor = "var(--surface)";
+    promoInput.style.color = "var(--text)";
+    promoInput.style.border = "1px solid var(--border)";
+    promoInput.style.borderRadius = "4px";
+    promoInput.oninput = (e) => {
+      e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+    };
+
+    const promoBtn = document.createElement("button");
+    promoBtn.type = "button";
+    promoBtn.className = "erp-btn erp-btn-secondary";
+    promoBtn.style.padding = "6px 12px";
+    promoBtn.style.fontSize = "12px";
+    promoBtn.textContent = "Terapkan";
+
+    const promoNotice = document.createElement("div");
+    promoNotice.style.fontSize = "11px";
+    promoNotice.style.marginTop = "4px";
+    promoNotice.style.display = "none";
+
+    promoBtn.onclick = async () => {
+      const code = promoInput.value.trim().toUpperCase();
+      if (!code) {
+        appliedPromoCode = "";
+        appliedDiscountVal = 0;
+        promoNotice.style.color = "var(--muted)";
+        promoNotice.textContent = "Kode dikosongkan.";
+        promoNotice.style.display = "block";
+        updatePrepayTotals();
+        return;
+      }
+
+      promoBtn.disabled = true;
+      promoBtn.textContent = "⌛ Check...";
+
+      try {
+        if (!API_BASE_URL.trim()) {
+          if (code === "MERDEKA50") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.ceil(0.5 * roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+          } else if (code === "VCH100K") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.min(100000, roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
+          } else {
+            appliedPromoCode = "";
+            appliedDiscountVal = 0;
+            promoNotice.style.color = "var(--error)";
+            promoNotice.textContent = `❌ Kode promo "${code}" tidak valid.`;
+          }
+          promoNotice.style.display = "block";
+          updatePrepayTotals();
+          return;
+        }
+
+        const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomPrepayCharge}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data && data.success) {
+          appliedPromoCode = data.code;
+          appliedDiscountVal = data.discount;
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang: Potongan sewa room <strong>${formatCurrency(data.discount)}</strong>`;
+          promoNotice.style.display = "block";
+        } else {
+          appliedPromoCode = "";
+          appliedDiscountVal = 0;
+          promoNotice.style.color = "var(--error)";
+          promoNotice.textContent = `❌ ${data.error || "Kode tidak valid"}`;
+          promoNotice.style.display = "block";
+        }
+      } catch (error) {
+        console.error(error);
+        promoNotice.style.color = "var(--error)";
+        promoNotice.textContent = "❌ Gagal memvalidasi kode.";
+        promoNotice.style.display = "block";
+      } finally {
+        promoBtn.disabled = false;
+        promoBtn.textContent = "Terapkan";
+        updatePrepayTotals();
+      }
+    };
+
+    function updatePrepayTotals() {
+      const discountedRoomTotal = Math.max(0, roomPrepayCharge - appliedDiscountVal);
+      const newGrandTotal = discountedRoomTotal + lcFeeTotal + fnbTotal;
+      roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(discountedRoomTotal)}</span>`;
+      grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(newGrandTotal)}</span>`;
+    }
+
+    promoInputRow.append(promoInput, promoBtn);
+    promoGroup.append(promoLabel, promoInputRow, promoNotice);
+    billingSummary.appendChild(promoGroup);
+  }
 
   panel.appendChild(billingSummary);
   
@@ -6424,7 +6723,7 @@ function createPaymentSelectionElement(room) {
       startButton.textContent = "Terima Pembayaran & Mulai";
       startButton.onclick = async () => {
         const method = paymentSelect.value;
-        await payAndStartSession(room.room_id, method);
+        await payAndStartSession(room.room_id, method, appliedPromoCode);
       };
     }
     panel.appendChild(startButton);
@@ -12551,10 +12850,423 @@ function refreshActiveTabData() {
       } else if (activeLcSubTab === "payroll") {
         loadLcPayrollData();
       }
+    case "promosi":
+      loadPromos();
       break;
     default:
       break;
   }
+}
+
+// ==========================================
+// PROMOSI & VOUCHER FUNCTIONS
+// ==========================================
+let promosList = [];
+let isLoadingPromos = false;
+let isSavingPromo = false;
+let showAddPromoModal = false;
+
+async function loadPromos() {
+  if (!API_BASE_URL.trim()) {
+    promosList = [
+      { code: "MERDEKA50", type: "promo", discount_type: "percentage", discount_value: 50, status: "active", created_at: "2026-07-24T00:00:00Z" },
+      { code: "VCH100K", type: "voucher", discount_type: "nominal", discount_value: 100000, status: "active", created_at: "2026-07-24T00:00:00Z", used_in_transaction_id: "", used_at: "" }
+    ];
+    return;
+  }
+
+  isLoadingPromos = true;
+  if (activeDashboardTab === "promosi") {
+    renderRooms();
+  }
+
+  try {
+    const res = await fetch(`${API_BASE_URL}?action=getPromos`);
+    const data = await res.json();
+    if (data && data.success) {
+      promosList = data.promos || [];
+    }
+  } catch (error) {
+    console.error("Error loading promos:", error);
+  } finally {
+    isLoadingPromos = false;
+    if (activeDashboardTab === "promosi") {
+      renderRooms();
+    }
+  }
+}
+
+async function executeSavePromo(promoData) {
+  if (!API_BASE_URL.trim()) {
+    promosList.push({
+      ...promoData,
+      status: "active",
+      used_in_transaction_id: "",
+      used_at: "",
+      created_at: new Date().toISOString()
+    });
+    showAddPromoModal = false;
+    alert("Promo berhasil ditambahkan (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  isSavingPromo = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "savePromo",
+      ...promoData
+    });
+    if (data && data.success) {
+      alert(data.message || "Kode promosi berhasil disimpan.");
+      showAddPromoModal = false;
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal menyimpan kode promosi.");
+    }
+  } catch (error) {
+    console.error("Error saving promo:", error);
+    alert(error.message || "Terjadi kesalahan koneksi saat menyimpan.");
+  } finally {
+    isSavingPromo = false;
+    renderRooms();
+  }
+}
+
+async function executeDeletePromo(code) {
+  if (!confirm(`Apakah Anda yakin ingin menghapus kode "${code}" secara permanen?`)) {
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    promosList = promosList.filter(p => p.code !== code);
+    alert("Promo berhasil dihapus (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  try {
+    const data = await postApiAction({
+      action: "deletePromo",
+      code: code
+    });
+    if (data && data.success) {
+      alert(data.message || "Kode promosi berhasil dihapus.");
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal menghapus kode.");
+    }
+  } catch (error) {
+    console.error("Error deleting promo:", error);
+    alert(error.message || "Terjadi kesalahan koneksi saat menghapus.");
+  }
+}
+
+async function togglePromoStatus(code, currentStatus) {
+  const newStatus = currentStatus === "active" ? "inactive" : "active";
+
+  if (!API_BASE_URL.trim()) {
+    const promo = promosList.find(p => p.code === code);
+    if (promo) {
+      promo.status = newStatus;
+    }
+    renderRooms();
+    return;
+  }
+
+  try {
+    const data = await postApiAction({
+      action: "updatePromoStatus",
+      code: code,
+      status: newStatus
+    });
+    if (data && data.success) {
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal mengubah status.");
+    }
+  } catch (error) {
+    console.error("Error updating status:", error);
+    alert(error.message || "Terjadi kesalahan koneksi.");
+  }
+}
+
+function createPromosiPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "promosi-panel erp-card";
+  panel.style.padding = "24px";
+  panel.style.display = "flex";
+  panel.style.flexDirection = "column";
+  panel.style.gap = "20px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+
+  const title = document.createElement("h2");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = "Manajemen Promosi & Voucher";
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  addBtn.style.padding = "10px 20px";
+  addBtn.style.fontWeight = "bold";
+  addBtn.textContent = "+ Buat Promo / Voucher";
+  addBtn.onclick = () => {
+    showAddPromoModal = true;
+    renderRooms();
+  };
+
+  header.append(title, addBtn);
+  panel.appendChild(header);
+
+  if (isLoadingPromos) {
+    panel.appendChild(createStateMessage("Memuat data promosi..."));
+  } else if (promosList.length === 0) {
+    panel.appendChild(createStateMessage("Belum ada kode promo atau voucher yang terdaftar.", "info"));
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "table-responsive";
+
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Kode Promo</th>
+          <th>Tipe</th>
+          <th>Tipe Diskon</th>
+          <th>Nilai Potongan</th>
+          <th>Status</th>
+          <th>Penggunaan</th>
+          <th style="text-align: center;">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${promosList.map(row => {
+          const typeLabel = row.type === "voucher" ? "Voucher (Sekali Pakai)" : "Promo (Berkali-kali)";
+          const discTypeLabel = row.discount_type === "percentage" ? "Persentase (%)" : "Potongan Rupiah (Nominal)";
+          const discValLabel = row.discount_type === "percentage" ? `${row.discount_value}%` : formatCurrency(row.discount_value);
+          const statusBadge = row.status === "active"
+            ? `<span class="badge badge-success" style="background-color: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Aktif</span>`
+            : `<span class="badge badge-error" style="background-color: var(--error); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Tidak Aktif</span>`;
+          
+          let usageInfo = "-";
+          if (row.type === "voucher") {
+            if (row.used_in_transaction_id) {
+              usageInfo = `<span style="color: var(--muted); font-size:11px;">Dipakai di ${row.used_in_transaction_id}<br>${formatSimpleDate(row.used_at)}</span>`;
+            } else {
+              usageInfo = `<span class="badge badge-info" style="border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px; font-size:10px;">Belum Terpakai</span>`;
+            }
+          }
+
+          return `
+            <tr>
+              <td><strong>${escapeHtml(row.code)}</strong></td>
+              <td>${typeLabel}</td>
+              <td>${discTypeLabel}</td>
+              <td><strong>${discValLabel}</strong></td>
+              <td>${statusBadge}</td>
+              <td>${usageInfo}</td>
+              <td style="text-align: center; white-space: nowrap; gap: 6px;">
+                <button type="button" class="erp-btn erp-btn-secondary btn-toggle-status" style="padding: 4px 8px; font-size: 12px; margin-right: 6px;" data-code="${row.code}" data-status="${row.status}">
+                  ${row.status === "active" ? "Nonaktifkan" : "Aktifkan"}
+                </button>
+                <button type="button" class="erp-btn erp-btn-secondary btn-delete-promo" style="padding: 4px 8px; font-size: 12px; border-color: var(--error); color: var(--error);" data-code="${row.code}">
+                  Hapus
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    `;
+
+    table.querySelectorAll(".btn-toggle-status").forEach(btn => {
+      btn.onclick = () => {
+        togglePromoStatus(btn.dataset.code, btn.dataset.status);
+      };
+    });
+
+    table.querySelectorAll(".btn-delete-promo").forEach(btn => {
+      btn.onclick = () => {
+        executeDeletePromo(btn.dataset.code);
+      };
+    });
+
+    tableWrapper.appendChild(table);
+    panel.appendChild(tableWrapper);
+  }
+
+  if (showAddPromoModal) {
+    panel.appendChild(createAddPromoModalOverlay());
+  }
+
+  return panel;
+}
+
+function createAddPromoModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const formCard = document.createElement("form");
+  formCard.className = "erp-card";
+  formCard.style.width = "400px";
+  formCard.style.padding = "24px";
+  formCard.style.display = "flex";
+  formCard.style.flexDirection = "column";
+  formCard.style.gap = "16px";
+  formCard.style.backgroundColor = "var(--surface-raised)";
+  formCard.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = "Buat Kode Promo / Voucher";
+
+  const codeGroup = document.createElement("div");
+  codeGroup.style.display = "flex";
+  codeGroup.style.flexDirection = "column";
+  codeGroup.style.gap = "6px";
+  const codeLabel = document.createElement("label");
+  codeLabel.textContent = "Kode Promo (Kapital, tanpa spasi):";
+  const codeInput = document.createElement("input");
+  codeInput.type = "text";
+  codeInput.placeholder = "Contoh: MERDEKA50";
+  codeInput.required = true;
+  codeInput.style.padding = "8px";
+  codeInput.style.backgroundColor = "var(--surface)";
+  codeInput.style.color = "var(--text)";
+  codeInput.style.border = "1px solid var(--border)";
+  codeInput.style.borderRadius = "4px";
+  codeInput.oninput = (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+  };
+  codeGroup.append(codeLabel, codeInput);
+
+  const typeGroup = document.createElement("div");
+  typeGroup.style.display = "flex";
+  typeGroup.style.flexDirection = "column";
+  typeGroup.style.gap = "6px";
+  const typeLabel = document.createElement("label");
+  typeLabel.textContent = "Tipe Penggunaan:";
+  const typeSelect = document.createElement("select");
+  typeSelect.style.padding = "8px";
+  typeSelect.style.backgroundColor = "var(--surface)";
+  typeSelect.style.color = "var(--text)";
+  typeSelect.style.border = "1px solid var(--border)";
+  typeSelect.style.borderRadius = "4px";
+  typeSelect.innerHTML = `
+    <option value="promo">Promo (Bisa dipakai berulang kali)</option>
+    <option value="voucher">Voucher (Sekali pakai)</option>
+  `;
+  typeGroup.append(typeLabel, typeSelect);
+
+  const discTypeGroup = document.createElement("div");
+  discTypeGroup.style.display = "flex";
+  discTypeGroup.style.flexDirection = "column";
+  discTypeGroup.style.gap = "6px";
+  const discTypeLabel = document.createElement("label");
+  discTypeLabel.textContent = "Tipe Potongan:";
+  const discTypeSelect = document.createElement("select");
+  discTypeSelect.style.padding = "8px";
+  discTypeSelect.style.backgroundColor = "var(--surface)";
+  discTypeSelect.style.color = "var(--text)";
+  discTypeSelect.style.border = "1px solid var(--border)";
+  discTypeSelect.style.borderRadius = "4px";
+  discTypeSelect.innerHTML = `
+    <option value="percentage">Persentase (%)</option>
+    <option value="nominal">Nominal Rupiah (Rp)</option>
+  `;
+  discTypeGroup.append(discTypeLabel, discTypeSelect);
+
+  const valGroup = document.createElement("div");
+  valGroup.style.display = "flex";
+  valGroup.style.flexDirection = "column";
+  valGroup.style.gap = "6px";
+  const valLabel = document.createElement("label");
+  valLabel.textContent = "Nilai Potongan:";
+  const valInput = document.createElement("input");
+  valInput.type = "number";
+  valInput.min = "1";
+  valInput.placeholder = "Persen (1-100) atau nominal (misal: 50000)";
+  valInput.required = true;
+  valInput.style.padding = "8px";
+  valInput.style.backgroundColor = "var(--surface)";
+  valInput.style.color = "var(--text)";
+  valInput.style.border = "1px solid var(--border)";
+  valInput.style.borderRadius = "4px";
+  valGroup.append(valLabel, valInput);
+
+  discTypeSelect.onchange = () => {
+    if (discTypeSelect.value === "percentage") {
+      valInput.max = "100";
+      valInput.placeholder = "Masukkan nilai persen (1 - 100)";
+    } else {
+      valInput.removeAttribute("max");
+      valInput.placeholder = "Masukkan nominal rupiah (misal: 50000)";
+    }
+  };
+
+  const actionGroup = document.createElement("div");
+  actionGroup.style.display = "flex";
+  actionGroup.style.gap = "8px";
+  actionGroup.style.justifyContent = "flex-end";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.padding = "8px 16px";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingPromo ? "Menyimpan..." : "Simpan";
+  saveBtn.disabled = isSavingPromo;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.style.padding = "8px 16px";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    showAddPromoModal = false;
+    renderRooms();
+  };
+
+  actionGroup.append(saveBtn, cancelBtn);
+  formCard.append(title, codeGroup, typeGroup, discTypeGroup, valGroup, actionGroup);
+  overlay.appendChild(formCard);
+
+  formCard.onsubmit = async (e) => {
+    e.preventDefault();
+    const payload = {
+      code: codeInput.value,
+      type: typeSelect.value,
+      discount_type: discTypeSelect.value,
+      discount_value: Number(valInput.value)
+    };
+    await executeSavePromo(payload);
+  };
+
+  return overlay;
 }
 
 // ==========================================
@@ -14569,6 +15281,9 @@ function appendDashboardTabContent(panel, tabKey) {
     case "lc":
       panel.appendChild(createLcPanelElement());
       break;
+    case "promosi":
+      panel.appendChild(createPromosiPanelElement());
+      break;
     default:
       break;
   }
@@ -15385,7 +16100,7 @@ async function loadPackages() {
   }
 }
 
-async function payAndStartSession(roomId, paymentMethod) {
+async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
     return;
@@ -15408,6 +16123,7 @@ async function payAndStartSession(roomId, paymentMethod) {
       action: "payAndStartSession",
       room_id: roomId,
       payment_method: paymentMethod,
+      promo_code: promoCode,
       cashier_name: getLoggedInOperatorName(),
       fnb_items: prepayCartItems.map(item => ({
         menu_id: item.menu_id,
@@ -15855,7 +16571,7 @@ async function submitRoomRecovery() {
   }
 }
 
-async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
+async function markTransactionPaid(transactionId, paymentMethod, promoCode = "", options = {}) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -15873,6 +16589,7 @@ async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
       action: "markTransactionPaid",
       transaction_id: transactionId,
       payment_method: paymentMethod,
+      promo_code: promoCode,
     });
 
     if (!data || data.ok !== true) {
@@ -16405,8 +17122,10 @@ async function handleRoomAction(event) {
     const summary = button.closest(".billing-summary");
     const transactionId = button.dataset.transactionId || summary?.dataset.transactionId || "";
     const paymentMethod = summary?.querySelector(".billing-payment-select")?.value || "";
+    const promoInput = summary?.querySelector(".billing-payment-promo-input");
+    const promoCode = promoInput ? promoInput.getAttribute("data-applied-promo-code") || "" : "";
 
-    await markTransactionPaid(transactionId, paymentMethod, { updateBillingSummary: true });
+    await markTransactionPaid(transactionId, paymentMethod, promoCode, { updateBillingSummary: true });
     return;
   }
 
@@ -17069,6 +17788,10 @@ async function initializeDashboard() {
 
   if (activeDashboardTab === "settings" && canAccessDashboardTab("settings")) {
     initialLoads.push(loadSettingsTabData());
+  }
+
+  if (activeDashboardTab === "promosi" && canAccessDashboardTab("promosi")) {
+    initialLoads.push(loadPromos());
   }
 
   await Promise.all(initialLoads);
