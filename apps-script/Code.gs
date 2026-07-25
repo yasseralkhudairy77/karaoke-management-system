@@ -7853,7 +7853,7 @@ function payAndStartSession_(payload) {
     }
     
     var lcFeeTotal = 0;
-    var lcIds = String(session.lc_ids || "").trim();
+    var lcIds = request.lc_ids !== undefined ? String(request.lc_ids || "").trim() : String(session.lc_ids || "").trim();
     if (lcIds) {
       var selectedLcIds = lcIds.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
       var lcMasterRows = readSheetAsObjects_("LcMaster");
@@ -7988,12 +7988,16 @@ function payAndStartSession_(payload) {
     }
 
     // Update session — simpan pay_idempotency_key untuk deteksi replay
-    setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
+    var sessionUpdateFields = {
       updated_at: now,
       cashier_name: cashierName,
       prepayment_transaction_id: transactionId,
       pay_idempotency_key: requestIdempotencyKey,
-    });
+    };
+    if (request.lc_ids !== undefined && sessionResult.headerMap.lc_ids) {
+      sessionUpdateFields.lc_ids = lcIds;
+    }
+    setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, sessionUpdateFields);
 
     // Update Room
     roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
@@ -8001,6 +8005,9 @@ function payAndStartSession_(payload) {
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
+    }
 
     return {
       ok: true,

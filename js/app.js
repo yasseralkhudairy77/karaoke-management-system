@@ -4635,13 +4635,193 @@ function createPaymentControlElement(transaction) {
 
   control.append(select, button);
 
+  // Set layout container payment to vertical
+  payment.style.flexDirection = "column";
+  payment.style.alignItems = "stretch";
+  payment.style.gap = "12px";
+
+  const headerRow = document.createElement("div");
+  headerRow.style.display = "flex";
+  headerRow.style.justifyContent = "space-between";
+  headerRow.style.alignItems = "center";
+  headerRow.style.gap = "14px";
+  headerRow.style.flexWrap = "wrap";
+
+  headerRow.append(label, control);
+
+  // Formatting helpers for cash input
+  function formatIndonesianNumber(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  }
+  function parseIndonesianNumber(str) {
+    return Number(str.replace(/\./g, "")) || 0;
+  }
+
+  // Cash Calculator Container (Opsi A)
+  const calculatorContainer = document.createElement("div");
+  calculatorContainer.className = "billing-payment-calculator";
+  calculatorContainer.style.display = select.value === "cash" ? "flex" : "none";
+  calculatorContainer.style.flexDirection = "column";
+  calculatorContainer.style.gap = "10px";
+  calculatorContainer.style.padding = "10px 12px";
+  calculatorContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  calculatorContainer.style.border = "1px solid var(--border)";
+  calculatorContainer.style.borderRadius = "8px";
+
+  const calcHeader = document.createElement("div");
+  calcHeader.style.display = "flex";
+  calcHeader.style.justifyContent = "space-between";
+  calcHeader.style.alignItems = "center";
+  
+  const calcTitle = document.createElement("span");
+  calcTitle.style.fontSize = "11px";
+  calcTitle.style.fontWeight = "800";
+  calcTitle.style.color = "var(--muted)";
+  calcTitle.style.textTransform = "uppercase";
+  calcTitle.style.letterSpacing = "0.5px";
+  calcTitle.textContent = "Kalkulator Kasir (Tunai)";
+  calcHeader.appendChild(calcTitle);
+
+  const inputInfoRow = document.createElement("div");
+  inputInfoRow.style.display = "flex";
+  inputInfoRow.style.gap = "14px";
+  inputInfoRow.style.alignItems = "center";
+  inputInfoRow.style.flexWrap = "wrap";
+
+  const inputGroup = document.createElement("div");
+  inputGroup.style.display = "flex";
+  inputGroup.style.flexDirection = "column";
+  inputGroup.style.gap = "4px";
+  inputGroup.style.flex = "1 1 180px";
+
+  const inputLabel = document.createElement("span");
+  inputLabel.style.fontSize = "11px";
+  inputLabel.style.color = "var(--muted)";
+  inputLabel.textContent = "Uang Diterima (Rp):";
+
+  const cashInput = document.createElement("input");
+  cashInput.type = "text";
+  cashInput.placeholder = "Masukkan jumlah...";
+  cashInput.style.padding = "8px 10px";
+  cashInput.style.fontSize = "13px";
+  cashInput.style.fontWeight = "700";
+  cashInput.style.backgroundColor = "var(--surface)";
+  cashInput.style.color = "var(--text)";
+  cashInput.style.border = "1px solid var(--border)";
+  cashInput.style.borderRadius = "6px";
+
+  inputGroup.append(inputLabel, cashInput);
+
+  const resultGroup = document.createElement("div");
+  resultGroup.style.display = "flex";
+  resultGroup.style.flexDirection = "column";
+  resultGroup.style.gap = "4px";
+  resultGroup.style.flex = "1 1 180px";
+
+  const resultLabel = document.createElement("span");
+  resultLabel.style.fontSize = "11px";
+  resultLabel.style.color = "var(--muted)";
+  resultLabel.textContent = "Kembalian:";
+
+  const changeDisplay = document.createElement("span");
+  changeDisplay.style.fontSize = "16px";
+  changeDisplay.style.fontWeight = "900";
+  changeDisplay.style.color = "var(--muted)";
+  changeDisplay.textContent = "-";
+
+  resultGroup.append(resultLabel, changeDisplay);
+  inputInfoRow.append(inputGroup, resultGroup);
+
+  const shortcutsRow = document.createElement("div");
+  shortcutsRow.style.display = "flex";
+  shortcutsRow.style.flexWrap = "wrap";
+  shortcutsRow.style.gap = "6px";
+  shortcutsRow.style.marginTop = "2px";
+
+  calculatorContainer.append(calcHeader, inputInfoRow, shortcutsRow);
+
+  // Dynamic Banknote Shortcuts generator
+  function getShortcutValues(total) {
+    if (total <= 0) return [];
+    const shortcuts = new Set();
+    shortcuts.add(total); // Uang Pas
+
+    // Next round values of 50k, 100k, 500k
+    const denoms = [50000, 100000, 500000];
+    denoms.forEach(d => {
+      const val = Math.ceil(total / d) * d;
+      if (val > total) {
+        shortcuts.add(val);
+      }
+    });
+
+    // Add common large bills above total
+    const commonBills = [100000, 200000, 500000, 1000000, 1500000, 2000000];
+    commonBills.forEach(b => {
+      if (b > total && b < total * 3) {
+        shortcuts.add(b);
+      }
+    });
+
+    return Array.from(shortcuts).sort((a, b) => a - b).slice(0, 5);
+  }
+
+  function renderShortcuts(total) {
+    shortcutsRow.replaceChildren();
+    const values = getShortcutValues(total);
+    values.forEach(val => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "erp-btn erp-btn-secondary";
+      btn.style.padding = "4px 8px";
+      btn.style.fontSize = "11px";
+      btn.style.fontWeight = "700";
+      
+      if (val === total) {
+        btn.textContent = "Uang Pas";
+        btn.style.borderColor = "var(--success)";
+        btn.style.color = "var(--success)";
+      } else {
+        btn.textContent = formatCurrency(val);
+      }
+
+      btn.onclick = () => {
+        cashInput.value = formatIndonesianNumber(val);
+        recalculateChange(total);
+      };
+      shortcutsRow.appendChild(btn);
+    });
+  }
+
+  function recalculateChange(total) {
+    const cashText = cashInput.value;
+    if (!cashText) {
+      changeDisplay.textContent = "-";
+      changeDisplay.style.color = "var(--muted)";
+      button.disabled = false; // let them mark paid directly if they don't want to use calc
+      return;
+    }
+
+    const cash = parseIndonesianNumber(cashText);
+    const change = cash - total;
+
+    if (change >= 0) {
+      changeDisplay.textContent = formatCurrency(change);
+      changeDisplay.style.color = "var(--success)";
+      button.disabled = false;
+    } else {
+      changeDisplay.textContent = `Kurang ${formatCurrency(Math.abs(change))}`;
+      changeDisplay.style.color = "var(--error)";
+      button.disabled = true;
+    }
+  }
+
   // Promo / Voucher Input Group
   const promoContainer = document.createElement("div");
   promoContainer.style.display = "flex";
   promoContainer.style.flexDirection = "column";
   promoContainer.style.gap = "6px";
-  promoContainer.style.marginTop = "12px";
-  promoContainer.style.marginBottom = "12px";
+  promoContainer.style.marginTop = "4px";
   promoContainer.style.padding = "8px";
   promoContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
   promoContainer.style.border = "1px solid var(--border)";
@@ -4689,6 +4869,29 @@ function createPaymentControlElement(transaction) {
   const roomTotal = Number(transaction?.room_total || 0);
   const fnbTotal = Number(transaction?.fnb_total || 0);
   const lcTotal = Number(transaction?.lc_total || 0);
+
+  let activeGrandTotal = roomTotal + fnbTotal + lcTotal;
+
+  cashInput.oninput = (e) => {
+    let cleanVal = e.target.value.replace(/\D/g, "");
+    if (cleanVal) {
+      e.target.value = formatIndonesianNumber(cleanVal);
+    } else {
+      e.target.value = "";
+    }
+    recalculateChange(activeGrandTotal);
+  };
+
+  select.onchange = () => {
+    if (select.value === "cash") {
+      calculatorContainer.style.display = "flex";
+      cashInput.focus();
+      recalculateChange(activeGrandTotal);
+    } else {
+      calculatorContainer.style.display = "none";
+      button.disabled = false;
+    }
+  };
 
   promoBtn.onclick = async () => {
     const code = promoInput.value.trim().toUpperCase();
@@ -4769,6 +4972,7 @@ function createPaymentControlElement(transaction) {
   function updateCheckoutTotals() {
     const discountedRoomTotal = Math.max(0, roomTotal - appliedDiscountVal);
     const newGrandTotal = discountedRoomTotal + fnbTotal + lcTotal;
+    activeGrandTotal = newGrandTotal;
 
     const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
     if (breakdownEl) {
@@ -4780,12 +4984,19 @@ function createPaymentControlElement(transaction) {
         rows[rows.length - 1].querySelector("p:last-child").textContent = formatCurrency(newGrandTotal);
       }
     }
+
+    renderShortcuts(activeGrandTotal);
+    recalculateChange(activeGrandTotal);
   }
+
+  // Initialize shortcuts and change for initial grand total
+  renderShortcuts(activeGrandTotal);
+  recalculateChange(activeGrandTotal);
 
   promoInputRow.append(promoInput, promoBtn);
   promoContainer.append(promoLabel, promoInputRow, promoNotice);
 
-  payment.append(label, control, promoContainer);
+  payment.append(headerRow, calculatorContainer, promoContainer);
 
   return payment;
 }
@@ -6739,6 +6950,51 @@ function createPaymentSelectionElement(room) {
 
   panel.appendChild(fnbPrepayField);
 
+  // LC Selector Field for Cashier (Hanya Kasir)
+  if (role !== "receptionist") {
+    const lcSelectField = document.createElement("div");
+    lcSelectField.style.display = "flex";
+    lcSelectField.style.flexDirection = "column";
+    lcSelectField.style.gap = "4px";
+    lcSelectField.style.marginTop = "8px";
+    lcSelectField.style.marginBottom = "8px";
+
+    const lcSelectLabel = document.createElement("span");
+    lcSelectLabel.className = "duration-payment-label";
+    lcSelectLabel.style.fontWeight = "bold";
+    lcSelectLabel.textContent = "Lady Companion (LC):";
+
+    const lcSelectDropdown = document.createElement("select");
+    lcSelectDropdown.className = "duration-payment-select";
+    lcSelectDropdown.style.width = "100%";
+
+    if (!selectedLcIdsForRoom[room.room_id] && room.lc_ids) {
+      selectedLcIdsForRoom[room.room_id] = room.lc_ids.split(",").map(id => id.trim()).filter(Boolean);
+    }
+    const currentLcCount = (selectedLcIdsForRoom[room.room_id] || []).length;
+
+    for (let i = 0; i <= 10; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = i === 0 ? "Tanpa LC" : `${i} Orang`;
+      opt.selected = currentLcCount === i;
+      lcSelectDropdown.appendChild(opt);
+    }
+
+    lcSelectDropdown.onchange = (e) => {
+      const count = parseInt(e.target.value) || 0;
+      const placeholderArray = [];
+      for (let i = 0; i < count; i++) {
+        placeholderArray.push("PENDING");
+      }
+      selectedLcIdsForRoom[room.room_id] = placeholderArray;
+      renderRooms(); // Re-render to update the summary, calculator shortcuts, and breakdown!
+    };
+
+    lcSelectField.append(lcSelectLabel, lcSelectDropdown);
+    panel.appendChild(lcSelectField);
+  }
+
   // Kalkulasi Room Prepay + LC Fee
   let roomPrepayCharge = 0;
   if (room.package_id) {
@@ -6748,8 +7004,12 @@ function createPaymentSelectionElement(room) {
     roomPrepayCharge = Math.ceil((Number(room.booked_duration_minutes) || 0) / 60 * (Number(room.rate_per_hour) || 0));
   }
 
+  if (!selectedLcIdsForRoom[room.room_id] && room.lc_ids) {
+    selectedLcIdsForRoom[room.room_id] = room.lc_ids.split(",").map(id => id.trim()).filter(Boolean);
+  }
+  const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
+
   let lcFeeTotal = 0;
-  const activeLcIds = selectedLcIdsForRoom[room.room_id] || (room.lc_ids ? room.lc_ids.split(",") : []);
   if (activeLcIds && activeLcIds.length > 0) {
     const durationHours = (Number(room.booked_duration_minutes) || 0) / 60;
     // Hitung rata-rata tarif dari semua LC aktif (untuk preview slot PENDING)
@@ -6768,7 +7028,7 @@ function createPaymentSelectionElement(room) {
     });
   }
 
-  const grandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
+  let activeGrandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
 
   // Ringkasan Pembayaran (Billing Summary)
   const billingSummary = document.createElement("div");
@@ -6796,11 +7056,52 @@ function createPaymentSelectionElement(room) {
 
   const lcRow = document.createElement("div");
   lcRow.style.display = "flex";
-  lcRow.style.justifyContent = "space-between";
+  lcRow.style.flexDirection = "column";
+  lcRow.style.gap = "4px";
   lcRow.style.fontSize = "0.85rem";
   lcRow.style.color = "rgba(255, 255, 255, 0.8)";
-  lcRow.innerHTML = `<span>Biaya LC:</span> <span>${formatCurrency(lcFeeTotal)}</span>`;
+  
   if (lcFeeTotal > 0) {
+    const mainLcRow = document.createElement("div");
+    mainLcRow.style.display = "flex";
+    mainLcRow.style.justifyContent = "space-between";
+    mainLcRow.innerHTML = `<span>Jasa LC (${activeLcIds.length} Orang):</span> <span>${formatCurrency(lcFeeTotal)}</span>`;
+    lcRow.appendChild(mainLcRow);
+
+    const breakdownList = document.createElement("div");
+    breakdownList.style.display = "flex";
+    breakdownList.style.flexDirection = "column";
+    breakdownList.style.gap = "2px";
+    breakdownList.style.paddingLeft = "12px";
+    breakdownList.style.fontSize = "0.75rem";
+    breakdownList.style.color = "rgba(255, 255, 255, 0.6)";
+
+    const durationHours = (Number(room.booked_duration_minutes) || 0) / 60;
+    const activeLcList = lcs.filter(l => l.status === "active");
+    const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
+    const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+
+    activeLcIds.forEach((id, index) => {
+      let lcName = "";
+      let rate = 0;
+      if (id === "PENDING") {
+        lcName = `LC ${index + 1} (Belum Dipilih)`;
+        rate = avgRate;
+      } else {
+        const found = lcs.find(l => l.lc_id === id);
+        lcName = found ? found.lc_name : `LC ${index + 1}`;
+        rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
+      }
+      const itemCost = Math.ceil(durationHours * rate);
+      
+      const itemRow = document.createElement("div");
+      itemRow.style.display = "flex";
+      itemRow.style.justifyContent = "space-between";
+      itemRow.innerHTML = `<span>• ${lcName} (${formatCurrency(rate)}/jam × ${durationHours} jam)</span> <span>${formatCurrency(itemCost)}</span>`;
+      breakdownList.appendChild(itemRow);
+    });
+    
+    lcRow.appendChild(breakdownList);
     billingSummary.appendChild(lcRow);
   }
 
@@ -6826,7 +7127,7 @@ function createPaymentSelectionElement(room) {
   grandTotalRow.style.fontWeight = "bold";
   grandTotalRow.style.fontSize = "1rem";
   grandTotalRow.style.color = "#ffffff";
-  grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(grandTotal)}</span>`;
+  grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(activeGrandTotal)}</span>`;
   billingSummary.appendChild(grandTotalRow);
 
   // Promo / Voucher Input Group (Hanya Kasir)
@@ -6951,8 +7252,16 @@ function createPaymentSelectionElement(room) {
     function updatePrepayTotals() {
       const discountedRoomTotal = Math.max(0, roomPrepayCharge - appliedDiscountVal);
       const newGrandTotal = discountedRoomTotal + lcFeeTotal + fnbTotal;
+      activeGrandTotal = newGrandTotal;
       roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(discountedRoomTotal)}</span>`;
-      grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(newGrandTotal)}</span>`;
+      grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(activeGrandTotal)}</span>`;
+
+      if (typeof renderShortcuts === "function") {
+        renderShortcuts(activeGrandTotal);
+      }
+      if (typeof recalculateChange === "function") {
+        recalculateChange(activeGrandTotal);
+      }
     }
 
     promoInputRow.append(promoInput, promoBtn);
@@ -6962,6 +7271,8 @@ function createPaymentSelectionElement(room) {
 
   panel.appendChild(billingSummary);
   
+  let renderShortcuts, recalculateChange;
+
   if (role !== "receptionist") {
     const paymentField = document.createElement("label");
     paymentField.className = "duration-payment-field";
@@ -6987,6 +7298,202 @@ function createPaymentSelectionElement(room) {
     paymentField.append(paymentLabel, paymentSelect);
     panel.appendChild(paymentField);
 
+    // Cash Calculator Container (Opsi A)
+    const calculatorContainer = document.createElement("div");
+    calculatorContainer.className = "duration-payment-calculator";
+    calculatorContainer.style.display = paymentSelect.value === "cash" ? "flex" : "none";
+    calculatorContainer.style.flexDirection = "column";
+    calculatorContainer.style.gap = "10px";
+    calculatorContainer.style.padding = "10px 12px";
+    calculatorContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+    calculatorContainer.style.border = "1px solid var(--border)";
+    calculatorContainer.style.borderRadius = "8px";
+    calculatorContainer.style.marginTop = "8px";
+    calculatorContainer.style.marginBottom = "8px";
+
+    const calcHeader = document.createElement("div");
+    calcHeader.style.display = "flex";
+    calcHeader.style.justifyContent = "space-between";
+    calcHeader.style.alignItems = "center";
+    
+    const calcTitle = document.createElement("span");
+    calcTitle.style.fontSize = "11px";
+    calcTitle.style.fontWeight = "800";
+    calcTitle.style.color = "var(--muted)";
+    calcTitle.style.textTransform = "uppercase";
+    calcTitle.style.letterSpacing = "0.5px";
+    calcTitle.textContent = "Kalkulator Kasir (Tunai)";
+    calcHeader.appendChild(calcTitle);
+
+    const inputInfoRow = document.createElement("div");
+    inputInfoRow.style.display = "flex";
+    inputInfoRow.style.gap = "14px";
+    inputInfoRow.style.alignItems = "center";
+    inputInfoRow.style.flexWrap = "wrap";
+
+    const inputGroup = document.createElement("div");
+    inputGroup.style.display = "flex";
+    inputGroup.style.flexDirection = "column";
+    inputGroup.style.gap = "4px";
+    inputGroup.style.flex = "1 1 180px";
+
+    const inputLabel = document.createElement("span");
+    inputLabel.style.fontSize = "11px";
+    inputLabel.style.color = "var(--muted)";
+    inputLabel.textContent = "Uang Diterima (Rp):";
+
+    const cashInput = document.createElement("input");
+    cashInput.type = "text";
+    cashInput.placeholder = "Masukkan jumlah...";
+    cashInput.style.padding = "8px 10px";
+    cashInput.style.fontSize = "13px";
+    cashInput.style.fontWeight = "700";
+    cashInput.style.backgroundColor = "var(--surface)";
+    cashInput.style.color = "var(--text)";
+    cashInput.style.border = "1px solid var(--border)";
+    cashInput.style.borderRadius = "6px";
+    cashInput.style.width = "100%";
+
+    inputGroup.append(inputLabel, cashInput);
+
+    const resultGroup = document.createElement("div");
+    resultGroup.style.display = "flex";
+    resultGroup.style.flexDirection = "column";
+    resultGroup.style.gap = "4px";
+    resultGroup.style.flex = "1 1 180px";
+
+    const resultLabel = document.createElement("span");
+    resultLabel.style.fontSize = "11px";
+    resultLabel.style.color = "var(--muted)";
+    resultLabel.textContent = "Kembalian:";
+
+    const changeDisplay = document.createElement("span");
+    changeDisplay.style.fontSize = "16px";
+    changeDisplay.style.fontWeight = "900";
+    changeDisplay.style.color = "var(--muted)";
+    changeDisplay.textContent = "-";
+
+    resultGroup.append(resultLabel, changeDisplay);
+    inputInfoRow.append(inputGroup, resultGroup);
+
+    const shortcutsRow = document.createElement("div");
+    shortcutsRow.style.display = "flex";
+    shortcutsRow.style.flexWrap = "wrap";
+    shortcutsRow.style.gap = "6px";
+    shortcutsRow.style.marginTop = "2px";
+
+    calculatorContainer.append(calcHeader, inputInfoRow, shortcutsRow);
+
+    // Helpers
+    function formatIndonesianNumber(num) {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    }
+    function parseIndonesianNumber(str) {
+      return Number(str.replace(/\./g, "")) || 0;
+    }
+
+    function getShortcutValues(total) {
+      if (total <= 0) return [];
+      const shortcuts = new Set();
+      shortcuts.add(total);
+      const denoms = [50000, 100000, 500000];
+      denoms.forEach(d => {
+        const val = Math.ceil(total / d) * d;
+        if (val > total) shortcuts.add(val);
+      });
+      const commonBills = [100000, 200000, 500000, 1000000, 1500000, 2000000];
+      commonBills.forEach(b => {
+        if (b > total && b < total * 3) shortcuts.add(b);
+      });
+      return Array.from(shortcuts).sort((a, b) => a - b).slice(0, 5);
+    }
+
+    renderShortcuts = function(total) {
+      shortcutsRow.replaceChildren();
+      const values = getShortcutValues(total);
+      values.forEach(val => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "erp-btn erp-btn-secondary";
+        btn.style.padding = "4px 8px";
+        btn.style.fontSize = "11px";
+        btn.style.fontWeight = "700";
+        if (val === total) {
+          btn.textContent = "Uang Pas";
+          btn.style.borderColor = "var(--success)";
+          btn.style.color = "var(--success)";
+        } else {
+          btn.textContent = formatCurrency(val);
+        }
+        btn.onclick = () => {
+          cashInput.value = formatIndonesianNumber(val);
+          recalculateChange(total);
+        };
+        shortcutsRow.appendChild(btn);
+      });
+    };
+
+    recalculateChange = function(total) {
+      const cashText = cashInput.value;
+      if (isLoadingPrepayFnb) {
+        startButton.disabled = true;
+        startButton.style.opacity = "0.5";
+        startButton.style.cursor = "not-allowed";
+        return;
+      }
+
+      if (!cashText) {
+        changeDisplay.textContent = "-";
+        changeDisplay.style.color = "var(--muted)";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+        return;
+      }
+
+      const cash = parseIndonesianNumber(cashText);
+      const change = cash - total;
+
+      if (change >= 0) {
+        changeDisplay.textContent = formatCurrency(change);
+        changeDisplay.style.color = "var(--success)";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+      } else {
+        changeDisplay.textContent = `Kurang ${formatCurrency(Math.abs(change))}`;
+        changeDisplay.style.color = "var(--error)";
+        startButton.disabled = true;
+        startButton.style.opacity = "0.5";
+        startButton.style.cursor = "not-allowed";
+      }
+    };
+
+    cashInput.oninput = (e) => {
+      let cleanVal = e.target.value.replace(/\D/g, "");
+      if (cleanVal) {
+        e.target.value = formatIndonesianNumber(cleanVal);
+      } else {
+        e.target.value = "";
+      }
+      recalculateChange(activeGrandTotal);
+    };
+
+    paymentSelect.onchange = () => {
+      if (paymentSelect.value === "cash") {
+        calculatorContainer.style.display = "flex";
+        cashInput.focus();
+        recalculateChange(activeGrandTotal);
+      } else {
+        calculatorContainer.style.display = "none";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+      }
+    };
+
+    panel.appendChild(calculatorContainer);
+
     const startButton = document.createElement("button");
     startButton.className = "duration-custom-button";
     startButton.type = "button";
@@ -7009,6 +7516,10 @@ function createPaymentSelectionElement(room) {
       };
     }
     panel.appendChild(startButton);
+
+    // Initial load
+    renderShortcuts(activeGrandTotal);
+    recalculateChange(activeGrandTotal);
   } else {
     const notice = document.createElement("p");
     notice.className = "duration-phase-note";
@@ -16561,11 +17072,15 @@ async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
   setActionButtonsDisabled(true);
   renderRooms();
   try {
+    const activeLcIds = selectedLcIdsForRoom[roomId] || [];
+    const lcIdsStr = activeLcIds.join(",");
+
     const data = await postApiAction({
       action: "payAndStartSession",
       room_id: roomId,
       payment_method: paymentMethod,
       promo_code: promoCode,
+      lc_ids: lcIdsStr,
       cashier_name: getLoggedInOperatorName(),
       fnb_items: prepayCartItems.map(item => ({
         menu_id: item.menu_id,
