@@ -438,6 +438,18 @@ function getRoomTimeBadgeTone(status) {
 let cashierClosingPreviewVisible = false;
 let cashierClosingCashActual = "";
 let cashierClosingNote = "";
+let cashierClosingDenominations = {
+  d100k: 0,
+  d50k: 0,
+  d20k: 0,
+  d10k: 0,
+  d5k: 0,
+  d2k: 0,
+  d1k: 0,
+  d500: 0,
+  d200: 0,
+  d100: 0,
+};
 let cashierClosingConfirmationVisible = false;
 let lastCashierClosing = null;
 let isSavingCashierClosing = false;
@@ -2486,6 +2498,7 @@ function hideCashierClosingPreview() {
 
 function updateCashierClosingCashActual(value) {
   cashierClosingCashActual = value;
+  resetClosingDenominations();
   renderRooms();
 
   const cashInput = queryDashboard("#cashierClosingCashActual");
@@ -2503,6 +2516,111 @@ function updateCashierClosingCashActual(value) {
 
 function updateCashierClosingNote(value) {
   cashierClosingNote = value;
+}
+
+function resetClosingDenominations() {
+  cashierClosingDenominations = {
+    d100k: 0,
+    d50k: 0,
+    d20k: 0,
+    d10k: 0,
+    d5k: 0,
+    d2k: 0,
+    d1k: 0,
+    d500: 0,
+    d200: 0,
+    d100: 0,
+  };
+}
+
+function compileClosingNote() {
+  const baseNote = cashierClosingNote.trim();
+  const breakdownLines = [];
+  const denoms = [
+    { key: "d100k", val: 100000, label: "Rp 100.000" },
+    { key: "d50k", val: 50000, label: "Rp 50.000" },
+    { key: "d20k", val: 20000, label: "Rp 20.000" },
+    { key: "d10k", val: 10000, label: "Rp 10.000" },
+    { key: "d5k", val: 5000, label: "Rp 5.000" },
+    { key: "d2k", val: 2000, label: "Rp 2.000" },
+    { key: "d1k", val: 1000, label: "Rp 1.000" },
+    { key: "d500", val: 500, label: "Rp 500" },
+    { key: "d200", val: 200, label: "Rp 200" },
+    { key: "d100", val: 100, label: "Rp 100" },
+  ];
+
+  denoms.forEach(d => {
+    const qty = cashierClosingDenominations[d.key] || 0;
+    if (qty > 0) {
+      breakdownLines.push(`${d.label}: ${qty}x`);
+    }
+  });
+
+  if (breakdownLines.length > 0) {
+    const denomString = `[Pecahan Fisik: ${breakdownLines.join(" | ")}]`;
+    return baseNote ? `${baseNote}\n\n${denomString}` : denomString;
+  }
+  return baseNote;
+}
+
+function parseClosingNoteAndDenoms(rawNote) {
+  if (!rawNote) return { note: "", denoms: [] };
+
+  const denomRegex = /\[Pecahan Fisik:\s*([^\]]+)\]/;
+  const match = rawNote.match(denomRegex);
+
+  if (match) {
+    const denomPart = match[1];
+    const cleanedNote = rawNote.replace(denomRegex, "").trim();
+    const denoms = denomPart.split(" | ").map(part => {
+      const subParts = part.split(":");
+      const label = subParts[0]?.trim() || "";
+      const qtyText = subParts[1]?.replace("x", "")?.trim() || "0";
+      const qty = parseInt(qtyText, 10) || 0;
+      
+      const valText = label.replace(/[^\d]/g, "");
+      const value = parseInt(valText, 10) || 0;
+
+      return { label, qty, total: qty * value };
+    });
+
+    return { note: cleanedNote, denoms };
+  }
+
+  return { note: rawNote, denoms: [] };
+}
+
+function recalculateFromDenoms(focusedId) {
+  const denoms = [
+    { key: "d100k", val: 100000 },
+    { key: "d50k", val: 50000 },
+    { key: "d20k", val: 20000 },
+    { key: "d10k", val: 10000 },
+    { key: "d5k", val: 5000 },
+    { key: "d2k", val: 2000 },
+    { key: "d1k", val: 1000 },
+    { key: "d500", val: 500 },
+    { key: "d200", val: 200 },
+    { key: "d100", val: 100 },
+  ];
+
+  let total = 0;
+  denoms.forEach((d) => {
+    total += (cashierClosingDenominations[d.key] || 0) * d.val;
+  });
+
+  cashierClosingCashActual = total.toString();
+  renderRooms();
+
+  if (focusedId) {
+    const input = queryDashboard(`#${focusedId}`);
+    if (input) {
+      input.focus();
+      try {
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch (error) {}
+    }
+  }
 }
 
 function hasTodayCashierClosing() {
@@ -4056,21 +4174,74 @@ function createCashierClosingPreviewElement(preview) {
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
 
-  const grid = document.createElement("div");
-  grid.className = "cashier-closing-grid";
-
-  [
-    ["Total Transaksi", `${preview.totalTransactions} transaksi`, "Semua transaksi pada shift aktif"],
-    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`, "Sudah dibayar cash atau transfer"],
-    ["Belum Dibayar", `${preview.unpaidTransactions} transaksi`, "Perlu diketahui sebelum tutup shift", preview.unpaidTransactions > 0 ? "negative" : "equal"],
-    ["Omzet Lunas", formatCurrency(preview.paidRevenue), "Uang masuk yang sudah tercatat lunas", "equal"],
-    ["Cash Sistem", formatCurrency(preview.cashExpected), `${preview.cashTransactions} transaksi cash`],
-    ["Transfer Sistem", formatCurrency(preview.transferRevenue), `${preview.transferTransactions} transaksi transfer`],
-    ["Sisa Belum Dibayar", formatCurrency(preview.unpaidRevenue), "Tagihan yang belum lunas"],
-    ["Total Semua Tagihan", formatCurrency(preview.totalRevenue), "Lunas dan belum dibayar"],
-  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
-    grid.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
+  // 1. Rekap Transaksi & Keuangan Table
+  const mainTable = document.createElement("table");
+  mainTable.className = "cashier-closing-table";
+  
+  const mainTableHeader = document.createElement("thead");
+  const mainHeaderRow = document.createElement("tr");
+  ["Kategori / Deskripsi", "Detail Transaksi", "Nominal Sistem"].forEach(text => {
+    const th = document.createElement("th");
+    if (text === "Nominal Sistem") th.className = "text-right";
+    th.textContent = text;
+    mainHeaderRow.appendChild(th);
   });
+  mainTableHeader.appendChild(mainHeaderRow);
+  mainTable.appendChild(mainTableHeader);
+
+  const mainTableBody = document.createElement("tbody");
+
+  // Section Rekap Transaksi
+  const secTrans = document.createElement("tr");
+  secTrans.className = "table-section-header";
+  const secTransTd = document.createElement("td");
+  secTransTd.colSpan = 3;
+  secTransTd.textContent = "Rekap Volume Transaksi";
+  secTrans.appendChild(secTransTd);
+  mainTableBody.appendChild(secTrans);
+
+  const transRows = [
+    ["Total Transaksi", `${preview.totalTransactions} transaksi`, "-"],
+    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`, "-"],
+    ["Transaksi Belum Dibayar", `${preview.unpaidTransactions} transaksi`, "-", preview.unpaidTransactions > 0 ? "text-warning font-bold" : ""],
+  ];
+  transRows.forEach(([desc, detail, amount, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    const td1 = document.createElement("td"); td1.textContent = desc;
+    const td2 = document.createElement("td"); td2.textContent = detail;
+    const td3 = document.createElement("td"); td3.className = "text-right"; td3.textContent = amount;
+    tr.append(td1, td2, td3);
+    mainTableBody.appendChild(tr);
+  });
+
+  // Section Rekap Keuangan
+  const secFinance = document.createElement("tr");
+  secFinance.className = "table-section-header";
+  const secFinanceTd = document.createElement("td");
+  secFinanceTd.colSpan = 3;
+  secFinanceTd.textContent = "Rekap Keuangan (Omzet)";
+  secFinance.appendChild(secFinanceTd);
+  mainTableBody.appendChild(secFinance);
+
+  const financeRows = [
+    ["Omzet Lunas (Sudah Dibayar)", "Total penerimaan kasir", formatCurrency(preview.paidRevenue), "highlight-row text-success"],
+    ["• Cash Sistem", `${preview.cashTransactions} transaksi cash`, formatCurrency(preview.cashExpected), "sub-row"],
+    ["• Transfer Sistem", `${preview.transferTransactions} transaksi transfer`, formatCurrency(preview.transferRevenue), "sub-row"],
+    ["Sisa Belum Dibayar", "Tagihan room/F&B yang masih open", formatCurrency(preview.unpaidRevenue), preview.unpaidRevenue > 0 ? "text-warning font-bold" : ""],
+    ["Total Semua Tagihan", "Akumulasi lunas + belum lunas", formatCurrency(preview.totalRevenue), "grand-total-row"],
+  ];
+  financeRows.forEach(([desc, detail, amount, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    const td1 = document.createElement("td"); td1.textContent = desc;
+    const td2 = document.createElement("td"); td2.textContent = detail;
+    const td3 = document.createElement("td"); td3.className = "text-right"; td3.textContent = amount;
+    tr.append(td1, td2, td3);
+    mainTableBody.appendChild(tr);
+  });
+
+  mainTable.appendChild(mainTableBody);
 
   const cashSection = document.createElement("div");
   cashSection.className = "cashier-closing-section";
@@ -4095,27 +4266,134 @@ function createCashierClosingPreviewElement(preview) {
   cashInput.dataset.action = "update-cash-actual";
   cashInput.value = cashierClosingCashActual;
 
-  const cashCheck = document.createElement("div");
-  cashCheck.className = "cashier-closing-grid";
+  // Kalkulator Pecahan Uang
+  const calcTitle = document.createElement("p");
+  calcTitle.className = "cashier-closing-label";
+  calcTitle.style.marginTop = "16px";
+  calcTitle.textContent = "Kalkulator Pecahan Uang Laci (Opsional)";
 
-  [
-    ["Cash Sistem", formatCurrency(preview.cashExpected), "Uang cash yang seharusnya ada"],
-    ["Cash Aktual", formatCurrency(preview.cashActual), "Uang cash yang dihitung kasir"],
-    [
-      "Selisih Cash",
-      formatCurrency(preview.cashDifference),
-      "Selisih otomatis antara cash aktual dan cash sistem",
-      getCashDifferenceClass(preview.cashDifference),
-    ],
-  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
-    cashCheck.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
+  const denomTable = document.createElement("table");
+  denomTable.className = "cashier-closing-table";
+  
+  const denomTableHeader = document.createElement("thead");
+  const denomHeaderRow = document.createElement("tr");
+  ["Pecahan Uang", "Jumlah Lembar / Koin", "Subtotal"].forEach(text => {
+    const th = document.createElement("th");
+    if (text === "Jumlah Lembar / Koin") th.className = "text-center";
+    if (text === "Subtotal") th.className = "text-right";
+    th.textContent = text;
+    denomHeaderRow.appendChild(th);
   });
+  denomTableHeader.appendChild(denomHeaderRow);
+  denomTable.appendChild(denomTableHeader);
+
+  const denomTableBody = document.createElement("tbody");
+
+  const denoms = [
+    { key: "d100k", val: 100000, label: "Rp 100.000" },
+    { key: "d50k", val: 50000, label: "Rp 50.000" },
+    { key: "d20k", val: 20000, label: "Rp 20.000" },
+    { key: "d10k", val: 10000, label: "Rp 10.000" },
+    { key: "d5k", val: 5000, label: "Rp 5.000" },
+    { key: "d2k", val: 2000, label: "Rp 2.000" },
+    { key: "d1k", val: 1000, label: "Rp 1.000" },
+    { key: "d500", val: 500, label: "Rp 500" },
+    { key: "d200", val: 200, label: "Rp 200" },
+    { key: "d100", val: 100, label: "Rp 100" },
+  ];
+
+  denoms.forEach((denom) => {
+    const tr = document.createElement("tr");
+
+    const labelTd = document.createElement("td");
+    labelTd.textContent = denom.label;
+
+    const countTd = document.createElement("td");
+    countTd.className = "text-center";
+
+    const rowWrapper = document.createElement("div");
+    rowWrapper.className = "denom-row-table";
+
+    const decBtn = document.createElement("button");
+    decBtn.type = "button";
+    decBtn.className = "denom-btn-table dec-btn";
+    decBtn.textContent = "-";
+    decBtn.onclick = () => {
+      const currentVal = cashierClosingDenominations[denom.key] || 0;
+      if (currentVal > 0) {
+        cashierClosingDenominations[denom.key] = currentVal - 1;
+        recalculateFromDenoms(`denom_input_${denom.key}`);
+      }
+    };
+
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = "0";
+    countInput.id = `denom_input_${denom.key}`;
+    countInput.value = cashierClosingDenominations[denom.key] || 0;
+    countInput.className = "denom-input-table";
+    countInput.oninput = (e) => {
+      const val = parseInt(e.target.value, 10) || 0;
+      cashierClosingDenominations[denom.key] = val >= 0 ? val : 0;
+      recalculateFromDenoms(`denom_input_${denom.key}`);
+    };
+
+    const incBtn = document.createElement("button");
+    incBtn.type = "button";
+    incBtn.className = "denom-btn-table inc-btn";
+    incBtn.textContent = "+";
+    incBtn.onclick = () => {
+      const currentVal = cashierClosingDenominations[denom.key] || 0;
+      cashierClosingDenominations[denom.key] = currentVal + 1;
+      recalculateFromDenoms(`denom_input_${denom.key}`);
+    };
+
+    rowWrapper.append(decBtn, countInput, incBtn);
+    countTd.appendChild(rowWrapper);
+
+    const subtotalTd = document.createElement("td");
+    subtotalTd.className = "text-right text-gold";
+    const totalVal = (cashierClosingDenominations[denom.key] || 0) * denom.val;
+    subtotalTd.textContent = totalVal > 0 ? formatCurrency(totalVal) : "Rp 0";
+
+    tr.append(labelTd, countTd, subtotalTd);
+    denomTableBody.appendChild(tr);
+  });
+  denomTable.appendChild(denomTableBody);
+
+  // 3. Cash Comparison Table
+  const cashCompTable = document.createElement("table");
+  cashCompTable.className = "cashier-closing-table";
+
+  const cashCompBody = document.createElement("tbody");
+
+  const compRows = [
+    ["Cash Sistem (Seharusnya Ada)", formatCurrency(preview.cashExpected), ""],
+    ["Cash Aktual Fisik (Dihitung)", formatCurrency(preview.cashActual), "text-gold"],
+    ["Selisih Cash", formatCurrency(preview.cashDifference), `highlight-row text-gold ${getCashDifferenceClass(preview.cashDifference)}`],
+  ];
+
+  compRows.forEach(([label, value, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    
+    const td1 = document.createElement("td");
+    td1.textContent = label;
+
+    const td2 = document.createElement("td");
+    td2.className = "text-right";
+    td2.textContent = value;
+
+    tr.append(td1, td2);
+    cashCompBody.appendChild(tr);
+  });
+  cashCompTable.appendChild(cashCompBody);
 
   const difference = document.createElement("p");
   difference.className = `cashier-closing-difference ${getCashDifferenceClass(preview.cashDifference)}`;
   difference.textContent = getCashDifferenceLabel(preview.cashDifference);
 
-  cashSection.append(cashLabel, cashInput, cashCheck, difference);
+  cashSection.append(cashLabel, cashInput, calcTitle, denomTable, cashCompTable, difference);
 
   const transferSection = document.createElement("div");
   transferSection.className = "cashier-closing-section cashier-closing-section--transfer";
@@ -4124,31 +4402,34 @@ function createCashierClosingPreviewElement(preview) {
     "Cocokkan transaksi transfer dengan mutasi rekening, QRIS, atau bukti transfer sebelum closing disimpan."
   ));
 
-  const transferGrid = document.createElement("div");
-  transferGrid.className = "cashier-closing-grid";
+  // 4. Transfer Comparison Table
+  const transferCompTable = document.createElement("table");
+  transferCompTable.className = "cashier-closing-table";
 
-  [
-    [
-      "Transfer Sistem",
-      formatCurrency(preview.transferRevenue),
-      `${preview.transferTransactions} transaksi transfer tercatat`,
-      preview.transferTransactions > 0 ? "equal" : "",
-    ],
-    [
-      "Yang Dicek Kasir",
-      preview.transferTransactions > 0 ? "Mutasi / QRIS" : "Tidak ada transfer",
-      preview.transferTransactions > 0
-        ? "Pastikan nominal dan jam pembayaran sesuai"
-        : "Tidak perlu cek transfer untuk shift ini",
-    ],
-    [
-      "Jika Belum Masuk",
-      "Tulis Catatan",
-      "Contoh: transfer pelanggan belum terlihat di mutasi",
-    ],
-  ].forEach(([labelText, valueText, detailText, modifierClass]) => {
-    transferGrid.appendChild(createCashierClosingCard(labelText, valueText, detailText, modifierClass));
+  const transferCompBody = document.createElement("tbody");
+
+  const transCompRows = [
+    ["Transfer Sistem", `${preview.transferTransactions} transaksi transfer lunas`, formatCurrency(preview.transferRevenue)],
+    ["Yang Harus Dicek Kasir", "Mutasi bank, QRIS, atau bukti transfer manual", "-"],
+  ];
+
+  transCompRows.forEach(([label, detail, value]) => {
+    const tr = document.createElement("tr");
+    
+    const td1 = document.createElement("td");
+    td1.textContent = label;
+
+    const td2 = document.createElement("td");
+    td2.textContent = detail;
+
+    const td3 = document.createElement("td");
+    td3.className = "text-right";
+    td3.textContent = value;
+
+    tr.append(td1, td2, td3);
+    transferCompBody.appendChild(tr);
   });
+  transferCompTable.appendChild(transferCompBody);
 
   const transferChecklist = document.createElement("ul");
   transferChecklist.className = "cashier-closing-checklist";
@@ -4163,7 +4444,7 @@ function createCashierClosingPreviewElement(preview) {
     transferChecklist.appendChild(item);
   });
 
-  transferSection.append(transferGrid, transferChecklist);
+  transferSection.append(transferCompTable, transferChecklist);
 
   const noteSection = document.createElement("div");
   noteSection.className = "cashier-closing-section";
@@ -4208,7 +4489,7 @@ function createCashierClosingPreviewElement(preview) {
 
   actions.append(closeButton, saveButton);
 
-  closing.append(header, grid, cashSection, transferSection, noteSection);
+  closing.append(header, mainTable, cashSection, transferSection, noteSection);
 
   if (lastCashierClosing) {
     closing.appendChild(createLastClosingSavedElement(lastCashierClosing));
@@ -5200,11 +5481,6 @@ function createRoomCard(room) {
   sessionButton.textContent = sessionButtonLabel;
   sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession;
 
-  if (room.status === "paid_waiting_start" && getCurrentOperatorRole() === "receptionist") {
-    sessionButton.disabled = true;
-    sessionButton.title = "Resepsionis tidak diizinkan memulai sesi";
-  }
-
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
 
@@ -5219,15 +5495,6 @@ function createRoomCard(room) {
     selectLcButton.type = "button";
     selectLcButton.dataset.action = "show-lc-selection";
     selectLcButton.textContent = "Pilih LC";
-
-    if (getCurrentOperatorRole() === "receptionist") {
-      sessionButton.disabled = true;
-      sessionButton.title = "Resepsionis tidak diizinkan menyelesaikan sesi";
-      extendButton.disabled = true;
-      extendButton.title = "Resepsionis tidak diizinkan menambah waktu";
-      selectLcButton.disabled = true;
-      selectLcButton.title = "Resepsionis tidak diizinkan memilih LC";
-    }
 
     const lcIds = String(room.lc_ids || "").trim();
     if (lcIds) {
@@ -6484,7 +6751,21 @@ function createPaymentSelectionElement(room) {
   let lcFeeTotal = 0;
   const activeLcIds = selectedLcIdsForRoom[room.room_id] || (room.lc_ids ? room.lc_ids.split(",") : []);
   if (activeLcIds && activeLcIds.length > 0) {
-    lcFeeTotal = activeLcIds.filter(id => id !== "PENDING").length * 175000;
+    const durationHours = (Number(room.booked_duration_minutes) || 0) / 60;
+    // Hitung rata-rata tarif dari semua LC aktif (untuk preview slot PENDING)
+    const activeLcList = lcs.filter(l => l.status === "active");
+    const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
+    const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+
+    activeLcIds.forEach(id => {
+      if (id === "PENDING") {
+        lcFeeTotal += Math.ceil(durationHours * avgRate);
+      } else {
+        const found = lcs.find(l => l.lc_id === id);
+        const rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
+        lcFeeTotal += Math.ceil(durationHours * rate);
+      }
+    });
   }
 
   const grandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
@@ -10451,37 +10732,151 @@ function createClosingPrintPreviewElement(closing) {
 
   header.append(title, subtitle);
 
-  const identity = createClosingPrintSection("Data Closing", [
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
+  // Main Print Table Report
+  const printTable = document.createElement("table");
+  printTable.className = "cashier-closing-table";
+  printTable.style.width = "100%";
+  printTable.style.borderCollapse = "collapse";
+  printTable.style.margin = "15px 0";
+  printTable.style.fontSize = "12px";
+
+  const printTableBody = document.createElement("tbody");
+
+  // Section 1: Data Closing
+  const trDataHeader = document.createElement("tr");
+  trDataHeader.className = "table-section-header";
+  trDataHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdDataHeader = document.createElement("td");
+  tdDataHeader.colSpan = 2;
+  tdDataHeader.style.fontWeight = "800";
+  tdDataHeader.textContent = "I. DATA CLOSING";
+  trDataHeader.appendChild(tdDataHeader);
+  printTableBody.appendChild(trDataHeader);
+
+  const dataRows = [
     ["ID Closing", closing?.closing_id || "-"],
     ["Tanggal Closing", closing?.closing_date || "-"],
     ["Waktu Closing", formatDateTimeLabel(closing?.created_at)],
     ["Kasir", closing?.cashier_name || "-"],
-  ]);
+  ];
+  dataRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
 
-  const transactionSummary = createClosingPrintSection("Ringkasan Transaksi", [
+  // Section 2: Ringkasan Transaksi
+  const trTransHeader = document.createElement("tr");
+  trTransHeader.className = "table-section-header";
+  trTransHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdTransHeader = document.createElement("td");
+  tdTransHeader.colSpan = 2;
+  tdTransHeader.style.fontWeight = "800";
+  tdTransHeader.textContent = "II. RINGKASAN TRANSAKSI";
+  trTransHeader.appendChild(tdTransHeader);
+  printTableBody.appendChild(trTransHeader);
+
+  const transSummaryRows = [
     ["Total Transaksi", `${Number(closing?.total_transactions) || 0} transaksi`],
     ["Transaksi Lunas", `${Number(closing?.paid_transactions) || 0} transaksi`],
-    ["Belum Dibayar", `${Number(closing?.unpaid_transactions) || 0} transaksi`],
+    ["Transaksi Belum Dibayar", `${Number(closing?.unpaid_transactions) || 0} transaksi`],
     ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
     ["Total Tagihan", formatCurrency(closing?.total_revenue)],
-  ]);
+  ];
+  transSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.style.fontWeight = label.includes("Total") || label.includes("Omzet") ? "bold" : "normal"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
 
-  const cashSummary = createClosingPrintSection("Pemeriksaan Cash", [
-    ["Cash Sistem", formatCurrency(closing?.cash_expected), "Uang cash yang seharusnya ada di laci."],
-    ["Cash Aktual", formatCurrency(closing?.cash_actual), "Uang cash yang dihitung kasir."],
-    [
-      "Selisih Cash",
-      `${formatCurrency(closing?.cash_difference)} - ${getClosingHistoryDifferenceLabel(Number(closing?.cash_difference) || 0)}`,
-      "Selisih otomatis antara cash aktual dan cash sistem.",
-    ],
-  ], `closing-print-section--${getCashDifferenceClass(Number(closing?.cash_difference) || 0)}`);
+  // Section 3: Pemeriksaan Kas (Cash)
+  const trCashHeader = document.createElement("tr");
+  trCashHeader.className = "table-section-header";
+  trCashHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdCashHeader = document.createElement("td");
+  tdCashHeader.colSpan = 2;
+  tdCashHeader.style.fontWeight = "800";
+  tdCashHeader.textContent = "III. PEMERIKSAAN KAS (CASH)";
+  trCashHeader.appendChild(tdCashHeader);
+  printTableBody.appendChild(trCashHeader);
 
-  const transferSummary = createClosingPrintSection("Pemeriksaan Transfer", [
-    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue), "Total pembayaran transfer yang tercatat di sistem."],
-    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`, "Cocokkan dengan mutasi rekening, QRIS, atau bukti transfer."],
-    ["Status Cek", Number(closing?.transfer_transactions) > 0 ? "Perlu cocokkan manual" : "Tidak ada transfer", "Jika belum masuk, tulis di catatan kasir."],
-    ["Sisa Belum Dibayar", formatCurrency(closing?.unpaid_revenue), "Tagihan yang belum lunas pada saat closing."],
-  ]);
+  const cashSummaryRows = [
+    ["Cash Sistem (Expected)", formatCurrency(closing?.cash_expected)],
+    ["Cash Aktual (Fisik)", formatCurrency(closing?.cash_actual)],
+    ["Selisih Cash", `${formatCurrency(closing?.cash_difference)} - ${getClosingHistoryDifferenceLabel(Number(closing?.cash_difference) || 0)}`],
+  ];
+  cashSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    tr.className = label === "Selisih Cash" ? `highlight-row ${getCashDifferenceClass(Number(closing?.cash_difference) || 0)}` : "";
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.style.fontWeight = "bold"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
+
+  // Section 4: Rincian Pecahan Uang Fisik jika ada
+  if (parsedDenoms.length > 0) {
+    const trDenomHeader = document.createElement("tr");
+    trDenomHeader.className = "table-section-header";
+    trDenomHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+    const tdDenomHeader = document.createElement("td");
+    tdDenomHeader.colSpan = 2;
+    tdDenomHeader.style.fontWeight = "800";
+    tdDenomHeader.textContent = "IV. RINCIAN SETORAN UANG FISIK";
+    trDenomHeader.appendChild(tdDenomHeader);
+    printTableBody.appendChild(trDenomHeader);
+
+    parsedDenoms.forEach((denom) => {
+      const tr = document.createElement("tr");
+      const td1 = document.createElement("td"); 
+      td1.style.padding = "8px"; 
+      td1.style.borderBottom = "1px dashed var(--border)"; 
+      td1.textContent = `${denom.label} (x${denom.qty})`;
+      
+      const td2 = document.createElement("td"); 
+      td2.style.padding = "8px"; 
+      td2.style.borderBottom = "1px dashed var(--border)"; 
+      td2.style.textAlign = "right"; 
+      td2.style.fontWeight = "bold";
+      td2.className = "text-gold";
+      td2.textContent = formatCurrency(denom.total);
+
+      tr.append(td1, td2);
+      printTableBody.appendChild(tr);
+    });
+  }
+
+  // Section 5: Pemeriksaan Transfer & Unpaid
+  const trTransferHeader = document.createElement("tr");
+  trTransferHeader.className = "table-section-header";
+  trTransferHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdTransferHeader = document.createElement("td");
+  tdTransferHeader.colSpan = 2;
+  tdTransferHeader.style.fontWeight = "800";
+  tdTransferHeader.textContent = "V. PEMERIKSAAN KAS LAINNYA";
+  trTransferHeader.appendChild(tdTransferHeader);
+  printTableBody.appendChild(trTransferHeader);
+
+  const transferSummaryRows = [
+    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
+    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
+    ["Sisa Belum Dibayar (Unpaid)", formatCurrency(closing?.unpaid_revenue)],
+  ];
+  transferSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
+
+  printTable.appendChild(printTableBody);
 
   const noteSection = document.createElement("section");
   noteSection.className = "closing-print-section";
@@ -10491,7 +10886,7 @@ function createClosingPrintPreviewElement(closing) {
 
   const note = document.createElement("p");
   note.className = "closing-print-note";
-  note.textContent = closing?.note || "-";
+  note.textContent = parsedNote || "-";
 
   noteSection.append(noteTitle, note);
 
@@ -10533,7 +10928,7 @@ function createClosingPrintPreviewElement(closing) {
   closeButton.textContent = "Tutup Preview Cetak";
 
   actions.append(printButton, closeButton);
-  print.append(header, identity, transactionSummary, cashSummary, transferSummary, noteSection, signatureSection, footer, actions);
+  print.append(header, printTable, noteSection, signatureSection, footer, actions);
 
   return print;
 }
@@ -10612,6 +11007,8 @@ function createCashierClosingRowElement(closing) {
     row.appendChild(item);
   });
 
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
   const noteItem = document.createElement("div");
   noteItem.className = "cashier-closing-history-note";
 
@@ -10621,9 +11018,33 @@ function createCashierClosingRowElement(closing) {
 
   const noteValue = document.createElement("p");
   noteValue.className = "cashier-closing-history-value";
-  noteValue.textContent = closing?.note || "-";
+  noteValue.textContent = parsedNote || "-";
 
   noteItem.append(noteLabel, noteValue);
+
+  if (parsedDenoms.length > 0) {
+    const denomDetails = document.createElement("div");
+    denomDetails.style.marginTop = "8px";
+    denomDetails.style.padding = "6px 10px";
+    denomDetails.style.background = "rgba(226, 184, 92, 0.05)";
+    denomDetails.style.border = "1px dashed rgba(226, 184, 92, 0.2)";
+    denomDetails.style.borderRadius = "4px";
+    denomDetails.style.fontSize = "11px";
+    denomDetails.style.color = "var(--text-secondary)";
+
+    const denomTitle = document.createElement("strong");
+    denomTitle.style.display = "block";
+    denomTitle.style.marginBottom = "4px";
+    denomTitle.style.color = "var(--gold)";
+    denomTitle.textContent = "Rincian Pecahan Uang Fisik:";
+    denomDetails.appendChild(denomTitle);
+
+    const listText = parsedDenoms.map(d => `${d.label} (${d.qty}x)`).join(", ");
+    const textNode = document.createTextNode(listText);
+    denomDetails.appendChild(textNode);
+    noteItem.appendChild(denomDetails);
+  }
+
   row.appendChild(noteItem);
 
   const actionItem = document.createElement("div");
@@ -13401,7 +13822,7 @@ function downloadPendingPayrollCsv() {
   }
   
   // CSV headers
-  const headers = ["ID LC", "Nama Panggilan", "Tarif per Sesi", "Total Sesi Pending", "Total Gaji"];
+  const headers = ["ID LC", "Nama Panggilan", "Tarif per Jam", "Total Sesi Pending", "Total Gaji"];
   
   // CSV rows
   const rows = lcPayrollPendingReports.map(rep => [
@@ -13697,7 +14118,7 @@ function createLcMasterSubTabElement() {
     <tr>
       <th>ID LC</th>
       <th>Nama Panggilan</th>
-      <th>Tarif Flat</th>
+      <th>Tarif / Jam</th>
       <th>Status Keaktifan</th>
       <th>Ketersediaan</th>
       <th style="text-align: center;">Aksi</th>
@@ -13925,7 +14346,7 @@ function createLcReportsSubTabElement() {
     <tr>
       <th>ID LC</th>
       <th>Nama Panggilan</th>
-      <th>Tarif Default</th>
+      <th>Tarif per Jam</th>
       <th style="text-align: center;">Total Sesi / Job</th>
       <th>Total Pendapatan (Gaji)</th>
       <th style="text-align: center;">Aksi</th>
@@ -14161,7 +14582,7 @@ function createLcPayrollSubTabElement() {
         <tr>
           <th>ID LC</th>
           <th>Nama Panggilan</th>
-          <th>Tarif per Sesi</th>
+          <th>Tarif per Jam</th>
           <th style="text-align: center;">Total Sesi Pending</th>
           <th>Total Gaji</th>
         </tr>
@@ -14321,7 +14742,7 @@ function createLcPayrollDetailElement() {
       <tr>
         <th>ID LC</th>
         <th>Nama Panggilan</th>
-        <th>Tarif Sesi</th>
+        <th>Tarif per Jam</th>
         <th style="text-align: center;">Total Sesi Kerja</th>
         <th>Total Pembayaran Gaji</th>
         <th style="text-align: center;">Aksi</th>
@@ -14422,13 +14843,28 @@ function createLcSlipModalOverlay() {
 
   (lc.logs || []).forEach((log, index) => {
     const dateStr = formatTransactionDateTime(log.created_at).split(" - ")[0];
-    lines.push(padText(`${index + 1}. Room: ${log.session_id.split("-")[0]} (${dateStr})`, formatCurrency(log.rate), 32));
+    const roomName = log.session_id.split("-")[0];
+    
+    let durationHours = 0;
+    if (log.created_at && log.closed_at) {
+      const ms = new Date(log.closed_at).getTime() - new Date(log.created_at).getTime();
+      const mins = Math.max(1, Math.ceil(ms / 60000));
+      durationHours = mins / 60;
+    }
+    if (durationHours === 0 && Number(log.rate) > 0 && Number(lc.rate_per_room) > 0) {
+      durationHours = Number(log.rate) / Number(lc.rate_per_room);
+    }
+    
+    lines.push(`${index + 1}. Room: ${roomName} (${dateStr})`);
+    
+    const formattedHours = durationHours > 0 ? `${durationHours.toFixed(1)} Jam` : "N/A";
+    lines.push(padText(`   ${formattedHours} @ ${formatCurrency(lc.rate_per_room)}/Jam`, formatCurrency(log.rate), 32));
   });
 
   lines.push(
     divider,
     padText("Total Sesi", `${lc.total_sessions} Sesi`, 32),
-    padText("Tarif Sesi", formatCurrency(lc.rate_per_room), 32),
+    padText("Tarif per Jam", formatCurrency(lc.rate_per_room), 32),
     doubleDivider,
     padText("TOTAL GAJI", formatCurrency(lc.total_earnings), 32),
     doubleDivider,
@@ -14554,8 +14990,8 @@ function createAddLcModalOverlay() {
   rateField.style.flexDirection = "column";
   rateField.style.gap = "4px";
   rateField.innerHTML = `
-    <label style="font-size: 12px; color: var(--muted);">Tarif Flat (Rp) per Sesi:</label>
-    <input type="number" class="duration-custom-input text-input-rate" placeholder="175000" value="${addLcForm.rate_per_room || 175000}">
+    <label style="font-size: 12px; color: var(--muted);">Tarif per Jam (Rp):</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="150000" value="${addLcForm.rate_per_room || 150000}">
   `;
 
   const actions = document.createElement("div");
@@ -14693,8 +15129,8 @@ function createEditLcModalOverlay() {
   rateField.style.flexDirection = "column";
   rateField.style.gap = "4px";
   rateField.innerHTML = `
-    <label style="font-size: 12px; color: var(--muted);">Tarif Flat (Rp) per Sesi:</label>
-    <input type="number" class="duration-custom-input text-input-rate" placeholder="175000" value="${editLcForm.rate_per_room}">
+    <label style="font-size: 12px; color: var(--muted);">Tarif per Jam (Rp):</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="150000" value="${editLcForm.rate_per_room}">
   `;
 
   const statusField = document.createElement("div");
@@ -15189,7 +15625,11 @@ function createReportsSubTabContentElement() {
       );
       break;
     case "cashier":
-      wrapper.appendChild(renderCashierClosingHistory());
+      if (closingPrintPreviewVisible && selectedClosingForPrint) {
+        wrapper.appendChild(createClosingPrintPreviewElement(selectedClosingForPrint));
+      } else {
+        wrapper.appendChild(renderCashierClosingHistory());
+      }
       break;
     case "fnb":
       wrapper.appendChild(createTodayFnbSalesReportPanelElement());
@@ -16634,10 +17074,11 @@ async function saveCashierClosing() {
   renderRooms();
 
   try {
+    const compiledNote = compileClosingNote();
     const data = await postApiAction({
       action: "saveCashierClosing",
       cash_actual: Number(cashierClosingCashActual || 0),
-      note: cashierClosingNote,
+      note: compiledNote,
       cashier_name: getLoggedInOperatorName(),
     });
 
@@ -16647,6 +17088,9 @@ async function saveCashierClosing() {
 
     lastCashierClosing = data.closing || null;
     cashierClosingConfirmationVisible = false;
+    cashierClosingCashActual = "";
+    cashierClosingNote = "";
+    resetClosingDenominations();
     showInlineNotice("Closing kasir berhasil disimpan.");
     await loadTodayCashierClosings();
   } catch (error) {
@@ -17345,11 +17789,19 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-extend-selection") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan menambah waktu.", "error");
+      return;
+    }
     showExtendSelection(button.dataset.roomId || roomId || "");
     return;
   }
 
   if (action === "show-lc-selection") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan memilih LC.", "error");
+      return;
+    }
     showLcSelection(button.dataset.roomId || roomId || "");
     return;
   }
