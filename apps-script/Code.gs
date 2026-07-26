@@ -7874,8 +7874,7 @@ function payAndStartSession_(payload) {
       var pendingSerial = 0;
       selectedLcIds.forEach(function(selId) {
         if (selId === "PENDING") {
-          // Slot PENDING: hitung dengan rata-rata tarif, buat work log placeholder
-          var rateForPending = Math.ceil((durationMinutes / 60) * avgLcRate);
+          var rateForPending = Math.ceil(durationMinutes / 60) * avgLcRate;
           lcFeeTotal += rateForPending;
           pendingSerial++;
           appendLcWorkLog_({
@@ -7904,7 +7903,7 @@ function payAndStartSession_(payload) {
         if (!hourlyRate || isNaN(hourlyRate) || hourlyRate <= 0) {
           throw new Error("Tarif per jam LC '" + (foundLc.lc_name || selId) + "' tidak valid. Isi tarif per jam di menu Master LC.");
         }
-        var rateForSession = Math.ceil((durationMinutes / 60) * hourlyRate);
+        var rateForSession = Math.ceil(durationMinutes / 60) * hourlyRate;
         lcFeeTotal += rateForSession;
         appendLcWorkLog_({
           log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + selId + "-" + Math.floor(Math.random() * 100),
@@ -8501,6 +8500,21 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
 
     try {
       appendRoomTimeLog_(logEntry);
+      
+      // Update active RoomSession if exists
+      var activeRoomSession = findLatestRoomSessionForRoom_(roomId, ["active", "starting", "paid_waiting_start"]);
+      if (activeRoomSession && activeRoomSession.session) {
+        var sessionObj = activeRoomSession.session;
+        var packageIncludedMinutes = Number(sessionObj.package_included_minutes) || 0;
+        var newBillableRoomMinutes = Math.max(0, newBookedDurationMinutes - packageIncludedMinutes);
+        
+        setRowValues_(activeRoomSession.sheet, activeRoomSession.headerMap, activeRoomSession.rowNumber, {
+          booked_duration_minutes: newBookedDurationMinutes,
+          billable_room_minutes: newBillableRoomMinutes,
+          scheduled_end_time: newScheduledEndTime,
+          updated_at: now
+        });
+      }
     } catch (logError) {
       sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(oldBookedDurationMinutes);
       sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(oldScheduledEndTime);
@@ -8508,7 +8522,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
 
       return {
         ok: false,
-        error: "Gagal mencatat audit log tambah waktu. Perubahan durasi dibatalkan.",
+        error: "Gagal mencatat audit log tambah waktu atau memperbarui sesi. Perubahan durasi dibatalkan.",
       };
     }
 
@@ -8630,14 +8644,45 @@ function closeSession_(roomId, cashierName) {
     var billing = resolveSessionBilling_(room, startDate, endDate);
     var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
+    
     var roomTotal = billing.room_total;
-
     var isPrepay = false;
     var prepayTxId = "";
+    var initialPaidMinutes = 0;
+    var prepaidRoomTotal = 0;
+    var prepaidLcTotal = 0;
+    
     if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.prepayment_transaction_id) {
       isPrepay = true;
       prepayTxId = activeRoomSession.session.prepayment_transaction_id;
-      roomTotal = 0; // Room fee was prepaid!
+      
+      try {
+        var txRows = readSheetAsObjects_("Transactions");
+        var prepayTx = null;
+        for (var tIdx = 0; tIdx < txRows.length; tIdx++) {
+          if (String(txRows[tIdx].transaction_id || "").trim() === String(prepayTxId).trim()) {
+            prepayTx = txRows[tIdx];
+            break;
+          }
+        }
+        if (prepayTx) {
+          prepaidRoomTotal = Number(prepayTx.room_total) || 0;
+          prepaidLcTotal = Number(prepayTx.lc_total) || 0;
+        }
+      } catch (err) {
+        Logger.log("Error finding prepayment transaction: " + err.message);
+      }
+
+      if (activeRoomSession.session.booking_mode === "package") {
+        initialPaidMinutes = Number(activeRoomSession.session.package_included_minutes) || 0;
+      } else {
+        if (prepayTx) {
+          initialPaidMinutes = Number(prepayTx.duration_minutes) || 0;
+        }
+      }
+      
+      var excessMinutes = Math.max(0, durationMinutes - initialPaidMinutes);
+      roomTotal = Math.ceil((excessMinutes / 60) * ratePerHour);
     }
 
     var prepaidExtensionsAmount = 0;
@@ -8668,16 +8713,22 @@ function closeSession_(roomId, cashierName) {
 
     roomTotal = Math.max(0, roomTotal - prepaidExtensionsAmount);
 
-    // Calculate LC Fee for Postpayment checkout
+    // Calculate LC Fee for checkout
     var lcFeeTotal = 0;
-    if (!isPrepay && activeRoomSession && activeRoomSession.session) {
-      var sessionForLc = activeRoomSession.session;
-      var lcIdsStr = String(sessionForLc.lc_ids || "").trim();
-      if (lcIdsStr) {
-        var selectedLcIds = lcIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+    if (activeRoomSession && activeRoomSession.session) {
+      try {
+        var sessionForLc = activeRoomSession.session;
+        var workLogRowsForLc = readSheetAsObjects_("LcWorkLogs").filter(function(log) {
+          return String(log.session_id || "").trim() === String(sessionForLc.session_id || "").trim();
+        });
+        
         var lcMasterRows = readSheetAsObjects_("LcMaster");
-        selectedLcIds.forEach(function(selId) {
-          if (selId === "PENDING") return;
+        var totalLcCost = 0;
+        
+        workLogRowsForLc.forEach(function(log) {
+          var selId = String(log.lc_id || "").trim();
+          if (selId === "PENDING" || !selId) return;
+          
           var foundLc = null;
           for (var idx = 0; idx < lcMasterRows.length; idx++) {
             if (String(lcMasterRows[idx].lc_id || "").trim() === selId) {
@@ -8692,9 +8743,21 @@ function closeSession_(roomId, cashierName) {
           if (!hourlyRate || isNaN(hourlyRate) || hourlyRate <= 0) {
             throw new Error("Tarif per jam LC '" + (foundLc.lc_name || selId) + "' tidak valid (" + foundLc.rate_per_room + "). Isi tarif per jam di menu Master LC terlebih dahulu.");
           }
-          var rateForSession = Math.ceil((durationMinutes / 60) * hourlyRate);
-          lcFeeTotal += rateForSession;
+          
+          if (log.status === "done") {
+            totalLcCost += Number(log.rate) || 0;
+          } else {
+            var startTimeText = log.created_at || startTime || endTime;
+            var workDurationMinutes = calculateDurationMinutes_(startTimeText, endTime);
+            var finalRate = Math.ceil(workDurationMinutes / 60) * hourlyRate;
+            totalLcCost += finalRate;
+          }
         });
+        
+        lcFeeTotal = Math.max(0, totalLcCost - prepaidLcTotal);
+      } catch (lcErr) {
+        Logger.log("Error calculating LC checkout fee: " + lcErr.message);
+        throw lcErr;
       }
     }
 
@@ -8799,24 +8862,21 @@ function closeSession_(roomId, cashierName) {
               lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("done");
               lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue(endTime);
               
-              var existingRate = Number(log.rate) || 0;
-              if (!isPrepay || existingRate === 0) {
-                var lcMasterRowsForClose = readSheetAsObjects_("LcMaster");
-                var foundLc = null;
-                for (var idx = 0; idx < lcMasterRowsForClose.length; idx++) {
-                  if (String(lcMasterRowsForClose[idx].lc_id || "").trim() === selId) {
-                    foundLc = lcMasterRowsForClose[idx];
-                    break;
-                  }
+              var lcMasterRowsForClose = readSheetAsObjects_("LcMaster");
+              var foundLc = null;
+              for (var idx = 0; idx < lcMasterRowsForClose.length; idx++) {
+                if (String(lcMasterRowsForClose[idx].lc_id || "").trim() === selId) {
+                  foundLc = lcMasterRowsForClose[idx];
+                  break;
                 }
-                if (foundLc) {
-                  var hourlyRate = Number(foundLc.rate_per_room);
-                  if (hourlyRate && !isNaN(hourlyRate) && hourlyRate > 0) {
-                    var startTimeText = log.created_at || startTime || endTime;
-                    var workDurationMinutes = calculateDurationMinutes_(startTimeText, endTime);
-                    var finalRate = Math.ceil((workDurationMinutes / 60) * hourlyRate);
-                    lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(finalRate);
-                  }
+              }
+              if (foundLc) {
+                var hourlyRate = Number(foundLc.rate_per_room);
+                if (hourlyRate && !isNaN(hourlyRate) && hourlyRate > 0) {
+                  var startTimeText = log.created_at || startTime || endTime;
+                  var workDurationMinutes = calculateDurationMinutes_(startTimeText, endTime);
+                  var finalRate = Math.ceil(workDurationMinutes / 60) * hourlyRate;
+                  lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(finalRate);
                 }
               }
             }
@@ -8883,13 +8943,7 @@ function assignSessionLcs_(payload) {
     var currentLcIds = currentLcIdsRaw.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
 
     var bookedCount = currentLcIds.length;
-    if (newLcIds.length > bookedCount) {
-      return { 
-        ok: false, 
-        success: false, 
-        error: "Jumlah LC yang dipilih (" + newLcIds.length + ") melebihi jumlah LC yang dipesan awal (" + bookedCount + ")." 
-      };
-    }
+    var finalLcCount = Math.max(bookedCount, newLcIds.length);
 
     var lcMasterSheet = ensureLcMasterSheet_();
     var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
@@ -8915,18 +8969,50 @@ function assignSessionLcs_(payload) {
       }
     }
 
+    var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+    var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+
     currentLcIds.forEach(function(oldId) {
       if (oldId !== "PENDING" && !newLcIds.includes(oldId)) {
+        // Free in LcMaster
         var rowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", oldId);
         if (rowNum) {
           lcMasterSheet.getRange(rowNum, lcMasterHeaders.availability).setValue("available");
           lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(now);
         }
+
+        // Close work log in LcWorkLogs
+        var workLogRows = readSheetAsObjects_("LcWorkLogs");
+        for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
+          var log = workLogRows[rIdx];
+          if (
+            String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
+            String(log.lc_id || "").trim() === oldId &&
+            log.status === "active"
+          ) {
+            var logRowNum = rIdx + 2;
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("done");
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue(now);
+            
+            // Calculate rate
+            var hourlyRate = 0;
+            for (var idx = 0; idx < lcMasterRows.length; idx++) {
+              if (String(lcMasterRows[idx].lc_id || "").trim() === oldId) {
+                hourlyRate = Number(lcMasterRows[idx].rate_per_room) || 0;
+                break;
+              }
+            }
+            if (hourlyRate > 0) {
+              var startTimeText = log.created_at || session.start_time || now;
+              var workDurationMinutes = calculateDurationMinutes_(startTimeText, now);
+              var finalRate = Math.ceil(workDurationMinutes / 60) * hourlyRate;
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(finalRate);
+            }
+          }
+        }
       }
     });
 
-    var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
-    var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
     var workLogRows = readSheetAsObjects_("LcWorkLogs");
 
     // Ganti work log PENDING satu per satu dengan LC yang baru dipilih
@@ -8964,7 +9050,6 @@ function assignSessionLcs_(payload) {
         var pendingRowNum = pendingLogIndexes[i] + 2;
         lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_id).setValue(newId);
         lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_name).setValue(foundLc ? foundLc.lc_name : newId);
-        // Rate sudah dihitung saat bayar — tidak diubah agar total transaksi tetap konsisten
       } else {
         // Lebih banyak LC baru dari slot PENDING → tambah baris baru
         appendLcWorkLog_({
@@ -8981,7 +9066,7 @@ function assignSessionLcs_(payload) {
     });
 
     var finalLcIdsList = newLcIds.slice();
-    while (finalLcIdsList.length < bookedCount) {
+    while (finalLcIdsList.length < finalLcCount) {
       finalLcIdsList.push("PENDING");
     }
     var finalLcIdsStr = finalLcIdsList.join(",");

@@ -520,7 +520,7 @@ let lastFnbOrder = null;
 let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
-let fnbOrderPaymentMethod = "cash";
+let fnbOrderPaymentMethod = "room_bill";
 let activeFnbSubTab = "order";
 let activeTransactionsSubTab = "history";
 let openFnbOrders = [];
@@ -2233,6 +2233,9 @@ function showInlineNotice(message, type = "info") {
 function showBillingSummary(transaction) {
   lastTransaction = transaction;
   renderRooms();
+  if (transaction) {
+    loadFnbDetailsForTransaction(transaction);
+  }
 }
 
 function clearBillingSummary() {
@@ -2252,6 +2255,7 @@ function showReceiptPrint(transaction) {
   receiptPrintVisible = true;
   renderRooms();
   window.scrollTo({ top: 0, behavior: "smooth" });
+  loadFnbDetailsForTransaction(transaction);
 }
 
 function hideReceiptPrint() {
@@ -3160,6 +3164,7 @@ function updateFnbOrderNote(value) {
 }
 
 function buildFnbOrderPayload() {
+  const isRoomBill = fnbOrderPaymentMethod === "room_bill";
   return {
     action: "saveFnbOrder",
     room_id: selectedFbRoomId,
@@ -3169,8 +3174,8 @@ function buildFnbOrderPayload() {
     })),
     cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
-    payment_method: fnbOrderPaymentMethod,
-    payment_status: "paid",
+    payment_method: isRoomBill ? "" : fnbOrderPaymentMethod,
+    payment_status: isRoomBill ? "unpaid" : "paid",
   };
 }
 
@@ -3218,7 +3223,7 @@ async function saveFnbOrder() {
     fbCartItems = [];
     fnbOrderNote = "";
     const originalPaymentMethod = fnbOrderPaymentMethod;
-    fnbOrderPaymentMethod = "cash";
+    fnbOrderPaymentMethod = "room_bill";
     showInlineNotice("Order F&B berhasil disimpan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
@@ -5623,6 +5628,108 @@ function createRoomRecoveryCandidateElement(candidate) {
   return item;
 }
 
+function getOpenFnbOrdersForRoom(room) {
+  if (room.status !== "occupied" || !room.start_time) {
+    return [];
+  }
+  const roomStartTime = formatJakartaIsoString(room.start_time);
+  return openFnbOrders.filter((order) => {
+    return (
+      order.room_id === room.room_id &&
+      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
+      order.order_status === "open"
+    );
+  });
+}
+
+function createRoomOpenFnbBreakdownElement(openOrders) {
+  const container = document.createElement("div");
+  container.className = "room-card-fnb-breakdown";
+  container.style.marginTop = "8px";
+  container.style.padding = "6px 8px";
+  container.style.backgroundColor = "rgba(0, 0, 0, 0.25)";
+  container.style.borderRadius = "6px";
+  container.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+  container.style.fontSize = "0.78rem";
+
+  const title = document.createElement("div");
+  title.style.fontWeight = "bold";
+  title.style.color = "rgba(255, 255, 255, 0.85)";
+  title.style.marginBottom = "4px";
+  title.style.display = "flex";
+  title.style.justifyContent = "space-between";
+  title.style.alignItems = "center";
+  title.innerHTML = `<span>🍽️ Rincian F&B:</span>`;
+
+  container.appendChild(title);
+
+  const itemsList = document.createElement("div");
+  itemsList.style.display = "flex";
+  itemsList.style.flexDirection = "column";
+  itemsList.style.gap = "2px";
+  itemsList.style.color = "rgba(255, 255, 255, 0.7)";
+
+  const aggregatedItems = {};
+  let totalFbAmount = 0;
+
+  openOrders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const name = item.menu_name || "-";
+      const qty = Number(item.quantity) || 0;
+      const price = Number(item.price) || 0;
+      if (!aggregatedItems[name]) {
+        aggregatedItems[name] = { quantity: 0, price: price };
+      }
+      aggregatedItems[name].quantity += qty;
+      totalFbAmount += qty * price;
+    });
+  });
+
+  Object.entries(aggregatedItems).forEach(([name, data]) => {
+    const itemRow = document.createElement("div");
+    itemRow.style.display = "flex";
+    itemRow.style.justifyContent = "space-between";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = name;
+    nameSpan.style.whiteSpace = "nowrap";
+    nameSpan.style.overflow = "hidden";
+    nameSpan.style.textOverflow = "ellipsis";
+    nameSpan.style.maxWidth = "130px";
+
+    const detailsSpan = document.createElement("span");
+    detailsSpan.textContent = `${data.quantity}x ${formatCurrency(data.price)}`;
+    detailsSpan.style.color = "rgba(255, 255, 255, 0.5)";
+
+    itemRow.append(nameSpan, detailsSpan);
+    itemsList.appendChild(itemRow);
+  });
+
+  container.appendChild(itemsList);
+
+  const divider = document.createElement("div");
+  divider.style.height = "1px";
+  divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+  divider.style.margin = "4px 0";
+  container.appendChild(divider);
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "space-between";
+  footer.style.fontWeight = "bold";
+  footer.style.color = "#10b981";
+
+  const footerLabel = document.createElement("span");
+  footerLabel.textContent = "Total F&B:";
+  const footerVal = document.createElement("span");
+  footerVal.textContent = formatCurrency(totalFbAmount);
+
+  footer.append(footerLabel, footerVal);
+  container.appendChild(footer);
+
+  return container;
+}
+
 function createRoomCard(room) {
   const card = document.createElement("article");
   card.className = `room-card ${getStatusClass(room.status)}`;
@@ -5653,13 +5760,31 @@ function createRoomCard(room) {
   status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
   status.textContent = statusLabel;
 
-  topLine.append(name, status);
+  if (room.status === "occupied") {
+    const openBillBadge = document.createElement("span");
+    openBillBadge.className = "room-status-badge open-bill-badge";
+    openBillBadge.style.backgroundColor = "rgba(124, 58, 237, 0.15)";
+    openBillBadge.style.color = "#a78bfa";
+    openBillBadge.style.fontSize = "11px";
+    openBillBadge.style.padding = "2px 6px";
+    openBillBadge.style.borderRadius = "4px";
+    openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
+    openBillBadge.style.fontWeight = "bold";
+    openBillBadge.textContent = "Open Bill";
+    topLine.append(name, status, openBillBadge);
+  } else {
+    topLine.append(name, status);
+  }
 
   const meta = document.createElement("div");
   meta.className = "room-meta";
 
   if (room.status === "occupied") {
     meta.appendChild(createRoomBookingInfoElement(room));
+    const openOrders = getOpenFnbOrdersForRoom(room);
+    if (openOrders.length > 0) {
+      meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders));
+    }
   } else if (room.status === "waiting_payment" || room.status === "paid_waiting_start") {
     meta.appendChild(createRoomWaitingPaymentInfoElement(room));
   } else if (room.status === "cleaning") {
@@ -5707,12 +5832,7 @@ function createRoomCard(room) {
     selectLcButton.dataset.action = "show-lc-selection";
     selectLcButton.textContent = "Pilih LC";
 
-    const lcIds = String(room.lc_ids || "").trim();
-    if (lcIds) {
-      actions.append(sessionButton, extendButton, selectLcButton);
-    } else {
-      actions.append(sessionButton, extendButton);
-    }
+    actions.append(sessionButton, extendButton, selectLcButton);
   } else {
     actions.append(sessionButton);
   }
@@ -6144,7 +6264,7 @@ function createDurationSelectionElement(room) {
         await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId, activeLcIds);
         customerNameInput = "";
         bookingTypeSelection = "regular";
-        selectedLcIdsForRoom[room.room_id] = [];
+        delete selectedLcIdsForRoom[room.room_id];
       } else {
         showInlineNotice("Pilih paket terlebih dahulu.", "error");
       }
@@ -7019,11 +7139,11 @@ function createPaymentSelectionElement(room) {
 
     activeLcIds.forEach(id => {
       if (id === "PENDING") {
-        lcFeeTotal += Math.ceil(durationHours * avgRate);
+        lcFeeTotal += Math.ceil(durationHours) * avgRate;
       } else {
         const found = lcs.find(l => l.lc_id === id);
         const rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
-        lcFeeTotal += Math.ceil(durationHours * rate);
+        lcFeeTotal += Math.ceil(durationHours) * rate;
       }
     });
   }
@@ -7619,29 +7739,14 @@ function createExtendSelectionElement(room) {
 
   const paymentField = document.createElement("div");
   paymentField.className = "extend-note-field";
-
-  const paymentLabel = document.createElement("label");
-  paymentLabel.className = "extend-note-label";
-  paymentLabel.textContent = "Metode Pembayaran (Wajib Bayar di Muka)";
-
-  const paymentSelect = document.createElement("select");
-  paymentSelect.className = "extend-note-input";
-  paymentSelect.id = "extendPaymentMethodSelect";
-  paymentSelect.dataset.action = "update-extend-payment-method";
-  paymentSelect.disabled = isExtendingSession || getCurrentOperatorRole() === "receptionist";
-
-  const cashOpt = document.createElement("option");
-  cashOpt.value = "cash";
-  cashOpt.textContent = "Tunai / Cash";
-  if (extendPaymentMethod === "cash") cashOpt.selected = true;
-
-  const transferOpt = document.createElement("option");
-  transferOpt.value = "transfer";
-  transferOpt.textContent = "Transfer / QRIS";
-  if (extendPaymentMethod === "transfer") transferOpt.selected = true;
-
-  paymentSelect.append(cashOpt, transferOpt);
-  paymentField.append(paymentLabel, paymentSelect);
+  paymentField.style.backgroundColor = "rgba(124, 58, 237, 0.1)";
+  paymentField.style.padding = "8px 12px";
+  paymentField.style.borderRadius = "var(--radius-sm)";
+  paymentField.style.border = "1px dashed rgba(124, 58, 237, 0.3)";
+  paymentField.style.fontSize = "12px";
+  paymentField.style.color = "#a78bfa";
+  paymentField.style.textAlign = "center";
+  paymentField.textContent = "ℹ️ Biaya tambahan waktu akan ditagihkan saat checkout (Open Bill).";
 
   const noteField = document.createElement("div");
   noteField.className = "extend-note-field";
@@ -8114,12 +8219,17 @@ function createFbPaymentMethodElement() {
   const label = document.createElement("label");
   label.className = "transaction-label";
   label.setAttribute("for", "fbPaymentMethodSelect");
-  label.textContent = "Metode Pembayaran (Wajib Bayar di Muka)";
+  label.textContent = "Metode Pembayaran";
 
   const select = document.createElement("select");
   select.className = "fb-room-select";
   select.id = "fbPaymentMethodSelect";
   select.dataset.action = "update-fb-payment-method";
+
+  const roomBillOpt = document.createElement("option");
+  roomBillOpt.value = "room_bill";
+  roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
+  if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
 
   const cashOpt = document.createElement("option");
   cashOpt.value = "cash";
@@ -8131,7 +8241,7 @@ function createFbPaymentMethodElement() {
   transferOpt.textContent = "Transfer / QRIS";
   if (fnbOrderPaymentMethod === "transfer") transferOpt.selected = true;
 
-  select.append(cashOpt, transferOpt);
+  select.append(roomBillOpt, cashOpt, transferOpt);
   control.append(label, select);
 
   return control;
@@ -16441,10 +16551,7 @@ function createSelectLcModalOverlay(room) {
 
   const counter = document.createElement("p");
   counter.className = "lc-selection-counter";
-  counter.textContent = `Terpilih: ${selectedCount} / ${bookedCount} orang`;
-  if (selectedCount > bookedCount) {
-    counter.style.color = "var(--danger)";
-  }
+  counter.textContent = `Terpilih: ${selectedCount} orang`;
 
   const availableLcs = lcs.filter(lc => lc.status === "active" && (lc.availability === "available" || pendingLcSelections[lc.lc_id]));
 
@@ -16468,12 +16575,6 @@ function createSelectLcModalOverlay(room) {
       cb.dataset.action = "toggle-lc-checkbox";
       cb.onchange = () => {
         if (cb.checked) {
-          const currentSelected = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]).length;
-          if (currentSelected >= bookedCount) {
-            cb.checked = false;
-            showInlineNotice(`Maksimal ${bookedCount} LC sesuai pesanan awal.`, "error");
-            return;
-          }
           pendingLcSelections[lc.lc_id] = true;
         } else {
           delete pendingLcSelections[lc.lc_id];
@@ -16904,8 +17005,8 @@ async function extendSession(roomId, addMinutes) {
       room_id: roomId,
       add_minutes: selectedMinutes,
       cashier_name: getLoggedInOperatorName(),
-      payment_method: extendPaymentMethod,
-      payment_status: "paid",
+      payment_method: "",
+      payment_status: "unpaid",
     };
 
     if (extendSessionNote.trim()) {
@@ -17558,6 +17659,9 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
       lastTransaction?.transaction_id === data.transaction?.transaction_id
     ) {
       lastTransaction = data.transaction || lastTransaction;
+      if (lastTransaction) {
+        loadFnbDetailsForTransaction(lastTransaction);
+      }
     }
 
     showInlineNotice("Pembayaran berhasil ditandai lunas.");
@@ -18273,7 +18377,7 @@ async function handleRoomAction(event) {
     const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
     await prepareRoomSession(roomId, Number(button.dataset.durationMinutes), customerNameInput, "", activeLcIds);
     customerNameInput = "";
-    selectedLcIdsForRoom[roomId] = [];
+    delete selectedLcIdsForRoom[roomId];
     return;
   }
 
@@ -18294,7 +18398,7 @@ async function handleRoomAction(event) {
     const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
     await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", activeLcIds);
     customerNameInput = "";
-    selectedLcIdsForRoom[roomId] = [];
+    delete selectedLcIdsForRoom[roomId];
     return;
   }
 
