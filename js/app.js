@@ -240,6 +240,24 @@ function getOperatorRoleLabel(role) {
   return ROLE_LABELS[normalizedRole] || normalizedRole || "Kasir";
 }
 
+function roleMeetsRequired(role, requiredRole) {
+  const normalizedRole = normalizeOperatorRole(role);
+  const normalizedRequiredRole = normalizeOperatorRole(requiredRole || "manager");
+  const rank = {
+    staff: 1,
+    receptionist: 1,
+    cashier: 2,
+    manager: 3,
+    owner: 4,
+  };
+
+  if (normalizedRole === "owner") {
+    return true;
+  }
+
+  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.manager);
+}
+
 function getCurrentOperatorRole() {
   if (currentOperator?.role) {
     return normalizeOperatorRole(currentOperator.role);
@@ -299,7 +317,15 @@ function loadOperatorSession() {
   }
 }
 
-function saveOperatorSession(operator) {
+function getLoggedInOperatorPin() {
+  try {
+    return sessionStorage.getItem("karaoke_operator_pin") || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveOperatorSession(operator, pin = "") {
   const safeOperator = {
     employee_id: String(operator?.employee_id || ""),
     employee_name: String(operator?.employee_name || ""),
@@ -307,11 +333,21 @@ function saveOperatorSession(operator) {
   };
 
   sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(safeOperator));
+  if (pin) {
+    try {
+      sessionStorage.setItem("karaoke_operator_pin", pin);
+    } catch (e) {
+      console.error("Gagal menyimpan operator PIN ke sessionStorage", e);
+    }
+  }
   currentOperator = safeOperator;
 }
 
 function clearOperatorSession() {
   sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+  try {
+    sessionStorage.removeItem("karaoke_operator_pin");
+  } catch (e) {}
   currentOperator = null;
   loginPin = "";
   loginErrorMessage = "";
@@ -13390,6 +13426,21 @@ function createDeleteField(labelText, field, value) {
 }
 
 function openAdminPinModal({ title, message, requestedAction, requiredRole = "manager", validatePin = true, onSuccess }) {
+  const operatorPin = getLoggedInOperatorPin();
+  if (isOperatorLoggedIn() && roleMeetsRequired(currentOperator.role, requiredRole) && operatorPin) {
+    console.log("openAdminPinModal: Bypassing PIN modal, operator role matches or exceeds required role.");
+    if (typeof onSuccess === "function") {
+      setTimeout(async () => {
+        try {
+          await onSuccess({ success: true, employee: currentOperator }, operatorPin);
+        } catch (err) {
+          console.error("Error executing onSuccess in bypassed PIN validation:", err);
+        }
+      }, 0);
+    }
+    return;
+  }
+
   adminPinModal = {
     title: title || "PIN Manager",
     message: message || "Masukkan PIN owner/manager untuk melanjutkan.",
@@ -17909,7 +17960,7 @@ async function handleOperatorLogin() {
       throw new Error("PIN tidak valid");
     }
 
-    saveOperatorSession(employee);
+    saveOperatorSession(employee, pin);
     loginPin = "";
     loginErrorMessage = "";
     renderOperatorHeader();
