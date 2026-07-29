@@ -15,7 +15,7 @@ import {
 } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=thermal-logo-canvas-5g";
-import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-5g";
+import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-6g";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -2570,6 +2570,62 @@ function getFilteredTodayTransactions() {
 
 function findTodayTransactionById(transactionId) {
   return todayTransactions.find((transaction) => transaction.transaction_id === transactionId) || null;
+}
+
+function getTransactionTimeValue(transaction) {
+  const candidates = [
+    transaction?.created_at,
+    transaction?.createdAt,
+    transaction?.end_time,
+    transaction?.endTime,
+    transaction?.start_time,
+    transaction?.startTime,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    const localMatch = value.match(/^(\d{2})-(\d{2})-(\d{4}) - (\d{2}):(\d{2}):(\d{2})$/);
+    const timestamp = localMatch
+      ? new Date(
+          Number(localMatch[3]),
+          Number(localMatch[2]) - 1,
+          Number(localMatch[1]),
+          Number(localMatch[4]),
+          Number(localMatch[5]),
+          Number(localMatch[6])
+        ).getTime()
+      : Date.parse(value);
+
+    if (!Number.isNaN(timestamp)) {
+      return timestamp;
+    }
+  }
+
+  return 0;
+}
+
+function getLatestTodayTransaction() {
+  return todayTransactions.reduce((latest, transaction) => {
+    if (!latest) {
+      return transaction;
+    }
+
+    return getTransactionTimeValue(transaction) >= getTransactionTimeValue(latest)
+      ? transaction
+      : latest;
+  }, null);
+}
+
+function findTransactionForAction(button) {
+  const transactionId = button?.dataset?.transactionId || "";
+
+  if (transactionId) {
+    return findTodayTransactionById(transactionId)
+      || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
+      || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
+  }
+
+  return lastTransaction || selectedReceiptTransaction || getLatestTodayTransaction();
 }
 
 function showTransactionFromHistory(transactionId) {
@@ -5146,6 +5202,57 @@ function createBillingBasisNoteElement(transaction) {
   note.textContent = `Dasar tagihan: ${basisLabel}`;
 
   return note;
+}
+
+function createLatestTransactionShortcutElement(transaction) {
+  const shortcut = document.createElement("section");
+  shortcut.className = "latest-transaction-shortcut";
+  shortcut.dataset.transactionId = transaction?.transaction_id || "";
+  shortcut.setAttribute("aria-labelledby", "latest-transaction-shortcut-title");
+
+  const content = document.createElement("div");
+  content.className = "latest-transaction-shortcut-content";
+
+  const title = document.createElement("h2");
+  title.id = "latest-transaction-shortcut-title";
+  title.className = "latest-transaction-shortcut-title";
+  title.textContent = "Transaksi Terakhir";
+
+  const meta = document.createElement("p");
+  meta.className = "latest-transaction-shortcut-meta";
+  meta.textContent = [
+    transaction?.room_name || transaction?.room_id || "-",
+    formatCurrency(getTransactionFinalTotal(transaction)),
+    getPaymentStatusLabel(transaction?.payment_status),
+  ].join(" | ");
+
+  const detail = document.createElement("p");
+  detail.className = "latest-transaction-shortcut-detail";
+  detail.textContent = `ID: ${transaction?.transaction_id || "-"} | Selesai: ${formatTransactionDateTime(transaction?.end_time || transaction?.created_at)}`;
+
+  content.append(title, meta, detail);
+
+  const actions = document.createElement("div");
+  actions.className = "latest-transaction-shortcut-actions";
+
+  const summaryButton = document.createElement("button");
+  summaryButton.className = "latest-transaction-shortcut-button secondary";
+  summaryButton.type = "button";
+  summaryButton.dataset.action = "show-transaction-summary";
+  summaryButton.dataset.transactionId = transaction?.transaction_id || "";
+  summaryButton.textContent = "Lihat Ringkasan";
+
+  const printButton = document.createElement("button");
+  printButton.className = "latest-transaction-shortcut-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-receipt-print";
+  printButton.dataset.transactionId = transaction?.transaction_id || "";
+  printButton.textContent = "Cetak Struk";
+
+  actions.append(summaryButton, printButton);
+  shortcut.append(content, actions);
+
+  return shortcut;
 }
 
 function createBillingSummaryElement(transaction) {
@@ -16213,6 +16320,12 @@ function renderDashboardGlobal() {
     fragment.appendChild(createStockWarningListElement(stockWarningMessages));
   }
 
+  const latestTransaction = getLatestTodayTransaction();
+
+  if (!lastTransaction && !receiptPrintVisible && activeDashboardTab === "rooms" && latestTransaction) {
+    fragment.appendChild(createLatestTransactionShortcutElement(latestTransaction));
+  }
+
   if (lastTransaction) {
     fragment.appendChild(createBillingSummaryElement(lastTransaction));
   }
@@ -18278,7 +18391,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-receipt-print") {
-    showReceiptPrint(lastTransaction);
+    showReceiptPrint(findTransactionForAction(button));
     return;
   }
 
@@ -18927,7 +19040,22 @@ document.addEventListener("input", (event) => {
 
   loginPin = loginPinInput.value.replace(/\D/g, "");
   loginErrorMessage = "";
-  renderLoginScreen();
+  
+  // Update the input value in-place to avoid cursor jumps / redraws
+  loginPinInput.value = loginPin;
+
+  // Update the submit button status and remove error message without re-rendering the whole screen
+  const loginForm = loginPinInput.closest("[data-action='operator-login-form']");
+  if (loginForm) {
+    const submitButton = loginForm.querySelector(".operator-login-button");
+    if (submitButton) {
+      submitButton.disabled = isLoggingIn || !loginPin.trim();
+    }
+    const errorEl = loginForm.querySelector(".operator-login-error");
+    if (errorEl) {
+      errorEl.remove();
+    }
+  }
 });
 
 document.addEventListener("submit", (event) => {

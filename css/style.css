@@ -2235,6 +2235,88 @@ body::after {
   color: var(--state-info-text);
 }
 
+.latest-transaction-shortcut {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 210, 104, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 210, 104, 0.1);
+  box-shadow: var(--shadow);
+}
+
+.latest-transaction-shortcut-content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.latest-transaction-shortcut-title {
+  margin: 0;
+  color: var(--button);
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.latest-transaction-shortcut-meta {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.latest-transaction-shortcut-detail {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.latest-transaction-shortcut-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.latest-transaction-shortcut-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--button);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.latest-transaction-shortcut-button.secondary {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.latest-transaction-shortcut-button:hover,
+.latest-transaction-shortcut-button:focus-visible {
+  background: var(--button-hover);
+  outline: 3px solid var(--button-focus);
+  outline-offset: 2px;
+}
+
+.latest-transaction-shortcut-button:active {
+  transform: translateY(1px);
+}
+
 .billing-summary {
   grid-column: 1 / -1;
   display: grid;
@@ -6873,6 +6955,19 @@ body::after {
     width: 100%;
     white-space: normal;
     text-align: center;
+  }
+
+  .latest-transaction-shortcut {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .latest-transaction-shortcut-actions {
+    width: 100%;
+  }
+
+  .latest-transaction-shortcut-button {
+    flex: 1 1 auto;
   }
 
   .billing-summary-header {
