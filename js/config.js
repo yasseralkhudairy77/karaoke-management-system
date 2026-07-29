@@ -16,7 +16,7 @@ export const API_BASE_URL = "https://script.google.com/macros/s/AKfycbzYoO2LkCAG
   This is called directly by the cashier browser on the local network.
   Keep empty to disable physical TV control from the dashboard.
 */
-export const LOCAL_TV_BRIDGE_URL = "http://localhost:3030/tv-command";
+export const LOCAL_TV_BRIDGE_URL = "http://192.168.1.31:3030/tv-command";
 export const LOCAL_TV_BRIDGE_ENABLED = true;
 
 /*
