@@ -6,7 +6,13 @@
   agar action=getRooms menggantikan sumber data contoh di production.
 */
 
-import { API_BASE_URL } from "./config.js";
+import {
+  API_BASE_URL,
+  DEV_MIN_SESSION_MINUTES,
+  DEV_SHORT_SESSION_ENABLED,
+  LOCAL_TV_BRIDGE_ENABLED,
+  LOCAL_TV_BRIDGE_URL,
+} from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=thermal-logo-canvas-5g";
 import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-5g";
@@ -127,6 +133,62 @@ function buildApiUrl(action, params = null) {
   }
 
   return url.toString();
+}
+
+function isLocalTvBridgeEnabled() {
+  return Boolean(LOCAL_TV_BRIDGE_ENABLED && String(LOCAL_TV_BRIDGE_URL || "").trim());
+}
+
+function canUseDevShortSessions() {
+  return Boolean(DEV_SHORT_SESSION_ENABLED && roleMeetsRequired(getCurrentOperatorRole(), "manager"));
+}
+
+function getMinimumSessionMinutes() {
+  if (canUseDevShortSessions()) {
+    return Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1);
+  }
+
+  return 15;
+}
+
+function getMinimumSessionMessage() {
+  return `Durasi minimal ${getMinimumSessionMinutes()} menit.`;
+}
+
+async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
+  if (!isLocalTvBridgeEnabled()) {
+    return {
+      skipped: true,
+      message: "Kontrol TV lokal belum aktif.",
+    };
+  }
+
+  const response = await fetch(LOCAL_TV_BRIDGE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+    body: JSON.stringify({
+      room_id: roomId,
+      tv_action: tvAction,
+      trigger_source: triggerSource,
+      requested_by: getLoggedInOperatorName(),
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error("Bridge TV lokal mengembalikan respons tidak valid.");
+  }
+
+  if (!response.ok || data?.success !== true) {
+    throw new Error(data?.message || data?.error || `Perintah TV gagal dengan status ${response.status}.`);
+  }
+
+  return data;
 }
 
 let rooms = [];
@@ -6316,11 +6378,22 @@ function createDurationSelectionElement(room) {
     const options = document.createElement("div");
     options.className = "duration-options";
 
-    [
-      [60, "1 jam"],
-      [120, "2 jam"],
-      [180, "3 jam"],
-    ].forEach(([minutes, labelText]) => {
+    const durationOptions = canUseDevShortSessions()
+      ? [
+          [1, "1 menit"],
+          [5, "5 menit"],
+          [10, "10 menit"],
+          [60, "1 jam"],
+          [120, "2 jam"],
+          [180, "3 jam"],
+        ]
+      : [
+          [60, "1 jam"],
+          [120, "2 jam"],
+          [180, "3 jam"],
+        ];
+
+    durationOptions.forEach(([minutes, labelText]) => {
       const button = document.createElement("button");
       button.className = "duration-option-button";
       button.type = "button";
@@ -6338,7 +6411,7 @@ function createDurationSelectionElement(room) {
     const input = document.createElement("input");
     input.className = "duration-custom-input";
     input.type = "number";
-    input.min = "15";
+    input.min = String(getMinimumSessionMinutes());
     input.step = "1";
     input.placeholder = "Custom mnt";
     input.dataset.action = "update-custom-duration";
@@ -17105,8 +17178,8 @@ async function startSession(roomId, durationMinutes) {
     return;
   }
 
-  if (selectedDuration < 15) {
-    showInlineNotice("Durasi minimal 15 menit.", "error");
+  if (selectedDuration < getMinimumSessionMinutes()) {
+    showInlineNotice(getMinimumSessionMessage(), "error");
     return;
   }
 
@@ -17117,13 +17190,20 @@ async function startSession(roomId, durationMinutes) {
       action: "startSession",
       room_id: roomId,
       duration_minutes: selectedDuration,
+      dev_test_duration: canUseDevShortSessions(),
     });
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal memulai sesi.");
     }
 
-    showInlineNotice("Sesi berhasil dimulai.");
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "start_session");
+      showInlineNotice("Sesi berhasil dimulai. TV dinyalakan.");
+    } catch (tvError) {
+      showInlineNotice(`Sesi berhasil dimulai. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+    }
+
     durationSelectionRoomId = "";
     customDurationMinutes = "";
     await loadRooms();
@@ -17147,8 +17227,8 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
     return;
   }
 
-  if (selectedDuration < 15) {
-    showInlineNotice("Durasi minimal 15 menit.", "error");
+  if (selectedDuration < getMinimumSessionMinutes()) {
+    showInlineNotice(getMinimumSessionMessage(), "error");
     return;
   }
 
@@ -17161,6 +17241,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       action: "prepareRoomSession",
       room_id: roomId,
       duration_minutes: selectedDuration,
+      dev_test_duration: canUseDevShortSessions(),
       payment_method: "cash",
       cashier_name: getLoggedInOperatorName(),
       customer_name: customerName,
@@ -17399,7 +17480,16 @@ async function activatePreparedSession(roomId) {
       throw new Error(data?.error || "Gagal memulai countdown.");
     }
 
-    showInlineNotice(data.message || "Countdown room berhasil dimulai.");
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "activate_prepared_session");
+      showInlineNotice(`${data.message || "Countdown room berhasil dimulai."} TV dinyalakan.`);
+    } catch (tvError) {
+      showInlineNotice(
+        `${data.message || "Countdown room berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
+        "warning"
+      );
+    }
+
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memulai countdown.", "error");
@@ -17445,7 +17535,13 @@ async function closeSession(roomId) {
       transactionFnbDetails[transaction.transaction_id] = transaction.fnb_orders;
     }
 
-    showInlineNotice("Sesi berhasil diselesaikan.");
+    try {
+      await sendLocalTvCommand(roomId, "power_off", "close_session");
+      showInlineNotice("Sesi berhasil diselesaikan. TV dimatikan.");
+    } catch (tvError) {
+      showInlineNotice(`Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
+    }
+
     if (transaction.transaction_id) {
       showBillingSummary(transaction);
     } else {
@@ -18440,8 +18536,8 @@ async function handleRoomAction(event) {
       return;
     }
 
-    if (selectedDuration < 15) {
-      showInlineNotice("Durasi minimal 15 menit.", "error");
+    if (selectedDuration < getMinimumSessionMinutes()) {
+      showInlineNotice(getMinimumSessionMessage(), "error");
       return;
     }
 

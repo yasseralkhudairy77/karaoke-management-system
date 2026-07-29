@@ -16,6 +16,9 @@ var FNB_V25A_PRICING_VERSION = "fnb-v2.5a";
 var FNB_V25A_VALID_DAY_ALL = "all";
 var FNB_V25A_VALID_DAY_WEEKDAY = "weekday";
 var FNB_V25A_VALID_DAY_WEEKEND = "weekend";
+var DEV_SHORT_SESSION_ENABLED = true;
+var DEV_MIN_SESSION_MINUTES = 1;
+var MIN_SESSION_MINUTES = 15;
 var NUMERIC_FIELDS = {
   rate_per_hour: true,
   duration_minutes: true,
@@ -700,7 +703,7 @@ function doPost(e) {
     var action = payload.action || "";
 
     if (action === "startSession") {
-      return jsonResponse(startSession_(payload.room_id, payload.duration_minutes));
+      return jsonResponse(startSession_(payload.room_id, payload.duration_minutes, payload));
     }
 
     if (action === "prepareRoomSession") {
@@ -7444,7 +7447,7 @@ function parsePostBody_(e) {
   }
 }
 
-function startSession_(roomId, durationMinutes) {
+function startSession_(roomId, durationMinutes, options) {
   if (!roomId) {
     return {
       ok: false,
@@ -7461,10 +7464,10 @@ function startSession_(roomId, durationMinutes) {
     };
   }
 
-  if (bookedDurationMinutes < 15) {
+  if (bookedDurationMinutes < getMinimumSessionMinutes_(options)) {
     return {
       ok: false,
-      error: "Durasi minimal 15 menit.",
+      error: getMinimumSessionErrorMessage_(options),
     };
   }
 
@@ -7546,11 +7549,11 @@ function prepareRoomSession_(payload) {
     };
   }
 
-  if (durationMinutes < 15) {
+  if (durationMinutes < getMinimumSessionMinutes_(request)) {
     return {
       ok: false,
       success: false,
-      error: "Durasi minimal 15 menit.",
+      error: getMinimumSessionErrorMessage_(request),
     };
   }
 
@@ -8355,7 +8358,11 @@ function activatePreparedSession_(roomId, cashierName) {
     var session = sessionResult.session;
     var durationMinutes = Number(session.booked_duration_minutes) || Number(room.booked_duration_minutes) || 0;
 
-    if (!isFinite(durationMinutes) || durationMinutes < 15) {
+    var minimumDurationMinutes = DEV_SHORT_SESSION_ENABLED === true
+      ? Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1)
+      : MIN_SESSION_MINUTES;
+
+    if (!isFinite(durationMinutes) || durationMinutes < minimumDurationMinutes) {
       return {
         ok: false,
         success: false,
@@ -12526,6 +12533,23 @@ function createLockBusyResponse_(message) {
     error: text,
     message: text,
   };
+}
+
+function isDevShortSessionRequest_(payload) {
+  var request = payload || {};
+  return DEV_SHORT_SESSION_ENABLED === true && request.dev_test_duration === true;
+}
+
+function getMinimumSessionMinutes_(payload) {
+  if (isDevShortSessionRequest_(payload)) {
+    return Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1);
+  }
+
+  return MIN_SESSION_MINUTES;
+}
+
+function getMinimumSessionErrorMessage_(payload) {
+  return "Durasi minimal " + getMinimumSessionMinutes_(payload) + " menit.";
 }
 
 function generateTransactionId_() {
