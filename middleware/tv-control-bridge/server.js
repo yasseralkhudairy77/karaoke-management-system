@@ -1,9 +1,17 @@
 const express = require("express");
 const cors = require("cors");
+require("dotenv").config();
 
-const PORT = 3030;
-const TIMEOUT_DELAY_MS = 5000;
-const VALID_TV_ACTIONS = new Set(["test", "power_on", "power_off"]);
+const {
+  connectToRoom,
+  getRuntime,
+  getStatus,
+  listRoomStatuses,
+  sleepRoom,
+  wakeRoom,
+} = require("./src/adbService");
+
+const PORT = Number(process.env.PORT) || 3030;
 
 const app = express();
 
@@ -18,7 +26,6 @@ app.use(
         callback(null, true);
         return;
       }
-
       callback(null, false);
     },
     methods: ["GET", "POST"],
@@ -26,137 +33,188 @@ app.use(
   })
 );
 
-function logTvCommand({ roomId, tvDeviceId, tvAction, result, blockReason = "" }) {
+function log(message) {
   const timestamp = new Date().toISOString();
-  const suffix = blockReason ? ` block_reason=${blockReason}` : "";
-
-  console.log(
-    `[${timestamp}] room_id=${roomId} tv_device_id=${tvDeviceId} tv_action=${tvAction} result=${result}${suffix}`
-  );
+  console.log(`[${timestamp}] ${message}`);
 }
 
-function buildValidationError(message) {
-  return {
-    success: false,
-    result: "failed",
-    message: message || "Payload tidak lengkap.",
-    block_reason: "VALIDATION_ERROR",
-  };
-}
-
-function isNonEmptyString(value) {
-  return typeof value === "string" && value.trim().length > 0;
-}
+// ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get("/health", (_req, res) => {
   res.json({
     success: true,
     service: "tv-control-bridge",
     status: "ok",
+    adb: "real",
   });
 });
+
+// ─── Runtime info (semua room + status koneksi) ───────────────────────────────
+
+app.get("/runtime", (_req, res) => {
+  try {
+    const data = getRuntime();
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─── Status satu room ─────────────────────────────────────────────────────────
+
+app.get("/rooms/:roomId/status", async (req, res) => {
+  const { roomId } = req.params;
+  try {
+    const status = await getStatus(roomId);
+    res.json({ success: true, data: status });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// ─── Connect ke room ─────────────────────────────────────────────────────────
+
+app.post("/rooms/:roomId/connect", async (req, res) => {
+  const { roomId } = req.params;
+  try {
+    log(`Connecting to ${roomId}...`);
+    const result = await connectToRoom(roomId);
+    log(`Connected to ${roomId}: ${result.connected}`);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    log(`Connect failed for ${roomId}: ${err.message}`);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─── TV Command (power_on / power_off / test) ─────────────────────────────────
 
 app.post("/tv-command", async (req, res) => {
   const body = req.body || {};
   const roomId = String(body.room_id || "").trim();
-  const tvDeviceId = String(body.tv_device_id || "").trim();
   const tvAction = String(body.tv_action || "").trim().toLowerCase();
 
-  if (!isNonEmptyString(roomId) || !isNonEmptyString(tvDeviceId) || !isNonEmptyString(tvAction)) {
-    const response = buildValidationError("room_id, tv_device_id, dan tv_action wajib diisi.");
-    logTvCommand({
-      roomId: roomId || "-",
-      tvDeviceId: tvDeviceId || "-",
-      tvAction: tvAction || "-",
-      result: response.result,
-      blockReason: response.block_reason,
-    });
-    res.status(400).json(response);
-    return;
-  }
-
-  if (!VALID_TV_ACTIONS.has(tvAction)) {
-    const response = {
+  if (!roomId || !tvAction) {
+    return res.status(400).json({
       success: false,
       result: "failed",
-      message: "tv_action tidak valid.",
+      message: "room_id dan tv_action wajib diisi.",
+      block_reason: "VALIDATION_ERROR",
+    });
+  }
+
+  const validActions = new Set(["test", "power_on", "power_off"]);
+  if (!validActions.has(tvAction)) {
+    return res.status(400).json({
+      success: false,
+      result: "failed",
+      message: "tv_action tidak valid. Gunakan: power_on, power_off, test",
       block_reason: "INVALID_TV_ACTION",
-    };
-
-    logTvCommand({
-      roomId,
-      tvDeviceId,
-      tvAction,
-      result: response.result,
-      blockReason: response.block_reason,
     });
-    res.status(400).json(response);
-    return;
   }
 
-  if (tvDeviceId === "TV-FAIL") {
-    const response = {
+  log(`TV command: room=${roomId} action=${tvAction}`);
+
+  try {
+    if (tvAction === "test") {
+      const status = await getStatus(roomId);
+      log(`Test result for ${roomId}: connected=${status.connected}`);
+      return res.json({
+        success: true,
+        result: "tested",
+        message: `Test ADB untuk ${roomId}: ${status.connected ? "Terhubung" : "Tidak terhubung"}`,
+        data: status,
+      });
+    }
+
+    if (tvAction === "power_off") {
+      const result = await sleepRoom(roomId);
+      log(`Power OFF sent to ${roomId} (keyevent ${result.keycode})`);
+      return res.json({
+        success: true,
+        result: "sent",
+        message: `TV ${roomId} berhasil dimatikan (sleep keyevent ${result.keycode})`,
+        data: result,
+      });
+    }
+
+    if (tvAction === "power_on") {
+      const result = await wakeRoom(roomId);
+      log(`Power ON sent to ${roomId} (WoL + keyevent 224)`);
+      return res.json({
+        success: true,
+        result: "sent",
+        message: `TV ${roomId} berhasil dinyalakan (WoL + wake keyevent)`,
+        data: result,
+      });
+    }
+  } catch (err) {
+    log(`TV command failed: room=${roomId} action=${tvAction} error=${err.message}`);
+    return res.status(500).json({
       success: false,
       result: "failed",
-      message: "SIMULATOR: Device offline",
-      block_reason: "TV_DEVICE_OFFLINE",
-    };
-
-    logTvCommand({
-      roomId,
-      tvDeviceId,
-      tvAction,
-      result: response.result,
-      blockReason: response.block_reason,
+      message: err.message,
+      block_reason: "ADB_ERROR",
     });
-    res.status(200).json(response);
-    return;
   }
-
-  if (tvDeviceId === "TV-TIMEOUT") {
-    await new Promise((resolve) => {
-      setTimeout(resolve, TIMEOUT_DELAY_MS);
-    });
-
-    const response = {
-      success: false,
-      result: "timeout",
-      message: "SIMULATOR: Device timeout",
-      block_reason: "TV_DEVICE_TIMEOUT",
-    };
-
-    logTvCommand({
-      roomId,
-      tvDeviceId,
-      tvAction,
-      result: response.result,
-      blockReason: response.block_reason,
-    });
-    res.status(200).json(response);
-    return;
-  }
-
-  const response = {
-    success: true,
-    result: "sent",
-    message: `Perintah TV berhasil dikirim. Middleware menerima command ${tvAction} untuk ${tvDeviceId}`,
-    data: {
-      room_id: roomId,
-      tv_device_id: tvDeviceId,
-      tv_action: tvAction,
-    },
-  };
-
-  logTvCommand({
-    roomId,
-    tvDeviceId,
-    tvAction,
-    result: response.result,
-  });
-  res.status(200).json(response);
 });
 
+// ─── Power OFF semua room ─────────────────────────────────────────────────────
+
+app.post("/rooms/all/power-off", async (req, res) => {
+  const statuses = listRoomStatuses();
+  const enabled = statuses.filter((r) => r && r.enabled && r.ip);
+
+  const results = await Promise.allSettled(
+    enabled.map(async (room) => {
+      const result = await sleepRoom(room.id);
+      log(`Power OFF sent to ${room.id}`);
+      return result;
+    })
+  );
+
+  const summary = results.map((r, i) => ({
+    roomId: enabled[i].id,
+    ok: r.status === "fulfilled",
+    error: r.status === "rejected" ? r.reason?.message : null,
+  }));
+
+  res.json({ success: true, results: summary });
+});
+
+// ─── Power ON semua room ──────────────────────────────────────────────────────
+
+app.post("/rooms/all/power-on", async (req, res) => {
+  const statuses = listRoomStatuses();
+  const enabled = statuses.filter((r) => r && r.enabled && r.ip && r.mac);
+
+  const results = await Promise.allSettled(
+    enabled.map(async (room) => {
+      const result = await wakeRoom(room.id);
+      log(`Power ON sent to ${room.id}`);
+      return result;
+    })
+  );
+
+  const summary = results.map((r, i) => ({
+    roomId: enabled[i].id,
+    ok: r.status === "fulfilled",
+    error: r.status === "rejected" ? r.reason?.message : null,
+  }));
+
+  res.json({ success: true, results: summary });
+});
+
+// ─── Start server ─────────────────────────────────────────────────────────────
+
 app.listen(PORT, () => {
-  console.log(`tv-control-bridge listening on http://localhost:${PORT}`);
-  console.log("Endpoints: GET /health, POST /tv-command");
+  console.log(`tv-control-bridge (ADB mode) listening on http://localhost:${PORT}`);
+  console.log("Endpoints:");
+  console.log("  GET  /health");
+  console.log("  GET  /runtime");
+  console.log("  GET  /rooms/:roomId/status");
+  console.log("  POST /rooms/:roomId/connect");
+  console.log("  POST /tv-command              { room_id, tv_action: power_on|power_off|test }");
+  console.log("  POST /rooms/all/power-off");
+  console.log("  POST /rooms/all/power-on");
 });

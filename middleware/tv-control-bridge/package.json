@@ -1,7 +1,7 @@
 {
   "name": "tv-control-bridge",
   "version": "1.0.0",
-  "description": "Local TV middleware bridge simulator for Karaoke Management System (Fase 7A-2)",
+  "description": "TV middleware bridge with real ADB control for Karaoke Management System",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "dotenv": "^16.0.0",
+    "express": "^4.21.2",
+    "wake_on_lan": "^1.2.3"
   }
-}
+}
