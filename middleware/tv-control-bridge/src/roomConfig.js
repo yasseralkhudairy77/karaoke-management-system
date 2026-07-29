@@ -32,6 +32,7 @@ function normalizeRoom(rawRoom = {}, index = 0) {
   const ip = String(rawRoom.ip || '').trim();
   const mac = String(rawRoom.mac || '').trim().toLowerCase();
   const adbPort = Number(rawRoom.adbPort || process.env.ADB_PORT || 5555);
+  const adbTimeoutMs = Number(rawRoom.adbTimeoutMs || process.env.ADB_TIMEOUT_MS || 15000);
   const wolBroadcast = String(rawRoom.wolBroadcast || process.env.WOL_BROADCAST || '255.255.255.255').trim();
   const wolBroadcasts = parseCsvList(
     typeof rawRoom.wolBroadcasts !== 'undefined' ? rawRoom.wolBroadcasts : process.env.WOL_BROADCASTS
@@ -42,13 +43,16 @@ function normalizeRoom(rawRoom = {}, index = 0) {
   const defaultSleepKeycode = Number(rawRoom.defaultSleepKeycode || process.env.DEFAULT_SLEEP_KEYCODE || 223);
   const enabled = rawRoom.enabled !== false;
   const notes = rawRoom.notes ? String(rawRoom.notes).trim() : '';
+  const aliases = parseCsvList(rawRoom.aliases);
 
   return {
     id,
     name,
+    aliases,
     ip,
     mac,
     adbPort,
+    adbTimeoutMs,
     wolBroadcast,
     wolBroadcasts,
     wolPort,
@@ -57,6 +61,15 @@ function normalizeRoom(rawRoom = {}, index = 0) {
     defaultSleepKeycode,
     enabled,
     notes,
+  };
+}
+
+function normalizeTestDevice(rawDevice = {}, index = 0) {
+  const device = normalizeRoom(rawDevice, index);
+  return {
+    ...device,
+    id: String(rawDevice.id || `test-device-${padRoomNumber(index)}`).trim(),
+    name: String(rawDevice.name || `Test Device ${padRoomNumber(index)}`).trim(),
   };
 }
 
@@ -73,6 +86,7 @@ function buildFallbackRooms() {
           ip: process.env.TV_IP || '',
           mac: process.env.TV_MAC || '',
           adbPort: process.env.ADB_PORT || 5555,
+          adbTimeoutMs: process.env.ADB_TIMEOUT_MS || 15000,
           wolBroadcast: process.env.WOL_BROADCAST || '255.255.255.255',
           wolBroadcasts: process.env.WOL_BROADCASTS || '',
           wolPort: process.env.WOL_PORT || 9,
@@ -84,6 +98,7 @@ function buildFallbackRooms() {
         0
       ),
     ],
+    testDevices: [],
   };
 }
 
@@ -97,21 +112,38 @@ function loadRoomFile() {
   const defaultRoomId = String(parsed.defaultRoomId || process.env.DEFAULT_ROOM_ID || '').trim();
   const roomList = Array.isArray(parsed.rooms) ? parsed.rooms : Array.isArray(parsed) ? parsed : [];
   const rooms = roomList.map((room, index) => normalizeRoom(room, index));
+  const testDeviceList = Array.isArray(parsed.testDevices) ? parsed.testDevices : [];
+  const testDevices = testDeviceList.map((device, index) => normalizeTestDevice(device, index));
   const resolvedDefaultRoomId = defaultRoomId || (rooms[0] ? rooms[0].id : 'room-01');
 
   return {
     defaultRoomId: resolvedDefaultRoomId,
     rooms,
+    testDevices,
   };
 }
 
 const roomFile = loadRoomFile();
 const rooms = roomFile.rooms;
+const testDevices = roomFile.testDevices;
 const roomsById = new Map(rooms.map((room) => [room.id.toLowerCase(), room]));
 const roomsByName = new Map(rooms.map((room) => [room.name.toLowerCase(), room]));
+const roomsByAlias = new Map();
+const testDevicesById = new Map(testDevices.map((device) => [device.id.toLowerCase(), device]));
+const testDevicesByName = new Map(testDevices.map((device) => [device.name.toLowerCase(), device]));
+
+rooms.forEach((room) => {
+  room.aliases.forEach((alias) => {
+    roomsByAlias.set(alias.toLowerCase(), room);
+  });
+});
 
 function listRooms() {
   return rooms.map((room) => ({ ...room }));
+}
+
+function listTestDevices() {
+  return testDevices.map((device) => ({ ...device }));
 }
 
 function getDefaultRoomId() {
@@ -137,6 +169,10 @@ function getRoomIdOrNull(selector) {
     return roomsByName.get(lower).id;
   }
 
+  if (roomsByAlias.has(lower)) {
+    return roomsByAlias.get(lower).id;
+  }
+
   if (/^\d+$/.test(lower)) {
     const normalized = `room-${String(Number(lower)).padStart(2, '0')}`;
     if (roomsById.has(normalized.toLowerCase())) {
@@ -154,6 +190,37 @@ function getRoom(selector) {
   }
 
   return roomsById.get(roomId.toLowerCase()) || null;
+}
+
+function getTestDeviceIdOrNull(selector) {
+  if (typeof selector === 'undefined' || selector === null || selector === '') {
+    return null;
+  }
+
+  const raw = String(selector).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const lower = raw.toLowerCase();
+  if (testDevicesById.has(lower)) {
+    return testDevicesById.get(lower).id;
+  }
+
+  if (testDevicesByName.has(lower)) {
+    return testDevicesByName.get(lower).id;
+  }
+
+  return null;
+}
+
+function getTestDevice(selector) {
+  const deviceId = getTestDeviceIdOrNull(selector);
+  if (!deviceId) {
+    return null;
+  }
+
+  return testDevicesById.get(deviceId.toLowerCase()) || null;
 }
 
 function resolveRoom(selector) {
@@ -182,7 +249,11 @@ module.exports = {
   getDefaultRoomId,
   getRoom,
   getRoomIdOrNull,
+  getTestDevice,
+  getTestDeviceIdOrNull,
   listRooms,
+  listTestDevices,
   normalizeRoom,
+  normalizeTestDevice,
   resolveRoom,
 };

@@ -7,7 +7,10 @@ const {
   getDefaultRoomId,
   getRoom,
   getRoomIdOrNull,
+  getTestDevice,
+  getTestDeviceIdOrNull,
   listRooms,
+  listTestDevices,
   resolveRoom,
   getConfigPath,
 } = require('./roomConfig');
@@ -45,6 +48,14 @@ function setConnected(roomId, connected, error = null, serial = null) {
 function assertRoomHasIp(room) {
   if (!room.ip) {
     throw new Error(`ROOM ${room.id} is missing ip`);
+  }
+}
+
+function assertRoomEnabled(room) {
+  if (!room.enabled) {
+    const error = new Error(`ROOM ${room.id} is disabled`);
+    error.statusCode = 409;
+    throw error;
   }
 }
 
@@ -121,6 +132,7 @@ async function waitForDevice(room) {
 
 async function connectToRoom(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   assertRoomHasIp(room);
 
   const serial = serialFromRoom(room);
@@ -128,7 +140,7 @@ async function connectToRoom(roomSelector) {
 
   if (await verifyConnected(room)) {
     log(`Room ${room.id} is already connected`);
-    return getStatus(room.id);
+    return getStatus(room);
   }
 
   try {
@@ -148,11 +160,12 @@ async function connectToRoom(roomSelector) {
 
   setConnected(room.id, true, null, serial);
   log(`Connected to ${room.id} (${serial})`);
-  return getStatus(room.id);
+  return getStatus(room);
 }
 
 async function ensureConnected(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   const serial = serialFromRoom(room);
   if (getRuntimeState(room.id).connected && (await verifyConnected(room))) {
     return serial;
@@ -170,6 +183,7 @@ async function runShell(room, command, label) {
 
 async function sendSleepKeyevent(roomSelector, keycode) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   assertRoomHasIp(room);
 
   const numericKeycode = Number(
@@ -194,6 +208,7 @@ async function sendSleepKeyevent(roomSelector, keycode) {
 
 async function sendWakeKeyevent(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   assertRoomHasIp(room);
 
   const serial = await ensureConnected(room);
@@ -211,6 +226,7 @@ async function sendWakeKeyevent(roomSelector) {
 
 async function wakeRoom(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   assertRoomHasIp(room);
   assertRoomHasMac(room);
 
@@ -273,6 +289,7 @@ async function launchApp(packageName, roomSelector) {
   }
 
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
   assertRoomHasIp(room);
 
   const cleanPackage = packageName.trim();
@@ -365,11 +382,31 @@ function getRuntime() {
         ...getRuntimeState(room.id),
       },
     })),
+    testDevices: listTestDevices().map((device) => ({
+      ...device,
+      serial: device.ip ? serialFromRoom(device) : null,
+      runtime: {
+        ...getRuntimeState(device.id),
+      },
+    })),
   };
 }
 
 function listRoomStatuses() {
   return listRooms().map((room) => getRoomRuntime(room.id));
+}
+
+function getTestDeviceRuntime(deviceSelector) {
+  const device = typeof deviceSelector === 'object' && deviceSelector ? deviceSelector : getTestDevice(deviceSelector);
+  if (!device) {
+    return null;
+  }
+
+  return getRoomRuntime(device);
+}
+
+function listTestDeviceStatuses() {
+  return listTestDevices().map((device) => getTestDeviceRuntime(device.id));
 }
 
 module.exports = {
@@ -379,9 +416,12 @@ module.exports = {
   getRoomRuntime,
   getRuntime,
   getStatus,
+  getTestDeviceRuntime,
   launchApp,
   listRoomStatuses,
+  listTestDeviceStatuses,
   resolveRoomId: getRoomIdOrNull,
+  resolveTestDeviceId: getTestDeviceIdOrNull,
   sleepRoom: sendSleepKeyevent,
   wakeRoom,
 };

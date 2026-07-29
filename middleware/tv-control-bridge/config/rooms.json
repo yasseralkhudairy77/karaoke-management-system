@@ -3,7 +3,32 @@
   "rooms": [
     {
       "id": "room-01",
+      "name": "VIP-1",
+      "aliases": [
+        "ROOM-001",
+        "VIP-1"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.39",
+      "mac": "9c:53:85:00:b4:dc",
+      "adbPort": 5555,
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
+      "wolPort": 9,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
+      "defaultSleepKeycode": 223,
+      "notes": ""
+    },
+    {
+      "id": "room-02",
       "name": "VIP-2",
+      "aliases": [
+        "ROOM-002",
+        "VIP-2"
+      ],
       "enabled": true,
       "ip": "192.168.1.21",
       "mac": "74:81:9a:ff:6a:a5",
@@ -16,117 +41,141 @@
       "wolPackets": 10,
       "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
-      "adbTimeoutMs": 10000,
       "notes": "Pilot room at workplace"
     },
     {
-      "id": "room-02",
-      "name": "Room 02",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
-      "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
-      "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
-      "defaultSleepKeycode": 223,
-      "notes": ""
-    },
-    {
       "id": "room-03",
-      "name": "Room 03",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-3",
+      "aliases": [
+        "ROOM-003",
+        "VIP-3"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.38",
+      "mac": "9c:53:85:00:b3:ab",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-04",
-      "name": "Room 04",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-4",
+      "aliases": [
+        "ROOM-004",
+        "VIP-4"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.35",
+      "mac": "74:81:9a:ff:72:be",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-05",
-      "name": "Room 05",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-5",
+      "aliases": [
+        "ROOM-005",
+        "VIP-5"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.20",
+      "mac": "74:81:9a:ff:72:f8",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-06",
-      "name": "Room 06",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-6",
+      "aliases": [
+        "ROOM-006",
+        "VIP-6"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.36",
+      "mac": "74:81:9a:ff:6a:ad",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-07",
-      "name": "Room 07",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-7",
+      "aliases": [
+        "ROOM-007",
+        "VIP-7"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.3",
+      "mac": "74:81:9a:ff:75:26",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-08",
-      "name": "Room 08",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "VIP-8",
+      "aliases": [
+        "ROOM-008",
+        "VIP-8"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.18",
+      "mac": "74:81:9a:ff:75:56",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
     },
     {
       "id": "room-09",
-      "name": "Room 09",
+      "name": "VIP-9",
+      "aliases": [
+        "ROOM-009",
+        "VIP-9"
+      ],
       "enabled": false,
       "ip": "",
       "mac": "",
@@ -141,7 +190,11 @@
     },
     {
       "id": "room-10",
-      "name": "Room 10",
+      "name": "VIP-10",
+      "aliases": [
+        "ROOM-010",
+        "VIP-10"
+      ],
       "enabled": false,
       "ip": "",
       "mac": "",
@@ -156,7 +209,11 @@
     },
     {
       "id": "room-11",
-      "name": "Room 11",
+      "name": "VIP-11",
+      "aliases": [
+        "ROOM-011",
+        "VIP-11"
+      ],
       "enabled": false,
       "ip": "",
       "mac": "",
@@ -171,7 +228,11 @@
     },
     {
       "id": "room-12",
-      "name": "Room 12",
+      "name": "VIP-12",
+      "aliases": [
+        "ROOM-012",
+        "VIP-12"
+      ],
       "enabled": false,
       "ip": "",
       "mac": "",
@@ -186,18 +247,45 @@
     },
     {
       "id": "room-13",
-      "name": "Room 13",
-      "enabled": false,
-      "ip": "",
-      "mac": "",
+      "name": "Executive Room",
+      "aliases": [
+        "ROOM-013",
+        "EXECUTIVE",
+        "Executive Room"
+      ],
+      "enabled": true,
+      "ip": "192.168.1.22",
+      "mac": "74:81:9a:ff:64:3a",
       "adbPort": 5555,
-      "wolBroadcast": "255.255.255.255",
-      "wolBroadcasts": [],
+      "wolBroadcast": "192.168.1.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
       "wolPort": 9,
-      "wolPackets": 3,
-      "wolIntervalMs": 100,
+      "wolPackets": 10,
+      "wolIntervalMs": 250,
       "defaultSleepKeycode": 223,
       "notes": ""
+    }
+  ],
+  "testDevices": [
+    {
+      "id": "android-box-test",
+      "name": "Android Box Test",
+      "enabled": true,
+      "ip": "10.43.157.148",
+      "mac": "ac:00:d0:e6:eb:47",
+      "adbPort": 5555,
+      "adbTimeoutMs": 15000,
+      "wolBroadcast": "10.43.157.255",
+      "wolBroadcasts": [
+        "255.255.255.255"
+      ],
+      "wolPort": 9,
+      "wolPackets": 5,
+      "wolIntervalMs": 100,
+      "defaultSleepKeycode": 223,
+      "notes": "Lab Android box target, outside production rooms"
     }
   ]
 }
