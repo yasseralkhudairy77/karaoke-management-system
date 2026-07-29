@@ -191,6 +191,23 @@ async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
   return data;
 }
 
+function sendTvOffForExpiredCountdown(roomId, scheduledEndTime) {
+  const key = `${roomId || ""}|${scheduledEndTime || ""}`;
+  if (!roomId || !scheduledEndTime || autoTvOffByCountdownKey.has(key)) {
+    return;
+  }
+
+  autoTvOffByCountdownKey.add(key);
+  sendLocalTvCommand(roomId, "power_off", "countdown_expired")
+    .then(() => {
+      showInlineNotice(`Waktu ${roomId} habis. TV dimatikan otomatis.`, "warning");
+    })
+    .catch((error) => {
+      console.warn("Gagal mematikan TV saat countdown habis.", error);
+      showInlineNotice(`Waktu ${roomId} habis, tetapi TV gagal dimatikan: ${error.message}`, "warning");
+    });
+}
+
 let rooms = [];
 let errorMessage = "";
 let noticeMessage = "";
@@ -215,6 +232,7 @@ let isLoadingOwnerReport = false;
 let ownerReportPrintVisible = false;
 let roomWarningStateInitialized = false;
 let previousWarningRoomIds = new Set();
+const autoTvOffByCountdownKey = new Set();
 let roomWarningAudioContext = null;
 let roomWarningAudioUnlocked = false;
 let pendingRoomWarningSound = false;
@@ -16537,6 +16555,11 @@ function updateRunningTimers() {
       timer.classList.toggle("warning", status === "warning");
       applyRoomTimeVisualState(card, status);
       updateRoomTimeBadge(badge, status);
+
+      if (status === "expired") {
+        sendTvOffForExpiredCountdown(card.dataset.roomId, timer.dataset.scheduledEndTime);
+      }
+
       return;
     }
 
