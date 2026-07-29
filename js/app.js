@@ -17382,7 +17382,14 @@ async function completeCleaning(roomId) {
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menyelesaikan cleaning.");
     }
-    showInlineNotice("Room siap digunakan kembali.");
+
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "complete_cleaning");
+      showInlineNotice("Room siap digunakan kembali. TV dinyalakan.");
+    } catch (tvError) {
+      showInlineNotice(`Room siap digunakan kembali. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+    }
+
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan cleaning.", "error");
