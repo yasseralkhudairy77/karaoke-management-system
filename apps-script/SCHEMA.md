@@ -605,6 +605,7 @@ Menyimpan daftar menu yang bisa dijual.
 | `stock_tracking` | `yes` jika menu mengurangi stok langsung, `no` jika tidak. |
 | `stock_item_id` | ID item stok di tab `Inventory`. |
 | `stock_qty_per_unit` | Jumlah stok yang berkurang setiap 1 menu terjual. |
+| `bonus_sales_lc` | Bonus LC per quantity menu. Bonus otomatis dibagi rata ke LC aktif di room. |
 
 Fase stok dasar hanya mendukung stok item langsung. Recipe/BOM belum dipakai.
 
@@ -613,7 +614,7 @@ Fase stok dasar hanya mendukung stok item langsung. Recipe/BOM belum dipakai.
 POST `saveMenuMaster` dan `updateMenuMaster` mengelola master menu.
 
 - ID baru memakai format `MENU-001`, `MENU-002`, dst.
-- Field yang dikelola: `menu_name`, `category`, `price`, `stock_item_id`, `stock_qty_per_unit`, `status`.
+- Field yang dikelola: `menu_name`, `category`, `price`, `stock_item_id`, `stock_qty_per_unit`, `bonus_sales_lc`, `status`.
 - Menu `inactive` tidak boleh dipakai dalam order F&B.
 - Jika `stock_item_id` kosong, backend menyimpan `stock_tracking = no`.
 - Fase 6B: POST `deleteMenuMaster` menghapus permanen hanya jika menu belum pernah muncul di `FnbOrderItems`.
@@ -1445,6 +1446,202 @@ Stable error codes:
 - `FOUNDATION_INITIALIZATION_FAILED`
 
 No production initialization is implied by this documentation. Jalankan initializer production hanya setelah backup manual dan owner approval.
+
+## LC Payroll, Sales Bonus, Kasbon, dan Petty Cash
+
+Pondasi ini menghubungkan hak LC, bonus sales minuman, kasbon, payroll, dan uang fisik kasir.
+
+Prinsip:
+
+- `LcWorkLogs` tetap menjadi sumber jasa room LC.
+- `LcSalesBonusLogs` menjadi sumber bonus sales LC dari F&B/minuman.
+- `LcCashAdvances` menjadi sumber kasbon/potongan payroll.
+- `PettyCashLedger` menjadi sumber mutasi uang fisik kasir.
+- `LcPayrollHistory` menjadi ringkasan payroll final per periode.
+- Semua row yang sudah tercatat tidak dihapus permanen; koreksi memakai status/catatan.
+- Kasbon dan payroll LC dijalankan oleh kasir sesuai kebijakan management; tidak ada step approval manager di pondasi ini.
+
+### LcSalesBonusLogs
+
+Purpose: mencatat bonus sales LC dari item F&B/minuman yang eligible setelah transaksi lunas.
+
+Headers:
+
+```text
+bonus_log_id
+operational_date
+transaction_id
+order_id
+menu_id
+menu_name
+category
+lc_id
+lc_name
+quantity
+bonus_per_item
+bonus_total
+source_status
+payroll_id
+created_at
+created_by
+voided_at
+void_reason
+```
+
+Rules:
+
+- `bonus_log_id` wajib dan unik.
+- `transaction_id` mengacu ke `Transactions.transaction_id`.
+- `order_id` mengacu ke `FnbOrders.order_id`.
+- `menu_id` adalah snapshot item menu saat bonus dibuat.
+- `lc_id` mengacu ke `LcMaster.lc_id`.
+- `quantity`, `bonus_per_item`, dan `bonus_total` finite dan nonnegative.
+- `bonus_total = quantity * bonus_per_item`.
+- `source_status`: `earned`, `voided`, atau `payrolled`.
+- `payroll_id` kosong sebelum masuk payroll.
+- Kombinasi `transaction_id + order_id + menu_id + lc_id` tidak boleh dobel untuk bonus aktif.
+
+### LcCashAdvances
+
+Purpose: mencatat kasbon LC yang menjadi potongan payroll dan sekaligus referensi cash out petty cash.
+
+Headers:
+
+```text
+cash_advance_id
+operational_date
+lc_id
+lc_name
+amount
+status
+requested_by
+cashier_name
+petty_cash_ledger_id
+payroll_id
+note
+created_at
+deducted_at
+cancelled_at
+cancel_reason
+```
+
+Rules:
+
+- `cash_advance_id` wajib dan unik.
+- `lc_id` mengacu ke `LcMaster.lc_id`.
+- `amount` finite dan lebih dari `0`.
+- `status`: `open`, `deducted`, atau `cancelled`.
+- `cashier_name` wajib sebagai operator yang mengeluarkan kasbon.
+- `petty_cash_ledger_id` wajib setelah kasbon mengeluarkan uang dari kasir.
+- `payroll_id` kosong saat `open`, terisi saat `deducted`.
+- Kasbon yang salah input dibatalkan dengan `status = cancelled`, bukan dihapus.
+
+### PettyCashLedger
+
+Purpose: mencatat semua mutasi petty cash kasir.
+
+Headers:
+
+```text
+ledger_id
+operational_date
+entry_type
+category
+reference_type
+reference_id
+lc_id
+lc_name
+cash_in_amount
+cash_out_amount
+balance_after
+cashier_name
+note
+created_at
+voided_at
+void_reason
+```
+
+Rules:
+
+- `ledger_id` wajib dan unik.
+- `entry_type`: `cash_in`, `cash_out`, atau `adjustment`.
+- `category` awal: `petty_cash_topup`, `lc_cash_advance`, `lc_payroll_payout`, `operational_expense`, `manual_adjustment`.
+- `reference_type` awal: `lc_cash_advance`, `lc_payroll`, `manual`, atau `expense`.
+- `cash_in_amount` dan `cash_out_amount` finite dan nonnegative.
+- Untuk `cash_in`, `cash_in_amount > 0` dan `cash_out_amount = 0`.
+- Untuk `cash_out`, `cash_out_amount > 0` dan `cash_in_amount = 0`.
+- `balance_after` adalah saldo petty cash sistem setelah mutasi.
+- `cashier_name` wajib sebagai operator mutasi petty cash.
+- Koreksi memakai void/adjustment dengan catatan, bukan delete.
+
+### LcPayrollHistory V2 Fields
+
+`LcPayrollHistory` tetap memakai header existing dan ditambah field berikut secara append-only:
+
+```text
+room_earning_total
+sales_bonus_total
+cash_advance_deducted
+gross_earning_total
+net_payout_total
+petty_cash_ledger_id
+status
+```
+
+Rules:
+
+- `total_amount` dipertahankan untuk kompatibilitas dan sebaiknya sama dengan `net_payout_total` pada payroll v2.
+- `room_earning_total` berasal dari `LcWorkLogs`.
+- `sales_bonus_total` berasal dari `LcSalesBonusLogs`.
+- `cash_advance_deducted` berasal dari `LcCashAdvances`.
+- `gross_earning_total = room_earning_total + sales_bonus_total`.
+- `net_payout_total = gross_earning_total - cash_advance_deducted`.
+- `cash_advance_deducted` tidak boleh membuat `net_payout_total` negatif; kasbon yang belum bisa dipotong tetap `open`.
+- `petty_cash_ledger_id` terisi jika payroll dibayar cash oleh kasir.
+- `processed_by` berisi nama kasir/operator yang menjalankan payroll.
+- `status`: `processed`, `paid`, `voided`, atau `adjusted`.
+
+### LC Finance Foundation API
+
+POST/GET `validateLcFinanceFoundation` adalah read-only.
+
+Request:
+
+```json
+{
+  "action": "validateLcFinanceFoundation"
+}
+```
+
+Status response:
+
+- `ready`: semua sheet dan header valid.
+- `not_initialized`: ada sheet yang belum dibuat.
+- `append_required`: sheet existing valid tetapi butuh tambahan header append-only.
+- `partial_invalid`: ada sheet missing sekaligus konflik.
+- `invalid`: ada konflik header/data.
+
+POST `initializeLcFinanceFoundation` default dry-run:
+
+```json
+{
+  "action": "initializeLcFinanceFoundation",
+  "dry_run": true
+}
+```
+
+Execute hanya boleh berjalan dengan:
+
+```json
+{
+  "action": "initializeLcFinanceFoundation",
+  "dry_run": false,
+  "backup_confirmed": true,
+  "confirm": "INITIALIZE_LC_FINANCE"
+}
+```
+
+Initializer membuat sheet yang belum ada dan menambah header append-only pada `LcPayrollHistory` jika masih memakai schema lama. Initializer tidak membuat sample data, tidak menghapus sheet, dan berhenti jika menemukan konflik header blocking.
 
 ## Recipe
 

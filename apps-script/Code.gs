@@ -66,6 +66,17 @@ var NUMERIC_FIELDS = {
   rate_per_room: true,
   rate: true,
   lc_total: true,
+  bonus_per_item: true,
+  bonus_total: true,
+  room_earning_total: true,
+  sales_bonus_total: true,
+  cash_advance_deducted: true,
+  gross_earning_total: true,
+  net_payout_total: true,
+  amount: true,
+  cash_in_amount: true,
+  cash_out_amount: true,
+  balance_after: true,
 };
 var CASHIER_CLOSINGS_HEADERS = [
   "closing_id",
@@ -109,6 +120,7 @@ var FNB_ORDER_ITEMS_HEADERS = [
   "price",
   "quantity",
   "subtotal",
+  "bonus_sales_lc",
   "created_at",
 ];
 var TRANSACTIONS_EXTRA_HEADERS = [
@@ -158,6 +170,68 @@ var LC_PAYROLL_HISTORY_HEADERS = [
   "total_lcs_paid",
   "processed_at",
   "processed_by",
+  "room_earning_total",
+  "sales_bonus_total",
+  "cash_advance_deducted",
+  "gross_earning_total",
+  "net_payout_total",
+  "petty_cash_ledger_id",
+  "status",
+];
+var LC_SALES_BONUS_LOG_HEADERS = [
+  "bonus_log_id",
+  "operational_date",
+  "transaction_id",
+  "order_id",
+  "menu_id",
+  "menu_name",
+  "category",
+  "lc_id",
+  "lc_name",
+  "quantity",
+  "bonus_per_item",
+  "bonus_total",
+  "source_status",
+  "payroll_id",
+  "created_at",
+  "created_by",
+  "voided_at",
+  "void_reason",
+];
+var LC_CASH_ADVANCES_HEADERS = [
+  "cash_advance_id",
+  "operational_date",
+  "lc_id",
+  "lc_name",
+  "amount",
+  "status",
+  "requested_by",
+  "cashier_name",
+  "petty_cash_ledger_id",
+  "payroll_id",
+  "note",
+  "created_at",
+  "deducted_at",
+  "cancelled_at",
+  "cancel_reason",
+];
+var PETTY_CASH_LEDGER_HEADERS = [
+  "ledger_id",
+  "operational_date",
+  "entry_type",
+  "category",
+  "reference_type",
+  "reference_id",
+  "lc_id",
+  "lc_name",
+  "cash_in_amount",
+  "cash_out_amount",
+  "balance_after",
+  "cashier_name",
+  "note",
+  "created_at",
+  "voided_at",
+  "void_reason",
 ];
 var MENU_STOCK_HEADERS = [
   "stock_tracking",
@@ -279,6 +353,7 @@ var MENU_MASTER_HEADERS = [
   "stock_tracking",
   "stock_item_id",
   "stock_qty_per_unit",
+  "bonus_sales_lc",
 ];
 var MASTER_DATA_AUDIT_LOG_HEADERS = [
   "log_id",
@@ -470,6 +545,29 @@ var PACKAGE_SESSION_FOUNDATION_SHEETS = [
     sheet_name: TRANSACTION_LINES_SHEET,
     headers: TRANSACTION_LINE_HEADERS,
     primary_id: "transaction_line_id",
+  },
+];
+var LC_FINANCE_FOUNDATION_SHEETS = [
+  {
+    sheet_name: "LcSalesBonusLogs",
+    headers: LC_SALES_BONUS_LOG_HEADERS,
+    primary_id: "bonus_log_id",
+  },
+  {
+    sheet_name: "LcCashAdvances",
+    headers: LC_CASH_ADVANCES_HEADERS,
+    primary_id: "cash_advance_id",
+  },
+  {
+    sheet_name: "PettyCashLedger",
+    headers: PETTY_CASH_LEDGER_HEADERS,
+    primary_id: "ledger_id",
+  },
+  {
+    sheet_name: "LcPayrollHistory",
+    headers: LC_PAYROLL_HISTORY_HEADERS,
+    primary_id: "payroll_id",
+    allow_append_headers: true,
   },
 ];
 var RECIPE_BOM_HEADERS = [
@@ -665,6 +763,18 @@ function doGet(e) {
       ));
     }
 
+    if (action === "validateLcFinanceFoundation") {
+      return jsonResponse(validateLcFinanceFoundation_());
+    }
+
+    if (action === "getLcFinanceSummary") {
+      return jsonResponse(getLcFinanceSummary_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
     if (action === "getPromos") {
       return jsonResponse(getPromos_());
     }
@@ -780,6 +890,14 @@ function doPost(e) {
       return jsonResponse(initializePackageSessionFoundation_(payload));
     }
 
+    if (action === "validateLcFinanceFoundation") {
+      return jsonResponse(validateLcFinanceFoundation_());
+    }
+
+    if (action === "initializeLcFinanceFoundation") {
+      return jsonResponse(initializeLcFinanceFoundation_(payload));
+    }
+
     if (action === "cancelFnbOrder") {
       return jsonResponse(cancelFnbOrder_(payload.order_id, payload.cancel_reason, payload.cancelled_by));
     }
@@ -892,6 +1010,18 @@ function doPost(e) {
 
     if (action === "processLcPayroll") {
       return jsonResponse(processLcPayroll_(payload));
+    }
+
+    if (action === "createLcCashAdvance") {
+      return jsonResponse(createLcCashAdvance_(payload));
+    }
+
+    if (action === "recordPettyCashEntry") {
+      return jsonResponse(recordPettyCashEntry_(payload));
+    }
+
+    if (action === "createLcSalesBonusLog") {
+      return jsonResponse(createLcSalesBonusLog_(payload));
     }
 
     if (action === "savePromo") {
@@ -2689,6 +2819,7 @@ function getMenuItems_() {
         stock_tracking: menuItem.stock_tracking || "",
         stock_item_id: menuItem.stock_item_id || "",
         stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
+        bonus_sales_lc: Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0,
       };
     })
     .sort(function (first, second) {
@@ -4015,6 +4146,388 @@ function packageSessionFoundationError_(code, message, data) {
   response.message = message;
   response.error = message;
   return response;
+}
+
+function validateLcFinanceFoundation_() {
+  var validation = buildLcFinanceFoundationValidation_();
+
+  return {
+    ok: true,
+    success: true,
+    status: validation.status,
+    sheets: validation.sheets,
+    summary: validation.summary,
+  };
+}
+
+function initializeLcFinanceFoundation_(payload) {
+  var request = payload || {};
+  var dryRun = request.dry_run !== false;
+  var backupConfirmed = request.backup_confirmed === true;
+  var confirmToken = typeof request.confirm === "string"
+    ? request.confirm.trim()
+    : "";
+  var initialValidation = buildLcFinanceFoundationValidation_();
+  var output = buildLcFinanceFoundationInitializerPlan_(dryRun, initialValidation);
+
+  if (dryRun) {
+    return output;
+  }
+
+  if (!backupConfirmed) {
+    return lcFinanceFoundationError_(
+      "BACKUP_CONFIRMATION_REQUIRED",
+      "Backup manual spreadsheet wajib dikonfirmasi sebelum initializer LC finance dijalankan.",
+      output
+    );
+  }
+
+  if (confirmToken !== "INITIALIZE_LC_FINANCE") {
+    return lcFinanceFoundationError_(
+      "INITIALIZATION_CONFIRMATION_REQUIRED",
+      "Token confirm wajib INITIALIZE_LC_FINANCE.",
+      output
+    );
+  }
+
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+
+  try {
+    if (!lock.tryLock(2000)) {
+      return lcFinanceFoundationError_(
+        "LOCK_BUSY",
+        "Sistem sedang memproses perubahan lain. Coba lagi sebentar.",
+        output
+      );
+    }
+    lockAcquired = true;
+
+    var lockedValidation = buildLcFinanceFoundationValidation_();
+    var lockedPlan = buildLcFinanceFoundationInitializerPlan_(false, lockedValidation);
+
+    if (isLcFinanceFoundationReady_(lockedValidation)) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_ALREADY_INITIALIZED",
+        "LC finance foundation sudah terinisialisasi.",
+        lockedPlan
+      );
+    }
+
+    if (lockedValidation.summary.invalid_sheet_count > 0) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_SCHEMA_CONFLICT",
+        "Terdapat sheet LC finance dengan header konflik. Initializer dihentikan tanpa perbaikan otomatis.",
+        lockedPlan
+      );
+    }
+
+    var createdSheets = [];
+    var updatedSheets = [];
+    var failedSheets = [];
+
+    LC_FINANCE_FOUNDATION_SHEETS.forEach(function (definition) {
+      try {
+        var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+        var existingSheet = spreadsheet.getSheetByName(definition.sheet_name);
+        var beforeValidation = lockedValidation.sheets[definition.sheet_name] || {};
+        var sheet = ensureSheetWithHeaders_(definition.sheet_name, definition.headers);
+
+        ensureSheetHasHeaders_(sheet, definition.headers);
+
+        if (!existingSheet) {
+          createdSheets.push(definition.sheet_name);
+        } else if (beforeValidation.missing_headers && beforeValidation.missing_headers.length > 0) {
+          updatedSheets.push(definition.sheet_name);
+        }
+
+        if (typeof sheet.setFrozenRows === "function") {
+          sheet.setFrozenRows(1);
+        }
+      } catch (error) {
+        failedSheets.push({
+          sheet_name: definition.sheet_name,
+          error: error.message,
+        });
+      }
+    });
+
+    var finalValidation = buildLcFinanceFoundationValidation_();
+
+    if (failedSheets.length > 0 || !isLcFinanceFoundationReady_(finalValidation)) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "LC finance foundation gagal diinisialisasi penuh.",
+        {
+          status: "post_validation_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          updated_sheets: updatedSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    return {
+      ok: true,
+      success: true,
+      status: "initialized",
+      dry_run: false,
+      code: "FOUNDATION_INITIALIZED",
+      message: "LC finance foundation berhasil diinisialisasi.",
+      created_sheets: createdSheets,
+      updated_sheets: updatedSheets,
+      failed_sheets: failedSheets,
+      validation: finalValidation,
+    };
+  } catch (error) {
+    return lcFinanceFoundationError_(
+      "FOUNDATION_INITIALIZATION_FAILED",
+      "LC finance foundation gagal diinisialisasi.",
+      {
+        dry_run: false,
+        safe_error_detail: error.message,
+      }
+    );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function lcFinanceFoundationError_(code, message, data) {
+  var response = data || {};
+  response.ok = false;
+  response.success = false;
+  response.code = code;
+  response.message = message;
+  response.error = message;
+  return response;
+}
+
+function isLcFinanceFoundationReady_(validation) {
+  var summary = validation.summary || {};
+
+  return validation.status === "ready" &&
+    summary.required_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.existing_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.valid_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.missing_sheet_count === 0 &&
+    summary.invalid_sheet_count === 0;
+}
+
+function buildLcFinanceFoundationInitializerPlan_(dryRun, validation) {
+  var sheetsToCreate = LC_FINANCE_FOUNDATION_SHEETS
+    .filter(function (definition) {
+      var sheetResult = validation.sheets[definition.sheet_name];
+      return !sheetResult || !sheetResult.exists;
+    })
+    .map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    });
+  var sheetsToUpdate = [];
+  var blockers = [];
+
+  Object.keys(validation.sheets).forEach(function (sheetName) {
+    var sheetResult = validation.sheets[sheetName];
+
+    if (sheetResult.exists && sheetResult.missing_headers.length > 0 && sheetResult.allow_append_headers) {
+      sheetsToUpdate.push({
+        sheet_name: sheetName,
+        missing_headers: sheetResult.missing_headers,
+      });
+    }
+
+    if (sheetResult.exists && sheetResult.validation_status === "invalid") {
+      blockers.push({
+        code: "FOUNDATION_SCHEMA_CONFLICT",
+        sheet_name: sheetName,
+        validation_status: sheetResult.validation_status,
+        duplicate_headers: sheetResult.duplicate_headers,
+        unexpected_headers: sheetResult.unexpected_headers,
+        header_order_valid: sheetResult.header_order_valid,
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    success: true,
+    status: dryRun ? "dry_run" : "ready_to_initialize",
+    dry_run: dryRun,
+    required_sheet_count: LC_FINANCE_FOUNDATION_SHEETS.length,
+    sheets_to_create: sheetsToCreate,
+    sheets_to_update: sheetsToUpdate,
+    blockers: blockers,
+    expected_schemas: LC_FINANCE_FOUNDATION_SHEETS.map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    }),
+    validation: validation,
+  };
+}
+
+function buildLcFinanceFoundationValidation_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!spreadsheet) {
+    throw new Error("Active spreadsheet was not found.");
+  }
+
+  var sheets = {};
+  var summary = {
+    required_sheet_count: LC_FINANCE_FOUNDATION_SHEETS.length,
+    existing_sheet_count: 0,
+    valid_sheet_count: 0,
+    missing_sheet_count: 0,
+    invalid_sheet_count: 0,
+    append_required_count: 0,
+  };
+
+  LC_FINANCE_FOUNDATION_SHEETS.forEach(function (definition) {
+    var sheetResult = validateLcFinanceFoundationSheet_(spreadsheet, definition);
+    sheets[definition.sheet_name] = sheetResult;
+
+    if (!sheetResult.exists) {
+      summary.missing_sheet_count++;
+      return;
+    }
+
+    summary.existing_sheet_count++;
+
+    if (sheetResult.validation_status === "valid") {
+      summary.valid_sheet_count++;
+    } else if (sheetResult.validation_status === "append_required") {
+      summary.append_required_count++;
+    } else {
+      summary.invalid_sheet_count++;
+    }
+  });
+
+  var status = "ready";
+
+  if (summary.missing_sheet_count > 0 && summary.invalid_sheet_count > 0) {
+    status = "partial_invalid";
+  } else if (summary.invalid_sheet_count > 0) {
+    status = "invalid";
+  } else if (summary.missing_sheet_count > 0) {
+    status = "not_initialized";
+  } else if (summary.append_required_count > 0) {
+    status = "append_required";
+  }
+
+  return {
+    status: status,
+    sheets: sheets,
+    summary: summary,
+  };
+}
+
+function validateLcFinanceFoundationSheet_(spreadsheet, definition) {
+  var sheet = spreadsheet.getSheetByName(definition.sheet_name);
+
+  if (!sheet) {
+    return {
+      sheet_name: definition.sheet_name,
+      exists: false,
+      allow_append_headers: definition.allow_append_headers === true,
+      expected_headers: definition.headers.slice(),
+      missing_headers: definition.headers.slice(),
+      unexpected_headers: [],
+      duplicate_headers: [],
+      header_order_valid: false,
+      data_row_count: 0,
+      missing_primary_id_count: 0,
+      duplicate_primary_id_count: 0,
+      validation_status: "missing",
+    };
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) { return String(header).trim(); })
+    : [];
+  var headerIssues = getPackageSessionFoundationHeaderIssues_(headers, definition.headers);
+  var duplicateHeaders = headerIssues.duplicate_headers;
+  var missingHeaders = headerIssues.missing_headers;
+  var unexpectedHeaders = headerIssues.unexpected_headers;
+  var headerOrderValid = headerIssues.header_order_valid;
+  var appendPrefixOrderValid = definition.allow_append_headers === true &&
+    headers.every(function (header, index) {
+      return !header || definition.headers[index] === header;
+    });
+  var rows = values.slice(1).filter(function (row) {
+    return row.some(function (cell) {
+      return cell !== "" && cell !== null;
+    });
+  });
+  var primaryIndex = headers.indexOf(definition.primary_id);
+  var primaryIds = {};
+  var missingPrimaryIdCount = 0;
+  var duplicatePrimaryIdCount = 0;
+
+  if (primaryIndex >= 0) {
+    rows.forEach(function (row) {
+      var id = String(row[primaryIndex] || "").trim();
+
+      if (!id) {
+        missingPrimaryIdCount++;
+        return;
+      }
+
+      if (primaryIds[id]) {
+        duplicatePrimaryIdCount++;
+      }
+
+      primaryIds[id] = true;
+    });
+  }
+
+  var hasBlockingHeaderConflict = duplicateHeaders.length > 0 ||
+    unexpectedHeaders.length > 0 ||
+    (!definition.allow_append_headers && missingHeaders.length > 0) ||
+    (definition.allow_append_headers ? !appendPrefixOrderValid : !headerOrderValid);
+  var validationStatus = hasBlockingHeaderConflict ||
+    primaryIndex === -1 ||
+    missingPrimaryIdCount > 0 ||
+    duplicatePrimaryIdCount > 0
+      ? "invalid"
+      : "valid";
+
+  if (definition.allow_append_headers &&
+      missingHeaders.length > 0 &&
+      appendPrefixOrderValid &&
+      duplicateHeaders.length === 0 &&
+      unexpectedHeaders.length === 0 &&
+      primaryIndex >= 0 &&
+      missingPrimaryIdCount === 0 &&
+      duplicatePrimaryIdCount === 0) {
+    validationStatus = "append_required";
+  }
+
+  return {
+    sheet_name: definition.sheet_name,
+    exists: true,
+    allow_append_headers: definition.allow_append_headers === true,
+    header_count: headers.length,
+    expected_header_count: definition.headers.length,
+    expected_headers: definition.headers.slice(),
+    missing_headers: missingHeaders,
+    unexpected_headers: unexpectedHeaders,
+    duplicate_headers: duplicateHeaders,
+    header_order_valid: headerOrderValid,
+    data_row_count: rows.length,
+    missing_primary_id_count: missingPrimaryIdCount,
+    duplicate_primary_id_count: duplicatePrimaryIdCount,
+    validation_status: validationStatus,
+  };
 }
 
 function buildPackageSessionFoundationValidation_() {
@@ -5684,6 +6197,7 @@ function validateMenuMasterPayload_(payload, isUpdate) {
   var price = Number(payload.price);
   var stockItemId = String(payload.stock_item_id || "").trim();
   var qtyPerUnit = Number(payload.qty_per_unit || payload.stock_qty_per_unit || 0);
+  var bonusSalesLc = Number(payload.bonus_sales_lc || payload.bonus_per_item || 0);
   var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
 
   if (isUpdate && !String(payload.menu_id || "").trim()) {
@@ -5706,6 +6220,10 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     masterError_("Qty stok per unit wajib angka 0 atau lebih jika stock item diisi.");
   }
 
+  if (!isFinite(bonusSalesLc) || bonusSalesLc < 0) {
+    masterError_("Bonus sales LC wajib angka 0 atau lebih.");
+  }
+
   return {
     menu_name: menuName,
     category: category,
@@ -5713,6 +6231,7 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     stock_item_id: stockItemId,
     stock_qty_per_unit: stockItemId ? qtyPerUnit : 0,
     stock_tracking: stockItemId ? "yes" : "no",
+    bonus_sales_lc: bonusSalesLc,
     status: status,
   };
 }
@@ -5730,6 +6249,7 @@ function getMenuMasterRow_(sheet, headerMap, rowNumber) {
     stock_tracking: row.stock_tracking || "",
     stock_item_id: row.stock_item_id || "",
     stock_qty_per_unit: Number(row.stock_qty_per_unit) || 0,
+    bonus_sales_lc: Number(row.bonus_sales_lc || row.bonus_per_item) || 0,
   };
 }
 
@@ -5811,6 +6331,7 @@ function updateMenuMaster_(payload) {
     stock_tracking: data.stock_tracking,
     stock_item_id: data.stock_item_id,
     stock_qty_per_unit: data.stock_qty_per_unit,
+    bonus_sales_lc: data.bonus_sales_lc,
   });
   var updatedMenu = getMenuMasterRow_(sheet, headerMap, rowNumber);
 
@@ -6215,8 +6736,57 @@ function ensureLcWorkLogsSheet_() {
   return sheet;
 }
 
+function ensureSheetHasHeaders_(sheet, expectedHeaders) {
+  var lastCol = sheet.getLastColumn();
+  var headers = lastCol > 0
+    ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+        return String(h).trim();
+      })
+    : [];
+
+  expectedHeaders.forEach(function (header) {
+    if (headers.indexOf(header) === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      headers.push(header);
+    }
+  });
+
+  return sheet;
+}
+
 function ensureLcPayrollHistorySheet_() {
-  return ensureSheetWithHeaders_("LcPayrollHistory", LC_PAYROLL_HISTORY_HEADERS);
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcPayrollHistory", LC_PAYROLL_HISTORY_HEADERS),
+    LC_PAYROLL_HISTORY_HEADERS
+  );
+}
+
+function ensureLcSalesBonusLogsSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcSalesBonusLogs", LC_SALES_BONUS_LOG_HEADERS),
+    LC_SALES_BONUS_LOG_HEADERS
+  );
+}
+
+function ensureLcCashAdvancesSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcCashAdvances", LC_CASH_ADVANCES_HEADERS),
+    LC_CASH_ADVANCES_HEADERS
+  );
+}
+
+function ensurePettyCashLedgerSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("PettyCashLedger", PETTY_CASH_LEDGER_HEADERS),
+    PETTY_CASH_LEDGER_HEADERS
+  );
+}
+
+function ensureLcFinanceFoundation_() {
+  ensureLcSalesBonusLogsSheet_();
+  ensureLcCashAdvancesSheet_();
+  ensurePettyCashLedgerSheet_();
+  ensureLcPayrollHistorySheet_();
 }
 
 function ensurePromoMasterSheet_() {
@@ -6440,6 +7010,10 @@ function getLcWorkReports_(period, startDate, endDate) {
   var lcs = readSheetAsObjects_("LcMaster");
   
   var range = getOperationalDateRangeForPeriod_(period, startDate, endDate);
+
+  if (!range.ok) {
+    return range;
+  }
   
   var filteredLogs = logs.filter(function(log) {
     var createdTime = log.created_at || log.closed_at || "";
@@ -6553,6 +7127,217 @@ function getLcPayrollDetails_(payrollId) {
   };
 }
 
+function generateLcFinanceId_(prefix) {
+  return prefix + "-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function normalizeLcFinanceOperationalDate_(value) {
+  var normalized = normalizeJakartaDateString_(value);
+  return normalized || getCurrentOperationalDateString_();
+}
+
+function resolveLcFinanceOperationalDate_(row) {
+  var direct = normalizeJakartaDateString_(row.operational_date);
+  if (direct) {
+    return direct;
+  }
+
+  return getOperationalDateString_(row.created_at || row.deducted_at || row.voided_at || "");
+}
+
+function isLcFinanceRowVoided_(row) {
+  return !!String(row.voided_at || row.cancelled_at || "").trim();
+}
+
+function getLatestPettyCashBalance_() {
+  ensurePettyCashLedgerSheet_();
+  var rows = readSheetAsObjects_("PettyCashLedger");
+  var latestBalance = 0;
+
+  rows.forEach(function (row) {
+    if (!String(row.voided_at || "").trim() && row.balance_after !== "" && row.balance_after !== null) {
+      latestBalance = Number(row.balance_after) || 0;
+    }
+  });
+
+  return latestBalance;
+}
+
+function appendPettyCashLedgerEntry_(entry) {
+  var sheet = ensurePettyCashLedgerSheet_();
+  var entryType = String(entry.entry_type || "").trim().toLowerCase();
+  var amount = Number(entry.amount || entry.cash_out_amount || entry.cash_in_amount);
+  var previousBalance = getLatestPettyCashBalance_();
+  var cashIn = entryType === "cash_in" ? amount : 0;
+  var cashOut = entryType === "cash_out" ? amount : 0;
+  var ledger = {
+    ledger_id: entry.ledger_id || generateLcFinanceId_("PETTY"),
+    operational_date: normalizeLcFinanceOperationalDate_(entry.operational_date),
+    entry_type: entryType,
+    category: entry.category || "manual",
+    reference_type: entry.reference_type || "manual",
+    reference_id: entry.reference_id || "",
+    lc_id: entry.lc_id || "",
+    lc_name: entry.lc_name || "",
+    cash_in_amount: cashIn,
+    cash_out_amount: cashOut,
+    balance_after: previousBalance + cashIn - cashOut,
+    cashier_name: entry.cashier_name || "Kasir",
+    note: entry.note || "",
+    created_at: toJakartaIsoString_(new Date()),
+    voided_at: "",
+    void_reason: "",
+  };
+
+  appendObjectRow_(sheet, ledger);
+  return ledger;
+}
+
+function getLcMasterById_(lcId) {
+  var targetId = String(lcId || "").trim();
+  if (!targetId) {
+    return null;
+  }
+
+  ensureLcMasterSheet_();
+  return readSheetAsObjects_("LcMaster").find(function (lc) {
+    return String(lc.lc_id || "").trim() === targetId;
+  }) || null;
+}
+
+function filterLcFinanceRowsByPeriod_(rows, periodResult) {
+  return rows.filter(function (row) {
+    var operationalDate = resolveLcFinanceOperationalDate_(row);
+    return operationalDate && matchesOperationalPeriod_(operationalDate, periodResult);
+  });
+}
+
+function getPendingLcSalesBonusRows_(range) {
+  ensureLcSalesBonusLogsSheet_();
+  return readSheetAsObjects_("LcSalesBonusLogs").map(function (row, index) {
+    row.__row_number = index + 2;
+    return row;
+  }).filter(function (row) {
+    var status = String(row.source_status || "").trim().toLowerCase();
+    var isUnpaid = !String(row.payroll_id || "").trim();
+    return isUnpaid &&
+      !isLcFinanceRowVoided_(row) &&
+      status !== "cancelled" &&
+      status !== "voided" &&
+      matchesOperationalPeriod_(resolveLcFinanceOperationalDate_(row), range);
+  });
+}
+
+function getDeductibleLcCashAdvanceRows_(range) {
+  ensureLcCashAdvancesSheet_();
+  return readSheetAsObjects_("LcCashAdvances").map(function (row, index) {
+    row.__row_number = index + 2;
+    return row;
+  }).filter(function (row) {
+    var status = String(row.status || "open").trim().toLowerCase();
+    var operationalDate = resolveLcFinanceOperationalDate_(row);
+    var withinCutoff = range.period === "all" || !range.endDate || operationalDate <= range.endDate;
+    return !String(row.payroll_id || "").trim() &&
+      !isLcFinanceRowVoided_(row) &&
+      status === "open" &&
+      operationalDate &&
+      withinCutoff;
+  });
+}
+
+function buildLcPayrollFinanceGroups_(range) {
+  var groups = {};
+
+  getPendingLcSalesBonusRows_(range).forEach(function (row) {
+    var lcId = String(row.lc_id || "").trim();
+    if (!lcId) {
+      return;
+    }
+    if (!groups[lcId]) {
+      groups[lcId] = { sales_bonus_total: 0, cash_advance_deducted: 0, bonus_rows: [], advance_rows: [] };
+    }
+    groups[lcId].sales_bonus_total += Number(row.bonus_total) || 0;
+    groups[lcId].bonus_rows.push(row);
+  });
+
+  getDeductibleLcCashAdvanceRows_(range).forEach(function (row) {
+    var lcId = String(row.lc_id || "").trim();
+    if (!lcId) {
+      return;
+    }
+    if (!groups[lcId]) {
+      groups[lcId] = { sales_bonus_total: 0, cash_advance_deducted: 0, bonus_rows: [], advance_rows: [] };
+    }
+    groups[lcId].cash_advance_deducted += Number(row.amount) || 0;
+    groups[lcId].advance_rows.push(row);
+  });
+
+  return groups;
+}
+
+function calculateDeductibleCashAdvanceTotal_(advanceRows, grossLimit) {
+  var remaining = Math.max(0, Number(grossLimit) || 0);
+  var deducted = 0;
+
+  (advanceRows || []).slice().sort(function (a, b) {
+    return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+  }).forEach(function (row) {
+    var amount = Number(row.amount) || 0;
+    if (amount > 0 && amount <= remaining) {
+      deducted += amount;
+      remaining -= amount;
+    }
+  });
+
+  return deducted;
+}
+
+function getLcFinanceSummary_(period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period || "today", startDate || "", endDate || "");
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
+  ensureLcFinanceFoundation_();
+
+  var salesBonusLogs = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("LcSalesBonusLogs"),
+    periodResult
+  ).filter(function (row) {
+    return !isLcFinanceRowVoided_(row);
+  });
+  var cashAdvances = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("LcCashAdvances"),
+    periodResult
+  );
+  var pettyCashLedger = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("PettyCashLedger"),
+    periodResult
+  ).filter(function (row) {
+    return !String(row.voided_at || "").trim();
+  });
+
+  var summary = {
+    sales_bonus_total: salesBonusLogs.reduce(function (sum, row) { return sum + (Number(row.bonus_total) || 0); }, 0),
+    cash_advance_total: cashAdvances.filter(function (row) {
+      return String(row.status || "").trim().toLowerCase() !== "cancelled";
+    }).reduce(function (sum, row) { return sum + (Number(row.amount) || 0); }, 0),
+    petty_cash_in_total: pettyCashLedger.reduce(function (sum, row) { return sum + (Number(row.cash_in_amount) || 0); }, 0),
+    petty_cash_out_total: pettyCashLedger.reduce(function (sum, row) { return sum + (Number(row.cash_out_amount) || 0); }, 0),
+    petty_cash_balance: getLatestPettyCashBalance_(),
+  };
+
+  return {
+    ok: true,
+    success: true,
+    range: periodResult,
+    summary: summary,
+    sales_bonus_logs: salesBonusLogs,
+    cash_advances: cashAdvances,
+    petty_cash_ledger: pettyCashLedger,
+  };
+}
+
 function getPendingLcPayroll_(startDate, endDate) {
   ensureLcPayrollHistorySheet_();
   ensureLcWorkLogsSheet_();
@@ -6585,6 +7370,7 @@ function getPendingLcPayroll_(startDate, endDate) {
 
   var logs = readSheetAsObjects_("LcWorkLogs");
   var lcs = readSheetAsObjects_("LcMaster");
+  var financeGroups = buildLcPayrollFinanceGroups_(range);
 
   var filteredLogs = logs.filter(function(log) {
     var status = String(log.status || "").trim().toLowerCase();
@@ -6602,28 +7388,71 @@ function getPendingLcPayroll_(startDate, endDate) {
     return matchesOperationalPeriod_(logOperationalDate, range);
   });
 
-  var reports = lcs.map(function(lc) {
+  var lcById = {};
+  lcs.forEach(function (lc) {
+    lcById[String(lc.lc_id || "").trim()] = lc;
+  });
+
+  var reportLcIds = {};
+  filteredLogs.forEach(function (log) {
+    if (String(log.lc_id || "").trim()) {
+      reportLcIds[String(log.lc_id || "").trim()] = true;
+    }
+  });
+  Object.keys(financeGroups).forEach(function (lcId) {
+    reportLcIds[lcId] = true;
+  });
+
+  var reports = Object.keys(reportLcIds).map(function(lcId) {
+    var lc = lcById[lcId] || { lc_id: lcId, lc_name: "LC " + lcId, rate_per_room: 0 };
     var lcLogs = filteredLogs.filter(function(log) {
       return String(log.lc_id || "").trim() === String(lc.lc_id || "").trim();
     });
 
-    var totalEarnings = lcLogs.reduce(function(sum, log) {
+    var roomEarningTotal = lcLogs.reduce(function(sum, log) {
       return sum + (Number(log.rate) || 0);
     }, 0);
+    var finance = financeGroups[lcId] || { sales_bonus_total: 0, cash_advance_deducted: 0 };
+    var salesBonusTotal = Number(finance.sales_bonus_total) || 0;
+    var grossEarningTotal = roomEarningTotal + salesBonusTotal;
+    var cashAdvanceOutstanding = Number(finance.cash_advance_deducted) || 0;
+    var cashAdvanceDeducted = calculateDeductibleCashAdvanceTotal_(finance.advance_rows || [], grossEarningTotal);
+    var netPayoutTotal = grossEarningTotal - cashAdvanceDeducted;
 
     return {
       lc_id: lc.lc_id,
       lc_name: lc.lc_name,
       rate_per_room: Number(lc.rate_per_room) || 0,
       total_sessions: lcLogs.length,
-      total_earnings: totalEarnings,
+      room_earning_total: roomEarningTotal,
+      sales_bonus_total: salesBonusTotal,
+      cash_advance_deducted: cashAdvanceDeducted,
+      cash_advance_outstanding: cashAdvanceOutstanding - cashAdvanceDeducted,
+      gross_earning_total: grossEarningTotal,
+      net_payout_total: netPayoutTotal,
+      total_earnings: netPayoutTotal,
     };
   }).filter(function(report) {
-    return report.total_sessions > 0;
+    return report.total_sessions > 0 ||
+      report.sales_bonus_total > 0 ||
+      report.cash_advance_deducted > 0 ||
+      report.cash_advance_outstanding > 0;
   });
 
+  var summaryRoomEarningTotal = reports.reduce(function(sum, r) {
+    return sum + r.room_earning_total;
+  }, 0);
+
+  var summarySalesBonusTotal = reports.reduce(function(sum, r) {
+    return sum + r.sales_bonus_total;
+  }, 0);
+
+  var summaryCashAdvanceDeducted = reports.reduce(function(sum, r) {
+    return sum + r.cash_advance_deducted;
+  }, 0);
+
   var summaryTotalAmount = reports.reduce(function(sum, r) {
-    return sum + r.total_earnings;
+    return sum + r.net_payout_total;
   }, 0);
 
   var summaryTotalSessions = reports.reduce(function(sum, r) {
@@ -6644,6 +7473,11 @@ function getPendingLcPayroll_(startDate, endDate) {
     },
     summary: {
       total_amount: summaryTotalAmount,
+      room_earning_total: summaryRoomEarningTotal,
+      sales_bonus_total: summarySalesBonusTotal,
+      cash_advance_deducted: summaryCashAdvanceDeducted,
+      gross_earning_total: summaryRoomEarningTotal + summarySalesBonusTotal,
+      net_payout_total: summaryTotalAmount,
       total_sessions: summaryTotalSessions,
       total_lcs: reports.length,
     }
@@ -6659,7 +7493,7 @@ function processLcPayroll_(payload) {
 
     var startDate = String(payload.start_date || "").trim();
     var endDate = String(payload.end_date || "").trim();
-    var cashierName = String(payload.cashier_name || "Manager").trim();
+    var cashierName = String(payload.cashier_name || "Kasir").trim() || "Kasir";
 
     if (!startDate || !endDate) {
       return { ok: false, error: "Tanggal mulai dan tanggal akhir wajib ditentukan." };
@@ -6686,12 +7520,16 @@ function processLcPayroll_(payload) {
         error: "Payroll untuk periode " + startDate + " s/d " + endDate +
           " sudah pernah diproses (ID: " + duplicatePayroll.payroll_id +
           ", diproses oleh: " + (duplicatePayroll.processed_by || "?") +
-          "). Hubungi manager jika terjadi kesalahan.",
+          "). Cek riwayat payroll jika terjadi kesalahan.",
       };
     }
 
     var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
     var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+    var salesBonusSheet = ensureLcSalesBonusLogsSheet_();
+    var salesBonusHeaders = getHeaderMap_(salesBonusSheet);
+    var cashAdvanceSheet = ensureLcCashAdvancesSheet_();
+    var cashAdvanceHeaders = getHeaderMap_(cashAdvanceSheet);
 
     var range = {
       period: "custom",
@@ -6719,36 +7557,108 @@ function processLcPayroll_(payload) {
       }
     }
 
-    if (matchedLogs.length === 0) {
-      return { ok: false, error: "Tidak ada sesi kerja LC yang belum dibayar pada periode ini." };
+    var pendingRoomEarningByLc = {};
+    matchedLogs.forEach(function (log) {
+      var lcId = String(log.lc_id || "").trim();
+      pendingRoomEarningByLc[lcId] = (pendingRoomEarningByLc[lcId] || 0) + (Number(log.rate) || 0);
+    });
+
+    var financeGroups = buildLcPayrollFinanceGroups_(range);
+    var hasProcessableFinanceRows = Object.keys(financeGroups).some(function (lcId) {
+      var group = financeGroups[lcId] || {};
+      var salesBonusTotal = Number(group.sales_bonus_total) || 0;
+      var lcGross = (Number(pendingRoomEarningByLc[lcId]) || 0) + salesBonusTotal;
+      return salesBonusTotal > 0 ||
+        calculateDeductibleCashAdvanceTotal_(group.advance_rows || [], lcGross) > 0;
+    });
+
+    if (matchedLogs.length === 0 && !hasProcessableFinanceRows) {
+      return { ok: false, error: "Tidak ada sesi kerja, bonus sales, atau potongan kasbon LC yang bisa diproses pada periode ini." };
     }
 
     var todayStr = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd");
     var payrollId = "LCPAY-" + todayStr + "-" + Math.floor(Math.random() * 9000 + 1000);
 
     var uniqueLcIds = {};
-    var totalAmount = 0;
+    var roomEarningByLc = {};
+    var roomEarningTotal = 0;
     var totalSessions = matchedLogs.length;
 
     matchedLogs.forEach(function(log) {
-      uniqueLcIds[log.lc_id] = true;
-      totalAmount += (Number(log.rate) || 0);
+      var lcId = String(log.lc_id || "").trim();
+      var rate = Number(log.rate) || 0;
+      uniqueLcIds[lcId] = true;
+      roomEarningByLc[lcId] = (roomEarningByLc[lcId] || 0) + rate;
+      roomEarningTotal += rate;
+    });
+
+    Object.keys(financeGroups).forEach(function (lcId) {
+      uniqueLcIds[lcId] = true;
     });
 
     var totalLcsPaid = Object.keys(uniqueLcIds).length;
+    var salesBonusTotal = Object.keys(financeGroups).reduce(function (sum, lcId) {
+      return sum + (Number(financeGroups[lcId].sales_bonus_total) || 0);
+    }, 0);
+    var cashAdvanceDeducted = 0;
+    var grossEarningTotal = roomEarningTotal + salesBonusTotal;
 
     matchingLogIndices.forEach(function(origIdx) {
       var rowNum = origIdx + 2;
       lcWorkLogsSheet.getRange(rowNum, lcWorkLogsHeaders.payroll_id).setValue(payrollId);
     });
 
+    Object.keys(financeGroups).forEach(function (lcId) {
+      (financeGroups[lcId].bonus_rows || []).forEach(function (row) {
+        salesBonusSheet.getRange(row.__row_number, salesBonusHeaders.payroll_id).setValue(payrollId);
+      });
+
+      var lcGross = (Number(roomEarningByLc[lcId]) || 0) + (Number(financeGroups[lcId].sales_bonus_total) || 0);
+      var remainingDeduction = lcGross;
+      (financeGroups[lcId].advance_rows || []).slice().sort(function (a, b) {
+        return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+      }).forEach(function (row) {
+        var amount = Number(row.amount) || 0;
+        if (amount > 0 && amount <= remainingDeduction) {
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.status).setValue("deducted");
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.payroll_id).setValue(payrollId);
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.deducted_at).setValue(toJakartaIsoString_(new Date()));
+          remainingDeduction -= amount;
+          cashAdvanceDeducted += amount;
+        }
+      });
+    });
+
+    var netPayoutTotal = grossEarningTotal - cashAdvanceDeducted;
+
+    var payoutLedger = null;
+    if (netPayoutTotal > 0) {
+      payoutLedger = appendPettyCashLedgerEntry_({
+        operational_date: getCurrentOperationalDateString_(),
+        entry_type: "cash_out",
+        category: "lc_payroll",
+        reference_type: "lc_payroll",
+        reference_id: payrollId,
+        amount: netPayoutTotal,
+        cashier_name: cashierName,
+        note: "Pembayaran payroll LC periode " + startDate + " s/d " + endDate,
+      });
+    }
+
     var payrollRecord = {
       payroll_id: payrollId,
       start_date: startDate,
       end_date: endDate,
-      total_amount: totalAmount,
+      total_amount: netPayoutTotal,
+      room_earning_total: roomEarningTotal,
+      sales_bonus_total: salesBonusTotal,
+      cash_advance_deducted: cashAdvanceDeducted,
+      gross_earning_total: grossEarningTotal,
+      net_payout_total: netPayoutTotal,
       total_sessions: totalSessions,
       total_lcs_paid: totalLcsPaid,
+      petty_cash_ledger_id: payoutLedger ? payoutLedger.ledger_id : "",
+      status: "processed",
       processed_at: toJakartaIsoString_(new Date()),
       processed_by: cashierName
     };
@@ -6768,6 +7678,291 @@ function processLcPayroll_(payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function createLcCashAdvance_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var lcId = String(request.lc_id || "").trim();
+    var lc = getLcMasterById_(lcId);
+    var amount = Number(request.amount);
+    var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+    var operationalDate = normalizeLcFinanceOperationalDate_(request.operational_date);
+    var note = String(request.note || "").trim();
+
+    if (!lc) {
+      return { ok: false, success: false, error: "LC tidak ditemukan.", message: "LC tidak ditemukan." };
+    }
+
+    if (!isFinite(amount) || amount <= 0) {
+      return { ok: false, success: false, error: "Nominal kasbon wajib lebih dari 0.", message: "Nominal kasbon wajib lebih dari 0." };
+    }
+
+    var advanceId = generateLcFinanceId_("LCADV");
+    var ledger = appendPettyCashLedgerEntry_({
+      operational_date: operationalDate,
+      entry_type: "cash_out",
+      category: "lc_cash_advance",
+      reference_type: "lc_cash_advance",
+      reference_id: advanceId,
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      amount: amount,
+      cashier_name: cashierName,
+      note: note,
+    });
+
+    var advance = {
+      cash_advance_id: advanceId,
+      operational_date: operationalDate,
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      amount: amount,
+      status: "open",
+      requested_by: String(request.requested_by || lc.lc_name || "").trim(),
+      cashier_name: cashierName,
+      petty_cash_ledger_id: ledger.ledger_id,
+      payroll_id: "",
+      note: note,
+      created_at: toJakartaIsoString_(new Date()),
+      deducted_at: "",
+      cancelled_at: "",
+      cancel_reason: "",
+    };
+
+    appendObjectRow_(ensureLcCashAdvancesSheet_(), advance);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Kasbon LC berhasil dicatat dan petty cash otomatis keluar.",
+      cash_advance: advance,
+      petty_cash_entry: ledger,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat kasbon LC: " + error.message, message: "Gagal mencatat kasbon LC: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function recordPettyCashEntry_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var entryType = String(request.entry_type || "").trim().toLowerCase();
+    var amount = Number(request.amount);
+    var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+
+    if (["cash_in", "cash_out"].indexOf(entryType) === -1) {
+      return { ok: false, success: false, error: "Tipe petty cash wajib cash_in atau cash_out.", message: "Tipe petty cash wajib cash_in atau cash_out." };
+    }
+
+    if (!isFinite(amount) || amount <= 0) {
+      return { ok: false, success: false, error: "Nominal petty cash wajib lebih dari 0.", message: "Nominal petty cash wajib lebih dari 0." };
+    }
+
+    var ledger = appendPettyCashLedgerEntry_({
+      operational_date: normalizeLcFinanceOperationalDate_(request.operational_date),
+      entry_type: entryType,
+      category: String(request.category || "manual").trim() || "manual",
+      reference_type: "manual",
+      reference_id: "",
+      amount: amount,
+      cashier_name: cashierName,
+      note: String(request.note || "").trim(),
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Mutasi petty cash berhasil dicatat.",
+      petty_cash_entry: ledger,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat petty cash: " + error.message, message: "Gagal mencatat petty cash: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function createLcSalesBonusLog_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var lcId = String(request.lc_id || "").trim();
+    var lc = getLcMasterById_(lcId);
+    var quantity = Number(request.quantity || 1);
+    var bonusPerItem = Number(request.bonus_per_item);
+    var cashierName = String(request.cashier_name || request.created_by || "Kasir").trim() || "Kasir";
+
+    if (!lc) {
+      return { ok: false, success: false, error: "LC tidak ditemukan.", message: "LC tidak ditemukan." };
+    }
+
+    if (!isFinite(quantity) || quantity <= 0) {
+      return { ok: false, success: false, error: "Quantity bonus wajib lebih dari 0.", message: "Quantity bonus wajib lebih dari 0." };
+    }
+
+    if (!isFinite(bonusPerItem) || bonusPerItem < 0) {
+      return { ok: false, success: false, error: "Bonus per item wajib angka 0 atau lebih.", message: "Bonus per item wajib angka 0 atau lebih." };
+    }
+
+    var bonusLog = {
+      bonus_log_id: generateLcFinanceId_("LCBONUS"),
+      operational_date: normalizeLcFinanceOperationalDate_(request.operational_date),
+      transaction_id: String(request.transaction_id || "").trim(),
+      order_id: String(request.order_id || "").trim(),
+      menu_id: String(request.menu_id || "").trim(),
+      menu_name: String(request.menu_name || "").trim(),
+      category: String(request.category || "").trim(),
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      quantity: quantity,
+      bonus_per_item: bonusPerItem,
+      bonus_total: quantity * bonusPerItem,
+      source_status: String(request.source_status || "manual").trim() || "manual",
+      payroll_id: "",
+      created_at: toJakartaIsoString_(new Date()),
+      created_by: cashierName,
+      voided_at: "",
+      void_reason: "",
+    };
+
+    appendObjectRow_(ensureLcSalesBonusLogsSheet_(), bonusLog);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Bonus sales LC berhasil dicatat.",
+      sales_bonus_log: bonusLog,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat bonus sales LC: " + error.message, message: "Gagal mencatat bonus sales LC: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function getActiveSessionLcSnapshotsForRoom_(roomId) {
+  var sessionResult = findLatestRoomSessionForRoom_(roomId, ["active", "starting", "paid_waiting_start", "closing"]);
+  if (!sessionResult || !sessionResult.session) {
+    return [];
+  }
+
+  var lcIds = String(sessionResult.session.lc_ids || "")
+    .split(",")
+    .map(function (id) { return String(id || "").trim(); })
+    .filter(function (id) { return id && id !== "PENDING"; });
+
+  if (lcIds.length === 0) {
+    return [];
+  }
+
+  ensureLcMasterSheet_();
+  var lcRows = readSheetAsObjects_("LcMaster");
+  var lcMap = lcRows.reduce(function (map, lc) {
+    map[String(lc.lc_id || "").trim()] = lc;
+    return map;
+  }, {});
+
+  return lcIds.map(function (lcId) {
+    var lc = lcMap[lcId] || {};
+    return {
+      lc_id: lcId,
+      lc_name: lc.lc_name || lcId,
+    };
+  });
+}
+
+function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) {
+  ensureLcSalesBonusLogsSheet_();
+
+  var activeLcs = getActiveSessionLcSnapshotsForRoom_(order.room_id);
+  if (!activeLcs.length) {
+    return [];
+  }
+
+  var rows = [];
+  var createdAt = toJakartaIsoString_(new Date());
+
+  (orderItems || []).forEach(function (item) {
+    var bonusPerItem = Number(item.bonus_sales_lc) || 0;
+    var quantity = Number(item.quantity) || 0;
+    var totalBonus = bonusPerItem * quantity;
+
+    if (totalBonus <= 0) {
+      return;
+    }
+
+    var baseShare = Math.floor(totalBonus / activeLcs.length);
+    var remainder = totalBonus - (baseShare * activeLcs.length);
+
+    activeLcs.forEach(function (lc, index) {
+      var lcBonusTotal = baseShare + (index < remainder ? 1 : 0);
+      if (lcBonusTotal <= 0) {
+        return;
+      }
+
+      rows.push({
+        bonus_log_id: generateLcFinanceId_("LCBONUS"),
+        operational_date: normalizeLcFinanceOperationalDate_(order.created_at),
+        transaction_id: "",
+        order_id: order.order_id,
+        menu_id: item.menu_id,
+        menu_name: item.menu_name,
+        category: item.category,
+        lc_id: lc.lc_id,
+        lc_name: lc.lc_name,
+        quantity: quantity / activeLcs.length,
+        bonus_per_item: bonusPerItem,
+        bonus_total: lcBonusTotal,
+        source_status: "fnb_order",
+        payroll_id: "",
+        created_at: createdAt,
+        created_by: cashierName || order.cashier_name || "Kasir",
+        voided_at: "",
+        void_reason: "",
+      });
+    });
+  });
+
+  rows.forEach(function (row) {
+    appendObjectRow_(ensureLcSalesBonusLogsSheet_(), row);
+  });
+
+  return rows;
 }
 
 function getTodayTransactions_() {
@@ -7210,6 +8405,14 @@ function normalizeOperationalPeriodKey_(period) {
     return "today";
   }
 
+  if (normalizedPeriod === "this_month") {
+    return "thismonth";
+  }
+
+  if (normalizedPeriod === "last_7_days") {
+    return "last7days";
+  }
+
   return normalizedPeriod;
 }
 
@@ -7217,7 +8420,7 @@ function getOperationalDateRangeForPeriod_(period, startDate, endDate) {
   var normalizedPeriod = normalizeOperationalPeriodKey_(period);
   var activeOperationalDate = getCurrentOperationalDateString_();
 
-  if (["today", "yesterday", "last7days", "thismonth", "all", "custom"].indexOf(normalizedPeriod) === -1) {
+  if (["today", "yesterday", "last7days", "this_week", "last_week", "thismonth", "last_month", "all", "custom"].indexOf(normalizedPeriod) === -1) {
     return {
       ok: false,
       error: "Periode transaksi tidak dikenal.",
@@ -7250,6 +8453,33 @@ function getOperationalDateRangeForPeriod_(period, startDate, endDate) {
       period: normalizedPeriod,
       startDate: addDaysToOperationalDateString_(activeOperationalDate, -6),
       endDate: activeOperationalDate,
+    };
+  }
+
+  if (normalizedPeriod === "this_week") {
+    var weekAnchor = parseOperationalDateAnchor_(activeOperationalDate);
+    var weekDay = weekAnchor ? weekAnchor.getUTCDay() : 0;
+    var daysFromMonday = weekDay === 0 ? 6 : weekDay - 1;
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: addDaysToOperationalDateString_(activeOperationalDate, -daysFromMonday),
+      endDate: activeOperationalDate,
+    };
+  }
+
+  if (normalizedPeriod === "last_week") {
+    var lastWeekAnchor = parseOperationalDateAnchor_(activeOperationalDate);
+    var lastWeekDay = lastWeekAnchor ? lastWeekAnchor.getUTCDay() : 0;
+    var offsetFromMonday = lastWeekDay === 0 ? 6 : lastWeekDay - 1;
+    var thisWeekMonday = addDaysToOperationalDateString_(activeOperationalDate, -offsetFromMonday);
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: addDaysToOperationalDateString_(thisWeekMonday, -7),
+      endDate: addDaysToOperationalDateString_(thisWeekMonday, -1),
     };
   }
 
@@ -7468,6 +8698,21 @@ function startSession_(roomId, durationMinutes, options) {
     return {
       ok: false,
       error: getMinimumSessionErrorMessage_(options),
+    };
+  }
+
+  if (normalizedPeriod === "last_month") {
+    var dateParts = activeOperationalDate.split("-");
+    var firstOfThisMonth = new Date(Date.UTC(Number(dateParts[0]), Number(dateParts[1]) - 1, 1, 5, 0, 0));
+    var lastOfPreviousMonth = new Date(firstOfThisMonth.getTime() - 86400000);
+    var previousYear = Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "yyyy");
+    var previousMonth = Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "MM");
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: previousYear + "-" + previousMonth + "-01",
+      endDate: Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "yyyy-MM-dd"),
     };
   }
 
@@ -9470,6 +10715,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
         price: item.price,
         quantity: item.quantity,
         subtotal: item.subtotal,
+        bonus_sales_lc: item.bonus_sales_lc,
         created_at: timestamp,
       };
     });
@@ -9478,6 +10724,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
     ensureFnbOrderItemsSheet_();
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
+    var lcSalesBonusLogs = appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName || "Kasir");
 
     if (isPaid) {
       var transaction = {
@@ -9509,6 +10756,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       message: isPaid ? "Order F&B berhasil dibayar & disimpan." : "Order F&B berhasil disimpan.",
       order: order,
       items: orderItems,
+      lc_sales_bonus_logs: lcSalesBonusLogs,
     };
   } finally {
     lock.releaseLock();
@@ -12149,7 +13397,10 @@ function ensureFnbOrdersSheetColumns_() {
 }
 
 function ensureFnbOrderItemsSheet_() {
-  return ensureSheetWithHeaders_("FnbOrderItems", FNB_ORDER_ITEMS_HEADERS);
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("FnbOrderItems", FNB_ORDER_ITEMS_HEADERS),
+    FNB_ORDER_ITEMS_HEADERS
+  );
 }
 
 function ensureMenuStockColumns_() {
@@ -12158,7 +13409,7 @@ function ensureMenuStockColumns_() {
     return String(header).trim();
   });
 
-  MENU_STOCK_HEADERS.forEach(function (header) {
+  MENU_MASTER_HEADERS.concat(MENU_STOCK_HEADERS).forEach(function (header) {
     if (headers.indexOf(header) === -1) {
       sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
       headers.push(header);
@@ -12307,6 +13558,7 @@ function normalizeFnbOrderItems_(items, menuMap) {
       price: price,
       quantity: quantity,
       subtotal: price * quantity,
+      bonus_sales_lc: Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0,
     };
   });
 }
