@@ -7092,12 +7092,18 @@ function updateLcMaster_(payload) {
 
 function deleteLcMaster_(payload) {
   var lcId = String(payload.lc_id || "").trim();
-  var changedBy = String(payload.changed_by || "").trim();
-  
+
   if (!lcId) {
     return { ok: false, success: false, error: "lc_id wajib diisi." };
   }
-  
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "lc", lcId);
+
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
+  var changedBy = getMasterChangedBy_(payload);
   var sheet = ensureLcMasterSheet_();
   var headerMap = getHeaderMap_(sheet);
   var rowNumber = findRowByValue_(sheet, headerMap, "lc_id", lcId);

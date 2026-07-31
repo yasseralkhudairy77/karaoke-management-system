@@ -17097,7 +17097,7 @@ function createDeleteLcModalOverlay() {
   msg.style.margin = "0";
   msg.style.fontSize = "14px";
   msg.style.color = "var(--text)";
-  msg.textContent = `Apakah Anda yakin ingin menghapus ${deleteLcConfirmation.lc_name} secara permanen? Tindakan ini tidak bisa dibatalkan.`;
+  msg.textContent = `Apakah Anda yakin ingin menghapus ${deleteLcConfirmation.lc_name} secara permanen? Aksi ini memerlukan PIN owner/manager dan hanya dapat dilakukan jika LC belum memiliki riwayat kerja.`;
 
   const actions = document.createElement("div");
   actions.style.display = "flex";
@@ -17119,7 +17119,7 @@ function createDeleteLcModalOverlay() {
   deleteBtn.style.backgroundColor = "var(--color-danger)";
   deleteBtn.style.color = "#fff";
   deleteBtn.style.fontWeight = "bold";
-  deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen";
+  deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen (Manager)";
   deleteBtn.disabled = isDeletingLc;
   deleteBtn.onclick = () => {
     openAdminPinModal({
@@ -17127,8 +17127,9 @@ function createDeleteLcModalOverlay() {
       message: "Masukkan PIN owner/manager untuk menghapus data LC secara permanen.",
       requestedAction: "delete_lc_master",
       requiredRole: "manager",
+      validatePin: false,
       onSuccess: async (authData, adminPin) => {
-        await executeDeleteLcMaster(adminPin);
+        return executeDeleteLcMaster(adminPin);
       }
     });
   };
@@ -17140,7 +17141,7 @@ function createDeleteLcModalOverlay() {
 }
 
 async function executeDeleteLcMaster(adminPin) {
-  if (isDeletingLc || !deleteLcConfirmation) return;
+  if (isDeletingLc || !deleteLcConfirmation) return { success: false };
 
   isDeletingLc = true;
   renderRooms();
@@ -17154,14 +17155,40 @@ async function executeDeleteLcMaster(adminPin) {
     });
 
     if (!response || response.ok !== true) {
-      throw new Error(response?.message || response?.error || "Gagal menghapus data LC.");
+      const message = isAdminPinDeleteError(response)
+        ? "PIN tidak valid atau akses tidak cukup. Gunakan PIN owner/manager."
+        : response?.message || response?.error || "Gagal menghapus data LC.";
+
+      if (adminPinModal) {
+        adminPinModal = {
+          ...adminPinModal,
+          pin: "",
+          error: message,
+        };
+      }
+
+      showInlineNotice(message, "error");
+      return { success: false, message };
     }
 
     showInlineNotice("LC berhasil dihapus secara permanen.");
+    adminPinModal = null;
     deleteLcConfirmation = null;
     await loadLcs(true);
+    return { success: true };
   } catch (error) {
-    showInlineNotice(error.message || "Gagal menghapus LC.", "error");
+    const message = error.message || "Gagal menghapus LC.";
+    showInlineNotice(message, "error");
+
+    if (adminPinModal) {
+      adminPinModal = {
+        ...adminPinModal,
+        pin: "",
+        error: message,
+      };
+    }
+
+    return { success: false, message };
   } finally {
     isDeletingLc = false;
     renderRooms();
