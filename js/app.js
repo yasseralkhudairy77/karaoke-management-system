@@ -136,7 +136,10 @@ function buildApiUrl(action, params = null) {
 }
 
 function isLocalTvBridgeEnabled() {
-  return Boolean(LOCAL_TV_BRIDGE_ENABLED && String(LOCAL_TV_BRIDGE_URL || "").trim());
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isGitHubPages = hostname === "github.io" || hostname.endsWith(".github.io");
+
+  return Boolean(!isGitHubPages && LOCAL_TV_BRIDGE_ENABLED && String(LOCAL_TV_BRIDGE_URL || "").trim());
 }
 
 function canUseDevShortSessions() {
