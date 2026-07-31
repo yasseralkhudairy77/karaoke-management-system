@@ -6258,6 +6258,35 @@ body::after {
   line-height: 1.4;
 }
 
+.receipt-print-reprint-notice {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  text-align: center;
+}
+
+.receipt-print-reprint-title,
+.receipt-print-reprint-detail {
+  margin: 0;
+}
+
+.receipt-print-reprint-title {
+  color: var(--warning);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.receipt-print-reprint-detail {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .receipt-print-section {
   display: grid;
   gap: 9px;
@@ -7971,6 +8000,7 @@ body::after {
   .closing-print-signatures,
   .owner-report-print-section,
   .receipt-print-header,
+  .receipt-print-reprint-notice,
   .receipt-print-section,
   .receipt-print-footer,
   .receipt-print-row,
@@ -7985,6 +8015,7 @@ body::after {
   .closing-print-note,
   .closing-print-signature-line,
   .receipt-print-title,
+  .receipt-print-reprint-title,
   .receipt-print-section-title,
   .receipt-print-value,
   .receipt-print-footer,
@@ -7997,6 +8028,7 @@ body::after {
   .closing-print-helper,
   .receipt-print-brand,
   .receipt-print-meta,
+  .receipt-print-reprint-detail,
   .receipt-print-label,
   .receipt-print-note {
     color: #444444;

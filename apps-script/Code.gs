@@ -191,6 +191,16 @@ var CASHIER_CLOSING_LC_DETAILS_HEADERS = [
   "bonus_total",
   "snapshot_at",
 ];
+var RECEIPT_PRINT_LOGS_HEADERS = [
+  "print_log_id",
+  "transaction_id",
+  "print_sequence",
+  "is_reprint",
+  "print_type",
+  "cashier_name",
+  "printed_at",
+  "note",
+];
 var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_total",
   "grand_total",
@@ -939,6 +949,10 @@ function doPost(e) {
 
     if (action === "markTransactionPaid") {
       return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
+    }
+
+    if (action === "logReceiptPrint") {
+      return jsonResponse(logReceiptPrint_(payload));
     }
 
     if (action === "saveCashierClosing") {
@@ -13843,6 +13857,111 @@ function ensureCashierClosingSnapshotSheets_() {
     fnb_items: ensureSheetWithHeaders_("CashierClosingFnbItems", CASHIER_CLOSING_FNB_ITEMS_HEADERS),
     lc_details: ensureSheetWithHeaders_("CashierClosingLcDetails", CASHIER_CLOSING_LC_DETAILS_HEADERS),
   };
+}
+
+function ensureReceiptPrintLogsSheet_() {
+  return ensureSheetColumns_("ReceiptPrintLogs", RECEIPT_PRINT_LOGS_HEADERS);
+}
+
+function generateReceiptPrintLogId_() {
+  return "RPL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function logReceiptPrint_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+
+  if (!transactionId) {
+    return {
+      ok: false,
+      success: false,
+      error: "transaction_id wajib diisi.",
+    };
+  }
+
+  var transactionsSheet = ensureTransactionsSheetColumns_();
+  var transactionsHeaderMap = getHeaderMap_(transactionsSheet);
+  var transactionRowNumber = findRowByValue_(transactionsSheet, transactionsHeaderMap, "transaction_id", transactionId);
+
+  if (!transactionRowNumber) {
+    return {
+      ok: false,
+      success: false,
+      error: "Transaksi tidak ditemukan.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang mencatat cetak struk lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var sheet = ensureReceiptPrintLogsSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var existingCount = countRowsByValue_(sheet, headerMap, "transaction_id", transactionId);
+    var sequence = existingCount + 1;
+    var now = toJakartaIsoString_(new Date());
+    var printType = String(request.print_type || "browser").trim().toLowerCase();
+
+    if (["browser", "thermal"].indexOf(printType) === -1) {
+      printType = "browser";
+    }
+
+    var logEntry = {
+      print_log_id: generateReceiptPrintLogId_(),
+      transaction_id: transactionId,
+      print_sequence: sequence,
+      is_reprint: sequence > 1,
+      print_type: printType,
+      cashier_name: String(request.cashier_name || "Kasir").trim() || "Kasir",
+      printed_at: now,
+      note: String(request.note || "").trim(),
+    };
+
+    appendObjectRow_(sheet, logEntry);
+
+    return {
+      ok: true,
+      success: true,
+      log: logEntry,
+      transaction_id: transactionId,
+      print_sequence: sequence,
+      is_reprint: sequence > 1,
+      reprint_number: Math.max(0, sequence - 1),
+      printed_at: now,
+      cashier_name: logEntry.cashier_name,
+      print_type: printType,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function countRowsByValue_(sheet, headerMap, columnName, value) {
+  var column = headerMap[columnName];
+
+  if (!column) {
+    return 0;
+  }
+
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return 0;
+  }
+
+  var values = sheet.getRange(2, column, lastRow - 1, 1).getValues();
+  var expectedValue = String(value || "").trim();
+  var count = 0;
+
+  values.forEach(function (row) {
+    if (String(row[0] || "").trim() === expectedValue) {
+      count += 1;
+    }
+  });
+
+  return count;
 }
 
 function appendCashierClosingSnapshotRows_(sheet, rows) {

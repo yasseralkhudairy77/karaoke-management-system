@@ -1,0 +1,1 @@
+print_log_id,transaction_id,print_sequence,is_reprint,print_type,cashier_name,printed_at,note

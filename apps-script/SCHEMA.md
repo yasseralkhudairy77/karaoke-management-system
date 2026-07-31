@@ -424,6 +424,21 @@ Contoh `payment_status`:
 - `paid`
 - `cancelled`
 
+## ReceiptPrintLogs
+
+Menyimpan audit cetak struk transaksi. Sheet ini dibuat otomatis saat kasir mencetak struk pertama kali dari dashboard.
+
+| Column | Description |
+| --- | --- |
+| `print_log_id` | ID unik log cetak struk. |
+| `transaction_id` | ID transaksi yang dicetak. |
+| `print_sequence` | Urutan cetak untuk transaksi tersebut. Cetak pertama bernilai `1`. |
+| `is_reprint` | `TRUE` jika struk adalah cetak ulang (`print_sequence > 1`). |
+| `print_type` | Jenis cetak: `browser` atau `thermal`. |
+| `cashier_name` | Kasir/operator yang menekan cetak. |
+| `printed_at` | Waktu cetak. |
+| `note` | Catatan opsional. |
+
 ### Fase UI-2A / UI-2B - Filter Periode & Tanggal Operasional
 
 GET `getTodayTransactions` tetap backward compatible. Tanpa parameter `period`, default `today` (shift operasional aktif).

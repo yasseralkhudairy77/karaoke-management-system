@@ -14,8 +14,8 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=thermal-logo-canvas-5g";
-import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-6g";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v1";
+import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -667,6 +667,7 @@ let transactionFnbDetails = {};
 let isLoadingTransactionFnbDetails = false;
 let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
+let receiptPrintAuditByTransactionId = {};
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
 let durationPaymentMethod = "cash";
@@ -2509,6 +2510,60 @@ async function prepareReceiptTransaction(transaction) {
   return transaction;
 }
 
+function normalizeReceiptPrintAudit(audit) {
+  const sequence = Number(audit?.print_sequence || audit?.printSequence || 0) || 0;
+  const reprintNumber = Number(audit?.reprint_number || audit?.reprintNumber || Math.max(0, sequence - 1)) || 0;
+
+  return {
+    print_sequence: sequence,
+    is_reprint: Boolean(audit?.is_reprint || audit?.isReprint || sequence > 1 || reprintNumber > 0),
+    reprint_number: reprintNumber,
+    printed_at: audit?.printed_at || audit?.printedAt || "",
+    cashier_name: audit?.cashier_name || audit?.cashierName || "",
+    print_type: audit?.print_type || audit?.printType || "",
+  };
+}
+
+function getReceiptPrintAudit(transaction) {
+  const transactionId = transaction?.transaction_id || "";
+  return transactionId ? receiptPrintAuditByTransactionId[transactionId] || null : null;
+}
+
+async function waitForNextFrame() {
+  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function logReceiptPrintAttempt(transaction, printType) {
+  const transactionId = transaction?.transaction_id || "";
+
+  if (!transactionId) {
+    throw new Error("ID transaksi tidak ditemukan.");
+  }
+
+  if (!API_BASE_URL.trim()) {
+    throw new Error("API belum dikonfigurasi. Cetak struk perlu dicatat ke sistem.");
+  }
+
+  const data = await postApiAction({
+    action: "logReceiptPrint",
+    transaction_id: transactionId,
+    print_type: printType,
+    cashier_name: getLoggedInOperatorName(),
+  });
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "Gagal mencatat cetak struk.");
+  }
+
+  const audit = normalizeReceiptPrintAudit(data.log || data);
+  receiptPrintAuditByTransactionId = {
+    ...receiptPrintAuditByTransactionId,
+    [transactionId]: audit,
+  };
+
+  return audit;
+}
+
 async function printReceipt(transaction = selectedReceiptTransaction || lastTransaction) {
   const preparedTransaction = await prepareReceiptTransaction(transaction);
 
@@ -2521,7 +2576,15 @@ async function printReceipt(transaction = selectedReceiptTransaction || lastTran
     return;
   }
 
-  window.print();
+  try {
+    const audit = await logReceiptPrintAttempt(preparedTransaction, "browser");
+    showInlineNotice(audit.is_reprint ? `Cetak ulang struk ke-${audit.reprint_number}.` : "Cetak struk dicatat.");
+    renderRooms();
+    await waitForNextFrame();
+    window.print();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencetak struk.", "error");
+  }
 }
 
 async function showThermalReceiptPreview(transaction) {
@@ -2540,6 +2603,7 @@ async function showThermalReceiptPreview(transaction) {
 
   const receiptData = buildReceiptData(preparedTransaction, {
     fnbOrders: getReceiptFnbOrders(preparedTransaction),
+    print: getReceiptPrintAudit(preparedTransaction),
   });
   const previewText = formatReceipt58mm(receiptData);
   let preview = receipt.querySelector(".thermal-receipt-preview");
@@ -2572,13 +2636,22 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
     return;
   }
 
-  const receiptData = buildReceiptData(preparedTransaction, {
-    fnbOrders: getReceiptFnbOrders(preparedTransaction),
-  });
-  const printStarted = printThermalReceipt(receiptData);
+  try {
+    const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
+    const receiptData = buildReceiptData(preparedTransaction, {
+      fnbOrders: getReceiptFnbOrders(preparedTransaction),
+      print: audit,
+    });
+    const printStarted = printThermalReceipt(receiptData);
 
-  if (!printStarted) {
-    showInlineNotice("Fitur cetak thermal tidak tersedia di browser ini.", "error");
+    if (!printStarted) {
+      showInlineNotice("Fitur cetak thermal tidak tersedia di browser ini.", "error");
+      return;
+    }
+
+    showInlineNotice(audit.is_reprint ? `Cetak ulang thermal ke-${audit.reprint_number}.` : "Cetak thermal dicatat.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencetak struk thermal.", "error");
   }
 }
 
@@ -5646,8 +5719,10 @@ function createBillingFnbOrderElement(order) {
 }
 
 function createReceiptPrintElement(transaction) {
+  const printAudit = getReceiptPrintAudit(transaction);
   const receiptData = buildReceiptData(transaction, {
     fnbOrders: getReceiptFnbOrders(transaction),
+    print: printAudit,
   });
   const receipt = document.createElement("section");
   receipt.className = "receipt-print";
@@ -5670,6 +5745,8 @@ function createReceiptPrintElement(transaction) {
   meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${formatTransactionDateTime(receiptData.transaction.createdAt)} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
 
   header.append(brand, title, meta);
+
+  const reprintNotice = createReceiptReprintNoticeElement(receiptData.print);
 
   const roomRows = [
     ["Nama Ruangan", receiptData.room.name || receiptData.room.id || "-"],
@@ -5746,6 +5823,7 @@ function createReceiptPrintElement(transaction) {
   actions.append(printButton, thermalPreviewButton, thermalPrintButton, closeButton);
   receipt.append(
     header,
+    reprintNotice,
     roomSection,
     billingSection,
     createReceiptFnbDetailElement(receiptData),
@@ -5755,6 +5833,30 @@ function createReceiptPrintElement(transaction) {
   );
 
   return receipt;
+}
+
+function createReceiptReprintNoticeElement(printAudit) {
+  if (!printAudit?.isReprint) {
+    return document.createDocumentFragment();
+  }
+
+  const notice = document.createElement("section");
+  notice.className = "receipt-print-reprint-notice";
+
+  const title = document.createElement("p");
+  title.className = "receipt-print-reprint-title";
+  title.textContent = "*** CETAK ULANG ***";
+
+  const detail = document.createElement("p");
+  detail.className = "receipt-print-reprint-detail";
+  detail.textContent = [
+    `Cetak ulang ke-${Number(printAudit.reprintNumber) || 1}`,
+    printAudit.printedAt ? `Waktu: ${formatTransactionDateTime(printAudit.printedAt)}` : "",
+    printAudit.cashierName ? `Kasir: ${printAudit.cashierName}` : "",
+  ].filter(Boolean).join(" | ");
+
+  notice.append(title, detail);
+  return notice;
 }
 
 function createReceiptSection(titleText, rows) {
@@ -12691,6 +12793,14 @@ function createTransactionActionsElement(transaction) {
   summaryButton.dataset.transactionId = transaction?.transaction_id || "";
   summaryButton.textContent = "Lihat Ringkasan";
   actions.appendChild(summaryButton);
+
+  const printButton = document.createElement("button");
+  printButton.className = "transaction-action-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-receipt-print";
+  printButton.dataset.transactionId = transaction?.transaction_id || "";
+  printButton.textContent = transaction?.payment_status === "paid" ? "Cetak Ulang" : "Cetak Struk";
+  actions.appendChild(printButton);
 
   if (transaction?.payment_status !== "unpaid") {
     return actions;

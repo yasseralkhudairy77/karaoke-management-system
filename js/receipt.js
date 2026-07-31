@@ -29,6 +29,7 @@ export function buildReceiptData(transaction, options = {}) {
     payment: normalizePayment(safeTransaction),
     totals: normalizeTotals(safeTransaction),
     paper: normalizePaper(options.paper),
+    print: normalizeReceiptPrint(options.print || safeTransaction.receipt_print),
   };
 }
 
@@ -43,8 +44,20 @@ export function formatReceipt58mm(receiptData, options = {}) {
   const fnb = receiptData?.fnb || {};
   const payment = receiptData?.payment || {};
   const totals = receiptData?.totals || {};
+  const print = receiptData?.print || {};
 
   pushReceiptHeader(lines, business, width);
+
+  if (print.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+    lines.push(centerReceiptText(`Cetak ulang ke-${getNumber(print.reprintNumber)}`, width));
+    if (print.printedAt) {
+      pushReceiptField(lines, "Waktu reprint", formatReceiptDateTime(print.printedAt), width);
+    }
+    if (print.cashierName) {
+      pushReceiptField(lines, "Kasir reprint", print.cashierName, width);
+    }
+  }
 
   if (business.address) {
     lines.push(...wrapReceiptText(business.address, width).map((line) => centerReceiptText(line, width)));
@@ -424,6 +437,21 @@ function normalizePaper(paper) {
   return {
     ...DEFAULT_PAPER,
     ...(paper || {}),
+  };
+}
+
+function normalizeReceiptPrint(print) {
+  const sequence = getNumber(print?.print_sequence || print?.printSequence);
+  const inferredReprintNumber = Math.max(0, sequence - 1);
+  const reprintNumber = getNumber(print?.reprint_number || print?.reprintNumber || inferredReprintNumber);
+
+  return {
+    printSequence: sequence,
+    isReprint: Boolean(print?.is_reprint || print?.isReprint || sequence > 1 || reprintNumber > 0),
+    reprintNumber,
+    printedAt: print?.printed_at || print?.printedAt || "",
+    cashierName: getText(print?.cashier_name || print?.cashierName || ""),
+    printType: getText(print?.print_type || print?.printType || ""),
   };
 }
 
