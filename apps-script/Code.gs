@@ -2903,7 +2903,7 @@ function getMenuItems_() {
         menu_name: menuItem.menu_name || "",
         category: menuItem.category || "",
         price: sellingPrice,
-        status: status || "",
+        status: String(status || "").trim().toLowerCase(),
         updated_at: menuItem.updated_at || "",
         stock_tracking: menuItem.stock_tracking || "",
         stock_item_id: menuItem.stock_item_id || "",

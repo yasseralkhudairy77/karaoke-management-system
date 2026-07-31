@@ -1251,7 +1251,9 @@ async function loadMenuItems() {
 }
 
 async function fetchMenuItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getMenuItems`);
+  const response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1271,7 +1273,7 @@ async function fetchMenuItemsFromApi() {
       menu_name: menuItem.menu_name || "",
       category: menuItem.category || "",
       price: Number(menuItem.price) || 0,
-      status: menuItem.status || "",
+      status: String(menuItem.status || "").trim().toLowerCase(),
       updated_at: menuItem.updated_at || "",
       stock_tracking: menuItem.stock_tracking || "",
       stock_item_id: menuItem.stock_item_id || "",
@@ -3244,7 +3246,7 @@ function getAvailableMenuPortions(menuItem) {
 function addMenuItemToCart(menuId) {
   const menuItem = findMenuItemById(menuId);
 
-  if (!menuItem || menuItem.status !== "active") {
+  if (!menuItem || String(menuItem.status || "").trim().toLowerCase() !== "active") {
     showInlineNotice("Menu tidak aktif dan tidak bisa ditambahkan.", "error");
     return;
   }
@@ -8284,7 +8286,8 @@ function createMenuSpiritFilterElement() {
 
 function createMenuCardElement(menuItem) {
   const card = document.createElement("article");
-  const isInactive = menuItem.status === "inactive";
+  const normalizedStatus = String(menuItem.status || "").trim().toLowerCase();
+  const isInactive = normalizedStatus !== "active";
   const stockInfo = getDynamicMenuStockInfo(menuItem);
   const hasStockTracking = stockInfo.hasTracking;
   const availablePortions = stockInfo.availablePortions;
@@ -8331,7 +8334,7 @@ function createMenuCardElement(menuItem) {
     `menu-status ${statusClass}`,
     statusClass === "active" ? "success" : "neutral"
   );
-  status.textContent = getMenuStatusLabel(menuItem.status);
+  status.textContent = getMenuStatusLabel(normalizedStatus);
 
   card.append(badge, info, price);
 
