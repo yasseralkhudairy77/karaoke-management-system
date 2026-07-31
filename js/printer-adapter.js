@@ -57,6 +57,11 @@ export function printThermalReceipt(receiptData) {
 }
 
 function buildThermalPrintDocument(receiptImage) {
+  const pageHeightMm = Math.max(
+    30,
+    Math.ceil((receiptImage.height / THERMAL_CANVAS_WIDTH_PX) * THERMAL_PAGE_WIDTH_MM)
+  );
+
   return `<!doctype html>
 <html lang="id">
   <head>
@@ -65,7 +70,7 @@ function buildThermalPrintDocument(receiptImage) {
     <title>Cetak Thermal 58mm</title>
     <style>
       @page {
-        size: ${THERMAL_PAGE_WIDTH_MM}mm auto;
+        size: ${THERMAL_PAGE_WIDTH_MM}mm ${pageHeightMm}mm;
         margin: 0;
       }
 
@@ -74,7 +79,8 @@ function buildThermalPrintDocument(receiptImage) {
         width: ${THERMAL_PAGE_WIDTH_MM}mm;
         margin: 0;
         padding: 0;
-        height: auto;
+        height: ${pageHeightMm}mm;
+        min-height: ${pageHeightMm}mm;
         background: #ffffff;
         color: #000000;
       }
@@ -82,7 +88,7 @@ function buildThermalPrintDocument(receiptImage) {
       body {
         box-sizing: border-box;
         display: block;
-        overflow: visible;
+        overflow: hidden;
         text-align: left;
         vertical-align: top;
       }
@@ -99,7 +105,8 @@ function buildThermalPrintDocument(receiptImage) {
         html,
         body {
           width: ${THERMAL_PAGE_WIDTH_MM}mm;
-          height: auto;
+          height: ${pageHeightMm}mm;
+          min-height: ${pageHeightMm}mm;
         }
       }
     </style>
