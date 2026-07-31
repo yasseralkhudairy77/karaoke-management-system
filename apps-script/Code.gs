@@ -4796,7 +4796,7 @@ function validateRoomSessionFoundationRows_(headers, rows, referenceMaps) {
       issues.invalid_booking_mode_count += 1;
     }
 
-    if (["starting", "active", "closing", "closed", "voided", "start_failed", "close_failed"].indexOf(status) === -1) {
+    if (["starting", "active", "closing", "closed", "cancelled", "voided", "start_failed", "close_failed"].indexOf(status) === -1) {
       issues.invalid_status_count += 1;
     }
 
