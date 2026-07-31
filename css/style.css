@@ -6064,6 +6064,157 @@ body::after {
   outline-offset: 2px;
 }
 
+.closing-receipt {
+  width: min(100%, 420px);
+  margin-inline: auto;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.closing-receipt-header {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 9px;
+  text-align: center;
+  border-bottom: 1px dashed var(--border);
+}
+
+.closing-receipt-brand,
+.closing-receipt-footer {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.closing-receipt-section {
+  display: grid;
+  gap: 4px;
+  padding-block: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.closing-receipt-section h3 {
+  margin: 0 0 3px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.closing-receipt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.closing-receipt-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.closing-receipt-row strong {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.closing-receipt-row--total {
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  font-weight: 900;
+}
+
+.closing-receipt-row--item {
+  padding-left: 8px;
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.closing-receipt-section--note .closing-receipt-row {
+  grid-template-columns: 1fr;
+}
+
+.closing-receipt-section--note .closing-receipt-row strong:empty {
+  display: none;
+}
+
+.closing-receipt-transaction,
+.closing-receipt-lc {
+  display: grid;
+  gap: 3px;
+  padding-block: 7px;
+  border-top: 1px dotted var(--border);
+}
+
+.closing-receipt-transaction h4,
+.closing-receipt-lc h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.closing-receipt-meta,
+.closing-receipt-payment,
+.closing-receipt-lc-line,
+.closing-receipt-warning,
+.closing-receipt-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.closing-receipt-payment {
+  margin-top: 3px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.closing-receipt-warning {
+  padding: 4px;
+  border: 1px solid var(--warning);
+  color: var(--warning);
+}
+
+.closing-receipt-message {
+  padding: 8px;
+  border: 1px dashed var(--border);
+  text-align: center;
+}
+
+.closing-receipt-signatures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 26px;
+}
+
+.closing-receipt-signature {
+  display: grid;
+  gap: 5px;
+  text-align: center;
+}
+
+.closing-receipt-signature span {
+  height: 1px;
+  background: var(--border);
+}
+
+.closing-receipt-signature p {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.closing-receipt-footer {
+  text-align: center;
+}
+
 .receipt-print {
   grid-column: 1 / -1;
   display: grid;
@@ -7766,6 +7917,53 @@ body::after {
     max-width: 58mm;
     margin: 0;
     padding: 3mm;
+  }
+
+  .closing-receipt {
+    box-sizing: border-box;
+    width: 58mm;
+    max-width: 58mm;
+    min-height: 0;
+    margin: 0;
+    padding: 2.5mm;
+    gap: 1.5mm;
+    border-radius: 0;
+    font-family: "Courier New", monospace;
+  }
+
+  .closing-receipt-header,
+  .closing-receipt-section,
+  .closing-receipt-transaction,
+  .closing-receipt-lc {
+    break-inside: avoid;
+    border-color: #000000;
+  }
+
+  .closing-receipt-brand,
+  .closing-receipt-footer,
+  .closing-receipt-section h3,
+  .closing-receipt-row,
+  .closing-receipt-transaction h4,
+  .closing-receipt-lc h4,
+  .closing-receipt-meta,
+  .closing-receipt-payment,
+  .closing-receipt-lc-line,
+  .closing-receipt-message,
+  .closing-receipt-signature p {
+    color: #000000;
+  }
+
+  .closing-receipt-row--item {
+    color: #333333;
+  }
+
+  .closing-receipt-warning {
+    border-color: #000000;
+    color: #000000;
+  }
+
+  .closing-receipt-signature span {
+    background: #000000;
   }
 
   .closing-print-header,

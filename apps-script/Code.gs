@@ -68,6 +68,7 @@ var NUMERIC_FIELDS = {
   rate_per_room: true,
   rate: true,
   lc_total: true,
+  promo_discount: true,
   bonus_per_item: true,
   bonus_total: true,
   room_earning_total: true,
@@ -124,6 +125,71 @@ var FNB_ORDER_ITEMS_HEADERS = [
   "subtotal",
   "bonus_sales_lc",
   "created_at",
+];
+var CASHIER_CLOSING_TRANSACTIONS_HEADERS = [
+  "closing_transaction_id",
+  "closing_id",
+  "transaction_id",
+  "transaction_type",
+  "session_id",
+  "room_id",
+  "room_name",
+  "start_time",
+  "end_time",
+  "duration_minutes",
+  "room_total",
+  "fnb_total",
+  "lc_total",
+  "promo_code",
+  "promo_discount",
+  "grand_total",
+  "fnb_order_ids",
+  "payment_method",
+  "payment_status",
+  "cashier_name",
+  "transaction_created_at",
+  "snapshot_at",
+];
+var CASHIER_CLOSING_FNB_ITEMS_HEADERS = [
+  "closing_fnb_item_id",
+  "closing_id",
+  "transaction_id",
+  "order_id",
+  "room_id",
+  "room_name",
+  "order_status",
+  "menu_id",
+  "menu_name",
+  "category",
+  "price",
+  "quantity",
+  "subtotal",
+  "order_created_at",
+  "snapshot_at",
+];
+var CASHIER_CLOSING_LC_DETAILS_HEADERS = [
+  "closing_lc_detail_id",
+  "closing_id",
+  "entry_type",
+  "log_id",
+  "bonus_log_id",
+  "transaction_id",
+  "order_id",
+  "session_id",
+  "room_id",
+  "room_name",
+  "lc_id",
+  "lc_name",
+  "start_time",
+  "end_time",
+  "duration_minutes",
+  "work_status",
+  "rate",
+  "menu_name",
+  "quantity",
+  "bonus_per_item",
+  "bonus_total",
+  "snapshot_at",
 ];
 var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_total",
@@ -667,6 +733,14 @@ function doGet(e) {
         e.parameter.start_date,
         e.parameter.end_date
       ));
+    }
+
+    if (action === "getCashierClosingDetails") {
+      return jsonResponse(getCashierClosingDetails_(e.parameter.closing_id));
+    }
+
+    if (action === "validateCashierClosingSnapshot") {
+      return jsonResponse(validateCashierClosingSnapshot_());
     }
 
     if (action === "getOpenFnbOrders") {
@@ -8166,8 +8240,12 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
         rate_per_hour: Number(transaction.rate_per_hour) || 0,
         room_total: Number(transaction.room_total) || 0,
         fnb_total: Number(transaction.fnb_total) || 0,
+        lc_total: Number(transaction.lc_total) || 0,
+        promo_code: transaction.promo_code || "",
+        promo_discount: Number(transaction.promo_discount) || 0,
         grand_total: getTransactionAmount_(transaction),
         fnb_order_ids: transaction.fnb_order_ids || "",
+        transaction_type: transaction.transaction_type || "session_checkout",
         payment_method: transaction.payment_method || "",
         payment_status: transaction.payment_status || "",
         cashier_name: transaction.cashier_name || "",
@@ -10729,20 +10807,33 @@ function saveCashierClosing_(cashActual, note, cashierName) {
       created_at: createdAt,
     };
 
-    var sheet = ensureCashierClosingsSheet_();
-    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
-      return String(header).trim();
-    });
-    var rowValues = headers.map(function (header) {
-      return closing[header] !== undefined ? closing[header] : "";
-    });
+    var snapshot = buildCashierClosingSnapshot_(closing, createdAt);
+    var snapshotSheets = ensureCashierClosingSnapshotSheets_();
 
-    sheet.appendRow(rowValues);
+    try {
+      appendCashierClosingSnapshotRows_(snapshotSheets.transactions, snapshot.transactions);
+      appendCashierClosingSnapshotRows_(snapshotSheets.fnb_items, snapshot.fnb_items);
+      appendCashierClosingSnapshotRows_(snapshotSheets.lc_details, snapshot.lc_details);
+
+      var sheet = ensureCashierClosingsSheet_();
+      var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+        return String(header).trim();
+      });
+      var rowValues = headers.map(function (header) {
+        return closing[header] !== undefined ? closing[header] : "";
+      });
+
+      sheet.appendRow(rowValues);
+    } catch (snapshotError) {
+      rollbackCashierClosingSnapshot_(closing.closing_id, snapshotSheets);
+      throw snapshotError;
+    }
 
     return {
       ok: true,
       message: "Closing kasir berhasil disimpan.",
       closing: closing,
+      snapshot_summary: summarizeCashierClosingSnapshot_(snapshot),
     };
   } finally {
     lock.releaseLock();
@@ -13746,6 +13837,360 @@ function normalizeFnbOrderItems_(items, menuMap) {
   });
 }
 
+function ensureCashierClosingSnapshotSheets_() {
+  return {
+    transactions: ensureSheetWithHeaders_("CashierClosingTransactions", CASHIER_CLOSING_TRANSACTIONS_HEADERS),
+    fnb_items: ensureSheetWithHeaders_("CashierClosingFnbItems", CASHIER_CLOSING_FNB_ITEMS_HEADERS),
+    lc_details: ensureSheetWithHeaders_("CashierClosingLcDetails", CASHIER_CLOSING_LC_DETAILS_HEADERS),
+  };
+}
+
+function appendCashierClosingSnapshotRows_(sheet, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var values = rows.map(function (row) {
+    return headers.map(function (header) {
+      return row[header] !== undefined ? row[header] : "";
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+}
+
+function buildCashierClosingSnapshot_(closing, snapshotAt) {
+  var closingId = String(closing.closing_id || "").trim();
+  var operationalDate = String(closing.closing_date || "").trim();
+  var roomSessions = sheetExists_(ROOM_SESSIONS_SHEET)
+    ? readSheetAsObjects_(ROOM_SESSIONS_SHEET)
+    : [];
+  var sessionsById = {};
+  var sessionsByTransactionId = {};
+
+  roomSessions.forEach(function (session) {
+    var sessionId = String(session.session_id || "").trim();
+    if (sessionId) {
+      sessionsById[sessionId] = session;
+    }
+    [session.closed_transaction_id, session.prepayment_transaction_id].forEach(function (transactionId) {
+      var normalizedTransactionId = String(transactionId || "").trim();
+      if (normalizedTransactionId) {
+        sessionsByTransactionId[normalizedTransactionId] = session;
+      }
+    });
+  });
+
+  var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    return resolveTransactionOperationalDateString_(transaction) === operationalDate;
+  });
+  var transactionIdByOrderId = {};
+  var transactionRows = transactions.map(function (transaction, index) {
+    var transactionId = String(transaction.transaction_id || "").trim();
+    var session = sessionsByTransactionId[transactionId] || {};
+
+    parseCommaSeparatedIds_(transaction.fnb_order_ids).forEach(function (orderId) {
+      transactionIdByOrderId[orderId] = transactionId;
+    });
+
+    return {
+      closing_transaction_id: closingId + "-TX-" + String(index + 1),
+      closing_id: closingId,
+      transaction_id: transactionId,
+      transaction_type: transaction.transaction_type || "session_checkout",
+      session_id: session.session_id || "",
+      room_id: transaction.room_id || session.room_id || "",
+      room_name: transaction.room_name || session.room_name || "",
+      start_time: transaction.start_time || session.start_time || "",
+      end_time: transaction.end_time || session.end_time || "",
+      duration_minutes: Number(transaction.duration_minutes) || Number(session.booked_duration_minutes) || 0,
+      room_total: Number(transaction.room_total) || 0,
+      fnb_total: Number(transaction.fnb_total) || 0,
+      lc_total: Number(transaction.lc_total) || 0,
+      promo_code: transaction.promo_code || "",
+      promo_discount: Number(transaction.promo_discount) || 0,
+      grand_total: getTransactionAmount_(transaction),
+      fnb_order_ids: transaction.fnb_order_ids || "",
+      payment_method: transaction.payment_method || "",
+      payment_status: transaction.payment_status || "",
+      cashier_name: transaction.cashier_name || "",
+      transaction_created_at: transaction.created_at || "",
+      snapshot_at: snapshotAt,
+    };
+  });
+
+  var fnbItemRows = [];
+  if (sheetExists_("FnbOrders") && sheetExists_("FnbOrderItems")) {
+    var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+    readFnbOrdersOrEmpty_().filter(function (order) {
+      return resolveFnbOrderOperationalDateString_(order) === operationalDate;
+    }).forEach(function (order) {
+      var orderId = String(order.order_id || "").trim();
+      (itemsByOrderId[orderId] || []).forEach(function (item) {
+        fnbItemRows.push({
+          closing_fnb_item_id: closingId + "-FNB-" + String(fnbItemRows.length + 1),
+          closing_id: closingId,
+          transaction_id: transactionIdByOrderId[orderId] || "",
+          order_id: orderId,
+          room_id: order.room_id || "",
+          room_name: order.room_name || "",
+          order_status: order.order_status || "",
+          menu_id: item.menu_id || "",
+          menu_name: item.menu_name || "",
+          category: item.category || "",
+          price: Number(item.price) || 0,
+          quantity: Number(item.quantity) || 0,
+          subtotal: Number(item.subtotal) || 0,
+          order_created_at: order.created_at || "",
+          snapshot_at: snapshotAt,
+        });
+      });
+    });
+  }
+
+  var lcDetailRows = [];
+  if (sheetExists_("LcWorkLogs")) {
+    readSheetAsObjects_("LcWorkLogs").filter(function (workLog) {
+      return normalizeLcFinanceOperationalDate_(workLog.created_at) === operationalDate;
+    }).forEach(function (workLog) {
+      var sessionId = String(workLog.session_id || "").trim();
+      var session = sessionsById[sessionId] || {};
+      var endTime = workLog.closed_at || session.end_time || "";
+
+      lcDetailRows.push({
+        closing_lc_detail_id: closingId + "-LC-" + String(lcDetailRows.length + 1),
+        closing_id: closingId,
+        entry_type: "work",
+        log_id: workLog.log_id || "",
+        bonus_log_id: "",
+        transaction_id: session.closed_transaction_id || session.prepayment_transaction_id || "",
+        order_id: "",
+        session_id: sessionId,
+        room_id: session.room_id || "",
+        room_name: session.room_name || "",
+        lc_id: workLog.lc_id || "",
+        lc_name: workLog.lc_name || "",
+        start_time: workLog.created_at || session.start_time || "",
+        end_time: endTime,
+        duration_minutes: calculateClosingDurationMinutes_(workLog.created_at || session.start_time, endTime || snapshotAt),
+        work_status: workLog.status || (endTime ? "closed" : "active"),
+        rate: Number(workLog.rate) || 0,
+        menu_name: "",
+        quantity: 0,
+        bonus_per_item: 0,
+        bonus_total: 0,
+        snapshot_at: snapshotAt,
+      });
+    });
+  }
+
+  if (sheetExists_("LcSalesBonusLogs")) {
+    readSheetAsObjects_("LcSalesBonusLogs").filter(function (bonusLog) {
+      var bonusDate = String(bonusLog.operational_date || "").trim()
+        || normalizeLcFinanceOperationalDate_(bonusLog.created_at);
+      return bonusDate === operationalDate && !String(bonusLog.voided_at || "").trim();
+    }).forEach(function (bonusLog) {
+      var orderId = String(bonusLog.order_id || "").trim();
+      lcDetailRows.push({
+        closing_lc_detail_id: closingId + "-LC-" + String(lcDetailRows.length + 1),
+        closing_id: closingId,
+        entry_type: "bonus",
+        log_id: "",
+        bonus_log_id: bonusLog.bonus_log_id || "",
+        transaction_id: bonusLog.transaction_id || transactionIdByOrderId[orderId] || "",
+        order_id: orderId,
+        session_id: "",
+        room_id: "",
+        room_name: "",
+        lc_id: bonusLog.lc_id || "",
+        lc_name: bonusLog.lc_name || "",
+        start_time: bonusLog.created_at || "",
+        end_time: bonusLog.created_at || "",
+        duration_minutes: 0,
+        work_status: bonusLog.source_status || "recorded",
+        rate: 0,
+        menu_name: bonusLog.menu_name || "",
+        quantity: Number(bonusLog.quantity) || 0,
+        bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
+        bonus_total: Number(bonusLog.bonus_total) || 0,
+        snapshot_at: snapshotAt,
+      });
+    });
+  }
+
+  return {
+    transactions: transactionRows,
+    fnb_items: fnbItemRows,
+    lc_details: lcDetailRows,
+  };
+}
+
+function calculateClosingDurationMinutes_(startTime, endTime) {
+  var start = new Date(startTime);
+  var end = new Date(endTime);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    return 0;
+  }
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+}
+
+function summarizeCashierClosingSnapshot_(snapshot) {
+  var transactionSummary = snapshot.transactions.reduce(function (summary, row) {
+    summary.room_total += Number(row.room_total) || 0;
+    summary.fnb_total += Number(row.fnb_total) || 0;
+    summary.lc_total += Number(row.lc_total) || 0;
+    summary.promo_discount += Number(row.promo_discount) || 0;
+    summary.grand_total += Number(row.grand_total) || 0;
+    if (String(row.transaction_type || "").trim().toLowerCase() === "session_checkout") {
+      summary.room_sessions += 1;
+      summary.room_duration_minutes += Number(row.duration_minutes) || 0;
+    }
+    return summary;
+  }, {
+    room_total: 0,
+    fnb_total: 0,
+    lc_total: 0,
+    promo_discount: 0,
+    grand_total: 0,
+    room_sessions: 0,
+    room_duration_minutes: 0,
+  });
+
+  var lcSummary = snapshot.lc_details.reduce(function (summary, row) {
+    var entryType = String(row.entry_type || "").trim().toLowerCase();
+    if (entryType === "work") {
+      summary.assignment_count += 1;
+      if (isClosingLcWorkCompleted_(row)) {
+        summary.room_earning_total += Number(row.rate) || 0;
+        summary.completed_duration_minutes += Number(row.duration_minutes) || 0;
+      } else if (String(row.work_status || "").trim().toLowerCase() === "active") {
+        summary.active_assignment_count += 1;
+      }
+    } else if (entryType === "bonus") {
+      summary.sales_bonus_total += Number(row.bonus_total) || 0;
+    }
+    return summary;
+  }, {
+    assignment_count: 0,
+    active_assignment_count: 0,
+    completed_duration_minutes: 0,
+    room_earning_total: 0,
+    sales_bonus_total: 0,
+  });
+
+  lcSummary.total_lc_obligation = lcSummary.room_earning_total + lcSummary.sales_bonus_total;
+  return {
+    transactions: transactionSummary,
+    lc: lcSummary,
+  };
+}
+
+function isClosingLcWorkCompleted_(row) {
+  var status = String((row && row.work_status) || "").trim().toLowerCase();
+  if (["done", "closed", "paid"].indexOf(status) !== -1) {
+    return true;
+  }
+  return !status && Boolean(row && row.end_time);
+}
+
+function rollbackCashierClosingSnapshot_(closingId, sheets) {
+  [sheets.transactions, sheets.fnb_items, sheets.lc_details].forEach(function (sheet) {
+    deleteSheetRowsByColumnValue_(sheet, "closing_id", closingId);
+  });
+}
+
+function deleteSheetRowsByColumnValue_(sheet, columnName, value) {
+  var headerMap = getHeaderMap_(sheet);
+  var column = headerMap[columnName];
+  if (!column || sheet.getLastRow() < 2) {
+    return;
+  }
+  var values = sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getValues();
+  for (var index = values.length - 1; index >= 0; index -= 1) {
+    if (String(values[index][0] || "").trim() === String(value || "").trim()) {
+      sheet.deleteRow(index + 2);
+    }
+  }
+}
+
+function getCashierClosingDetails_(closingId) {
+  var normalizedClosingId = String(closingId || "").trim();
+  if (!normalizedClosingId) {
+    return { ok: false, success: false, error: "closing_id wajib diisi." };
+  }
+
+  var closing = readCashierClosingsOrEmpty_().filter(function (row) {
+    return String(row.closing_id || "").trim() === normalizedClosingId;
+  })[0];
+  if (!closing) {
+    return { ok: false, success: false, error: "Data closing tidak ditemukan." };
+  }
+
+  var snapshot = {
+    transactions: sheetExists_("CashierClosingTransactions")
+      ? readSheetAsObjects_("CashierClosingTransactions").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+    fnb_items: sheetExists_("CashierClosingFnbItems")
+      ? readSheetAsObjects_("CashierClosingFnbItems").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+    lc_details: sheetExists_("CashierClosingLcDetails")
+      ? readSheetAsObjects_("CashierClosingLcDetails").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+  };
+
+  return {
+    ok: true,
+    success: true,
+    closing_id: normalizedClosingId,
+    snapshot_available: snapshot.transactions.length > 0,
+    transactions: snapshot.transactions,
+    fnb_items: snapshot.fnb_items,
+    lc_details: snapshot.lc_details,
+    summary: summarizeCashierClosingSnapshot_(snapshot),
+  };
+}
+
+function validateCashierClosingSnapshot_() {
+  var now = new Date();
+  var snapshotAt = toJakartaIsoString_(now);
+  var operationalDate = getOperationalDateString_(now);
+  var snapshot = buildCashierClosingSnapshot_({
+    closing_id: "VALIDATION-" + Utilities.formatDate(now, "Asia/Jakarta", "yyyyMMdd-HHmmss"),
+    closing_date: operationalDate,
+  }, snapshotAt);
+  var snapshotSummary = summarizeCashierClosingSnapshot_(snapshot);
+  var closingSummary = calculateCashierClosingSummary_();
+  var issues = [];
+
+  if (snapshot.transactions.length !== Number(closingSummary.total_transactions || 0)) {
+    issues.push("TRANSACTION_COUNT_MISMATCH");
+  }
+  if (Math.abs(Number(snapshotSummary.transactions.grand_total || 0) - Number(closingSummary.total_revenue || 0)) > 0.01) {
+    issues.push("GRAND_TOTAL_MISMATCH");
+  }
+
+  return {
+    ok: issues.length === 0,
+    success: issues.length === 0,
+    status: issues.length === 0 ? "ready" : "invalid",
+    operational_date: operationalDate,
+    counts: {
+      transactions: snapshot.transactions.length,
+      fnb_items: snapshot.fnb_items.length,
+      lc_details: snapshot.lc_details.length,
+    },
+    summary: snapshotSummary,
+    issues: issues,
+  };
+}
+
 function appendFnbOrder_(order) {
   var sheet = ensureFnbOrdersSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
@@ -14129,13 +14574,17 @@ function ensureTransactionsSheetColumns_() {
 }
 
 function getTransactionAmount_(transaction) {
-  var grandTotal = Number(transaction.grand_total) || 0;
-
-  if (grandTotal > 0) {
-    return grandTotal;
+  var rawGrandTotal = transaction ? transaction.grand_total : "";
+  if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
+    var grandTotal = Number(rawGrandTotal);
+    if (isFinite(grandTotal)) {
+      return grandTotal;
+    }
   }
 
-  return Number(transaction.room_total) || 0;
+  return (Number(transaction.room_total) || 0)
+    + (Number(transaction.fnb_total) || 0)
+    + (Number(transaction.lc_total) || 0);
 }
 
 function calculateDurationMinutes_(startTime, endTime) {

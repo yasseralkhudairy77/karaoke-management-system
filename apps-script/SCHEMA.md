@@ -561,7 +561,26 @@ Menyimpan hasil tutup kasir sederhana.
 | `note` | Catatan kasir. |
 | `created_at` | Timestamp closing dibuat. |
 
-Catatan: pada fase sederhana ini backend mencegah duplikat closing berdasarkan `closing_date`.
+Catatan: backend mencegah duplikat closing berdasarkan `closing_date`.
+
+### Snapshot detail closing
+
+Closing baru membekukan data rinci ke tiga sheet agar cetak ulang tidak berubah ketika master atau transaksi sumber diperbarui.
+
+- `CashierClosingTransactions`: satu baris per transaksi, termasuk room, durasi, F&B, LC, diskon, pembayaran, dan total akhir.
+- `CashierClosingFnbItems`: satu baris per item F&B, termasuk order batal atau belum tertaut ke transaksi.
+- `CashierClosingLcDetails`: baris `work` untuk penugasan LC dan baris `bonus` untuk bonus penjualan LC. Durasi disimpan dalam menit dari waktu mulai sampai selesai.
+
+GET `getCashierClosingDetails&closing_id=...` mengembalikan snapshot dan ringkasan operasional. Closing lama tetap valid dengan `snapshot_available: false`.
+
+GET `validateCashierClosingSnapshot` membangun snapshot read-only untuk tanggal operasional aktif dan memeriksa kesesuaian jumlah transaksi serta total tagihan terhadap rekap closing. Endpoint ini tidak membuat closing atau menulis data.
+
+Aturan LC pada snapshot:
+
+- status `done`, `closed`, atau `paid` masuk total jam selesai dan hak room;
+- status `active` ditampilkan sebagai penugasan berjalan dan tidak masuk total jam selesai;
+- status `cancelled` tidak masuk hak room maupun total jam selesai;
+- bonus LC disimpan terpisah dari omzet dan dijumlahkan sebagai kewajiban LC.
 
 ## Inventory
 

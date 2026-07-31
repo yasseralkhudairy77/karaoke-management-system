@@ -2910,7 +2910,7 @@ function findTodayClosingById(closingId) {
   return todayCashierClosings.find((closing) => closing.closing_id === closingId) || null;
 }
 
-function showClosingPrintPreview(closingId) {
+async function showClosingPrintPreview(closingId) {
   const closing = findTodayClosingById(closingId);
 
   if (!closing) {
@@ -2918,8 +2918,34 @@ function showClosingPrintPreview(closingId) {
     return;
   }
 
-  selectedClosingForPrint = closing;
+  selectedClosingForPrint = { ...closing, closing_details_loading: true };
   closingPrintPreviewVisible = true;
+  renderRooms();
+
+  try {
+    const params = new URLSearchParams({
+      action: "getCashierClosingDetails",
+      closing_id: closingId,
+      _: Date.now().toString(),
+    });
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok || data?.ok !== true) {
+      throw new Error(data?.error || "Rincian closing tidak dapat dimuat.");
+    }
+    selectedClosingForPrint = {
+      ...closing,
+      closing_details_loading: false,
+      closing_details: data,
+    };
+  } catch (error) {
+    selectedClosingForPrint = {
+      ...closing,
+      closing_details_loading: false,
+      closing_details_error: error.message || "Rincian closing tidak dapat dimuat.",
+    };
+    showInlineNotice(error.message || "Rincian closing tidak dapat dimuat.", "error");
+  }
   renderRooms();
 }
 
@@ -4097,13 +4123,15 @@ function formatPaymentMethodLabel(method) {
 }
 
 function getTransactionFinalTotal(transaction) {
-  const grandTotal = Number(transaction?.grand_total) || 0;
-
-  if (grandTotal > 0) {
-    return grandTotal;
+  const rawGrandTotal = transaction?.grand_total;
+  if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
+    const grandTotal = Number(rawGrandTotal);
+    if (Number.isFinite(grandTotal)) return grandTotal;
   }
 
-  return Number(transaction?.room_total) || 0;
+  return (Number(transaction?.room_total) || 0)
+    + (Number(transaction?.fnb_total) || 0)
+    + (Number(transaction?.lc_total) || 0);
 }
 
 function getTransactionRoomTotal(transaction) {
@@ -11737,6 +11765,394 @@ function createCashierClosingHistoryElement() {
 }
 
 function createClosingPrintPreviewElement(closing) {
+  const print = document.createElement("section");
+  print.className = "closing-print closing-receipt";
+  print.setAttribute("aria-labelledby", "closing-print-title");
+
+  const header = document.createElement("header");
+  header.className = "closing-receipt-header";
+
+  const brand = document.createElement("p");
+  brand.className = "closing-receipt-brand";
+  brand.textContent = "HAPPY SONG KARAOKE";
+
+  const title = document.createElement("h2");
+  title.className = "closing-print-title";
+  title.id = "closing-print-title";
+  title.textContent = "Laporan Tutup Shift";
+
+  header.append(brand, title);
+
+  const details = closing?.closing_details || null;
+  const snapshotSummary = details?.summary || {};
+  const transactionSummary = snapshotSummary.transactions || {};
+  const lcSummary = snapshotSummary.lc || {};
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
+  const identitySection = createClosingReceiptSection("Data Closing", [
+    ["Tanggal", closing?.closing_date || "-"],
+    ["ID", closing?.closing_id || "-"],
+    ["Kasir", closing?.cashier_name || "-"],
+    ["Waktu", formatDateTimeLabel(closing?.created_at)],
+  ]);
+
+  const salesRows = details?.snapshot_available
+    ? [
+        ["Room", formatCurrency(transactionSummary.room_total)],
+        ["F&B", formatCurrency(transactionSummary.fnb_total)],
+        ["LC", formatCurrency(transactionSummary.lc_total)],
+        ["Diskon", formatClosingSignedCurrency(-(Number(transactionSummary.promo_discount) || 0))],
+        ["Total Tagihan", formatCurrency(transactionSummary.grand_total), "total"],
+      ]
+    : [
+        ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
+        ["Total Tagihan", formatCurrency(closing?.total_revenue), "total"],
+      ];
+  const salesSection = createClosingReceiptSection("Ringkasan Omzet", salesRows);
+
+  const paymentSection = createClosingReceiptSection("Pembayaran", [
+    ["Cash Sistem", formatCurrency(closing?.cash_expected)],
+    ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+    ["Selisih", formatClosingSignedCurrency(closing?.cash_difference), "total"],
+    ["Transfer", formatCurrency(closing?.transfer_revenue)],
+    ["Belum Lunas", formatCurrency(closing?.unpaid_revenue)],
+  ]);
+
+  print.append(header, identitySection, salesSection, paymentSection);
+
+  if (closing?.closing_details_loading) {
+    print.appendChild(createClosingReceiptMessage("Memuat rincian closing..."));
+  } else if (details?.snapshot_available) {
+    print.appendChild(createClosingTransactionDetailsSection(details));
+    print.appendChild(createClosingLcDetailsSection(details));
+    print.appendChild(createClosingOperationalSummarySection(details));
+  } else {
+    print.appendChild(createClosingReceiptMessage(
+      closing?.closing_details_error
+        || "Rincian transaksi tidak tersedia untuk closing lama. Rekap agregat tetap dapat dicetak."
+    ));
+  }
+
+  if (parsedDenoms.length > 0) {
+    print.appendChild(createClosingReceiptSection(
+      "Pecahan Cash",
+      parsedDenoms.map((denom) => [
+        `${denom.label} x${denom.qty}`,
+        formatCurrency(denom.total),
+      ])
+    ));
+  }
+
+  print.appendChild(createClosingReceiptSection("Catatan", [
+    [parsedNote || "-", ""],
+  ], "note"));
+
+  const signatures = document.createElement("section");
+  signatures.className = "closing-receipt-signatures";
+  ["Kasir", "Manager"].forEach((labelText) => {
+    const signature = document.createElement("div");
+    signature.className = "closing-receipt-signature";
+    const line = document.createElement("span");
+    const label = document.createElement("p");
+    label.textContent = labelText;
+    signature.append(line, label);
+    signatures.appendChild(signature);
+  });
+
+  const footer = document.createElement("p");
+  footer.className = "closing-receipt-footer";
+  footer.textContent = details?.snapshot_available
+    ? `Closing tersimpan - ${Number(lcSummary.assignment_count) || 0} penugasan LC`
+    : "Closing tersimpan";
+
+  const actions = document.createElement("div");
+  actions.className = "closing-print-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "closing-print-button";
+  printButton.type = "button";
+  printButton.dataset.action = "print-closing";
+  printButton.textContent = "Cetak Lengkap";
+  printButton.disabled = Boolean(closing?.closing_details_loading);
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "closing-print-button secondary";
+  closeButton.type = "button";
+  closeButton.dataset.action = "hide-closing-print";
+  closeButton.textContent = "Tutup Preview";
+
+  actions.append(printButton, closeButton);
+  print.append(signatures, footer, actions);
+  return print;
+}
+
+function createClosingReceiptSection(titleText, rows, modifierClass = "") {
+  const section = document.createElement("section");
+  section.className = modifierClass
+    ? `closing-receipt-section closing-receipt-section--${modifierClass}`
+    : "closing-receipt-section";
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  section.appendChild(title);
+
+  rows.forEach(([labelText, valueText, rowType]) => {
+    const row = document.createElement("div");
+    row.className = rowType === "total"
+      ? "closing-receipt-row closing-receipt-row--total"
+      : "closing-receipt-row";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const value = document.createElement("strong");
+    value.textContent = valueText;
+    row.append(label, value);
+    section.appendChild(row);
+  });
+
+  return section;
+}
+
+function createClosingReceiptMessage(messageText) {
+  const message = document.createElement("p");
+  message.className = "closing-receipt-message";
+  message.textContent = messageText;
+  return message;
+}
+
+function createClosingTransactionDetailsSection(details) {
+  const section = document.createElement("section");
+  section.className = "closing-receipt-section closing-receipt-details";
+  const title = document.createElement("h3");
+  title.textContent = "Rincian Transaksi";
+  section.appendChild(title);
+
+  const transactions = Array.isArray(details?.transactions) ? details.transactions : [];
+  const fnbItems = Array.isArray(details?.fnb_items) ? details.fnb_items : [];
+  const itemsByTransaction = fnbItems.reduce((map, item) => {
+    const key = String(item.transaction_id || "").trim();
+    if (!key) return map;
+    if (!map[key]) map[key] = [];
+    map[key].push(item);
+    return map;
+  }, {});
+
+  transactions.forEach((transaction) => {
+    const article = document.createElement("article");
+    article.className = "closing-receipt-transaction";
+
+    const heading = document.createElement("h4");
+    const roomName = transaction.room_name || transaction.room_id || "Transaksi";
+    const duration = Number(transaction.duration_minutes) > 0
+      ? ` | ${formatClosingDuration(transaction.duration_minutes)}`
+      : "";
+    heading.textContent = `${roomName}${duration}`;
+    article.appendChild(heading);
+
+    if (transaction.start_time || transaction.end_time) {
+      const time = document.createElement("p");
+      time.className = "closing-receipt-meta";
+      time.textContent = `${formatClosingClock(transaction.start_time)}-${formatClosingClock(transaction.end_time)}`;
+      article.appendChild(time);
+    }
+
+    [
+      ["Room", transaction.room_total],
+      ["F&B", transaction.fnb_total],
+      ["LC", transaction.lc_total],
+    ].forEach(([label, amount]) => {
+      if (Number(amount)) article.appendChild(createClosingReceiptAmountRow(label, amount));
+    });
+
+    (itemsByTransaction[String(transaction.transaction_id || "").trim()] || []).forEach((item) => {
+      article.appendChild(createClosingReceiptAmountRow(
+        `${formatClosingQuantity(item.quantity)}x ${item.menu_name || "Item F&B"}`,
+        item.subtotal,
+        "item"
+      ));
+    });
+
+    if (Number(transaction.promo_discount)) {
+      article.appendChild(createClosingReceiptAmountRow("Diskon", -Number(transaction.promo_discount)));
+    }
+    article.appendChild(createClosingReceiptAmountRow("Total", transaction.grand_total, "total"));
+
+    const payment = document.createElement("p");
+    payment.className = "closing-receipt-payment";
+    payment.textContent = `${String(transaction.payment_method || "-").toUpperCase()} - ${String(transaction.payment_status || "-").toUpperCase()}`;
+    article.appendChild(payment);
+    section.appendChild(article);
+  });
+
+  const unlinkedOrders = groupClosingFnbItemsByOrder_(fnbItems.filter((item) => !String(item.transaction_id || "").trim()));
+  Object.keys(unlinkedOrders).forEach((orderId) => {
+    const items = unlinkedOrders[orderId];
+    const article = document.createElement("article");
+    article.className = "closing-receipt-transaction";
+    const heading = document.createElement("h4");
+    heading.textContent = `${items[0]?.room_name || "F&B"} | ${String(items[0]?.order_status || "OPEN").toUpperCase()}`;
+    article.appendChild(heading);
+    items.forEach((item) => {
+      article.appendChild(createClosingReceiptAmountRow(
+        `${formatClosingQuantity(item.quantity)}x ${item.menu_name || "Item F&B"}`,
+        item.subtotal,
+        "item"
+      ));
+    });
+    section.appendChild(article);
+  });
+
+  if (transactions.length === 0) {
+    section.appendChild(createClosingReceiptMessage("Tidak ada transaksi pada snapshot closing."));
+  }
+  return section;
+}
+
+function createClosingReceiptAmountRow(labelText, amount, modifier = "") {
+  return createClosingReceiptValueRow(labelText, formatClosingSignedCurrency(amount), modifier);
+}
+
+function createClosingReceiptValueRow(labelText, valueText, modifier = "") {
+  const row = document.createElement("div");
+  row.className = modifier
+    ? `closing-receipt-row closing-receipt-row--${modifier}`
+    : "closing-receipt-row";
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  const value = document.createElement("strong");
+  value.textContent = valueText;
+  row.append(label, value);
+  return row;
+}
+
+function createClosingLcDetailsSection(details) {
+  const section = document.createElement("section");
+  section.className = "closing-receipt-section closing-receipt-details";
+  const title = document.createElement("h3");
+  title.textContent = "Rekap LC";
+  section.appendChild(title);
+
+  const lcRows = Array.isArray(details?.lc_details) ? details.lc_details : [];
+  const groups = lcRows.reduce((map, row) => {
+    const key = String(row.lc_id || row.lc_name || "LC").trim();
+    if (!map[key]) {
+      map[key] = { name: row.lc_name || row.lc_id || "LC", work: [], bonus: [] };
+    }
+    if (String(row.entry_type || "").toLowerCase() === "bonus") map[key].bonus.push(row);
+    else map[key].work.push(row);
+    return map;
+  }, {});
+
+  Object.values(groups).forEach((group) => {
+    const article = document.createElement("article");
+    article.className = "closing-receipt-lc";
+    const heading = document.createElement("h4");
+    heading.textContent = String(group.name || "LC").toUpperCase();
+    article.appendChild(heading);
+
+    let completedMinutes = 0;
+    let activeCount = 0;
+    let roomEarning = 0;
+    group.work.forEach((work) => {
+      const workStatus = String(work.work_status || "").toLowerCase();
+      const isComplete = ["done", "closed", "paid"].includes(workStatus)
+        || (!workStatus && Boolean(work.end_time));
+      const isActive = workStatus === "active";
+      if (isComplete) {
+        completedMinutes += Number(work.duration_minutes) || 0;
+        roomEarning += Number(work.rate) || 0;
+      } else if (isActive) {
+        activeCount += 1;
+      }
+
+      const line = document.createElement("p");
+      line.className = "closing-receipt-lc-line";
+      if (isComplete) {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${formatClosingClock(work.start_time)}-${formatClosingClock(work.end_time)} ${formatClosingDuration(work.duration_minutes)}`;
+      } else if (isActive) {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${formatClosingClock(work.start_time)}-AKTIF`;
+      } else {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${String(work.work_status || "TIDAK SELESAI").toUpperCase()}`;
+      }
+      article.appendChild(line);
+    });
+
+    const bonusTotal = group.bonus.reduce((total, bonus) => total + (Number(bonus.bonus_total) || 0), 0);
+    article.appendChild(createClosingReceiptAmountRow(`${group.work.length} sesi | ${formatClosingDuration(completedMinutes)}`, roomEarning));
+    article.appendChild(createClosingReceiptAmountRow("Bonus penjualan", bonusTotal));
+    article.appendChild(createClosingReceiptAmountRow("Total hak", roomEarning + bonusTotal, "total"));
+    if (activeCount > 0) {
+      const warning = document.createElement("p");
+      warning.className = "closing-receipt-warning";
+      warning.textContent = `${activeCount} penugasan masih aktif dan tidak masuk total jam selesai.`;
+      article.appendChild(warning);
+    }
+    section.appendChild(article);
+  });
+
+  const summary = details?.summary?.lc || {};
+  section.appendChild(createClosingReceiptValueRow("Total penugasan", `${Number(summary.assignment_count) || 0} sesi`));
+  section.appendChild(createClosingReceiptValueRow("Total jam LC", formatClosingDuration(summary.completed_duration_minutes)));
+  section.appendChild(createClosingReceiptAmountRow("Hak room LC", summary.room_earning_total));
+  section.appendChild(createClosingReceiptAmountRow("Bonus LC", summary.sales_bonus_total));
+  section.appendChild(createClosingReceiptAmountRow("Kewajiban LC", summary.total_lc_obligation, "total"));
+
+  if (lcRows.length === 0) {
+    section.appendChild(createClosingReceiptMessage("Tidak ada aktivitas LC pada closing ini."));
+  }
+  return section;
+}
+
+function createClosingOperationalSummarySection(details) {
+  const summary = details?.summary?.transactions || {};
+  const fnbItems = Array.isArray(details?.fnb_items) ? details.fnb_items : [];
+  const orderIds = new Set(fnbItems.map((item) => item.order_id).filter(Boolean));
+  return createClosingReceiptSection("Operasional", [
+    ["Room terjual", `${Number(summary.room_sessions) || 0} sesi`],
+    ["Total room-hours", formatClosingDuration(summary.room_duration_minutes)],
+    ["Order F&B", `${orderIds.size} order`],
+    ["Item F&B", `${fnbItems.reduce((total, item) => total + (Number(item.quantity) || 0), 0)} item`],
+  ]);
+}
+
+function groupClosingFnbItemsByOrder_(items) {
+  return items.reduce((map, item) => {
+    const key = String(item.order_id || "Tanpa ID").trim();
+    if (!map[key]) map[key] = [];
+    map[key].push(item);
+    return map;
+  }, {});
+}
+
+function formatClosingClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date).replace(".", ":");
+}
+
+function formatClosingDuration(value) {
+  const totalMinutes = Math.max(0, Math.round(Number(value) || 0));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}j ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatClosingQuantity(value) {
+  const quantity = Number(value) || 0;
+  return Number.isInteger(quantity) ? String(quantity) : quantity.toFixed(2).replace(/\.00$/, "");
+}
+
+function formatClosingSignedCurrency(value) {
+  const amount = Number(value) || 0;
+  if (amount < 0) return `-${formatCurrency(Math.abs(amount))}`;
+  return formatCurrency(amount);
+}
+
+function createLegacyClosingPrintPreviewElement(closing) {
   const print = document.createElement("section");
   print.className = "closing-print";
   print.setAttribute("aria-labelledby", "closing-print-title");
@@ -19463,7 +19879,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-closing-print") {
-    showClosingPrintPreview(button.dataset.closingId || "");
+    await showClosingPrintPreview(button.dataset.closingId || "");
     return;
   }
 
