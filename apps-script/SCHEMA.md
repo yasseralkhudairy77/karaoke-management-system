@@ -1501,6 +1501,24 @@ Prinsip:
 - Semua row yang sudah tercatat tidak dihapus permanen; koreksi memakai status/catatan.
 - Kasbon dan payroll LC dijalankan oleh kasir sesuai kebijakan management; tidak ada step approval manager di pondasi ini.
 
+### LcWorkLogs
+
+Purpose: mencatat jasa room LC per sesi. Durasi LC boleh berbeda dari durasi room.
+
+Headers tambahan untuk custom durasi:
+
+```text
+duration_minutes
+rate_per_hour
+```
+
+Rules:
+
+- `duration_minutes` adalah durasi kerja LC dalam menit untuk log tersebut.
+- `rate_per_hour` adalah snapshot tarif LC saat log dibuat.
+- `rate` tetap menjadi total earning jasa room LC untuk payroll, dihitung `ceil(duration_minutes / 60) * rate_per_hour`.
+- Untuk log lama tanpa `duration_minutes`, sistem melakukan fallback dari `rate_per_hour`, `rate`, atau selisih `created_at` sampai `closed_at`.
+
 ### LcSalesBonusLogs
 
 Purpose: mencatat bonus sales LC dari item F&B/minuman yang eligible setelah transaksi lunas.

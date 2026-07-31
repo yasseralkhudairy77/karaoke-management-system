@@ -7016,6 +7016,19 @@ body::after {
   font-weight: 600;
 }
 
+.lc-selection-duration-input {
+  width: 76px;
+  min-width: 76px;
+  padding: 5px 6px;
+  border: 1px solid rgba(168, 130, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--card-text);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: right;
+}
+
 .lc-selection-empty {
   margin: 0;
   font-size: 0.82rem;
@@ -8086,6 +8099,14 @@ body::after {
 
 .lc-selection-list label:hover {
   background-color: rgba(226, 184, 92, 0.1);
+}
+
+.lc-selection-panel .lc-selection-list {
+  grid-template-columns: 1fr;
+}
+
+.lc-selection-panel .lc-selection-item {
+  min-width: 0;
 }
 
 .lc-selection-list input[type="checkbox"] {
