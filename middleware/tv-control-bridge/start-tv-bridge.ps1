@@ -5,6 +5,16 @@ $logPath = Join-Path $bridgeDir "windows-bridge.log"
 
 Set-Location $bridgeDir
 
+# Reconnect every configured TV after the network and Android TVs recover.
+$env:AUTO_CONNECT_ALL = "true"
+$env:AUTO_CONNECT_DELAY_MS = "15000"
+$env:AUTO_CONNECT_RETRIES = "8"
+
+$platformToolsAdb = Join-Path $env:SystemDrive "platform-tools\adb.exe"
+if (Test-Path -LiteralPath $platformToolsAdb) {
+  $env:ADB_BIN = $platformToolsAdb
+}
+
 $existing = Get-CimInstance Win32_Process |
   Where-Object {
     $_.CommandLine -match "node(\.exe)?\s+server\.js" -and

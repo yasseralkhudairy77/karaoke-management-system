@@ -1,0 +1,104 @@
+﻿{
+    "details":  {
+                    "ok":  true,
+                    "success":  true,
+                    "package_details":  [
+                                            {
+                                                "package_detail_id":  "PKG-ROOM-EXEC-SVC-001",
+                                                "package_id":  "PKG-ROOM-EXEC",
+                                                "line_no":  1,
+                                                "component_type":  "service",
+                                                "component_ref_id":  "ROOM-ONLY-EXEC",
+                                                "component_name":  "Executive Room 3 Jam",
+                                                "qty":  1,
+                                                "unit":  "package",
+                                                "hpp":  0,
+                                                "additional_price":  0,
+                                                "cost_amount":  0,
+                                                "is_choice":  false,
+                                                "choice_group":  "",
+                                                "updated_at":  "2026-07-31T15:42:34+07:00",
+                                                "note":  "Non F\u0026B service line"
+                                            },
+                                            {
+                                                "package_detail_id":  "PKG-ROOM-STD-SVC-001",
+                                                "package_id":  "PKG-ROOM-STD",
+                                                "line_no":  1,
+                                                "component_type":  "service",
+                                                "component_ref_id":  "ROOM-ONLY-STD",
+                                                "component_name":  "Standard Room 3 Jam",
+                                                "qty":  1,
+                                                "unit":  "package",
+                                                "hpp":  0,
+                                                "additional_price":  0,
+                                                "cost_amount":  0,
+                                                "is_choice":  false,
+                                                "choice_group":  "",
+                                                "updated_at":  "2026-07-31T15:42:34+07:00",
+                                                "note":  "Non F\u0026B service line"
+                                            },
+                                            {
+                                                "package_detail_id":  "PKG-ROOM-VIP-SVC-001",
+                                                "package_id":  "PKG-ROOM-VIP",
+                                                "line_no":  1,
+                                                "component_type":  "service",
+                                                "component_ref_id":  "ROOM-ONLY-VIP",
+                                                "component_name":  "VIP Room 3 Jam",
+                                                "qty":  1,
+                                                "unit":  "package",
+                                                "hpp":  0,
+                                                "additional_price":  0,
+                                                "cost_amount":  0,
+                                                "is_choice":  false,
+                                                "choice_group":  "",
+                                                "updated_at":  "2026-07-31T15:42:34+07:00",
+                                                "note":  "Non F\u0026B service line"
+                                            }
+                                        ]
+                },
+    "packages":  {
+                     "ok":  true,
+                     "success":  true,
+                     "packages":  [
+                                      {
+                                          "package_id":  "PKG-ROOM-EXEC",
+                                          "menu_id":  "",
+                                          "package_name":  "Executive Room",
+                                          "package_category":  "Room Only",
+                                          "package_type":  "room_fnb_bundle",
+                                          "selling_price":  450000,
+                                          "status":  "active",
+                                          "valid_day_type":  "all",
+                                          "duration_minutes":  180,
+                                          "updated_at":  "2026-07-31T15:42:34+07:00",
+                                          "note":  "Room only 3 jam, non F\u0026B"
+                                      },
+                                      {
+                                          "package_id":  "PKG-ROOM-STD",
+                                          "menu_id":  "",
+                                          "package_name":  "Standard Room",
+                                          "package_category":  "Room Only",
+                                          "package_type":  "room_fnb_bundle",
+                                          "selling_price":  300000,
+                                          "status":  "active",
+                                          "valid_day_type":  "all",
+                                          "duration_minutes":  180,
+                                          "updated_at":  "2026-07-31T15:42:34+07:00",
+                                          "note":  "Room only 3 jam, non F\u0026B"
+                                      },
+                                      {
+                                          "package_id":  "PKG-ROOM-VIP",
+                                          "menu_id":  "",
+                                          "package_name":  "VIP Room",
+                                          "package_category":  "Room Only",
+                                          "package_type":  "room_fnb_bundle",
+                                          "selling_price":  350000,
+                                          "status":  "active",
+                                          "valid_day_type":  "all",
+                                          "duration_minutes":  180,
+                                          "updated_at":  "2026-07-31T15:42:34+07:00",
+                                          "note":  "Room only 3 jam, non F\u0026B"
+                                      }
+                                  ]
+                 }
+}

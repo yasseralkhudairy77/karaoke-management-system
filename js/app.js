@@ -646,6 +646,7 @@ let isLoadingFnbSalesReport = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
+let fnbOrderMode = "room";
 let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
@@ -3152,6 +3153,20 @@ function setSelectedFbRoom(roomId) {
   renderRooms();
 }
 
+function setFnbOrderMode(mode) {
+  const nextMode = mode === "general" ? "general" : "room";
+  fnbOrderMode = nextMode;
+
+  if (nextMode === "general") {
+    selectedFbRoomId = "";
+    if (fnbOrderPaymentMethod === "room_bill") {
+      fnbOrderPaymentMethod = "cash";
+    }
+  }
+
+  renderRooms();
+}
+
 function getDynamicMenuStockInfo(menuItem) {
   if (!menuItem || menuItem.stock_tracking !== "yes" || !menuItem.stock_item_id) {
     return { hasTracking: false, availablePortions: Infinity, unit: "", stockQty: null };
@@ -3441,7 +3456,7 @@ function buildFnbOrderPayload() {
   const isRoomBill = fnbOrderPaymentMethod === "room_bill";
   return {
     action: "saveFnbOrder",
-    room_id: selectedFbRoomId,
+    room_id: fnbOrderMode === "general" ? "FNB-GENERAL" : selectedFbRoomId,
     items: fbCartItems.map((item) => ({
       menu_id: item.menu_id,
       quantity: item.quantity,
@@ -3460,14 +3475,20 @@ async function saveFnbOrder() {
   }
 
   const selectedRoom = getSelectedFbRoom();
+  const isGeneralOrder = fnbOrderMode === "general";
 
-  if (!selectedRoom) {
+  if (!isGeneralOrder && !selectedRoom) {
     showInlineNotice("Pilih ruangan terlebih dahulu.", "error");
     return;
   }
 
-  if (!isFbOrderRoomSelectable(selectedRoom)) {
+  if (!isGeneralOrder && !isFbOrderRoomSelectable(selectedRoom)) {
     showInlineNotice("Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.", "error");
+    return;
+  }
+
+  if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill") {
+    showInlineNotice("Order F&B umum harus dibayar tunai atau transfer.", "error");
     return;
   }
 
@@ -8377,6 +8398,35 @@ function createFbRoomControlElement() {
   const control = document.createElement("div");
   control.className = "fb-room-control";
 
+  const modeLabel = document.createElement("label");
+  modeLabel.className = "transaction-label";
+  modeLabel.textContent = "Jenis Order";
+
+  const modeButtons = document.createElement("div");
+  modeButtons.className = "fb-order-mode-buttons";
+  [
+    ["room", "Order Room"],
+    ["general", "Order F&B Umum"],
+  ].forEach(([mode, labelText]) => {
+    const button = document.createElement("button");
+    button.className = fnbOrderMode === mode ? "fb-order-mode-button active" : "fb-order-mode-button";
+    button.type = "button";
+    button.dataset.action = "set-fnb-order-mode";
+    button.dataset.mode = mode;
+    button.textContent = labelText;
+    modeButtons.appendChild(button);
+  });
+
+  control.append(modeLabel, modeButtons);
+
+  if (fnbOrderMode === "general") {
+    const info = document.createElement("p");
+    info.className = "fb-room-warning";
+    info.textContent = "Order ini tidak dikaitkan ke room dan dibayar terpisah.";
+    control.appendChild(info);
+    return control;
+  }
+
   const label = document.createElement("label");
   label.className = "transaction-label";
   label.setAttribute("for", "fbRoomSelect");
@@ -8422,6 +8472,19 @@ function createFbRoomInfoElement() {
   info.className = "fb-room-info";
 
   const selectedRoom = getSelectedFbRoom();
+
+  if (fnbOrderMode === "general") {
+    const roomName = document.createElement("p");
+    roomName.className = "fb-cart-name";
+    roomName.textContent = "F&B Umum";
+
+    const roomStatus = document.createElement("p");
+    roomStatus.className = "fb-cart-meta";
+    roomStatus.textContent = "Tidak terkait room aktif";
+
+    info.append(roomName, roomStatus);
+    return info;
+  }
 
   const roomName = document.createElement("p");
   roomName.className = "fb-cart-name";
@@ -8545,7 +8608,8 @@ function createFbCartTotalElement() {
 
 function createFbPaymentMethodElement() {
   const selectedRoom = getSelectedFbRoom();
-  if (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom) || fbCartItems.length === 0) {
+  const isGeneralOrder = fnbOrderMode === "general";
+  if ((!isGeneralOrder && (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom))) || fbCartItems.length === 0) {
     return document.createDocumentFragment();
   }
 
@@ -8562,10 +8626,13 @@ function createFbPaymentMethodElement() {
   select.id = "fbPaymentMethodSelect";
   select.dataset.action = "update-fb-payment-method";
 
-  const roomBillOpt = document.createElement("option");
-  roomBillOpt.value = "room_bill";
-  roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
-  if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
+  if (!isGeneralOrder) {
+    const roomBillOpt = document.createElement("option");
+    roomBillOpt.value = "room_bill";
+    roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
+    if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
+    select.appendChild(roomBillOpt);
+  }
 
   const cashOpt = document.createElement("option");
   cashOpt.value = "cash";
@@ -8577,7 +8644,7 @@ function createFbPaymentMethodElement() {
   transferOpt.textContent = "Transfer / QRIS";
   if (fnbOrderPaymentMethod === "transfer") transferOpt.selected = true;
 
-  select.append(roomBillOpt, cashOpt, transferOpt);
+  select.append(cashOpt, transferOpt);
   control.append(label, select);
 
   return control;
@@ -8678,8 +8745,7 @@ function createFbOrderActionsElement() {
   actions.className = "fb-order-actions";
   const selectedRoom = getSelectedFbRoom();
   const canSave =
-    Boolean(selectedRoom) &&
-    isFbOrderRoomSelectable(selectedRoom) &&
+    (fnbOrderMode === "general" || (Boolean(selectedRoom) && isFbOrderRoomSelectable(selectedRoom))) &&
     fbCartItems.length > 0 &&
     !isSavingFnbOrder;
 
@@ -19427,6 +19493,11 @@ async function handleRoomAction(event) {
 
   if (action === "add-menu-to-cart") {
     addMenuItemToCart(button.dataset.menuId || "");
+    return;
+  }
+
+  if (action === "set-fnb-order-mode") {
+    setFnbOrderMode(button.dataset.mode || "room");
     return;
   }
 

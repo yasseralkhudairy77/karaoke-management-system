@@ -16,6 +16,7 @@ const {
   resolveRoomId,
   resolveTestDeviceId,
 } = require("./src/adbService");
+const { listRooms } = require("./src/roomConfig");
 const {
   cancelCountdown,
   getCountdown,
@@ -27,8 +28,44 @@ const {
 const PORT = Number(process.env.PORT) || 3030;
 const apiToken = String(process.env.API_TOKEN || "").trim();
 const autoConnect = String(process.env.AUTO_CONNECT || "false").toLowerCase() === "true";
+const autoConnectAll = String(process.env.AUTO_CONNECT_ALL || "false").toLowerCase() === "true";
+const autoConnectDelayMs = Math.max(0, Number(process.env.AUTO_CONNECT_DELAY_MS) || 15000);
+const autoConnectRetries = Math.max(1, Number(process.env.AUTO_CONNECT_RETRIES) || 8);
 
 const app = express();
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function autoConnectConfiguredRooms() {
+  const rooms = listRooms().filter((room) => room.enabled && room.ip);
+  console.log(`Auto-connect: ${rooms.length} room(s), ${autoConnectRetries} attempt(s), ${autoConnectDelayMs}ms interval`);
+
+  for (let attempt = 1; attempt <= autoConnectRetries; attempt += 1) {
+    let connected = 0;
+
+    for (const room of rooms) {
+      try {
+        await connectToRoom(room);
+        connected += 1;
+      } catch (error) {
+        console.warn(`Auto-connect ${room.name} attempt ${attempt}/${autoConnectRetries}: ${error.message}`);
+      }
+    }
+
+    if (connected === rooms.length) {
+      console.log(`Auto-connect complete: ${connected}/${rooms.length} room(s) connected`);
+      return;
+    }
+
+    if (attempt < autoConnectRetries) {
+      await wait(autoConnectDelayMs);
+    }
+  }
+
+  console.warn("Auto-connect finished with one or more rooms unavailable; dashboard commands can retry on demand.");
+}
 
 app.use(express.json({ limit: "50kb" }));
 app.use(
@@ -598,7 +635,11 @@ app.listen(PORT, async () => {
   console.log("  POST /api/rooms/:roomId/wake");
   console.log("  POST /api/rooms/:roomId/sleep");
 
-  if (autoConnect) {
+  if (autoConnectAll) {
+    setTimeout(() => autoConnectConfiguredRooms().catch((error) => {
+      console.error("Auto-connect all failed:", error.message);
+    }), autoConnectDelayMs);
+  } else if (autoConnect) {
     try {
       await connectToRoom();
     } catch (error) {

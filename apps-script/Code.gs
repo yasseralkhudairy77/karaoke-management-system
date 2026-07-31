@@ -16,6 +16,8 @@ var FNB_V25A_PRICING_VERSION = "fnb-v2.5a";
 var FNB_V25A_VALID_DAY_ALL = "all";
 var FNB_V25A_VALID_DAY_WEEKDAY = "weekday";
 var FNB_V25A_VALID_DAY_WEEKEND = "weekend";
+var FNB_GENERAL_ROOM_ID = "FNB-GENERAL";
+var FNB_GENERAL_ROOM_NAME = "F&B Umum";
 var DEV_SHORT_SESSION_ENABLED = true;
 var DEV_MIN_SESSION_MINUTES = 1;
 var MIN_SESSION_MINUTES = 15;
@@ -10794,7 +10796,10 @@ function calculateCashierClosingSummary_() {
 }
 
 function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus) {
-  if (!roomId) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
+
+  if (!normalizedRoomId) {
     return {
       ok: false,
       error: "room_id wajib diisi.",
@@ -10814,32 +10819,41 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   }
 
   try {
-    var roomsSheet = getSheet_("Rooms");
-    var roomsHeaderMap = getHeaderMap_(roomsSheet);
-    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
-
-    if (!rowNumber) {
-      return {
-        ok: false,
-        error: "Ruangan tidak ditemukan.",
+    var room = null;
+    if (isGeneralOrder) {
+      room = {
+        room_id: FNB_GENERAL_ROOM_ID,
+        room_name: FNB_GENERAL_ROOM_NAME,
+        start_time: "",
       };
-    }
+    } else {
+      var roomsSheet = getSheet_("Rooms");
+      var roomsHeaderMap = getHeaderMap_(roomsSheet);
+      var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
 
-    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
-    var status = String(room.status || "").trim().toLowerCase();
+      if (!rowNumber) {
+        return {
+          ok: false,
+          error: "Ruangan tidak ditemukan.",
+        };
+      }
 
-    if (status !== "occupied" && status !== "waiting_payment") {
-      return {
-        ok: false,
-        error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau menunggu pembayaran.",
-      };
-    }
+      room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+      var status = String(room.status || "").trim().toLowerCase();
 
-    if (status === "occupied" && !room.start_time) {
-      return {
-        ok: false,
-        error: "Sesi ruangan belum memiliki waktu mulai.",
-      };
+      if (status !== "occupied" && status !== "waiting_payment") {
+        return {
+          ok: false,
+          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau menunggu pembayaran.",
+        };
+      }
+
+      if (status === "occupied" && !room.start_time) {
+        return {
+          ok: false,
+          error: "Sesi ruangan belum memiliki waktu mulai.",
+        };
+      }
     }
 
     var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
@@ -10863,7 +10877,9 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       order_status: isPaid ? "paid" : "open",
       order_total: orderTotal,
       cashier_name: cashierName || "Kasir",
-      note: note || "",
+      note: isGeneralOrder
+        ? ((note ? String(note).trim() + " | " : "") + "Order F&B umum")
+        : (note || ""),
       created_at: timestamp,
       updated_at: timestamp,
     };
