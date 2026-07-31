@@ -354,6 +354,8 @@ var MENU_MASTER_HEADERS = [
   "stock_item_id",
   "stock_qty_per_unit",
   "bonus_sales_lc",
+  "hpp",
+  "variable_cost_rate",
 ];
 var MASTER_DATA_AUDIT_LOG_HEADERS = [
   "log_id",
@@ -970,6 +972,10 @@ function doPost(e) {
 
     if (action === "updateMenuMaster") {
       return jsonResponse(updateMenuMaster_(payload));
+    }
+
+    if (action === "bulkUpdateMenuProfitability") {
+      return jsonResponse(bulkUpdateMenuProfitability_(payload));
     }
 
     if (action === "saveInventoryMaster") {
@@ -2808,18 +2814,30 @@ function getMenuItems_() {
       var stockTracking = menuItem.stock_tracking || (stockItemId ? "yes" : "no");
       var lookupKey = stockItemId.toLowerCase();
       var stockItem = stockItemId ? inventoryMap[lookupKey] : null;
+      var sellingPrice = Number(price) || 0;
+      var hpp = Number(menuItem.hpp) || 0;
+      var variableCostRate = Number(menuItem.variable_cost_rate) || 0;
+      var bonusSalesLc = Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0;
+      var variableCostAmount = sellingPrice * variableCostRate / 100;
+      var marginAmount = sellingPrice - hpp - variableCostAmount - bonusSalesLc;
+      var marginPercent = sellingPrice > 0 ? marginAmount / sellingPrice * 100 : 0;
 
       return {
         menu_id: menuItem.menu_id || "",
         menu_name: menuItem.menu_name || "",
         category: menuItem.category || "",
-        price: Number(price) || 0,
+        price: sellingPrice,
         status: status || "",
         updated_at: menuItem.updated_at || "",
         stock_tracking: menuItem.stock_tracking || "",
         stock_item_id: menuItem.stock_item_id || "",
         stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
-        bonus_sales_lc: Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0,
+        bonus_sales_lc: bonusSalesLc,
+        hpp: hpp,
+        variable_cost_rate: variableCostRate,
+        variable_cost_amount: variableCostAmount,
+        margin_amount: marginAmount,
+        margin_percent: marginPercent,
       };
     })
     .sort(function (first, second) {
@@ -6198,6 +6216,8 @@ function validateMenuMasterPayload_(payload, isUpdate) {
   var stockItemId = String(payload.stock_item_id || "").trim();
   var qtyPerUnit = Number(payload.qty_per_unit || payload.stock_qty_per_unit || 0);
   var bonusSalesLc = Number(payload.bonus_sales_lc || payload.bonus_per_item || 0);
+  var hpp = Number(payload.hpp || 0);
+  var variableCostRate = Number(payload.variable_cost_rate || 0);
   var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
 
   if (isUpdate && !String(payload.menu_id || "").trim()) {
@@ -6224,6 +6244,14 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     masterError_("Bonus sales LC wajib angka 0 atau lebih.");
   }
 
+  if (!isFinite(hpp) || hpp < 0) {
+    masterError_("HPP wajib angka 0 atau lebih.");
+  }
+
+  if (!isFinite(variableCostRate) || variableCostRate < 0 || variableCostRate > 100) {
+    masterError_("Var cost % wajib angka 0 sampai 100.");
+  }
+
   return {
     menu_name: menuName,
     category: category,
@@ -6232,6 +6260,8 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     stock_qty_per_unit: stockItemId ? qtyPerUnit : 0,
     stock_tracking: stockItemId ? "yes" : "no",
     bonus_sales_lc: bonusSalesLc,
+    hpp: hpp,
+    variable_cost_rate: variableCostRate,
     status: status,
   };
 }
@@ -6250,6 +6280,8 @@ function getMenuMasterRow_(sheet, headerMap, rowNumber) {
     stock_item_id: row.stock_item_id || "",
     stock_qty_per_unit: Number(row.stock_qty_per_unit) || 0,
     bonus_sales_lc: Number(row.bonus_sales_lc || row.bonus_per_item) || 0,
+    hpp: Number(row.hpp) || 0,
+    variable_cost_rate: Number(row.variable_cost_rate) || 0,
   };
 }
 
@@ -6266,7 +6298,7 @@ function saveMenuMaster_(payload) {
     var headerMap = getHeaderMap_(sheet);
 
     // Cek duplikasi nama menu (hanya untuk menu yang masih aktif)
-    var existingMenus = readSheetAsObjects_("MenuMaster");
+    var existingMenus = readSheetAsObjects_("Menu");
     var nameLower = data.menu_name.toLowerCase();
     var duplicateName = existingMenus.some(function(m) {
       return String(m.menu_name || "").trim().toLowerCase() === nameLower
@@ -6287,6 +6319,9 @@ function saveMenuMaster_(payload) {
       stock_tracking: data.stock_tracking,
       stock_item_id: data.stock_item_id,
       stock_qty_per_unit: data.stock_qty_per_unit,
+      bonus_sales_lc: data.bonus_sales_lc,
+      hpp: data.hpp,
+      variable_cost_rate: data.variable_cost_rate,
     };
 
     appendObjectRow_(sheet, menu);
@@ -6332,6 +6367,8 @@ function updateMenuMaster_(payload) {
     stock_item_id: data.stock_item_id,
     stock_qty_per_unit: data.stock_qty_per_unit,
     bonus_sales_lc: data.bonus_sales_lc,
+    hpp: data.hpp,
+    variable_cost_rate: data.variable_cost_rate,
   });
   var updatedMenu = getMenuMasterRow_(sheet, headerMap, rowNumber);
 
@@ -6348,6 +6385,130 @@ function updateMenuMaster_(payload) {
   });
 
   return masterSuccessResponse_("Data menu berhasil diperbarui.", updatedMenu);
+}
+
+function bulkUpdateMenuProfitability_(payload) {
+  var request = payload || {};
+  var items = Array.isArray(request.items) ? request.items : [];
+  var changedBy = getMasterChangedBy_(request);
+
+  if (items.length === 0) {
+    return { ok: false, success: false, error: "items wajib diisi.", message: "items wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return createLockBusyResponse_("Sistem sedang memproses update menu lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var sheet = ensureMenuMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var values = sheet.getDataRange().getValues();
+    var headers = values.length > 0
+      ? values[0].map(function (header) { return String(header).trim(); })
+      : [];
+    var rowIndexByMenuId = {};
+    var itemByMenuId = {};
+    var updated = [];
+    var skipped = [];
+    var now = toJakartaIsoString_(new Date());
+
+    values.slice(1).forEach(function (row, index) {
+      var menuId = String(row[(headerMap.menu_id || 1) - 1] || "").trim();
+      if (menuId) {
+        rowIndexByMenuId[menuId] = index + 1;
+      }
+    });
+
+    items.forEach(function (item) {
+      var menuId = String(item.menu_id || "").trim();
+
+      if (!menuId) {
+        skipped.push({ menu_id: "", reason: "menu_id kosong" });
+        return;
+      }
+
+      if (rowIndexByMenuId[menuId] === undefined) {
+        skipped.push({ menu_id: menuId, reason: "menu tidak ditemukan" });
+        return;
+      }
+
+      var price = Number(item.price);
+      var hpp = Number(item.hpp || 0);
+      var variableCostRate = Number(item.variable_cost_rate || 0);
+      var bonusSalesLc = Number(item.bonus_sales_lc || 0);
+
+      if (!isFinite(price) || price < 0 ||
+          !isFinite(hpp) || hpp < 0 ||
+          !isFinite(variableCostRate) || variableCostRate < 0 || variableCostRate > 100 ||
+          !isFinite(bonusSalesLc) || bonusSalesLc < 0) {
+        skipped.push({ menu_id: menuId, reason: "nilai profit tidak valid" });
+        return;
+      }
+
+      itemByMenuId[menuId] = {
+        price: price,
+        hpp: hpp,
+        variable_cost_rate: variableCostRate,
+        bonus_sales_lc: bonusSalesLc,
+      };
+    });
+
+    Object.keys(itemByMenuId).forEach(function (menuId) {
+      var rowIndex = rowIndexByMenuId[menuId];
+      var row = values[rowIndex];
+      var item = itemByMenuId[menuId];
+
+      row[headerMap.price - 1] = item.price;
+      row[headerMap.hpp - 1] = item.hpp;
+      row[headerMap.variable_cost_rate - 1] = item.variable_cost_rate;
+      row[headerMap.bonus_sales_lc - 1] = item.bonus_sales_lc;
+      row[headerMap.updated_at - 1] = now;
+
+      updated.push({
+        menu_id: menuId,
+        menu_name: row[headerMap.menu_name - 1],
+        category: row[headerMap.category - 1],
+        price: item.price,
+        hpp: item.hpp,
+        variable_cost_rate: item.variable_cost_rate,
+        bonus_sales_lc: item.bonus_sales_lc,
+      });
+    });
+
+    if (updated.length > 0) {
+      sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+
+      appendMasterDataAuditLog_({
+        entity_type: "menu",
+        entity_id: "BULK_MENU_PROFITABILITY",
+        entity_name: "Bulk Menu Profitability",
+        action_type: "bulk_profit_update",
+        old_value: "",
+        new_value: {
+          updated_count: updated.length,
+          skipped_count: skipped.length,
+          menu_ids: updated.map(function (item) { return item.menu_id; }),
+        },
+        changed_by: changedBy,
+        note: getMasterNote_(request),
+        result: "success",
+      });
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Profitability menu berhasil diupdate.",
+      updated_count: updated.length,
+      skipped_count: skipped.length,
+      updated: updated,
+      skipped: skipped,
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function validateInventoryMasterPayload_(payload, isUpdate) {

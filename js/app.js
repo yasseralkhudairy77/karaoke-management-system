@@ -592,9 +592,14 @@ let hasLoadedMasterAuditLogs = false;
 let masterAuditEntityFilter = "all";
 let masterAuditActionFilter = "all";
 let settingsMenuSearchQuery = "";
+let settingsMenuAnalysisFilter = "all";
 let settingsRoomSearchQuery = "";
 let settingsInventorySearchQuery = "";
 let settingsAccessSearchQuery = "";
+let settingsPackageSearchQuery = "";
+let selectedSettingsPackageId = "";
+let packageDetailsByPackageId = {};
+let isLoadingPackageDetails = false;
 let activeSettingsSubTab = "rooms";
 let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
@@ -1334,6 +1339,42 @@ async function fetchEmployeesFromApi() {
   return data.employees;
 }
 
+async function fetchPackagesFromApi() {
+  const response = await fetch(`${API_BASE_URL}?action=getPackages`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || (data.ok !== true && data.success !== true) || !Array.isArray(data.packages)) {
+    throw new Error(data?.message || data?.error || "Gagal memuat data paket.");
+  }
+
+  return data.packages;
+}
+
+async function fetchPackageDetailsFromApi(packageId) {
+  const params = new URLSearchParams();
+  params.set("action", "getPackageDetails");
+  params.set("package_id", packageId);
+
+  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || (data.ok !== true && data.success !== true) || !Array.isArray(data.package_details)) {
+    throw new Error(data?.message || data?.error || "Gagal memuat detail paket.");
+  }
+
+  return data.package_details;
+}
+
 async function loadSettingsData(options = {}) {
   if (!API_BASE_URL.trim()) {
     return;
@@ -1348,11 +1389,12 @@ async function loadSettingsData(options = {}) {
   renderRooms();
 
   try {
-    const [latestRooms, menuData, inventoryData, employeeData] = await Promise.all([
+    const [latestRooms, menuData, inventoryData, employeeData, latestPackages] = await Promise.all([
       fetchRoomsFromApi(),
       fetchMenuItemsFromApi(),
       fetchInventoryItemsFromApi(),
       fetchEmployeesFromApi(),
+      fetchPackagesFromApi(),
     ]);
 
     rooms = normalizeRooms(latestRooms);
@@ -1360,6 +1402,11 @@ async function loadSettingsData(options = {}) {
     inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
     inventorySummary = inventoryData.summary || null;
     employees = Array.isArray(employeeData) ? employeeData : [];
+    packages = Array.isArray(latestPackages) ? latestPackages : [];
+    packageDetailsByPackageId = force ? {} : packageDetailsByPackageId;
+    if (selectedSettingsPackageId && !packages.some((pkg) => pkg.package_id === selectedSettingsPackageId)) {
+      selectedSettingsPackageId = "";
+    }
     hasLoadedSettingsData = true;
     syncSelectedFbRoomWithRooms();
   } catch (error) {
@@ -1437,6 +1484,39 @@ async function loadSettingsTabData(options = {}) {
     loadSettingsData(options),
     loadMasterDataAuditLogs(options),
   ]);
+}
+
+async function selectSettingsPackage(packageId) {
+  const normalizedPackageId = String(packageId || "").trim();
+
+  if (!normalizedPackageId) {
+    return;
+  }
+
+  selectedSettingsPackageId = normalizedPackageId;
+
+  if (packageDetailsByPackageId[normalizedPackageId]) {
+    resetPaginationPage("settingsPackageDetails");
+    renderRooms();
+    return;
+  }
+
+  isLoadingPackageDetails = true;
+  resetPaginationPage("settingsPackageDetails");
+  renderRooms();
+
+  try {
+    packageDetailsByPackageId = {
+      ...packageDetailsByPackageId,
+      [normalizedPackageId]: await fetchPackageDetailsFromApi(normalizedPackageId),
+    };
+  } catch (error) {
+    console.warn("Gagal memuat detail paket.", error);
+    showInlineNotice(error.message || "Gagal memuat detail paket.", "error");
+  } finally {
+    isLoadingPackageDetails = false;
+    renderRooms();
+  }
 }
 
 function updateStockAdjustmentForm(field, value) {
@@ -12274,6 +12354,8 @@ function openMasterDataForm(type, mode, item = null) {
       stock_item_id: "",
       qty_per_unit: "",
       bonus_sales_lc: "",
+      hpp: "",
+      variable_cost_rate: "5",
       status: "active",
     },
     inventory: {
@@ -12432,6 +12514,8 @@ function createMasterDataFormElement() {
       createMasterField({ label: "Nama Menu", field: "menu_name" }),
       createMasterField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Harga", field: "price", type: "number" }),
+      createMasterField({ label: "HPP", field: "hpp", type: "number" }),
+      createMasterField({ label: "Var Cost %", field: "variable_cost_rate", type: "number" }),
       createMasterField({ label: "Bonus Sales LC", field: "bonus_sales_lc", type: "number" }),
       createMasterField({
         label: "Item Stok Terhubung",
@@ -12644,10 +12728,61 @@ function createSettingsSearchControl(labelText, value, action, placeholder) {
   return searchWrap;
 }
 
+function createSettingsSelectControl(labelText, value, action, options) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field settings-search-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+  select.dataset.action = action;
+  select.value = value;
+
+  options.forEach(([optionValue, text]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+function matchesSettingsMenuAnalysisFilter(menuItem) {
+  const profit = getMenuProfitAnalysis(menuItem);
+
+  if (settingsMenuAnalysisFilter === "margin_danger") {
+    return profit.marginPercent < 30;
+  }
+
+  if (settingsMenuAnalysisFilter === "margin_warning") {
+    return profit.marginPercent >= 30 && profit.marginPercent < 40;
+  }
+
+  if (settingsMenuAnalysisFilter === "hpp_empty") {
+    return profit.hpp <= 0;
+  }
+
+  if (settingsMenuAnalysisFilter === "bonus_lc") {
+    return Number(menuItem?.bonus_sales_lc) > 0;
+  }
+
+  if (settingsMenuAnalysisFilter === "varcost_empty") {
+    return profit.variableCostRate <= 0;
+  }
+
+  return true;
+}
+
 function createSettingsSubTabsElement() {
   const tabs = [
     ["rooms", "Ruangan"],
     ["menu", "Menu F&B"],
+    ["packages", "Paket"],
     ["inventory", "Inventory"],
     ["access", "Akses"],
     ["audit", "Audit"],
@@ -12676,6 +12811,10 @@ function getActiveSettingsSectionElement() {
 
   if (activeSettingsSubTab === "inventory") {
     return createInventorySettingsSection();
+  }
+
+  if (activeSettingsSubTab === "packages") {
+    return createPackageSettingsSection();
   }
 
   if (activeSettingsSubTab === "access") {
@@ -12721,10 +12860,40 @@ function createRoomSettingsSection() {
   );
 }
 
+function getMenuProfitAnalysis(menuItem) {
+  const price = Number(menuItem?.price) || 0;
+  const hpp = Number(menuItem?.hpp) || 0;
+  const variableCostRate = Number(menuItem?.variable_cost_rate) || 0;
+  const bonusSalesLc = Number(menuItem?.bonus_sales_lc) || 0;
+  const variableCostAmount = Number.isFinite(Number(menuItem?.variable_cost_amount))
+    ? Number(menuItem.variable_cost_amount)
+    : price * variableCostRate / 100;
+  const marginAmount = Number.isFinite(Number(menuItem?.margin_amount))
+    ? Number(menuItem.margin_amount)
+    : price - hpp - variableCostAmount - bonusSalesLc;
+  const marginPercent = Number.isFinite(Number(menuItem?.margin_percent))
+    ? Number(menuItem.margin_percent)
+    : price > 0 ? marginAmount / price * 100 : 0;
+
+  return {
+    hpp,
+    variableCostRate,
+    variableCostAmount,
+    marginAmount,
+    marginPercent,
+  };
+}
+
 function createMenuSettingsSection() {
   const query = settingsMenuSearchQuery.trim().toLowerCase();
-  const filteredMenuItems = query
-    ? menuItems.filter((menuItem) => {
+  const filteredMenuItems = menuItems.filter((menuItem) => {
+    const matchesAnalysis = matchesSettingsMenuAnalysisFilter(menuItem);
+
+    if (!matchesAnalysis) {
+      return false;
+    }
+
+    if (query) {
       const haystack = [
         menuItem.menu_id,
         menuItem.menu_name,
@@ -12733,34 +12902,59 @@ function createMenuSettingsSection() {
       ].join(" ").toLowerCase();
 
       return haystack.includes(query);
-    })
-    : menuItems;
+    }
 
-  const searchWrap = createSettingsSearchControl(
-    "Cari Menu F&B",
-    settingsMenuSearchQuery,
-    "filter-settings-menu",
-    "Cari nama, kategori, ID menu, atau stock item"
+    return true;
+  });
+
+  const controls = document.createElement("div");
+  controls.className = "settings-control-row";
+  controls.append(
+    createSettingsSearchControl(
+      "Cari Menu F&B",
+      settingsMenuSearchQuery,
+      "filter-settings-menu",
+      "Cari nama, kategori, ID menu, atau stock item"
+    ),
+    createSettingsSelectControl(
+      "Filter Analisa",
+      settingsMenuAnalysisFilter,
+      "filter-settings-menu-analysis",
+      [
+        ["all", "Semua"],
+        ["margin_danger", "Margin Bahaya (<30%)"],
+        ["margin_warning", "Margin Tipis (30-40%)"],
+        ["hpp_empty", "HPP Kosong"],
+        ["bonus_lc", "Bonus LC Ada"],
+        ["varcost_empty", "Var Cost Kosong"],
+      ]
+    )
   );
 
-  const rows = filteredMenuItems.map((menuItem) => [
-    menuItem.menu_id || "-",
-    menuItem.menu_name || "-",
-    menuItem.category || "-",
-    formatCurrency(menuItem.price),
-    formatCurrency(menuItem.bonus_sales_lc || 0),
-    menuItem.stock_item_id || "-",
-    Number(menuItem.stock_qty_per_unit) || 0,
-    getMasterStatusBadge(menuItem.status),
-    createMasterActionButton("menu", menuItem),
-  ]);
+  const rows = filteredMenuItems.map((menuItem) => {
+    const profit = getMenuProfitAnalysis(menuItem);
+
+    return [
+      menuItem.menu_id || "-",
+      menuItem.menu_name || "-",
+      menuItem.category || "-",
+      formatCurrency(menuItem.price),
+      formatCurrency(profit.hpp),
+      `${formatDecimal(profit.variableCostRate)}% / ${formatCurrency(profit.variableCostAmount)}`,
+      formatCurrency(menuItem.bonus_sales_lc || 0),
+      formatCurrency(profit.marginAmount),
+      formatPercent(profit.marginPercent),
+      getMasterStatusBadge(menuItem.status),
+      createMasterActionButton("menu", menuItem),
+    ];
+  });
 
   return createSettingsSection(
     "Pengaturan Menu F&B",
     "Kelola menu aktif/inaktif dan mapping stok.",
     "menu",
-    createMasterTable(["ID", "Menu", "Kategori", "Harga", "Bonus LC", "Stock Item", "Qty/Unit", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
-    searchWrap
+    createMasterTable(["ID", "Menu", "Kategori", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
+    controls
   );
 }
 
@@ -12792,6 +12986,129 @@ function createInventorySettingsSection() {
     "inventory",
     createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Inventory tidak ditemukan.", "settingsInventory"),
     createSettingsSearchControl("Cari Inventory", settingsInventorySearchQuery, "filter-settings-inventory", "Cari item, kategori, unit, ID, atau status")
+  );
+}
+
+function getPackageDetailsForSettings(packageId) {
+  return packageDetailsByPackageId[packageId] || [];
+}
+
+function getPackageComponentLabel(type) {
+  const normalized = String(type || "").trim().toLowerCase();
+  const labels = {
+    menu: "Menu F&B",
+    service: "Service",
+    inventory: "Inventory",
+    room: "Room",
+  };
+
+  return labels[normalized] || type || "-";
+}
+
+function createPackageDetailButton(pkg) {
+  const actions = document.createElement("div");
+  actions.className = "master-row-actions";
+
+  const button = document.createElement("button");
+  button.className = pkg.package_id === selectedSettingsPackageId ? "master-button primary" : "master-button";
+  button.type = "button";
+  button.dataset.action = "view-settings-package-detail";
+  button.dataset.packageId = pkg.package_id || "";
+  button.disabled = !pkg.package_id || isLoadingPackageDetails;
+  button.textContent = pkg.package_id === selectedSettingsPackageId ? "Terbuka" : "Detail";
+
+  actions.appendChild(button);
+  return actions;
+}
+
+function createPackageDetailsElement() {
+  if (!selectedSettingsPackageId) {
+    return createStateMessage("Pilih Detail pada salah satu paket untuk melihat isi paket.");
+  }
+
+  const selectedPackage = packages.find((pkg) => pkg.package_id === selectedSettingsPackageId);
+  const details = getPackageDetailsForSettings(selectedSettingsPackageId);
+  const wrapper = document.createElement("div");
+  wrapper.className = "settings-package-detail";
+
+  const title = document.createElement("h4");
+  title.className = "settings-section-title";
+  title.textContent = selectedPackage
+    ? `Isi Paket: ${selectedPackage.package_name}`
+    : `Isi Paket: ${selectedSettingsPackageId}`;
+
+  if (isLoadingPackageDetails) {
+    wrapper.append(title, createStateMessage("Memuat detail paket..."));
+    return wrapper;
+  }
+
+  const rows = details.map((detail) => [
+    detail.line_no ? String(detail.line_no) : "-",
+    getPackageComponentLabel(detail.component_type),
+    detail.component_name || detail.component_ref_id || "-",
+    detail.component_ref_id || "-",
+    `${formatDecimal(detail.qty)} ${detail.unit || ""}`.trim(),
+    formatCurrency(detail.hpp || detail.cost_amount || 0),
+    detail.is_choice ? "Pilihan" : "Included",
+    detail.note || "-",
+  ]);
+
+  wrapper.append(
+    title,
+    createMasterTable(
+      ["No", "Tipe", "Komponen", "Ref", "Qty", "HPP/Cost", "Mode", "Catatan"],
+      rows,
+      "Detail paket belum ada.",
+      "settingsPackageDetails"
+    )
+  );
+
+  return wrapper;
+}
+
+function createPackageSettingsSection() {
+  const query = settingsPackageSearchQuery.trim().toLowerCase();
+  const filteredPackages = query
+    ? packages.filter((pkg) => [
+      pkg.package_id,
+      pkg.package_name,
+      pkg.package_category,
+      pkg.package_type,
+      pkg.status,
+      pkg.valid_day_type,
+      pkg.note,
+    ].join(" ").toLowerCase().includes(query))
+    : packages;
+
+  const rows = filteredPackages.map((pkg) => [
+    pkg.package_id || "-",
+    pkg.package_name || "-",
+    pkg.package_category || "-",
+    formatCurrency(pkg.selling_price || 0),
+    `${Number(pkg.duration_minutes) || 0} menit`,
+    pkg.valid_day_type || "-",
+    getMasterStatusBadge(pkg.status),
+    createPackageDetailButton(pkg),
+  ]);
+
+  const content = document.createElement("div");
+  content.className = "settings-package-content";
+  content.append(
+    createMasterTable(
+      ["ID", "Paket", "Kategori", "Harga", "Durasi", "Hari", "Status", "Detail"],
+      rows,
+      "Paket tidak ditemukan.",
+      "settingsPackages"
+    ),
+    createPackageDetailsElement()
+  );
+
+  return createSettingsSection(
+    "Pengaturan Paket",
+    "Lihat master paket dan komponen included sebelum tahap tambah/edit paket diaktifkan.",
+    "",
+    content,
+    createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
   );
 }
 
@@ -14028,6 +14345,8 @@ function buildMasterPayload(authData = null, adminPin = "") {
       menu_name: values.menu_name || "",
       category: values.category || "",
       price: Number(values.price),
+      hpp: Number(values.hpp || 0),
+      variable_cost_rate: Number(values.variable_cost_rate || 0),
       bonus_sales_lc: Number(values.bonus_sales_lc || 0),
       stock_item_id: values.stock_item_id || "",
       qty_per_unit: Number(values.qty_per_unit || values.stock_qty_per_unit || 0),
@@ -17992,11 +18311,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
 async function loadPackages() {
   if (!API_BASE_URL.trim()) return;
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getPackages`);
-    const data = await response.json();
-    if (data && data.ok) {
-      packages = Array.isArray(data.packages) ? data.packages : [];
-    }
+    packages = await fetchPackagesFromApi();
   } catch (error) {
     console.error("Gagal memuat paket:", error);
   }
@@ -18851,6 +19166,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "view-settings-package-detail") {
+    await selectSettingsPackage(button.dataset.packageId);
+    return;
+  }
+
   if (action === "add-master-data") {
     openMasterDataForm(button.dataset.masterType, "create");
     return;
@@ -19519,6 +19839,13 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "filter-settings-package") {
+    settingsPackageSearchQuery = field.value;
+    resetPaginationPage("settingsPackages");
+    renderRooms();
+    return;
+  }
+
   if (action === "filter-settings-access") {
     settingsAccessSearchQuery = field.value;
     resetPaginationPage("settingsAccess");
@@ -19607,6 +19934,15 @@ function handleDashboardChange(event) {
   if (auditActionFilter) {
     masterAuditActionFilter = auditActionFilter.value || "all";
     loadMasterDataAuditLogs({ force: true });
+    return;
+  }
+
+  const menuAnalysisFilter = event.target.closest("[data-action='filter-settings-menu-analysis']");
+
+  if (menuAnalysisFilter) {
+    settingsMenuAnalysisFilter = menuAnalysisFilter.value || "all";
+    resetPaginationPage("settingsMenu");
+    renderRooms();
     return;
   }
 

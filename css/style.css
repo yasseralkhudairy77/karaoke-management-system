@@ -1808,6 +1808,12 @@ body::after {
   flex: 1 1 280px;
 }
 
+.settings-package-content,
+.settings-package-detail {
+  display: grid;
+  gap: var(--space-3);
+}
+
 .settings-title,
 .settings-section-title,
 .master-form-title {

@@ -107,7 +107,7 @@ function loadRoomFile() {
     return buildFallbackRooms();
   }
 
-  const raw = fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8');
+  const raw = fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8').replace(/^\uFEFF/, '');
   const parsed = JSON.parse(raw);
   const defaultRoomId = String(parsed.defaultRoomId || process.env.DEFAULT_ROOM_ID || '').trim();
   const roomList = Array.isArray(parsed.rooms) ? parsed.rooms : Array.isArray(parsed) ? parsed : [];

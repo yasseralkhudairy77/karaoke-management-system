@@ -12,6 +12,21 @@ Dokumen ini menjadi pondasi implementasi bonus sales LC dari minuman, kasbon LC,
 - Data transaksi lama harus tetap memakai snapshot nilai bonus saat transaksi terjadi.
 - Kasbon dan payroll LC adalah kewenangan kasir sesuai kebijakan management; manager tidak menjadi step approval operasional.
 
+## Analisa Profit Menu
+
+Data analisa produk jual berada di master `Menu`, bukan di `Inventory`.
+
+- `Inventory` menyimpan stok fisik dan qty.
+- `Menu` menyimpan produk jual, selling price, HPP menu, variable cost %, bonus LC, dan margin.
+- Field input owner/admin: `price`, `hpp`, `variable_cost_rate`, `bonus_sales_lc`.
+- Field hitungan sistem:
+
+```text
+variable_cost_amount = price * variable_cost_rate / 100
+margin_amount = price - hpp - variable_cost_amount - bonus_sales_lc
+margin_percent = margin_amount / price * 100
+```
+
 ## Komponen Data
 
 ### 1. Jasa Room LC

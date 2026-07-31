@@ -606,15 +606,21 @@ Menyimpan daftar menu yang bisa dijual.
 | `stock_item_id` | ID item stok di tab `Inventory`. |
 | `stock_qty_per_unit` | Jumlah stok yang berkurang setiap 1 menu terjual. |
 | `bonus_sales_lc` | Bonus LC per quantity menu. Bonus otomatis dibagi rata ke LC aktif di room. |
+| `hpp` | Harga pokok menu untuk analisa margin. |
+| `variable_cost_rate` | Persentase variable cost menu, contoh `5` untuk 5%. |
 
 Fase stok dasar hanya mendukung stok item langsung. Recipe/BOM belum dipakai.
 
 ### Fase 6A - Master Menu
 
 POST `saveMenuMaster` dan `updateMenuMaster` mengelola master menu.
+POST `bulkUpdateMenuProfitability` mengupdate massal `price`, `hpp`, `variable_cost_rate`, dan `bonus_sales_lc` berdasarkan `menu_id`.
 
 - ID baru memakai format `MENU-001`, `MENU-002`, dst.
-- Field yang dikelola: `menu_name`, `category`, `price`, `stock_item_id`, `stock_qty_per_unit`, `bonus_sales_lc`, `status`.
+- Field yang dikelola: `menu_name`, `category`, `price`, `hpp`, `variable_cost_rate`, `stock_item_id`, `stock_qty_per_unit`, `bonus_sales_lc`, `status`.
+- `variable_cost_amount = price * variable_cost_rate / 100`.
+- `margin_amount = price - hpp - variable_cost_amount - bonus_sales_lc`.
+- `margin_percent = margin_amount / price * 100`.
 - Menu `inactive` tidak boleh dipakai dalam order F&B.
 - Jika `stock_item_id` kosong, backend menyimpan `stock_tracking = no`.
 - Fase 6B: POST `deleteMenuMaster` menghapus permanen hanya jika menu belum pernah muncul di `FnbOrderItems`.
