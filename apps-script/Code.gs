@@ -13887,6 +13887,7 @@ function logReceiptPrint_(payload) {
     return {
       ok: false,
       success: false,
+      transaction_id: transactionId,
       error: "Transaksi tidak ditemukan.",
     };
   }

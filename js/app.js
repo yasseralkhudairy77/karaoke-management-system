@@ -14,8 +14,8 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v1";
-import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v1";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
+import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -2552,7 +2552,9 @@ async function logReceiptPrintAttempt(transaction, printType) {
   });
 
   if (!data || data.ok !== true) {
-    throw new Error(data?.error || "Gagal mencatat cetak struk.");
+    const failedTransactionId = data?.transaction_id || transactionId;
+    const baseMessage = data?.error || "Gagal mencatat cetak struk.";
+    throw new Error(`${baseMessage} ID: ${failedTransactionId}`);
   }
 
   const audit = normalizeReceiptPrintAudit(data.log || data);
@@ -2794,13 +2796,23 @@ function getLatestTodayTransaction() {
   }, null);
 }
 
-function findTransactionForAction(button) {
+async function findTransactionForAction(button) {
   const transactionId = button?.dataset?.transactionId || "";
 
   if (transactionId) {
-    return findTodayTransactionById(transactionId)
+    let transaction = findTodayTransactionById(transactionId)
       || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
       || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
+
+    if (!transaction) {
+      showInlineNotice("Memuat ulang riwayat transaksi...");
+      await loadTodayTransactions();
+      transaction = findTodayTransactionById(transactionId)
+        || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
+        || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
+    }
+
+    return transaction;
   }
 
   return lastTransaction || selectedReceiptTransaction || getLatestTodayTransaction();
@@ -19936,7 +19948,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-receipt-print") {
-    showReceiptPrint(findTransactionForAction(button));
+    showReceiptPrint(await findTransactionForAction(button));
     return;
   }
 
