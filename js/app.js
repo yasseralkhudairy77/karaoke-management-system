@@ -11790,7 +11790,7 @@ function createClosingPrintPreviewElement(closing) {
   const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
 
   const identitySection = createClosingReceiptSection("Data Closing", [
-    ["Tanggal", closing?.closing_date || "-"],
+    ["Tanggal", formatClosingDate(closing?.closing_date)],
     ["ID", closing?.closing_id || "-"],
     ["Kasir", closing?.cashier_name || "-"],
     ["Waktu", formatDateTimeLabel(closing?.created_at)],
@@ -12132,6 +12132,13 @@ function formatClosingClock(value) {
     minute: "2-digit",
     hour12: false,
   }).format(date).replace(".", ":");
+}
+
+function formatClosingDate(value) {
+  const normalized = String(value || "").trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized || "-";
+  const [year, month, day] = normalized.split("-");
+  return `${day}-${month}-${year}`;
 }
 
 function formatClosingDuration(value) {
