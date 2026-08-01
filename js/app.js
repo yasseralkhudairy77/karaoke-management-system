@@ -975,9 +975,10 @@ async function loadRooms() {
   }
 
   try {
-    const [roomsData, _] = await Promise.all([
+    const [roomsData, _, __] = await Promise.all([
       fetchRoomsFromApi(),
-      loadLcs()
+      loadLcs(),
+      loadTodayTransactions()
     ]);
     rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
@@ -1000,21 +1001,32 @@ async function loadRooms() {
 }
 
 async function fetchRoomsFromApi() {
-  const response = await fetch(buildApiUrl("getRooms"), {
-    cache: "no-store",
-  });
+  const attempts = 2;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetch(buildApiUrl("getRooms"), {
+        cache: "no-store",
+      });
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data || data.ok !== true || !Array.isArray(data.rooms)) {
+        throw new Error("API response is invalid.");
+      }
+
+      return data.rooms;
+    } catch (err) {
+      if (i === attempts - 1) {
+        throw err;
+      }
+      console.warn(`Gagal memuat data ruangan, mencoba ulang dalam 1 detik... (Percobaan ke-${i + 1})`, err);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
-
-  const data = await response.json();
-
-  if (!data || data.ok !== true || !Array.isArray(data.rooms)) {
-    throw new Error("API response is invalid.");
-  }
-
-  return data.rooms;
 }
 
 async function loadRoomRecoveryCandidates() {
@@ -5558,7 +5570,102 @@ function createBillingBasisNoteElement(transaction) {
   note.className = "billing-basis-note";
   note.textContent = `Dasar tagihan: ${basisLabel}`;
 
-  return note;
+function createUnpaidTransactionsTrayElement(unpaidTransactions) {
+  const tray = document.createElement("section");
+  tray.className = "unpaid-transactions-tray";
+  tray.style.backgroundColor = "rgba(239, 68, 68, 0.08)";
+  tray.style.border = "1px solid rgba(239, 68, 68, 0.2)";
+  tray.style.borderRadius = "8px";
+  tray.style.padding = "12px 16px";
+  tray.style.marginBottom = "16px";
+  
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "10px";
+  
+  const title = document.createElement("h2");
+  title.style.margin = "0";
+  title.style.fontSize = "15px";
+  title.style.color = "#ef4444";
+  title.style.fontWeight = "bold";
+  title.style.display = "flex";
+  title.style.alignItems = "center";
+  title.style.gap = "6px";
+  title.innerHTML = `⚠️ Tagihan Gantung Belum Lunas (${unpaidTransactions.length})`;
+  
+  header.appendChild(title);
+  tray.appendChild(header);
+  
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "8px";
+  
+  unpaidTransactions.forEach(tx => {
+    const item = document.createElement("div");
+    item.style.display = "flex";
+    item.style.justifyContent = "space-between";
+    item.style.alignItems = "center";
+    item.style.padding = "8px 12px";
+    item.style.backgroundColor = "rgba(255, 255, 255, 0.8)";
+    item.style.border = "1px solid rgba(239, 68, 68, 0.1)";
+    item.style.borderRadius = "6px";
+    
+    const info = document.createElement("div");
+    const roomName = document.createElement("p");
+    roomName.style.margin = "0 0 2px 0";
+    roomName.style.fontWeight = "bold";
+    roomName.style.fontSize = "14px";
+    roomName.textContent = tx.room_name || tx.room_id || "-";
+    
+    const meta = document.createElement("span");
+    meta.style.fontSize = "12px";
+    meta.style.color = "#6b7280";
+    meta.textContent = `Total: ${formatCurrency(getTransactionFinalTotal(tx))} | Selesai: ${formatTransactionDateTime(tx.end_time || tx.created_at)}`;
+    
+    info.append(roomName, meta);
+    
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    
+    const payBtn = document.createElement("button");
+    payBtn.style.padding = "4px 10px";
+    payBtn.style.backgroundColor = "#ef4444";
+    payBtn.style.color = "#ffffff";
+    payBtn.style.border = "none";
+    payBtn.style.borderRadius = "4px";
+    payBtn.style.fontSize = "12px";
+    payBtn.style.fontWeight = "bold";
+    payBtn.style.cursor = "pointer";
+    payBtn.textContent = "Bayar / Lunas";
+    payBtn.onclick = function() {
+      showBillingSummary(tx);
+    };
+    
+    const printBtn = document.createElement("button");
+    printBtn.style.padding = "4px 10px";
+    printBtn.style.backgroundColor = "#9ca3af";
+    printBtn.style.color = "#ffffff";
+    printBtn.style.border = "none";
+    printBtn.style.borderRadius = "4px";
+    printBtn.style.fontSize = "12px";
+    printBtn.style.fontWeight = "bold";
+    printBtn.style.cursor = "pointer";
+    printBtn.textContent = "Struk";
+    printBtn.onclick = function() {
+      showReceiptPrint(tx);
+    };
+    
+    actions.append(printBtn, payBtn);
+    item.append(info, actions);
+    list.appendChild(item);
+  });
+  
+  tray.appendChild(list);
+  return tray;
 }
 
 function createLatestTransactionShortcutElement(transaction) {
@@ -15355,13 +15462,19 @@ function refreshActiveTabData() {
       loadRoomRecoveryCandidates();
       break;
     case "fnb":
-      loadInventoryItems();
-      loadMenuItems();
+      if (inventoryItems.length === 0) {
+        loadInventoryItems();
+      }
+      if (menuItems.length === 0) {
+        loadMenuItems();
+      }
       loadOpenFnbOrders();
       loadTodayFnbOrders();
       break;
     case "stock":
-      loadInventoryItems();
+      if (inventoryItems.length === 0) {
+        loadInventoryItems();
+      }
       loadTodayStockMovements();
       break;
     case "reports":
@@ -18035,9 +18148,16 @@ function renderDashboardGlobal() {
   }
 
   const latestTransaction = getLatestTodayTransaction();
+  const unpaidTransactions = Array.isArray(todayTransactions)
+    ? todayTransactions.filter(tx => tx.payment_status === "unpaid" && tx.transaction_type === "session_checkout")
+    : [];
 
-  if (!lastTransaction && !receiptPrintVisible && activeDashboardTab === "rooms" && latestTransaction) {
-    fragment.appendChild(createLatestTransactionShortcutElement(latestTransaction));
+  if (!lastTransaction && !receiptPrintVisible && activeDashboardTab === "rooms") {
+    if (unpaidTransactions.length > 0) {
+      fragment.appendChild(createUnpaidTransactionsTrayElement(unpaidTransactions));
+    } else if (latestTransaction) {
+      fragment.appendChild(createLatestTransactionShortcutElement(latestTransaction));
+    }
   }
 
   if (lastTransaction) {

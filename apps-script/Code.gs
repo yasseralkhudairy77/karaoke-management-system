@@ -673,6 +673,13 @@ function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
 
   try {
+    if (action === "debugReadSheet") {
+      return jsonResponse({
+        ok: true,
+        data: readSheetAsObjects_(e.parameter.sheet)
+      });
+    }
+
     if (action === "health") {
       return jsonResponse(healthCheck_());
     }
@@ -9288,6 +9295,7 @@ function prepareRoomSession_(payload) {
     }
 
     var now = toJakartaIsoString_(new Date());
+    var sessionId = generateRoomSessionId_(roomId);
 
     var lcAssignments = parseLcAssignments_(request, durationMinutes);
     var lcIds = getLcIdsFromAssignments_(lcAssignments);
@@ -9333,11 +9341,71 @@ function prepareRoomSession_(payload) {
           lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(now);
         }
       });
+
+      // Hitung rata-rata tarif dari semua LC aktif di Master (untuk slot PENDING)
+      var activeLcRates = [];
+      for (var m = 0; m < lcMasterRows.length; m++) {
+        var lcRow = lcMasterRows[m];
+        if (String(lcRow.status || "").trim().toLowerCase() === "active") {
+          var r = Number(lcRow.rate_per_room);
+          if (r > 0) activeLcRates.push(r);
+        }
+      }
+      var avgLcRate = activeLcRates.length > 0
+        ? activeLcRates.reduce(function(a, b) { return a + b; }, 0) / activeLcRates.length
+        : 0;
+
+      var pendingSerial = 0;
+      lcAssignments.forEach(function(assignment) {
+        var selId = String(assignment.lc_id || "").trim();
+        var lcDurationMinutes = normalizeLcDurationMinutes_(assignment.duration_minutes, durationMinutes);
+
+        if (selId === "PENDING") {
+          var rateForPending = calculateLcRateForDuration_(lcDurationMinutes, avgLcRate);
+          pendingSerial++;
+          appendLcWorkLog_({
+            log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-PENDING" + pendingSerial + "-" + Math.floor(Math.random() * 100),
+            session_id: sessionId,
+            lc_id: "PENDING",
+            lc_name: "Belum Dipilih",
+            rate: rateForPending,
+            duration_minutes: lcDurationMinutes,
+            rate_per_hour: avgLcRate,
+            status: "active",
+            created_at: now,
+            closed_at: "",
+          });
+          return;
+        }
+        var foundLc = null;
+        for (var idx = 0; idx < lcMasterRows.length; idx++) {
+          if (String(lcMasterRows[idx].lc_id || "").trim() === selId) {
+            foundLc = lcMasterRows[idx];
+            break;
+          }
+        }
+        if (foundLc) {
+          var hourlyRate = Number(foundLc.rate_per_room) || avgLcRate;
+          var rateForSession = calculateLcRateForDuration_(lcDurationMinutes, hourlyRate);
+          appendLcWorkLog_({
+            log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + selId + "-" + Math.floor(Math.random() * 100),
+            session_id: sessionId,
+            lc_id: selId,
+            lc_name: foundLc.lc_name || selId,
+            rate: rateForSession,
+            duration_minutes: lcDurationMinutes,
+            rate_per_hour: hourlyRate,
+            status: "active",
+            created_at: now,
+            closed_at: "",
+          });
+        }
+      });
     }
 
     var ratePerHour = Number(room.rate_per_hour) || 0;
     var session = {
-      session_id: generateRoomSessionId_(roomId),
+      session_id: sessionId,
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       booking_mode: bookingMode,
@@ -9365,7 +9433,7 @@ function prepareRoomSession_(payload) {
     };
 
     appendRoomSession_(session);
-    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("waiting_payment");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
@@ -9393,7 +9461,7 @@ function prepareRoomSession_(payload) {
     return {
       ok: true,
       success: true,
-      message: "Booking room berhasil disiapkan. Silakan arahkan pelanggan melakukan pembayaran ke kasir.",
+      message: "Booking room berhasil disiapkan. Room menunggu siap diaktifkan waiters.",
       room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
       session: session,
     };
@@ -10924,6 +10992,15 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
       }
     }
 
+    // Mark associated F&B orders as paid
+    var fnbOrderIdsStr = String(transaction.fnb_order_ids || "").trim();
+    if (fnbOrderIdsStr) {
+      var fnbOrderIds = fnbOrderIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+      if (fnbOrderIds.length > 0) {
+        markFnbOrdersAsPaid_(fnbOrderIds, toJakartaIsoString_(new Date()));
+      }
+    }
+
     return {
       ok: true,
       message: "Pembayaran berhasil ditandai lunas.",
@@ -11133,10 +11210,10 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
       var status = String(room.status || "").trim().toLowerCase();
 
-      if (status !== "occupied" && status !== "waiting_payment") {
+      if (status !== "occupied" && status !== "waiting_payment" && status !== "paid_waiting_start") {
         return {
           ok: false,
-          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau menunggu pembayaran.",
+          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi, menunggu mulai, atau menunggu pembayaran.",
         };
       }
 
