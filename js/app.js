@@ -5579,6 +5579,9 @@ function createBillingBasisNoteElement(transaction) {
   note.className = "billing-basis-note";
   note.textContent = `Dasar tagihan: ${basisLabel}`;
 
+  return note;
+}
+
 function createUnpaidTransactionsTrayElement(unpaidTransactions) {
   const tray = document.createElement("section");
   tray.className = "unpaid-transactions-tray";
