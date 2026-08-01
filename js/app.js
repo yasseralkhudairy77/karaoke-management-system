@@ -984,18 +984,25 @@ async function loadRooms() {
   }
 
   try {
-    const [roomsData, _, __] = await Promise.all([
-      fetchRoomsFromApi(),
-      loadLcs(),
-      loadTodayTransactions()
-    ]);
+    const roomsData = await fetchRoomsFromApi();
     rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Terhubung ke Server", "live");
     console.info("Data ruangan berhasil dimuat dari Google Apps Script API.");
     renderRooms();
-    await loadRoomRecoveryCandidates();
+
+    Promise.allSettled([
+      loadLcs(),
+      loadTodayTransactions(),
+      loadRoomRecoveryCandidates(),
+    ]).then((results) => {
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.warn(`Gagal memuat data pendukung dashboard #${index + 1}.`, result.reason);
+        }
+      });
+    });
   } catch (error) {
     console.warn("Gagal memuat data ruangan dari API. Memakai data contoh sementara.", error);
     roomsLoading = false;

@@ -1221,12 +1221,9 @@ function readSheetAsObjects_(sheetName) {
 }
 
 function getRooms_() {
-  ensureRoomsBookingColumns_();
-  ensureTvDevicesSheet_();
-  ensureTvControlLogsSheet_();
-
   var tvDevicesByRoom = getTvDevicesByRoomMap_();
-  var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_();
+  var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_(tvDevicesByRoom);
+  var latestSessionByRoom = getLatestRoomSessionsByRoomMap_(["starting", "active", "closing", "paid_waiting_start"]);
 
   return readSheetAsObjects_("Rooms").map(function (room) {
     var tvDevice = tvDevicesByRoom[String(room.room_id || "").trim()] || null;
@@ -1246,8 +1243,7 @@ function getRooms_() {
     };
 
     try {
-      // Try to find session with any of these statuses
-      var activeSession = findLatestRoomSessionForRoom_(room.room_id || "", ["starting", "active", "closing", "paid_waiting_start"]);
+      var activeSession = latestSessionByRoom[String(room.room_id || "").trim()] || null;
       debugInfo.activeSession_found = !!activeSession;
       
       if (activeSession && activeSession.session) {
@@ -1285,6 +1281,67 @@ function getRooms_() {
 
     return roomObj;
   });
+}
+
+function getLatestRoomSessionsByRoomMap_(statuses) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return {};
+  }
+
+  var allowedStatuses = {};
+
+  (statuses || []).forEach(function (status) {
+    allowedStatuses[String(status || "").trim().toLowerCase()] = true;
+  });
+
+  var sheet = ensureRoomSessionsSheet_();
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var latestByRoom = {};
+
+  values.slice(1).forEach(function (row, index) {
+    var isEmptyRow = row.every(function (cell) {
+      return cell === "" || cell === null;
+    });
+
+    if (isEmptyRow) {
+      return;
+    }
+
+    var session = {};
+
+    headers.forEach(function (header, headerIndex) {
+      if (header) {
+        session[header] = normalizeCellValue_(header, row[headerIndex]);
+      }
+    });
+
+    var roomId = String(session.room_id || "").trim();
+    var normalizedStatus = String(session.status || "").trim().toLowerCase();
+
+    if (!roomId || !allowedStatuses[normalizedStatus]) {
+      return;
+    }
+
+    var updatedAt = session.updated_at || session.created_at || "";
+    var updatedTime = new Date(updatedAt).getTime();
+    var safeUpdatedTime = isNaN(updatedTime) ? 0 : updatedTime;
+    var currentLatest = latestByRoom[roomId];
+
+    if (!currentLatest || safeUpdatedTime >= currentLatest.updatedTime) {
+      latestByRoom[roomId] = {
+        session: session,
+        rowNumber: index + 2,
+        updatedTime: safeUpdatedTime,
+      };
+    }
+  });
+
+  return latestByRoom;
 }
 
 function normalizeTvDevice_(device) {
@@ -1335,23 +1392,76 @@ function getTvDevicesByRoomMap_() {
   }, {});
 }
 
-function getLatestTvControlLogByDeviceMap_() {
-  return readSheetAsObjectsOrEmpty_("TVControlLogs").reduce(function (map, log) {
-    var tvDeviceId = String(log.tv_device_id || "").trim();
+function getLatestTvControlLogByDeviceMap_(tvDevicesByRoom) {
+  if (!sheetExists_("TVControlLogs")) {
+    return {};
+  }
 
-    if (!tvDeviceId) {
-      return map;
-    }
+  var targetDeviceIds = {};
+  var remainingTargetCount = 0;
 
-    var normalizedLog = normalizeTvControlLog_(log);
-    var currentLog = map[tvDeviceId];
+  if (tvDevicesByRoom) {
+    Object.keys(tvDevicesByRoom).forEach(function (roomId) {
+      var deviceId = String(tvDevicesByRoom[roomId].tv_device_id || "").trim();
 
-    if (!currentLog || String(normalizedLog.created_at || "").localeCompare(String(currentLog.created_at || "")) > 0) {
+      if (deviceId && !targetDeviceIds[deviceId]) {
+        targetDeviceIds[deviceId] = true;
+        remainingTargetCount++;
+      }
+    });
+  }
+
+  if (tvDevicesByRoom && remainingTargetCount === 0) {
+    return {};
+  }
+
+  var sheet = getSheet_("TVControlLogs");
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+
+  if (lastRow < 2 || lastColumn < 1) {
+    return {};
+  }
+
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var chunkSize = 500;
+  var map = {};
+
+  for (var chunkEndRow = lastRow; chunkEndRow >= 2; chunkEndRow -= chunkSize) {
+    var chunkStartRow = Math.max(2, chunkEndRow - chunkSize + 1);
+    var values = sheet.getRange(chunkStartRow, 1, chunkEndRow - chunkStartRow + 1, lastColumn).getValues();
+
+    for (var rowIndex = values.length - 1; rowIndex >= 0; rowIndex--) {
+      var row = values[rowIndex];
+      var log = {};
+
+      headers.forEach(function (header, headerIndex) {
+        if (header) {
+          log[header] = normalizeCellValue_(header, row[headerIndex]);
+        }
+      });
+
+      var tvDeviceId = String(log.tv_device_id || "").trim();
+
+      if (!tvDeviceId || (tvDevicesByRoom && !targetDeviceIds[tvDeviceId]) || map[tvDeviceId]) {
+        continue;
+      }
+
+      var normalizedLog = normalizeTvControlLog_(log);
       map[tvDeviceId] = normalizedLog;
-    }
 
-    return map;
-  }, {});
+      if (tvDevicesByRoom) {
+        remainingTargetCount--;
+        if (remainingTargetCount <= 0) {
+          return map;
+        }
+      }
+    }
+  }
+
+  return map;
 }
 
 function buildRoomTvSummary_(room, tvDevice, latestTvLog) {
