@@ -7497,6 +7497,122 @@ function inferLcWorkLogDurationMinutes_(log) {
   return 0;
 }
 
+function findLcMasterById_(lcMasterRows, lcId) {
+  var normalizedLcId = String(lcId || "").trim();
+
+  for (var index = 0; index < lcMasterRows.length; index++) {
+    if (String(lcMasterRows[index].lc_id || "").trim() === normalizedLcId) {
+      return lcMasterRows[index];
+    }
+  }
+
+  return null;
+}
+
+function getLatestLcWorkLogByLcIdForSession_(workLogRows, sessionId) {
+  var normalizedSessionId = String(sessionId || "").trim();
+  var latestByLcId = {};
+
+  workLogRows.forEach(function (log, index) {
+    if (String(log.session_id || "").trim() !== normalizedSessionId) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    if (!lcId || lcId === "PENDING") {
+      return;
+    }
+
+    var current = latestByLcId[lcId];
+    var createdTime = new Date(log.created_at || log.closed_at || "").getTime();
+    var safeCreatedTime = isNaN(createdTime) ? 0 : createdTime;
+
+    if (!current || safeCreatedTime >= current.createdTime) {
+      latestByLcId[lcId] = {
+        log: log,
+        rowIndex: index,
+        createdTime: safeCreatedTime,
+      };
+    }
+  });
+
+  return latestByLcId;
+}
+
+function getUniqueLcWorkLogEntriesBySessionAndLc_(workLogRows) {
+  var latestBySessionAndLc = {};
+
+  (workLogRows || []).forEach(function (log, index) {
+    var sessionId = String(log.session_id || "").trim();
+    var lcId = String(log.lc_id || "").trim();
+
+    if (!sessionId || !lcId || lcId === "PENDING") {
+      return;
+    }
+
+    var key = sessionId + "|" + lcId;
+    var createdTime = new Date(log.created_at || log.closed_at || "").getTime();
+    var safeCreatedTime = isNaN(createdTime) ? 0 : createdTime;
+    var current = latestBySessionAndLc[key];
+
+    if (!current || safeCreatedTime >= current.createdTime) {
+      latestBySessionAndLc[key] = {
+        log: log,
+        rowIndex: index,
+        createdTime: safeCreatedTime,
+      };
+    }
+  });
+
+  return Object.keys(latestBySessionAndLc).map(function (key) {
+    return latestBySessionAndLc[key];
+  });
+}
+
+function dedupeLcWorkLogsBySessionAndLc_(workLogRows) {
+  return getUniqueLcWorkLogEntriesBySessionAndLc_(workLogRows).map(function (entry) {
+    return entry.log;
+  });
+}
+
+function calculateSessionLcTotalFromUniqueLogs_(session, workLogRows, lcMasterRows) {
+  var defaultDurationMinutes = Number(session.booked_duration_minutes) || 60;
+  var assignments = parseLcAssignments_({
+    lc_assignments: session.lc_assignments,
+    lc_ids: session.lc_ids,
+  }, defaultDurationMinutes);
+  var latestLogByLcId = getLatestLcWorkLogByLcIdForSession_(workLogRows, session.session_id);
+  var countedLcIds = {};
+  var total = 0;
+
+  assignments.forEach(function (assignment) {
+    var lcId = String(assignment.lc_id || "").trim();
+    if (!lcId || lcId === "PENDING" || countedLcIds[lcId]) {
+      return;
+    }
+
+    countedLcIds[lcId] = true;
+    if (latestLogByLcId[lcId]) {
+      total += Number(latestLogByLcId[lcId].log.rate) || 0;
+      return;
+    }
+
+    var lcMaster = findLcMasterById_(lcMasterRows, lcId);
+    total += calculateLcRateForDuration_(
+      assignment.duration_minutes || defaultDurationMinutes,
+      lcMaster ? Number(lcMaster.rate_per_room) || 0 : 0
+    );
+  });
+
+  if (assignments.length === 0) {
+    Object.keys(latestLogByLcId).forEach(function (lcId) {
+      total += Number(latestLogByLcId[lcId].log.rate) || 0;
+    });
+  }
+
+  return total;
+}
+
 function resolveLcClosedAtByDuration_(startTime, durationMinutes, fallbackEndTime) {
   if (startTime && Number(durationMinutes) > 0) {
     try {
@@ -7522,12 +7638,12 @@ function getLcWorkReports_(period, startDate, endDate) {
     return range;
   }
   
-  var filteredLogs = logs.filter(function(log) {
+  var filteredLogs = dedupeLcWorkLogsBySessionAndLc_(logs.filter(function(log) {
     var createdTime = log.created_at || log.closed_at || "";
     if (!createdTime) return false;
     var logOperationalDate = getOperationalDateString_(createdTime);
     return matchesOperationalPeriod_(logOperationalDate, range);
-  });
+  }));
 
   var reports = lcs.map(function(lc) {
     var lcLogs = filteredLogs.filter(function(log) {
@@ -7883,7 +7999,7 @@ function getPendingLcPayroll_(startDate, endDate) {
   var lcs = readSheetAsObjects_("LcMaster");
   var financeGroups = buildLcPayrollFinanceGroups_(range);
 
-  var filteredLogs = logs.filter(function(log) {
+  var filteredLogs = dedupeLcWorkLogsBySessionAndLc_(logs.filter(function(log) {
     var status = String(log.status || "").trim().toLowerCase();
     if (status !== "done") {
       return false;
@@ -7897,7 +8013,7 @@ function getPendingLcPayroll_(startDate, endDate) {
     }
     var logOperationalDate = getOperationalDateString_(effectiveTime);
     return matchesOperationalPeriod_(logOperationalDate, range);
-  });
+  }));
 
   var lcById = {};
   lcs.forEach(function (lc) {
@@ -8069,7 +8185,9 @@ function processLcPayroll_(payload) {
     }
 
     var pendingRoomEarningByLc = {};
-    matchedLogs.forEach(function (log) {
+    var uniqueMatchedLogs = dedupeLcWorkLogsBySessionAndLc_(matchedLogs);
+
+    uniqueMatchedLogs.forEach(function (log) {
       var lcId = String(log.lc_id || "").trim();
       pendingRoomEarningByLc[lcId] = (pendingRoomEarningByLc[lcId] || 0) + (Number(log.rate) || 0);
     });
@@ -8083,7 +8201,7 @@ function processLcPayroll_(payload) {
         calculateDeductibleCashAdvanceTotal_(group.advance_rows || [], lcGross) > 0;
     });
 
-    if (matchedLogs.length === 0 && !hasProcessableFinanceRows) {
+    if (uniqueMatchedLogs.length === 0 && !hasProcessableFinanceRows) {
       return { ok: false, error: "Tidak ada sesi kerja, bonus sales, atau potongan kasbon LC yang bisa diproses pada periode ini." };
     }
 
@@ -8093,9 +8211,9 @@ function processLcPayroll_(payload) {
     var uniqueLcIds = {};
     var roomEarningByLc = {};
     var roomEarningTotal = 0;
-    var totalSessions = matchedLogs.length;
+    var totalSessions = uniqueMatchedLogs.length;
 
-    matchedLogs.forEach(function(log) {
+    uniqueMatchedLogs.forEach(function(log) {
       var lcId = String(log.lc_id || "").trim();
       var rate = Number(log.rate) || 0;
       uniqueLcIds[lcId] = true;
@@ -10629,17 +10747,12 @@ function closeSession_(roomId, cashierName) {
     if (activeRoomSession && activeRoomSession.session) {
       try {
         var sessionForLc = activeRoomSession.session;
-        var workLogRowsForLc = readSheetAsObjects_("LcWorkLogs").filter(function(log) {
+        var allLcWorkLogRows = readSheetAsObjects_("LcWorkLogs");
+        var workLogRowsForLc = allLcWorkLogRows.filter(function(log) {
           return String(log.session_id || "").trim() === String(sessionForLc.session_id || "").trim();
         });
-        
-        var totalLcCost = 0;
-        workLogRowsForLc.forEach(function(log) {
-          var selId = String(log.lc_id || "").trim();
-          if (selId === "PENDING" || !selId) return;
-          
-          totalLcCost += Number(log.rate) || 0;
-        });
+        var lcMasterRowsForCheckout = readSheetAsObjects_("LcMaster");
+        var totalLcCost = calculateSessionLcTotalFromUniqueLogs_(sessionForLc, workLogRowsForLc, lcMasterRowsForCheckout);
         
         lcFeeTotal = Math.max(0, totalLcCost - prepaidLcTotal);
       } catch (lcErr) {
@@ -10902,28 +11015,32 @@ function assignSessionLcs_(payload) {
     // Ganti work log PENDING satu per satu dengan LC yang baru dipilih
     // Cari semua baris PENDING untuk session ini (dari belakang agar index tidak geser)
     var pendingLogIndexes = [];
+    var activeLogIndexByLcId = {};
     for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
       var log = workLogRows[rIdx];
-      if (
-        String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
-        String(log.lc_id || "").trim() === "PENDING" &&
-        log.status === "active"
-      ) {
+      var logLcId = String(log.lc_id || "").trim();
+      var isSameSession = String(log.session_id || "").trim() === String(session.session_id || "").trim();
+      var isActiveLog = String(log.status || "").trim().toLowerCase() === "active";
+
+      if (!isSameSession || !isActiveLog) {
+        continue;
+      }
+
+      if (logLcId === "PENDING") {
         pendingLogIndexes.push(rIdx);
+        continue;
+      }
+
+      if (logLcId && activeLogIndexByLcId[logLcId] === undefined) {
+        activeLogIndexByLcId[logLcId] = rIdx;
       }
     }
 
     // Update baris PENDING yang ada dengan data LC nyata
-    newLcAssignments.forEach(function(assignment, i) {
+    newLcAssignments.forEach(function(assignment) {
       var newId = String(assignment.lc_id || "").trim();
       var requestedDurationMinutes = normalizeLcDurationMinutes_(assignment.duration_minutes, Number(session.booked_duration_minutes) || 60);
-      var foundLc = null;
-      for (var idx = 0; idx < lcMasterRows.length; idx++) {
-        if (String(lcMasterRows[idx].lc_id || "").trim() === newId) {
-          foundLc = lcMasterRows[idx];
-          break;
-        }
-      }
+      var foundLc = findLcMasterById_(lcMasterRows, newId);
 
       var lcRowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", newId);
       if (lcRowNum) {
@@ -10932,14 +11049,25 @@ function assignSessionLcs_(payload) {
       }
 
       var hourlyRate = foundLc ? (Number(foundLc.rate_per_room) || 0) : 0;
-      if (i < pendingLogIndexes.length) {
+      var rateForSession = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
+      var existingLogIndex = activeLogIndexByLcId[newId];
+
+      if (existingLogIndex !== undefined) {
+        var existingLogRowNum = existingLogIndex + 2;
+        lcWorkLogsSheet.getRange(existingLogRowNum, lcWorkLogsHeaders.lc_name).setValue(foundLc ? foundLc.lc_name : newId);
+        lcWorkLogsSheet.getRange(existingLogRowNum, lcWorkLogsHeaders.rate).setValue(rateForSession);
+        if (lcWorkLogsHeaders.duration_minutes) {
+          lcWorkLogsSheet.getRange(existingLogRowNum, lcWorkLogsHeaders.duration_minutes).setValue(requestedDurationMinutes);
+        }
+        if (lcWorkLogsHeaders.rate_per_hour) {
+          lcWorkLogsSheet.getRange(existingLogRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
+        }
+      } else if (pendingLogIndexes.length > 0) {
         // Update baris PENDING yang sudah ada
-        var pendingRowNum = pendingLogIndexes[i] + 2;
+        var pendingRowNum = pendingLogIndexes.shift() + 2;
         lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_id).setValue(newId);
         lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_name).setValue(foundLc ? foundLc.lc_name : newId);
         
-        // Calculate the rate based on full session booked duration since they replace a PENDING slot
-        var rateForSession = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
         lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.rate).setValue(rateForSession);
         if (lcWorkLogsHeaders.duration_minutes) {
           lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.duration_minutes).setValue(requestedDurationMinutes);
@@ -10950,13 +11078,12 @@ function assignSessionLcs_(payload) {
       } else {
         // Lebih banyak LC baru dari slot PENDING → tambah baris baru
         // Calculate the rate based on remaining booked duration
-        var rateForRemaining = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
         appendLcWorkLog_({
           log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + newId + "-" + Math.floor(Math.random() * 100),
           session_id: session.session_id,
           lc_id: newId,
           lc_name: foundLc ? foundLc.lc_name : newId,
-          rate: rateForRemaining,
+          rate: rateForSession,
           duration_minutes: requestedDurationMinutes,
           rate_per_hour: hourlyRate,
           status: "active",
