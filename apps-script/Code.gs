@@ -362,6 +362,7 @@ var ROOM_TIME_LOGS_HEADERS = [
   "add_minutes",
   "cashier_name",
   "note",
+  "idempotency_key",
 ];
 var ROOM_RECOVERY_LOGS_HEADERS = [
   "log_id",
@@ -949,7 +950,16 @@ function doPost(e) {
         payload.cashier_name,
         payload.note,
         payload.payment_method,
-        payload.payment_status
+        payload.payment_status,
+        payload.idempotency_key
+      ));
+    }
+
+    if (action === "repairDuplicateRoomExtension") {
+      return jsonResponse(repairDuplicateRoomExtension_(
+        payload.room_id,
+        payload.duplicate_log_id,
+        payload.cashier_name
       ));
     }
 
@@ -10367,7 +10377,7 @@ function activatePreparedSession_(roomId, cashierName) {
   }
 }
 
-function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, paymentStatus) {
+function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, paymentStatus, idempotencyKey) {
   if (!roomId) {
     return {
       ok: false,
@@ -10403,6 +10413,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
     var sheet = ensureRoomsBookingColumns_();
     var headerMap = getHeaderMap_(sheet);
     var rowNumber = findRowByValue_(sheet, headerMap, "room_id", roomId);
+    var normalizedIdempotencyKey = String(idempotencyKey || "").trim();
 
     if (!rowNumber) {
       return {
@@ -10413,6 +10424,26 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
 
     var room = getRowObject_(sheet, headerMap, rowNumber);
     var status = String(room.status || "").trim();
+    var existingExtendLogs = readSheetAsObjectsOrEmpty_("RoomTimeLogs");
+
+    if (normalizedIdempotencyKey) {
+      for (var logIndex = 0; logIndex < existingExtendLogs.length; logIndex++) {
+        var existingLog = existingExtendLogs[logIndex];
+        if (
+          String(existingLog.idempotency_key || "").trim() === normalizedIdempotencyKey &&
+          String(existingLog.action_type || "").trim() === "extend_session"
+        ) {
+          return {
+            ok: true,
+            success: true,
+            duplicate: true,
+            message: "Tambah waktu ini sudah diproses sebelumnya.",
+            room: getRoomFromRow_(sheet, headerMap, rowNumber),
+            audit_log: existingLog,
+          };
+        }
+      }
+    }
 
     if (status !== "occupied") {
       return {
@@ -10439,6 +10470,33 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
     var oldScheduledEndTime = room.scheduled_end_time instanceof Date
       ? toJakartaIsoString_(room.scheduled_end_time)
       : String(room.scheduled_end_time).trim();
+
+    if (!normalizedIdempotencyKey) {
+      for (var recentLogIndex = existingExtendLogs.length - 1; recentLogIndex >= 0; recentLogIndex--) {
+        var recentLog = existingExtendLogs[recentLogIndex];
+        var recentCreatedTime = new Date(recentLog.created_at || "").getTime();
+        var isRecentClick = !isNaN(recentCreatedTime) && (Date.now() - recentCreatedTime) <= 15000;
+
+        if (
+          isRecentClick &&
+          String(recentLog.action_type || "").trim() === "extend_session" &&
+          String(recentLog.room_id || "").trim() === String(roomId || "").trim() &&
+          Number(recentLog.add_minutes) === addedMinutes &&
+          Number(recentLog.new_booked_duration_minutes) === oldBookedDurationMinutes &&
+          String(recentLog.new_scheduled_end_time || "").trim() === oldScheduledEndTime
+        ) {
+          return {
+            ok: true,
+            success: true,
+            duplicate: true,
+            message: "Tambah waktu ini sudah diproses sebelumnya.",
+            room: getRoomFromRow_(sheet, headerMap, rowNumber),
+            audit_log: recentLog,
+          };
+        }
+      }
+    }
+
     var newBookedDurationMinutes = oldBookedDurationMinutes + addedMinutes;
     var newScheduledEndTime = addMinutesToJakartaIsoString_(oldScheduledEndTime, addedMinutes);
     var now = toJakartaIsoString_(new Date());
@@ -10464,6 +10522,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
       add_minutes: addedMinutes,
       cashier_name: cashierName || "Kasir",
       note: String(note || "").trim(),
+      idempotency_key: normalizedIdempotencyKey,
     };
 
     try {
@@ -10526,10 +10585,15 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
               }
               
               var currentRate = Number(log.rate) || 0;
+              var currentDurationMinutes = inferLcWorkLogDurationMinutes_(log) || oldBookedDurationMinutes;
               var extensionCost = Math.ceil(addedMinutes / 60) * hourlyRate;
               var newRate = currentRate + extensionCost;
+              var newLcDurationMinutes = currentDurationMinutes + addedMinutes;
               
               lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(newRate);
+              if (lcWorkLogsHeaders.duration_minutes) {
+                lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.duration_minutes).setValue(newLcDurationMinutes);
+              }
             }
           }
         } catch (lcExtErr) {
@@ -10881,6 +10945,136 @@ function closeSession_(roomId, cashierName) {
       fnb_orders: fnbOrders,
       stock_movements: stockResult.movements,
       stock_warnings: stockResult.warnings,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function repairDuplicateRoomExtension_(roomId, duplicateLogId, cashierName) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var normalizedLogId = String(duplicateLogId || "").trim();
+
+  if (!normalizedRoomId || !normalizedLogId) {
+    return { ok: false, success: false, error: "room_id dan duplicate_log_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses room lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var roomRowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+    if (!roomRowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, roomRowNumber);
+    if (String(room.status || "").trim().toLowerCase() !== "occupied") {
+      return { ok: false, success: false, error: "Repair tambah waktu hanya untuk room aktif." };
+    }
+
+    var roomTimeLogsSheet = ensureRoomTimeLogsSheet_();
+    var roomTimeLogsHeaderMap = getHeaderMap_(roomTimeLogsSheet);
+    var duplicateLogRowNumber = findRowByValue_(roomTimeLogsSheet, roomTimeLogsHeaderMap, "log_id", normalizedLogId);
+
+    if (!duplicateLogRowNumber) {
+      return { ok: false, success: false, error: "Log tambah waktu duplikat tidak ditemukan." };
+    }
+
+    var duplicateLog = getRowObject_(roomTimeLogsSheet, roomTimeLogsHeaderMap, duplicateLogRowNumber);
+    if (
+      String(duplicateLog.room_id || "").trim() !== normalizedRoomId ||
+      String(duplicateLog.action_type || "").trim() !== "extend_session"
+    ) {
+      return { ok: false, success: false, error: "Log yang dipilih bukan log tambah waktu aktif untuk room ini." };
+    }
+
+    var restoreBookedDurationMinutes = Number(duplicateLog.old_booked_duration_minutes) || 0;
+    var restoreScheduledEndTime = duplicateLog.old_scheduled_end_time instanceof Date
+      ? toJakartaIsoString_(duplicateLog.old_scheduled_end_time)
+      : String(duplicateLog.old_scheduled_end_time || "").trim();
+    var duplicateAddMinutes = Number(duplicateLog.add_minutes) || 0;
+
+    if (!restoreBookedDurationMinutes || !restoreScheduledEndTime || !duplicateAddMinutes) {
+      return { ok: false, success: false, error: "Data log tambah waktu duplikat tidak lengkap." };
+    }
+
+    var currentBookedDurationMinutes = Number(room.booked_duration_minutes) || 0;
+    if (currentBookedDurationMinutes < restoreBookedDurationMinutes) {
+      return { ok: false, success: false, error: "Durasi room saat ini lebih kecil dari target repair." };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    roomsSheet.getRange(roomRowNumber, roomsHeaderMap.booked_duration_minutes).setValue(restoreBookedDurationMinutes);
+    roomsSheet.getRange(roomRowNumber, roomsHeaderMap.scheduled_end_time).setValue(restoreScheduledEndTime);
+    roomsSheet.getRange(roomRowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    var activeRoomSession = findLatestRoomSessionForRoom_(normalizedRoomId, ["active", "starting", "paid_waiting_start"]);
+    var adjustedLcLogs = [];
+
+    if (activeRoomSession && activeRoomSession.session) {
+      var sessionObj = activeRoomSession.session;
+      var packageIncludedMinutes = Number(sessionObj.package_included_minutes) || 0;
+      var restoredBillableRoomMinutes = Math.max(0, restoreBookedDurationMinutes - packageIncludedMinutes);
+
+      setRowValues_(activeRoomSession.sheet, activeRoomSession.headerMap, activeRoomSession.rowNumber, {
+        booked_duration_minutes: restoreBookedDurationMinutes,
+        billable_room_minutes: restoredBillableRoomMinutes,
+        scheduled_end_time: restoreScheduledEndTime,
+        updated_at: now,
+      });
+
+      var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+      var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+      var workLogRows = readSheetAsObjects_("LcWorkLogs");
+
+      for (var index = 0; index < workLogRows.length; index++) {
+        var log = workLogRows[index];
+        if (
+          String(log.session_id || "").trim() !== String(sessionObj.session_id || "").trim() ||
+          String(log.status || "").trim().toLowerCase() !== "active"
+        ) {
+          continue;
+        }
+
+        var logRowNumber = index + 2;
+        var hourlyRate = Number(log.rate_per_hour) || 0;
+        var duplicateLcCost = Math.ceil(duplicateAddMinutes / 60) * hourlyRate;
+        var restoredRate = Math.max(0, (Number(log.rate) || 0) - duplicateLcCost);
+
+        lcWorkLogsSheet.getRange(logRowNumber, lcWorkLogsHeaders.rate).setValue(restoredRate);
+        if (lcWorkLogsHeaders.duration_minutes) {
+          lcWorkLogsSheet.getRange(logRowNumber, lcWorkLogsHeaders.duration_minutes).setValue(restoreBookedDurationMinutes);
+        }
+
+        adjustedLcLogs.push({
+          log_id: log.log_id || "",
+          lc_id: log.lc_id || "",
+          old_rate: Number(log.rate) || 0,
+          new_rate: restoredRate,
+          duration_minutes: restoreBookedDurationMinutes,
+        });
+      }
+    }
+
+    var repairNote = "VOID duplicate extend by " + (cashierName || "Kasir") + " at " + now;
+    roomTimeLogsSheet.getRange(duplicateLogRowNumber, roomTimeLogsHeaderMap.action_type).setValue("extend_session_voided_duplicate");
+    if (roomTimeLogsHeaderMap.note) {
+      roomTimeLogsSheet.getRange(duplicateLogRowNumber, roomTimeLogsHeaderMap.note).setValue(repairNote);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Tambah waktu duplikat berhasil dibatalkan.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, roomRowNumber),
+      duplicate_log_id: normalizedLogId,
+      adjusted_lc_logs: adjustedLcLogs,
     };
   } finally {
     lock.releaseLock();
@@ -14849,7 +15043,7 @@ function appendStockMovement_(movement) {
 }
 
 function ensureRoomTimeLogsSheet_() {
-  return ensureSheetWithHeaders_("RoomTimeLogs", ROOM_TIME_LOGS_HEADERS);
+  return ensureSheetColumns_("RoomTimeLogs", ROOM_TIME_LOGS_HEADERS);
 }
 
 function ensureRoomRecoveryLogsSheet_() {

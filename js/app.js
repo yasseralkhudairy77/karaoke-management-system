@@ -820,6 +820,7 @@ let lcSelectionRoomId = "";
 let isSavingSessionLcs = false;
 let extendPaymentMethod = "cash";
 let isExtendingSession = false;
+let pendingExtendSessionRequestKey = "";
 let roomRecoveryCandidates = [];
 let roomRecoverySummary = null;
 let isLoadingRoomRecovery = false;
@@ -8501,10 +8502,10 @@ function createExtendSelectionElement(room) {
     button.dataset.action = "extend-session-duration";
     button.dataset.roomId = room.room_id;
     button.dataset.addMinutes = String(minutes);
-    if (getCurrentOperatorRole() === "receptionist") {
+    if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
       button.disabled = true;
     }
-    button.textContent = labelText;
+    button.textContent = isExtendingSession ? "Memproses..." : labelText;
     options.appendChild(button);
   });
 
@@ -8519,7 +8520,7 @@ function createExtendSelectionElement(room) {
   input.placeholder = "Custom menit";
   input.dataset.action = "update-custom-extend";
   input.value = customExtendMinutes;
-  if (getCurrentOperatorRole() === "receptionist") {
+  if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
     input.disabled = true;
   }
 
@@ -8528,10 +8529,10 @@ function createExtendSelectionElement(room) {
   customButton.type = "button";
   customButton.dataset.action = "extend-session-custom-duration";
   customButton.dataset.roomId = room.room_id;
-  if (getCurrentOperatorRole() === "receptionist") {
+  if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
     customButton.disabled = true;
   }
-  customButton.textContent = "Tambah Custom";
+  customButton.textContent = isExtendingSession ? "Memproses..." : "Tambah Custom";
 
   custom.append(input, customButton);
 
@@ -19118,7 +19119,22 @@ function getExtendSuccessMessage(roomName, addMinutes) {
   return `Waktu ${roomName} berhasil ditambah ${formatDurationMinutes(minutes)}.`;
 }
 
+function createExtendSessionIdempotencyKey(roomId, addMinutes) {
+  return [
+    "extend",
+    roomId || "room",
+    String(Number(addMinutes) || 0),
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2, 8),
+  ].join("-");
+}
+
 async function extendSession(roomId, addMinutes) {
+  if (isExtendingSession) {
+    showInlineNotice("Tambah waktu sedang diproses. Tunggu sebentar.");
+    return;
+  }
+
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan menambah waktu sesi.", "error");
     return;
@@ -19143,8 +19159,10 @@ async function extendSession(roomId, addMinutes) {
 
   const room = rooms.find((item) => item.room_id === roomId);
   const roomName = room?.room_name || "ruangan";
+  const idempotencyKey = createExtendSessionIdempotencyKey(roomId, selectedMinutes);
 
   isExtendingSession = true;
+  pendingExtendSessionRequestKey = idempotencyKey;
   setActionButtonsDisabled(true);
   renderRooms();
 
@@ -19156,6 +19174,7 @@ async function extendSession(roomId, addMinutes) {
       cashier_name: getLoggedInOperatorName(),
       payment_method: "",
       payment_status: "unpaid",
+      idempotency_key: idempotencyKey,
     };
 
     if (extendSessionNote.trim()) {
@@ -19181,6 +19200,7 @@ async function extendSession(roomId, addMinutes) {
     showInlineNotice(error.message || "Gagal menambah waktu sesi.", "error");
   } finally {
     isExtendingSession = false;
+    pendingExtendSessionRequestKey = "";
     setActionButtonsDisabled(false);
   }
 }
