@@ -163,6 +163,15 @@ function getDefaultLcDurationMinutes(room) {
   return Math.max(getMinimumSessionMinutes(), roomDuration || 60);
 }
 
+function getRemainingSessionMinutes(room) {
+  if (room?.status !== "occupied" || !room?.scheduled_end_time) {
+    return getDefaultLcDurationMinutes(room);
+  }
+  const remainingMs = new Date(room.scheduled_end_time).getTime() - Date.now();
+  const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
+  return Math.max(15, remainingMinutes);
+}
+
 function parseLcAssignmentsFromRoom(room) {
   const rawAssignments = String(room?.lc_assignments || "").trim();
 
@@ -18675,7 +18684,10 @@ function createSelectLcModalOverlay(room) {
       cb.onchange = () => {
         if (cb.checked) {
           pendingLcSelections[lc.lc_id] = true;
-          pendingLcDurations[lc.lc_id] = pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room);
+          const currentLcIds = String(room.lc_ids || "").split(",").map(id => id.trim()).filter(Boolean);
+          const isNewLc = !currentLcIds.includes(lc.lc_id);
+          const defaultDuration = isNewLc ? getRemainingSessionMinutes(room) : getDefaultLcDurationMinutes(room);
+          pendingLcDurations[lc.lc_id] = pendingLcDurations[lc.lc_id] || defaultDuration;
         } else {
           delete pendingLcSelections[lc.lc_id];
           delete pendingLcDurations[lc.lc_id];
@@ -18698,7 +18710,10 @@ function createSelectLcModalOverlay(room) {
         durationInput.type = "number";
         durationInput.min = "1";
         durationInput.step = "1";
-        durationInput.value = String(pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room));
+        const currentLcIds = String(room.lc_ids || "").split(",").map(id => id.trim()).filter(Boolean);
+        const isNewLc = !currentLcIds.includes(lc.lc_id);
+        const defaultDuration = isNewLc ? getRemainingSessionMinutes(room) : getDefaultLcDurationMinutes(room);
+        durationInput.value = String(pendingLcDurations[lc.lc_id] || defaultDuration);
         durationInput.title = "Durasi LC dalam menit";
         durationInput.onchange = (event) => {
           pendingLcDurations[lc.lc_id] = normalizeLcDurationMinutesForRoom(room, event.target.value);
