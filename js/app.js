@@ -3504,9 +3504,6 @@ function setFnbOrderMode(mode) {
 
   if (nextMode === "general") {
     selectedFbRoomId = "";
-    if (fnbOrderPaymentMethod === "room_bill") {
-      fnbOrderPaymentMethod = "cash";
-    }
   }
 
   renderRooms();
