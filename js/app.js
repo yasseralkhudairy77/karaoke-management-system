@@ -5824,8 +5824,24 @@ function createUnpaidTransactionsTrayElement(unpaidTransactions) {
     printBtn.onclick = function() {
       showReceiptPrint(tx);
     };
+
+    const restoreBtn = document.createElement("button");
+    restoreBtn.style.padding = "4px 10px";
+    restoreBtn.style.backgroundColor = "#d97706";
+    restoreBtn.style.color = "#ffffff";
+    restoreBtn.style.border = "none";
+    restoreBtn.style.borderRadius = "4px";
+    restoreBtn.style.fontSize = "12px";
+    restoreBtn.style.fontWeight = "bold";
+    restoreBtn.style.cursor = "pointer";
+    restoreBtn.textContent = "Pulihkan Sesi";
+    restoreBtn.onclick = async function() {
+      if (confirm(`Apakah Anda yakin ingin membatalkan checkout dan memulihkan kembali sesi ${tx.room_name || tx.room_id}? (LC dan waktu room akan diaktifkan kembali)`)) {
+        await restoreSessionCheckout(tx.transaction_id);
+      }
+    };
     
-    actions.append(printBtn, payBtn);
+    actions.append(printBtn, restoreBtn, payBtn);
     item.append(info, actions);
     list.appendChild(item);
   });
@@ -19808,6 +19824,31 @@ async function cancelBooking(roomId) {
     showInlineNotice(error.message || "Gagal membatalkan booking.", "error");
   } finally {
     isCancellingBooking = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function restoreSessionCheckout(transactionId) {
+  if (!API_BASE_URL.trim()) return;
+  setActionButtonsDisabled(true);
+  showInlineNotice("⏳ Sedang memulihkan sesi ruangan...", "info");
+  
+  try {
+    const data = await postApiAction({
+      action: "restoreSessionCheckout",
+      transaction_id: transactionId
+    });
+    
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memulihkan sesi.");
+    }
+    
+    showInlineNotice("✅ Sesi ruangan berhasil dipulihkan ke status aktif!");
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulihkan sesi.", "error");
+  } finally {
     setActionButtonsDisabled(false);
     renderRooms();
   }
