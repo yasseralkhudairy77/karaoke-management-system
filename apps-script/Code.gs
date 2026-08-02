@@ -990,6 +990,10 @@ function doPost(e) {
       ));
     }
 
+    if (action === "payOpenFnbOrder") {
+      return jsonResponse(payOpenFnbOrder_(payload));
+    }
+
     if (action === "previewSessionPricing") {
       return jsonResponse(previewSessionPricing_(payload));
     }
@@ -10776,6 +10780,23 @@ function closeSession_(roomId, cashierName) {
       
       var excessMinutes = Math.max(0, durationMinutes - initialPaidMinutes);
       roomTotal = Math.ceil((excessMinutes / 60) * ratePerHour);
+    } else if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.booking_mode === "package") {
+      var packageId = String(activeRoomSession.session.package_id || "").trim();
+      var packagePrice = 0;
+      var packageIncludedMinutes = 0;
+      if (packageId) {
+        var packagesList = readSheetAsObjects_("PackageMaster");
+        for (var i = 0; i < packagesList.length; i++) {
+          if (String(packagesList[i].package_id || "").trim() === packageId) {
+            packagePrice = Number(packagesList[i].selling_price) || 0;
+            packageIncludedMinutes = Number(packagesList[i].duration_minutes) || 0;
+            break;
+          }
+        }
+      }
+      var excessMinutes = Math.max(0, durationMinutes - packageIncludedMinutes);
+      var excessRoomCharge = Math.ceil((excessMinutes / 60) * ratePerHour);
+      roomTotal = packagePrice + excessRoomCharge;
     }
 
     var prepaidExtensionsAmount = 0;
@@ -10859,6 +10880,15 @@ function closeSession_(roomId, cashierName) {
 
       appendTransaction_(transaction);
       stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      
+      // Deduct package stock if it is a postpaid package session
+      if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.booking_mode === "package" && !isPrepay) {
+        var postpaidPackageId = String(activeRoomSession.session.package_id || "").trim();
+        if (postpaidPackageId) {
+          deductPackageStock_(postpaidPackageId, transaction.transaction_id, transaction.cashier_name, endTime);
+        }
+      }
+
       markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
       fnbOrders = detailedFnbOrders.map(function (order) {
         order.order_status = "billed";
@@ -11735,6 +11765,131 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       items: orderItems,
       lc_sales_bonus_logs: lcSalesBonusLogs,
     };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function payOpenFnbOrder_(payload) {
+  var request = payload || {};
+  var orderIdsStr = String(request.order_ids || request.order_id || "").trim();
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+
+  if (!orderIdsStr) {
+    return { ok: false, success: false, error: "order_ids wajib diisi." };
+  }
+
+  if (!paymentMethod || !getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib diisi dengan benar." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var orderIds = orderIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+    var ordersSheet = getSheet_("FnbOrders");
+    var ordersHeaderMap = getHeaderMap_(ordersSheet);
+    
+    var now = new Date();
+    var timestamp = toJakartaIsoString_(now);
+
+    var totalAccumulated = 0;
+    var allDetailedOrderItems = [];
+    var processedOrders = [];
+
+    for (var i = 0; i < orderIds.length; i++) {
+      var orderId = orderIds[i];
+      var rowNumber = findRowByValue_(ordersSheet, ordersHeaderMap, "order_id", orderId);
+      if (!rowNumber) {
+        throw new Error("Order F&B tidak ditemukan: " + orderId);
+      }
+      
+      var orderObj = getRowObject_(ordersSheet, ordersHeaderMap, rowNumber);
+      if (orderObj.order_status !== "open") {
+        throw new Error("Order F&B " + orderId + " sudah lunas atau dibatalkan.");
+      }
+
+      // Mark order as paid
+      ordersSheet.getRange(rowNumber, ordersHeaderMap.order_status).setValue("paid");
+      ordersSheet.getRange(rowNumber, ordersHeaderMap.updated_at).setValue(timestamp);
+
+      totalAccumulated += Number(orderObj.order_total) || 0;
+      processedOrders.push(orderObj);
+
+      // Read items for this order
+      var allItems = readSheetAsObjects_("FnbOrderItems");
+      var orderItems = allItems.filter(function (item) {
+        return String(item.order_id || "").trim() === orderId;
+      });
+      allDetailedOrderItems = allDetailedOrderItems.concat(orderItems);
+    }
+
+    var transactionId = generateTransactionId_();
+
+    // Create consolidated transaction
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: processedOrders[0].room_id || "",
+      room_name: processedOrders[0].room_name || "",
+      start_time: "",
+      end_time: timestamp,
+      duration_minutes: 0,
+      rate_per_hour: 0,
+      room_total: 0,
+      fnb_total: totalAccumulated,
+      grand_total: totalAccumulated,
+      fnb_order_ids: orderIdsStr,
+      payment_method: paymentMethod,
+      payment_status: "paid",
+      cashier_name: cashierName,
+      created_at: timestamp,
+      transaction_type: "fnb_addon",
+    };
+
+    appendTransaction_(transaction);
+
+    // Deduct stock for all orders together
+    var stockMovements = [];
+    var stockWarnings = [];
+    
+    // Group orderItems by menu_id to deduct properly
+    var consolidatedItems = [];
+    allDetailedOrderItems.forEach(function (item) {
+      var existing = consolidatedItems.filter(function(x) { return x.menu_id === item.menu_id; })[0];
+      if (existing) {
+        existing.quantity = (Number(existing.quantity) || 0) + (Number(item.quantity) || 0);
+        existing.subtotal = (Number(existing.subtotal) || 0) + (Number(item.subtotal) || 0);
+      } else {
+        consolidatedItems.push(Object.assign({}, item));
+      }
+    });
+
+    // Create a dummy detailed order containing consolidated items
+    var dummyDetailedOrder = {
+      order_id: transactionId,
+      room_id: transaction.room_id,
+      room_name: transaction.room_name,
+      items: consolidatedItems
+    };
+
+    var stockResult = deductStockForFnbOrders_([dummyDetailedOrder], transactionId, cashierName, timestamp);
+    stockMovements = stockResult.movements;
+    stockWarnings = stockResult.warnings;
+
+    return {
+      ok: true,
+      success: true,
+      message: "Order F&B gabungan berhasil dibayar & diselesaikan.",
+      transaction: transaction,
+      stock_movements: stockMovements,
+      stock_warnings: stockWarnings
+    };
+  } catch (err) {
+    return { ok: false, success: false, error: "Gagal memproses pembayaran F&B: " + err.message };
   } finally {
     lock.releaseLock();
   }

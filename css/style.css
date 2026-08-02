@@ -3584,10 +3584,27 @@ body::after {
   outline-offset: 2px;
 }
 
+.fb-order-button.success {
+  border: 1px solid rgba(52, 211, 153, 0.66);
+  background: linear-gradient(180deg, #34d399, #059669);
+  color: #04130c;
+  box-shadow: 0 10px 24px rgba(5, 150, 105, 0.22);
+}
+
+.fb-order-button.success:hover,
+.fb-order-button.success:focus-visible {
+  border-color: rgba(110, 231, 183, 0.78);
+  background: linear-gradient(180deg, #6ee7b7, #10b981);
+  outline: 3px solid rgba(52, 211, 153, 0.24);
+  outline-offset: 2px;
+}
+
 .fb-order-button.disabled,
 .fb-order-button:disabled,
 .fb-order-button.primary.disabled,
-.fb-order-button.primary:disabled {
+.fb-order-button.primary:disabled,
+.fb-order-button.success.disabled,
+.fb-order-button.success:disabled {
   border-color: rgba(139, 150, 168, 0.35);
   background: rgba(139, 150, 168, 0.1);
   color: var(--muted);

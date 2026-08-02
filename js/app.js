@@ -135,6 +135,41 @@ function buildApiUrl(action, params = null) {
   return url.toString();
 }
 
+const API_GET_RETRYABLE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
+
+async function fetchApiGet(url, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts) || 2);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response = null;
+
+    try {
+      response = await fetch(url, { cache: "no-store" });
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) {
+        throw error;
+      }
+    }
+
+    if (response?.ok) {
+      return response;
+    }
+
+    if (response) {
+      lastError = new Error(`API request failed with status ${response.status}`);
+      if (!API_GET_RETRYABLE_STATUSES.has(response.status) || attempt === attempts) {
+        throw lastError;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+  }
+
+  throw lastError || new Error("API request failed.");
+}
+
 function isLocalTvBridgeEnabled() {
   const hostname = String(window.location.hostname || "").toLowerCase();
   const isGitHubPages = hostname === "github.io" || hostname.endsWith(".github.io");
@@ -342,9 +377,12 @@ let rooms = [];
 let errorMessage = "";
 let noticeMessage = "";
 let noticeType = "info";
+let noticeTabKey = "";
 let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
+let todayTransactionsRequest = null;
+let todayCashierClosingsRequest = null;
 let transactionHistoryFilter = "all";
 let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
@@ -812,7 +850,7 @@ let packages = [];
 let isPreparingRoomSession = false;
 let isActivatingPreparedSession = false;
 let isCancellingBooking = false;
-let isCompletingCleaning = false;
+let completingCleaningRoomId = "";
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
@@ -995,7 +1033,6 @@ async function loadRooms() {
 
     Promise.allSettled([
       loadLcs(),
-      loadTodayTransactions(),
       loadRoomRecoveryCandidates(),
     ]).then((results) => {
       results.forEach((result, index) => {
@@ -1090,7 +1127,11 @@ async function loadRoomRecoveryCandidates() {
     console.warn("Gagal memuat daftar room recovery.", error);
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
-    showInlineNotice(error.message || "Gagal memuat daftar room bermasalah.", "error");
+    showInlineNotice(
+      `Gagal memuat status recovery room: ${error.message}`,
+      "error",
+      "rooms"
+    );
   } finally {
     isLoadingRoomRecovery = false;
     renderRooms();
@@ -1141,28 +1182,48 @@ async function loadTodayTransactions() {
     return;
   }
 
-  try {
-    const data = await fetchTodayTransactionsFromApi();
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
 
-    todayTransactions = data.transactions;
-    todayTransactionSummary = data.summary;
-    renderRooms();
-  } catch (error) {
-    console.warn("Gagal memuat riwayat transaksi.", error);
-    showInlineNotice(error.message || "Gagal memuat riwayat transaksi.", "error");
-    todayTransactions = [];
-    todayTransactionSummary = null;
-    renderRooms();
+  if (todayTransactionsRequest?.key === requestKey) {
+    return todayTransactionsRequest.promise;
   }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTodayTransactionsFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayTransactions = data.transactions;
+        todayTransactionSummary = data.summary;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat riwayat transaksi.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        showInlineNotice(
+          `Gagal memuat riwayat transaksi: ${error.message}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (todayTransactionsRequest === request) {
+        todayTransactionsRequest = null;
+      }
+    }
+  })();
+
+  todayTransactionsRequest = request;
+  return request.promise;
 }
 
-async function fetchTodayTransactionsFromApi() {
-  const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+async function fetchTodayTransactionsFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayTransactions", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1265,13 +1326,9 @@ async function applyOwnerReportCustomPeriod() {
 
 async function fetchOwnerReportEndpoint(action) {
   const params = buildOwnerReportPeriodQueryParams();
-  const response = await fetch(buildApiUrl(action, Object.fromEntries(params.entries())), {
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl(action, Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1314,7 +1371,11 @@ async function loadOwnerPeriodReport() {
     ownerReportCashierClosings = Array.isArray(closingData.closings) ? closingData.closings : [];
   } catch (error) {
     console.warn("Gagal memuat laporan owner periode.", error);
-    showInlineNotice(error.message || "Gagal memuat laporan owner periode.", "error");
+    showInlineNotice(
+      `Gagal memuat laporan owner: ${error.message}`,
+      "error",
+      "reports"
+    );
     ownerReportTransactionSummary = null;
     ownerReportRoomUsageSummary = null;
     ownerReportFnbSalesSummary = null;
@@ -1335,29 +1396,49 @@ async function loadTodayCashierClosings() {
     return;
   }
 
-  try {
-    const data = await fetchTodayCashierClosingsFromApi();
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
 
-    todayCashierClosings = data.closings;
-    todayCashierClosingSummary = data.summary;
-    lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
-    renderRooms();
-  } catch (error) {
-    console.warn("Gagal memuat riwayat closing.", error);
-    showInlineNotice(error.message || "Gagal memuat riwayat closing.", "error");
-    todayCashierClosings = [];
-    todayCashierClosingSummary = null;
-    renderRooms();
+  if (todayCashierClosingsRequest?.key === requestKey) {
+    return todayCashierClosingsRequest.promise;
   }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTodayCashierClosingsFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayCashierClosings = data.closings;
+        todayCashierClosingSummary = data.summary;
+        lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat riwayat closing.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        showInlineNotice(
+          `Gagal memuat riwayat closing kasir: ${error.message}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (todayCashierClosingsRequest === request) {
+        todayCashierClosingsRequest = null;
+      }
+    }
+  })();
+
+  todayCashierClosingsRequest = request;
+  return request.promise;
 }
 
-async function fetchTodayCashierClosingsFromApi() {
-  const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+async function fetchTodayCashierClosingsFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayCashierClosings", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1400,9 +1481,7 @@ async function loadMenuItems() {
 }
 
 async function fetchMenuItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
-    cache: "no-store",
-  });
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1460,7 +1539,7 @@ async function loadInventoryItems() {
 }
 
 async function fetchInventoryItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems`);
+  const response = await fetchApiGet(buildApiUrl("getInventoryItems"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1479,7 +1558,7 @@ async function fetchInventoryItemsFromApi() {
 }
 
 async function fetchEmployeesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getEmployees`);
+  const response = await fetchApiGet(buildApiUrl("getEmployees"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1495,7 +1574,7 @@ async function fetchEmployeesFromApi() {
 }
 
 async function fetchPackagesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getPackages`);
+  const response = await fetchApiGet(buildApiUrl("getPackages"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1515,7 +1594,9 @@ async function fetchPackageDetailsFromApi(packageId) {
   params.set("action", "getPackageDetails");
   params.set("package_id", packageId);
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getPackageDetails", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1610,7 +1691,9 @@ async function loadMasterDataAuditLogs(options = {}) {
 
   try {
     const params = buildMasterAuditQueryParams();
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchApiGet(
+      buildApiUrl("getMasterDataAuditLogs", Object.fromEntries(params.entries()))
+    );
 
     if (!response.ok) {
       throw new Error(`API request failed with status ${response.status}`);
@@ -2195,11 +2278,9 @@ async function fetchRoomUsageReportFromApi() {
   }
 
   const params = buildRoomUsagePeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -2224,11 +2305,9 @@ async function fetchActiveShiftRoomUsageReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -2324,11 +2403,9 @@ async function fetchTodayFnbSalesReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayFnbSalesReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -2395,11 +2472,9 @@ async function fetchTodayStockMovementsFromApi() {
     params.set("reference_type", stockMovementReferenceFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayStockMovements", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -2484,7 +2559,9 @@ async function fetchOpenFnbOrdersFromApi(roomId = "", roomStartTime = "") {
     params.set("room_start_time", roomStartTime);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getOpenFnbOrders", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2538,7 +2615,9 @@ async function fetchTodayFnbOrdersFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayFnbOrders", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2565,7 +2644,9 @@ async function fetchFnbOrdersByIds(orderIds) {
     action: "getFnbOrdersByIds",
     order_ids: orderIds.join(","),
   });
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getFnbOrdersByIds", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2594,9 +2675,10 @@ function showErrorState(message) {
   errorMessage = message;
 }
 
-function showInlineNotice(message, type = "info") {
+function showInlineNotice(message, type = "info", tabKey = activeDashboardTab) {
   noticeMessage = message;
   noticeType = type;
+  noticeTabKey = tabKey;
   renderRooms();
 }
 
@@ -3163,7 +3245,9 @@ async function showClosingPrintPreview(closingId) {
       closing_id: closingId,
       _: Date.now().toString(),
     });
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchApiGet(
+      buildApiUrl("getCashierClosingDetails", Object.fromEntries(params.entries()))
+    );
     const data = await response.json();
     if (!response.ok || data?.ok !== true) {
       throw new Error(data?.error || "Rincian closing tidak dapat dimuat.");
@@ -3581,11 +3665,76 @@ function getSelectedFbRoomStartTime() {
   return formatJakartaIsoString(selectedRoom.start_time);
 }
 
+function getActiveGeneralFnbCustomers() {
+  const names = new Set();
+  if (Array.isArray(openFnbOrders)) {
+    openFnbOrders.forEach(order => {
+      if (order.room_id === "FNB-GENERAL" && order.order_status === "open" && order.note) {
+        const name = String(order.note).trim();
+        if (name) names.add(name);
+      }
+    });
+  }
+  return Array.from(names);
+}
+
 function getSelectedRoomOpenFnbOrders() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    return openFnbOrders;
+    // Group general F&B orders by customer name (order.note)
+    const roomOrders = openFnbOrders.filter(order => order.room_id !== "FNB-GENERAL");
+    const generalOrders = openFnbOrders.filter(order => order.room_id === "FNB-GENERAL" && order.order_status === "open");
+
+    const generalGroups = {};
+    generalOrders.forEach(order => {
+      const name = String(order.note || "").trim() || "Tanpa Nama";
+      if (!generalGroups[name]) {
+        generalGroups[name] = {
+          order_id: "",
+          order_ids: [],
+          room_id: "FNB-GENERAL",
+          room_name: `Konsumen: ${name}`,
+          room_start_time: "",
+          order_status: "open",
+          order_total: 0,
+          created_at: order.created_at,
+          note: "",
+          items: [],
+          is_grouped: true,
+        };
+      }
+      generalGroups[name].order_ids.push(order.order_id);
+      generalGroups[name].order_total += Number(order.order_total) || 0;
+      
+      // Keep the earliest created_at
+      if (new Date(order.created_at) < new Date(generalGroups[name].created_at)) {
+        generalGroups[name].created_at = order.created_at;
+      }
+      
+      // Merge items
+      if (Array.isArray(order.items)) {
+        order.items.forEach(item => {
+          const existing = generalGroups[name].items.find(x => x.menu_id === item.menu_id);
+          if (existing) {
+            existing.quantity = (Number(existing.quantity) || 0) + (Number(item.quantity) || 0);
+            existing.subtotal = (Number(existing.subtotal) || 0) + (Number(item.subtotal) || 0);
+          } else {
+            generalGroups[name].items.push(Object.assign({}, item));
+          }
+        });
+      }
+    });
+
+    // Convert groups back to array and set consolidated order_id
+    const consolidatedGeneralOrders = Object.keys(generalGroups).map(name => {
+      const group = generalGroups[name];
+      group.order_id = group.order_ids.join(",");
+      return group;
+    });
+
+    // Combine room orders and consolidated general orders
+    return roomOrders.concat(consolidatedGeneralOrders);
   }
 
   if (!isFbOrderRoomSelectable(selectedRoom)) {
@@ -3748,8 +3897,8 @@ async function saveFnbOrder() {
     return;
   }
 
-  if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill") {
-    showInlineNotice("Order F&B umum harus dibayar tunai atau transfer.", "error");
+  if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill" && !fnbOrderNote.trim()) {
+    showInlineNotice("Nama Konsumen wajib diisi untuk order Open Bill (Bayar Nanti).", "error");
     return;
   }
 
@@ -5503,7 +5652,7 @@ function createPaymentControlElement(transaction) {
       }
 
       const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomTotal}`;
-      const res = await fetch(url);
+      const res = await fetchApiGet(url);
       const data = await res.json();
       if (data && data.success) {
         appliedPromoCode = data.code;
@@ -6539,7 +6688,16 @@ function createRoomCard(room) {
 
   const rate = document.createElement("p");
   rate.className = "rate";
-  rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    if (pkg) {
+      rate.textContent = `Paket: ${pkg.package_name} (${currencyFormatter.format(pkg.selling_price)} / ${pkg.duration_minutes / 60} jam)`;
+    } else {
+      rate.textContent = `Paket: ${room.package_id} (${currencyFormatter.format(room.rate_per_hour)} / jam)`;
+    }
+  } else {
+    rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
+  }
 
   meta.appendChild(rate);
 
@@ -6550,8 +6708,9 @@ function createRoomCard(room) {
   sessionButton.className = "room-button";
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
-  sessionButton.textContent = sessionButtonLabel;
-  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession;
+  const isCompletingThisRoom = completingCleaningRoomId === room.room_id;
+  sessionButton.textContent = isCompletingThisRoom ? "Memproses..." : sessionButtonLabel;
+  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession || isCompletingThisRoom;
 
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
@@ -8141,7 +8300,7 @@ function createPaymentSelectionElement(room) {
         }
 
         const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomPrepayCharge}`;
-        const res = await fetch(url);
+        const res = await fetchApiGet(url);
         const data = await res.json();
         if (data && data.success) {
           appliedPromoCode = data.code;
@@ -9069,13 +9228,13 @@ function createFbPaymentMethodElement() {
   select.id = "fbPaymentMethodSelect";
   select.dataset.action = "update-fb-payment-method";
 
-  if (!isGeneralOrder) {
-    const roomBillOpt = document.createElement("option");
-    roomBillOpt.value = "room_bill";
-    roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
-    if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
-    select.appendChild(roomBillOpt);
-  }
+  const roomBillOpt = document.createElement("option");
+  roomBillOpt.value = "room_bill";
+  roomBillOpt.textContent = isGeneralOrder 
+    ? "Open Bill (Bayar Nanti)" 
+    : "Open Bill (Masuk Tagihan Room)";
+  if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
+  select.appendChild(roomBillOpt);
 
   const cashOpt = document.createElement("option");
   cashOpt.value = "cash";
@@ -9096,20 +9255,93 @@ function createFbPaymentMethodElement() {
 function createFnbOrderNoteElement() {
   const control = document.createElement("div");
   control.className = "fb-room-control";
+  control.style.display = "flex";
+  control.style.flexDirection = "column";
+  control.style.gap = "8px";
+
+  const isGeneral = fnbOrderMode === "general";
+  const isPostpaid = fnbOrderPaymentMethod === "room_bill";
 
   const label = document.createElement("label");
   label.className = "transaction-label";
   label.setAttribute("for", "fbOrderNote");
-  label.textContent = "Catatan Order";
 
-  const note = document.createElement("textarea");
-  note.className = "fb-order-note";
-  note.id = "fbOrderNote";
-  note.dataset.action = "update-fnb-order-note";
-  note.placeholder = "Contoh: pedas sedikit, antar ke ruangan, tanpa es.";
-  note.value = fnbOrderNote;
+  if (isGeneral && isPostpaid) {
+    label.textContent = "Nama Konsumen (Wajib)";
+    control.appendChild(label);
 
-  control.append(label, note);
+    const activeCustomers = getActiveGeneralFnbCustomers();
+
+    const select = document.createElement("select");
+    select.className = "fb-room-select";
+    select.style.width = "100%";
+    select.style.marginBottom = "4px";
+
+    const newOpt = document.createElement("option");
+    newOpt.value = "__new__";
+    newOpt.textContent = "+ Konsumen Baru";
+    select.appendChild(newOpt);
+
+    activeCustomers.forEach(cust => {
+      const opt = document.createElement("option");
+      opt.value = cust;
+      opt.textContent = cust;
+      if (fnbOrderNote === cust) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "duration-custom-input";
+    nameInput.style.width = "100%";
+    nameInput.placeholder = "Masukkan Nama Konsumen Baru...";
+    
+    // Set initial visibility
+    const isExisting = fnbOrderNote && activeCustomers.includes(fnbOrderNote);
+    if (isExisting) {
+      nameInput.style.display = "none";
+      select.value = fnbOrderNote;
+    } else {
+      nameInput.style.display = "block";
+      select.value = "__new__";
+      nameInput.value = fnbOrderNote;
+    }
+
+    select.onchange = (e) => {
+      if (e.target.value === "__new__") {
+        nameInput.style.display = "block";
+        nameInput.value = "";
+        fnbOrderNote = "";
+        nameInput.focus();
+      } else {
+        nameInput.style.display = "none";
+        fnbOrderNote = e.target.value;
+      }
+    };
+
+    nameInput.oninput = (e) => {
+      fnbOrderNote = e.target.value.trim();
+    };
+
+    control.append(select, nameInput);
+  } else {
+    label.textContent = isGeneral ? "Nama Konsumen & Catatan (Opsional)" : "Catatan Order";
+    control.appendChild(label);
+
+    const note = document.createElement("textarea");
+    note.className = "fb-order-note";
+    note.id = "fbOrderNote";
+    note.dataset.action = "update-fnb-order-note";
+    note.placeholder = isGeneral 
+      ? "Tulis Nama Konsumen atau catatan order jika diperlukan" 
+      : "Contoh: pedas sedikit, antar ke ruangan, tanpa es.";
+    note.value = fnbOrderNote;
+    note.oninput = (e) => {
+      fnbOrderNote = e.target.value;
+    };
+
+    control.appendChild(note);
+  }
 
   return control;
 }
@@ -9201,12 +9433,12 @@ function createFbOrderActionsElement() {
 
   const saveButton = document.createElement("button");
   saveButton.className = canSave
-    ? "fb-order-button primary"
-    : "fb-order-button primary disabled";
+    ? "fb-order-button success"
+    : "fb-order-button success disabled";
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Bayar & Kirim Order";
+  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Simpan Order";
 
   actions.append(clearButton, saveButton);
 
@@ -9383,24 +9615,176 @@ function createOpenFnbOrderCardElement(order) {
 function createFnbOrderCancelActionsElement(order) {
   const actions = document.createElement("div");
   actions.className = "fnb-cancel-actions";
+  actions.style.display = "flex";
+  actions.style.gap = "8px";
 
-  const button = document.createElement("button");
-  const canCancel = getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
+  const isGeneral = order.room_id === "FNB-GENERAL";
 
-  button.className = canCancel
+  const cancelButton = document.createElement("button");
+  const canCancel = !order.is_grouped && getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
+
+  cancelButton.className = canCancel
     ? "fnb-cancel-button"
     : "fnb-cancel-button disabled";
-  button.type = "button";
-  button.dataset.action = "cancel-fnb-order";
-  button.dataset.orderId = order.order_id || "";
-  button.disabled = !canCancel;
-  button.textContent = isCancellingFnbOrder && getFnbOrderCanCancel(order)
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "cancel-fnb-order";
+  cancelButton.dataset.orderId = order.order_id || "";
+  cancelButton.disabled = !canCancel;
+  cancelButton.textContent = isCancellingFnbOrder && getFnbOrderCanCancel(order)
     ? "Membatalkan..."
     : getFnbOrderCancelButtonLabel(order);
 
-  actions.appendChild(button);
+  actions.appendChild(cancelButton);
+
+  if (isGeneral && order.order_status === "open") {
+    const payButton = document.createElement("button");
+    payButton.className = "fnb-pay-button";
+    payButton.type = "button";
+    payButton.style.padding = "6px 12px";
+    payButton.style.fontSize = "0.8rem";
+    payButton.style.backgroundColor = "var(--available)";
+    payButton.style.color = "#fff";
+    payButton.style.border = "none";
+    payButton.style.borderRadius = "4px";
+    payButton.style.cursor = "pointer";
+    payButton.style.fontWeight = "bold";
+    payButton.textContent = "💵 Bayar Tagihan";
+    payButton.onclick = () => {
+      showPayOpenFnbOrderModal(order);
+    };
+    actions.appendChild(payButton);
+  }
 
   return actions;
+}
+
+function showPayOpenFnbOrderModal(order) {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const formCard = document.createElement("div");
+  formCard.className = "erp-card";
+  formCard.style.width = "400px";
+  formCard.style.padding = "24px";
+  formCard.style.display = "flex";
+  formCard.style.flexDirection = "column";
+  formCard.style.gap = "16px";
+  formCard.style.backgroundColor = "var(--surface-raised)";
+  formCard.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = `Pembayaran F&B: ${order.room_name}`;
+
+  const detailText = document.createElement("p");
+  detailText.style.margin = "0";
+  detailText.style.fontSize = "0.9rem";
+  detailText.innerHTML = `Total yang harus dibayar: <strong>${formatCurrency(order.order_total)}</strong>`;
+
+  const methodGroup = document.createElement("div");
+  methodGroup.style.display = "flex";
+  methodGroup.style.flexDirection = "column";
+  methodGroup.style.gap = "6px";
+  
+  const methodLabel = document.createElement("label");
+  methodLabel.textContent = "Metode Pembayaran:";
+  
+  const select = document.createElement("select");
+  select.className = "fb-room-select";
+  select.style.width = "100%";
+  select.style.padding = "8px";
+
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Tunai / Cash";
+
+  const transferOpt = document.createElement("option");
+  transferOpt.value = "transfer";
+  transferOpt.textContent = "Transfer / QRIS";
+
+  select.append(cashOpt, transferOpt);
+  methodGroup.append(methodLabel, select);
+
+  const errorNotice = document.createElement("div");
+  errorNotice.style.display = "none";
+  errorNotice.style.color = "var(--occupied)";
+  errorNotice.style.fontSize = "0.85rem";
+
+  const btnGroup = document.createElement("div");
+  btnGroup.style.display = "flex";
+  btnGroup.style.justifyContent = "flex-end";
+  btnGroup.style.gap = "12px";
+  btnGroup.style.marginTop = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "duration-cancel-button";
+  cancelBtn.style.margin = "0";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    overlay.remove();
+  };
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "duration-custom-button";
+  confirmBtn.style.margin = "0";
+  confirmBtn.style.backgroundColor = "var(--available)";
+  confirmBtn.textContent = "Konfirmasi Bayar";
+  
+  confirmBtn.onclick = async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Memproses...";
+    errorNotice.style.display = "none";
+
+    try {
+      const response = await postApiAction({
+        action: "payOpenFnbOrder",
+        order_ids: order.order_id,
+        payment_method: select.value,
+        cashier_name: getLoggedInOperatorName()
+      });
+
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || "Gagal memproses pembayaran F&B.");
+      }
+
+      showInlineNotice("Pembayaran F&B berhasil diproses.");
+      overlay.remove();
+
+      if (response.transaction) {
+        showReceiptPrint(response.transaction);
+      }
+
+      await Promise.all([
+        loadOpenFnbOrders(),
+        loadTodayFnbOrders(),
+        loadTodayTransactions()
+      ]);
+    } catch (err) {
+      errorNotice.textContent = err.message || "Gagal memproses pembayaran.";
+      errorNotice.style.display = "block";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Konfirmasi Bayar";
+    }
+  };
+
+  btnGroup.append(cancelBtn, confirmBtn);
+  formCard.append(title, detailText, methodGroup, errorNotice, btnGroup);
+  overlay.appendChild(formCard);
+  document.body.appendChild(overlay);
 }
 
 function createOpenFnbOrderItemElement(item) {
@@ -15453,6 +15837,7 @@ function setActiveReportSubTab(tabKey) {
 
   activeReportSubTab = tabKey;
   renderRooms();
+  refreshActiveTabData();
 }
 
 function setActiveDashboardTab(tabKey) {
@@ -15462,6 +15847,9 @@ function setActiveDashboardTab(tabKey) {
 
   activeDashboardTab = tabKey;
   saveActiveDashboardTab(tabKey);
+  noticeMessage = "";
+  noticeType = "info";
+  noticeTabKey = "";
   renderRooms();
   refreshActiveTabData();
 
@@ -15470,79 +15858,80 @@ function setActiveDashboardTab(tabKey) {
   }
 }
 
-function refreshActiveTabData() {
+async function refreshActiveTabData() {
   ensureActiveDashboardTabAllowed();
 
   if (!API_BASE_URL.trim() && activeDashboardTab !== "rooms") {
     return;
   }
 
+  const loads = [];
+
   switch (activeDashboardTab) {
     case "rooms":
-      loadRoomRecoveryCandidates();
+      loads.push(loadRoomRecoveryCandidates());
+      if (inventoryItems.length === 0) {
+        loads.push(loadInventoryItems());
+      }
+      if (menuItems.length === 0) {
+        loads.push(loadMenuItems());
+      }
+      loads.push(loadOpenFnbOrders());
       break;
     case "fnb":
       if (inventoryItems.length === 0) {
-        loadInventoryItems();
+        loads.push(loadInventoryItems());
       }
       if (menuItems.length === 0) {
-        loadMenuItems();
+        loads.push(loadMenuItems());
       }
-      loadOpenFnbOrders();
-      loadTodayFnbOrders();
+      loads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
       break;
     case "stock":
       if (inventoryItems.length === 0) {
-        loadInventoryItems();
+        loads.push(loadInventoryItems());
       }
-      loadTodayStockMovements();
+      loads.push(loadTodayStockMovements());
       break;
     case "reports":
-      if (isValidReportSubTab("owner")) {
-        loadOwnerPeriodReport();
-        loadOwnerDashboardSummary();
-      }
-
-      if (isValidReportSubTab("fnb")) {
-        loadTodayFnbSalesReport();
-      }
-
-      if (isValidReportSubTab("cashier")) {
-        loadTodayCashierClosings();
-      }
-
-      if (isValidReportSubTab("room")) {
-        loadRoomUsageReport();
+      if (activeReportSubTab === "owner") {
+        loads.push(loadOwnerPeriodReport(), loadOwnerDashboardSummary());
+      } else if (activeReportSubTab === "fnb") {
+        loads.push(loadTodayFnbSalesReport());
+      } else if (activeReportSubTab === "cashier") {
+        loads.push(loadTodayCashierClosings());
+      } else if (activeReportSubTab === "room") {
+        loads.push(loadRoomUsageReport());
       }
       break;
     case "transactions":
-      loadTodayTransactions();
-      loadTodayCashierClosings();
+      loads.push(loadTodayTransactions(), loadTodayCashierClosings());
       break;
     case "audit":
-      loadTodayRoomTimeLogs();
+      loads.push(loadTodayRoomTimeLogs());
       break;
     case "settings":
-      loadSettingsTabData();
+      loads.push(loadSettingsTabData());
       break;
     case "lc":
       if (activeLcSubTab === "master") {
-        loadLcs();
+        loads.push(loadLcs());
       } else if (activeLcSubTab === "reports") {
-        loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+        loads.push(loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate));
       } else if (activeLcSubTab === "payroll") {
-        loadLcPayrollData();
+        loads.push(loadLcPayrollData());
       } else if (activeLcSubTab === "finance") {
-        loadLcs(true);
-        loadLcFinanceSummary();
+        loads.push(loadLcs(true), loadLcFinanceSummary());
       }
       break;
     case "promosi":
-      loadPromos();
+      loads.push(loadPromos());
       break;
     default:
       break;
   }
+
+  await Promise.allSettled(loads);
 }
 
 // ==========================================
@@ -15568,7 +15957,7 @@ async function loadPromos() {
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}?action=getPromos`);
+    const res = await fetchApiGet(buildApiUrl("getPromos"));
     const data = await res.json();
     if (data && data.success) {
       promosList = data.promos || [];
@@ -15979,7 +16368,7 @@ async function loadLcs(force = false) {
     renderRooms();
   }
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcMasterList`);
+    const response = await fetchApiGet(buildApiUrl("getLcMasterList"));
     const data = await response.json();
     if (data && data.success) {
       lcs = data.lcs || [];
@@ -16010,7 +16399,11 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
     renderRooms();
   }
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
+    const response = await fetchApiGet(buildApiUrl("getLcWorkReports", {
+      period,
+      start_date: startDate,
+      end_date: endDate,
+    }));
     const data = await response.json();
     if (data && data.success) {
       lcWorkReports = data.reports || [];
@@ -16083,7 +16476,7 @@ async function loadLcFinanceSummary(period = lcFinancePeriod) {
     }
 
     const url = `${API_BASE_URL}?action=getLcFinanceSummary&period=${encodeURIComponent(lcFinancePeriod)}`;
-    const res = await fetch(url);
+    const res = await fetchApiGet(url);
     const data = await res.json();
 
     if (data && data.success) {
@@ -16213,7 +16606,7 @@ async function loadLcPayrollDetail(payrollId) {
 
   try {
     const url = `${API_BASE_URL}?action=getLcPayrollDetails&payroll_id=${payrollId}`;
-    const res = await fetch(url);
+    const res = await fetchApiGet(url);
     const data = await res.json();
     if (data && data.success) {
       selectedLcPayrollDetail = data;
@@ -18159,7 +18552,7 @@ function renderDashboardGlobal() {
     fragment.appendChild(createStateMessage(errorMessage, "error"));
   }
 
-  if (noticeMessage) {
+  if (noticeMessage && (!noticeTabKey || noticeTabKey === activeDashboardTab)) {
     fragment.appendChild(createStateMessage(noticeMessage, noticeType));
   }
 
@@ -18851,7 +19244,9 @@ async function fetchTodayRoomTimeLogsFromApi() {
     params.set("room_id", roomTimeLogRoomFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayRoomTimeLogs", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -19423,9 +19818,15 @@ async function cancelBooking(roomId) {
 
 async function completeCleaning(roomId) {
   if (!API_BASE_URL.trim()) return;
-  if (isCompletingCleaning) return;
-  isCompletingCleaning = true;
-  setActionButtonsDisabled(true);
+  if (completingCleaningRoomId) {
+    if (completingCleaningRoomId !== roomId) {
+      showInlineNotice("Tunggu proses cleaning room sebelumnya selesai.", "warning");
+    }
+    return;
+  }
+
+  completingCleaningRoomId = roomId;
+  renderRooms();
   try {
     const data = await postApiAction({
       action: "completeCleaning",
@@ -19446,8 +19847,7 @@ async function completeCleaning(roomId) {
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan cleaning.", "error");
   } finally {
-    isCompletingCleaning = false;
-    setActionButtonsDisabled(false);
+    completingCleaningRoomId = "";
     renderRooms();
   }
 }
@@ -20793,6 +21193,7 @@ function handleDashboardInput(event) {
 
   if (action === "update-fb-payment-method") {
     fnbOrderPaymentMethod = field.value;
+    renderRooms();
     return;
   }
 
@@ -21104,58 +21505,5 @@ async function initializeDashboard() {
   await loadRooms();
   await loadPackages();
   await loadLcs();
-
-  const initialLoads = [];
-
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock") || canAccessDashboardTab("rooms")) {
-    initialLoads.push(loadInventoryItems());
-  }
-
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("rooms")) {
-    initialLoads.push(loadMenuItems());
-  }
-
-  if (canAccessDashboardTab("fnb")) {
-    initialLoads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
-  }
-
-  if (canAccessDashboardTab("stock")) {
-    initialLoads.push(loadTodayStockMovements());
-  }
-
-  if (canAccessDashboardTab("reports")) {
-    if (isValidReportSubTab("owner")) {
-      initialLoads.push(loadOwnerDashboardSummary(), loadOwnerPeriodReport());
-    }
-
-    if (isValidReportSubTab("fnb")) {
-      initialLoads.push(loadTodayFnbSalesReport());
-    }
-
-    if (isValidReportSubTab("room")) {
-      initialLoads.push(loadRoomUsageReport());
-    }
-
-    if (isValidReportSubTab("cashier")) {
-      initialLoads.push(loadTodayCashierClosings());
-    }
-  }
-
-  if (canAccessDashboardTab("audit")) {
-    initialLoads.push(loadTodayRoomTimeLogs());
-  }
-
-  if (canAccessDashboardTab("transactions")) {
-    initialLoads.push(loadTodayTransactions(), loadTodayCashierClosings());
-  }
-
-  if (activeDashboardTab === "settings" && canAccessDashboardTab("settings")) {
-    initialLoads.push(loadSettingsTabData());
-  }
-
-  if (activeDashboardTab === "promosi" && canAccessDashboardTab("promosi")) {
-    initialLoads.push(loadPromos());
-  }
-
-  await Promise.all(initialLoads);
+  await refreshActiveTabData();
 }
