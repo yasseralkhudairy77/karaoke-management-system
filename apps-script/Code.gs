@@ -994,6 +994,10 @@ function doPost(e) {
       return jsonResponse(payOpenFnbOrder_(payload));
     }
 
+    if (action === "restoreSessionCheckout") {
+      return jsonResponse(restoreSessionCheckout_(payload));
+    }
+
     if (action === "previewSessionPricing") {
       return jsonResponse(previewSessionPricing_(payload));
     }
@@ -15930,4 +15934,187 @@ function normalizeCompareDate_(val) {
     return clean.split(" ")[0];
   }
   return clean;
+}
+
+function restoreSessionCheckout_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  
+  if (!transactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+  
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+  
+  try {
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // 1. Dapatkan transaksi
+    var txSheet = spreadsheet.getSheetByName("Transactions");
+    if (!txSheet) {
+      return { ok: false, success: false, error: "Sheet Transactions tidak ditemukan." };
+    }
+    var txHeaderMap = getHeaderMap_(txSheet);
+    var txRowNum = findRowByValue_(txSheet, txHeaderMap, "transaction_id", transactionId);
+    if (!txRowNum) {
+      return { ok: false, success: false, error: "Transaksi tidak ditemukan." };
+    }
+    
+    var transaction = getRowObject_(txSheet, txHeaderMap, txRowNum);
+    var paymentStatus = String(transaction.payment_status || "").trim().toLowerCase();
+    
+    if (paymentStatus !== "unpaid") {
+      return { ok: false, success: false, error: "Hanya transaksi yang belum dibayar (unpaid) yang bisa dipulihkan." };
+    }
+    
+    var roomId = String(transaction.room_id || "").trim();
+    if (!roomId) {
+      return { ok: false, success: false, error: "Data room_id pada transaksi tidak valid." };
+    }
+    
+    // 2. Cek status room saat ini
+    var roomsSheet = spreadsheet.getSheetByName("Rooms");
+    if (!roomsSheet) {
+      return { ok: false, success: false, error: "Sheet Rooms tidak ditemukan." };
+    }
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var roomsRowNum = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+    if (!roomsRowNum) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan di database." };
+    }
+    
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, roomsRowNum);
+    var roomStatus = String(room.status || "").trim().toLowerCase();
+    
+    // Sesi hanya boleh dipulihkan jika room saat ini kosong/cleaning/waiting_payment
+    if (roomStatus !== "available" && roomStatus !== "cleaning" && roomStatus !== "waiting_payment") {
+      return { ok: false, success: false, error: "Ruangan sedang digunakan (" + roomStatus + "). Tidak bisa memulihkan sesi lama." };
+    }
+    
+    // 3. Dapatkan Sesi Room di RoomSessions
+    var sessionsSheet = spreadsheet.getSheetByName("RoomSessions");
+    if (!sessionsSheet) {
+      return { ok: false, success: false, error: "Sheet RoomSessions tidak ditemukan." };
+    }
+    var sessionsHeaderMap = getHeaderMap_(sessionsSheet);
+    var sessionsRows = readSheetAsObjects_("RoomSessions");
+    
+    var sessionRowNumber = -1;
+    var sessionObj = null;
+    for (var s = 0; s < sessionsRows.length; s++) {
+      if (String(sessionsRows[s].closed_transaction_id || "").trim() === transactionId) {
+        sessionRowNumber = s + 2; // header offset
+        sessionObj = sessionsRows[s];
+        break;
+      }
+    }
+    
+    if (!sessionObj) {
+      return { ok: false, success: false, error: "Sesi room terkait transaksi ini tidak ditemukan." };
+    }
+    
+    var now = toJakartaIsoString_(new Date());
+    
+    // 4. Pulihkan status LCs di LcMaster & LcWorkLogs
+    var lcIdsStr = String(sessionObj.lc_ids || "").trim();
+    if (lcIdsStr) {
+      var lcIds = lcIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+      var lcMasterSheet = spreadsheet.getSheetByName("LcMaster");
+      if (lcMasterSheet) {
+        var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
+        lcIds.forEach(function(lcId) {
+          if (lcId === "PENDING") return;
+          var lcRowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", lcId);
+          if (lcRowNum) {
+            lcMasterSheet.getRange(lcRowNum, lcMasterHeaders.availability).setValue("busy");
+            lcMasterSheet.getRange(lcRowNum, lcMasterHeaders.updated_at).setValue(now);
+          }
+        });
+      }
+      
+      var lcWorkLogsSheet = spreadsheet.getSheetByName("LcWorkLogs");
+      if (lcWorkLogsSheet) {
+        var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+        var workLogsRows = readSheetAsObjects_("LcWorkLogs");
+        for (var w = 0; w < workLogsRows.length; w++) {
+          if (String(workLogsRows[w].session_id || "").trim() === String(sessionObj.session_id || "").trim()) {
+            var logRowNum = w + 2;
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("working");
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue("");
+          }
+        }
+      }
+    }
+    
+    // 5. Kembalikan F&B Orders ke status "open"
+    var fnbOrderIdsStr = String(transaction.fnb_order_ids || "").trim();
+    if (fnbOrderIdsStr) {
+      var fnbOrderIds = fnbOrderIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+      var fnbSheet = spreadsheet.getSheetByName("FnbOrders");
+      if (fnbSheet) {
+        var fnbHeaderMap = getHeaderMap_(fnbSheet);
+        fnbOrderIds.forEach(function(orderId) {
+          var fnbRowNum = findRowByValue_(fnbSheet, fnbHeaderMap, "order_id", orderId);
+          if (fnbRowNum) {
+            fnbSheet.getRange(fnbRowNum, fnbHeaderMap.order_status).setValue("open");
+            fnbSheet.getRange(fnbRowNum, fnbHeaderMap.updated_at).setValue(now);
+          }
+        });
+      }
+    }
+    
+    // 6. Kembalikan data ruangan ke occupied
+    var updateFields = {
+      status: "occupied",
+      start_time: sessionObj.start_time instanceof Date ? toJakartaIsoString_(sessionObj.start_time) : sessionObj.start_time,
+      customer_name: sessionObj.customer_name || "",
+      package_id: sessionObj.package_id || "",
+      updated_at: now
+    };
+    
+    if (roomsHeaderMap.booked_duration_minutes && sessionObj.booked_duration_minutes) {
+      updateFields.booked_duration_minutes = sessionObj.booked_duration_minutes;
+    }
+    if (roomsHeaderMap.scheduled_end_time && sessionObj.scheduled_end_time) {
+      updateFields.scheduled_end_time = sessionObj.scheduled_end_time instanceof Date ? toJakartaIsoString_(sessionObj.scheduled_end_time) : sessionObj.scheduled_end_time;
+    }
+    
+    setRowValues_(roomsSheet, roomsHeaderMap, roomsRowNum, updateFields);
+    
+    // 7. Kembalikan status RoomSession ke active
+    setRowValues_(sessionsSheet, sessionsHeaderMap, sessionRowNumber, {
+      status: "active",
+      end_time: "",
+      closed_transaction_id: "",
+      updated_at: now
+    });
+    
+    // 8. Hapus unpaid transaction dari Transactions
+    txSheet.deleteRow(txRowNum);
+    
+    // 9. Hapus ReceiptPrintLogs jika ada
+    var printSheet = spreadsheet.getSheetByName("ReceiptPrintLogs");
+    if (printSheet) {
+      var printRows = readSheetAsObjects_("ReceiptPrintLogs");
+      for (var p = printRows.length - 1; p >= 0; p--) {
+        if (String(printRows[p].transaction_id || "").trim() === transactionId) {
+          printSheet.deleteRow(p + 2);
+        }
+      }
+    }
+    
+    return {
+      ok: true,
+      success: true,
+      message: "Sesi Ruangan " + room.room_name + " berhasil dipulihkan."
+    };
+    
+  } catch (err) {
+    return { ok: false, success: false, error: err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
