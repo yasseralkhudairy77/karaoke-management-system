@@ -313,6 +313,59 @@ function normalizeLcDurationMinutesForRoom(room, value) {
   return Math.max(1, duration);
 }
 
+function getLcDurationHourOptions(room) {
+  const bookedMinutes = Number(room?.booked_duration_minutes) || 0;
+  const maxMinutes = Math.max(60, Math.ceil(bookedMinutes / 30) * 30);
+  const options = [];
+
+  for (let minutes = 30; minutes <= maxMinutes; minutes += 30) {
+    options.push(minutes);
+  }
+
+  return options;
+}
+
+function formatLcDurationOptionLabel(minutes) {
+  const duration = Number(minutes) || 0;
+  const hours = duration / 60;
+
+  if (Number.isInteger(hours)) {
+    return `${hours} jam`;
+  }
+
+  return `${hours.toLocaleString("id-ID", { maximumFractionDigits: 1 })} jam`;
+}
+
+function createLcDurationSelectElement(room, lcId, value) {
+  const select = document.createElement("select");
+  select.className = "lc-selection-duration-input";
+  select.title = "Durasi LC dalam jam";
+
+  const normalizedValue = normalizeLcDurationMinutesForRoom(room, value);
+  const options = getLcDurationHourOptions(room);
+
+  if (!options.includes(normalizedValue)) {
+    options.push(normalizedValue);
+    options.sort((first, second) => first - second);
+  }
+
+  options.forEach((minutes) => {
+    const option = document.createElement("option");
+    option.value = String(minutes);
+    option.textContent = formatLcDurationOptionLabel(minutes);
+    option.selected = minutes === normalizedValue;
+    select.appendChild(option);
+  });
+
+  select.onchange = (event) => {
+    pendingLcDurations[lcId] = normalizeLcDurationMinutesForRoom(room, event.target.value);
+    renderRooms();
+  };
+  select.onclick = (event) => event.stopPropagation();
+
+  return select;
+}
+
 function ensureLcSelectionStateForRoom(room) {
   if (!room?.room_id) {
     return;
@@ -19299,21 +19352,14 @@ function createSelectLcModalOverlay(room) {
       itemLabel.append(cb, nameSpan, rateSpan);
 
       if (cb.checked) {
-        const durationInput = document.createElement("input");
-        durationInput.className = "lc-selection-duration-input";
-        durationInput.type = "number";
-        durationInput.min = "1";
-        durationInput.step = "1";
         const currentLcIds = String(room.lc_ids || "").split(",").map(id => id.trim()).filter(Boolean);
         const isNewLc = !currentLcIds.includes(lc.lc_id);
         const defaultDuration = isNewLc ? getRemainingSessionMinutes(room) : getDefaultLcDurationMinutes(room);
-        durationInput.value = String(pendingLcDurations[lc.lc_id] || defaultDuration);
-        durationInput.title = "Durasi LC dalam menit";
-        durationInput.onchange = (event) => {
-          pendingLcDurations[lc.lc_id] = normalizeLcDurationMinutesForRoom(room, event.target.value);
-          renderRooms();
-        };
-        durationInput.onclick = (event) => event.stopPropagation();
+        const durationInput = createLcDurationSelectElement(
+          room,
+          lc.lc_id,
+          pendingLcDurations[lc.lc_id] || defaultDuration
+        );
         itemLabel.appendChild(durationInput);
       }
 
