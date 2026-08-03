@@ -924,6 +924,7 @@ let lastOwnerTestRunId = "";
 let cleanupTestRunIdInput = "";
 let cleanupTestOwnerPinInput = "";
 let isCleaningTestRun = false;
+let preparingRoomSessionKey = "";
 let prepayCartItems = [];
 let isLoadingPrepayFnb = false;
 let prepayFnbError = "";
@@ -7459,7 +7460,14 @@ function createDurationSelectionElement(room) {
       const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
       if (selectedPkg) {
         const activeLcIds = (selectedLcIdsForRoom[room.room_id] || []).join(",");
-        await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId, activeLcIds);
+        await prepareRoomSession(
+          room.room_id,
+          selectedPkg.duration_minutes,
+          customerNameInput,
+          selectedPkgId,
+          activeLcIds,
+          `${room.room_id}:package:${selectedPkgId}`
+        );
         customerNameInput = "";
         bookingTypeSelection = "regular";
         delete selectedLcIdsForRoom[room.room_id];
@@ -7495,6 +7503,8 @@ function createDurationSelectionElement(room) {
         ];
 
     durationOptions.forEach(([minutes, labelText]) => {
+      const prepareKey = `${room.room_id}:${minutes}`;
+      const isThisDurationPreparing = preparingRoomSessionKey === prepareKey;
       const button = document.createElement("button");
       button.className = "duration-option-button";
       button.type = "button";
@@ -7502,7 +7512,7 @@ function createDurationSelectionElement(room) {
       button.dataset.roomId = room.room_id;
       button.dataset.durationMinutes = String(minutes);
       button.disabled = isPreparingRoomSession;
-      button.textContent = isPreparingRoomSession ? "Menyiapkan..." : labelText;
+      button.textContent = isThisDurationPreparing ? "Menyiapkan..." : labelText;
       options.appendChild(button);
     });
 
@@ -7529,7 +7539,7 @@ function createDurationSelectionElement(room) {
     customButton.style.color = "#ffffff";
     customButton.style.fontWeight = "800";
     customButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
-    customButton.textContent = isPreparingRoomSession ? "Menyiapkan..." : "Custom";
+    customButton.textContent = preparingRoomSessionKey === `${room.room_id}:custom` ? "Menyiapkan..." : "Custom";
 
     custom.append(input, customButton);
     panel.append(options, custom);
@@ -20038,7 +20048,7 @@ async function startSession(roomId, durationMinutes) {
   }
 }
 
-async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "", lcIds = "") {
+async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "", lcIds = "", prepareKey = "") {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -20061,6 +20071,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
   }
 
   isPreparingRoomSession = true;
+  preparingRoomSessionKey = prepareKey || (packageId ? `${roomId}:package:${packageId}` : `${roomId}:${selectedDuration}`);
   setActionButtonsDisabled(true);
   renderRooms();
 
@@ -20105,6 +20116,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
     showInlineNotice(error.message || "Gagal menyiapkan booking room.", "error");
   } finally {
     isPreparingRoomSession = false;
+    preparingRoomSessionKey = "";
     setActionButtonsDisabled(false);
     renderRooms();
   }
@@ -21594,8 +21606,9 @@ async function handleRoomAction(event) {
 
   if (action === "prepare-room-session-duration") {
     const roomId = button.dataset.roomId || "";
+    const durationMinutes = Number(button.dataset.durationMinutes);
     const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
-    await prepareRoomSession(roomId, Number(button.dataset.durationMinutes), customerNameInput, "", activeLcIds);
+    await prepareRoomSession(roomId, durationMinutes, customerNameInput, "", activeLcIds, `${roomId}:${durationMinutes}`);
     customerNameInput = "";
     delete selectedLcIdsForRoom[roomId];
     delete selectedLcDurationsForRoom[roomId];
@@ -21617,7 +21630,7 @@ async function handleRoomAction(event) {
 
     const roomId = button.dataset.roomId || "";
     const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
-    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", activeLcIds);
+    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", activeLcIds, `${roomId}:custom`);
     customerNameInput = "";
     delete selectedLcIdsForRoom[roomId];
     delete selectedLcDurationsForRoom[roomId];
