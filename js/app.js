@@ -4041,10 +4041,11 @@ function updateFnbOrderNote(value) {
 }
 
 function buildFnbOrderPayload() {
-  const isRoomBill = fnbOrderPaymentMethod === "room_bill";
+  const isGeneralOrder = fnbOrderMode === "general";
+  const isRoomBill = isGeneralOrder || fnbOrderPaymentMethod === "room_bill";
   return {
     action: "saveFnbOrder",
-    room_id: fnbOrderMode === "general" ? "FNB-GENERAL" : selectedFbRoomId,
+    room_id: isGeneralOrder ? "FNB-GENERAL" : selectedFbRoomId,
     items: fbCartItems.map((item) => ({
       menu_id: item.menu_id,
       quantity: item.quantity,
@@ -4075,7 +4076,7 @@ async function saveFnbOrder() {
     return;
   }
 
-  if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill" && !fnbOrderNote.trim()) {
+  if (isGeneralOrder && !fnbOrderNote.trim()) {
     showInlineNotice("Nama Konsumen wajib diisi untuk order Open Bill (Bayar Nanti).", "error");
     return;
   }
@@ -9099,7 +9100,7 @@ function createFbRoomControlElement() {
   if (fnbOrderMode === "general") {
     const info = document.createElement("p");
     info.className = "fb-room-warning";
-    info.textContent = "Order ini tidak dikaitkan ke room dan dibayar terpisah.";
+    info.textContent = "Order umum disimpan sebagai Open Bill dan dibayar saat tagihan F&B umum ditutup.";
     control.appendChild(info);
     return control;
   }
@@ -9288,6 +9289,13 @@ function createFbPaymentMethodElement() {
   const isGeneralOrder = fnbOrderMode === "general";
   if ((!isGeneralOrder && (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom))) || fbCartItems.length === 0) {
     return document.createDocumentFragment();
+  }
+
+  if (isGeneralOrder) {
+    const control = document.createElement("div");
+    control.className = "fb-room-control";
+    control.textContent = "Pembayaran: Open Bill, dibayar saat tagihan F&B umum ditutup.";
+    return control;
   }
 
   const control = document.createElement("div");
@@ -9513,7 +9521,11 @@ function createFbOrderActionsElement() {
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Simpan Order";
+  saveButton.textContent = isSavingFnbOrder
+    ? "Memproses..."
+    : fnbOrderMode === "general"
+      ? "Simpan Open Bill"
+      : "Simpan Order";
 
   actions.append(clearButton, saveButton);
 
