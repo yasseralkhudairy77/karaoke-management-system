@@ -11394,6 +11394,12 @@ function closeSession_(roomId, cashierName) {
       if (fnbOrderIds) {
         markFnbOrdersAsBilled_(fnbOrderIds.split(","), endTime);
       }
+      if (isPrepay && prepayTx) {
+        transaction = Object.assign({}, prepayTx);
+        if (transaction.fnb_order_ids) {
+          fnbOrders = getFnbOrdersWithItemsByIds_(parseCommaSeparatedIds_(transaction.fnb_order_ids));
+        }
+      }
     }
 
     roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("cleaning");
