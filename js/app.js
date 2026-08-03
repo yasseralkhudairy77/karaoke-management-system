@@ -17741,8 +17741,33 @@ function createLcFinanceSubTabElement() {
   histories.style.gridTemplateColumns = "repeat(auto-fit, minmax(320px, 1fr))";
   histories.style.gap = "16px";
 
+  const bonusLogs = (lcFinanceSummary?.sales_bonus_logs || []).slice(-12).reverse();
   const advances = (lcFinanceSummary?.cash_advances || []).slice(-12).reverse();
   const ledgers = (lcFinanceSummary?.petty_cash_ledger || []).slice(-12).reverse();
+
+  const bonusHistory = document.createElement("div");
+  bonusHistory.className = "erp-card";
+  bonusHistory.style.padding = "16px";
+  bonusHistory.innerHTML = `
+    <h4 style="margin:0 0 12px;">Rincian Bonus Penjualan Produk</h4>
+    ${bonusLogs.length ? `
+      <div class="table-responsive">
+        <table class="erp-table" style="width:100%; border-collapse:collapse;">
+          <thead><tr><th>LC</th><th>Produk</th><th>Qty</th><th>Bonus / Item</th><th>Total</th><th>Referensi</th></tr></thead>
+          <tbody>${bonusLogs.map(row => `
+            <tr>
+              <td>${escapeHtml(row.lc_name || row.lc_id || "-")}</td>
+              <td>${escapeHtml(row.menu_name || "-")}</td>
+              <td>${(Number(row.quantity) || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
+              <td>${formatCurrency(row.bonus_per_item)}</td>
+              <td><strong>${formatCurrency(row.bonus_total)}</strong></td>
+              <td>${escapeHtml(row.transaction_id || row.order_id || "-")}</td>
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </div>
+    ` : `<div class="state-message info">Belum ada bonus penjualan produk pada periode ini.</div>`}
+  `;
 
   const advanceHistory = document.createElement("div");
   advanceHistory.className = "erp-card";
@@ -17788,7 +17813,7 @@ function createLcFinanceSubTabElement() {
     ` : `<div class="state-message info">Belum ada mutasi petty cash hari ini.</div>`}
   `;
 
-  histories.append(advanceHistory, ledgerHistory);
+  histories.append(bonusHistory, advanceHistory, ledgerHistory);
   container.appendChild(histories);
 
   return container;
