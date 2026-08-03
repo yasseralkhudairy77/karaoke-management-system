@@ -12,7 +12,7 @@ import {
   DEV_SHORT_SESSION_ENABLED,
   LOCAL_TV_BRIDGE_ENABLED,
   LOCAL_TV_BRIDGE_URL,
-} from "./config.js";
+} from "./config.js?v=owner-test-mode-v1";
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=owner-test-mode-v1";
 import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
@@ -137,6 +137,7 @@ function buildApiUrl(action, params = null) {
 
 const API_GET_RETRYABLE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
 const API_GET_TIMEOUT_MS = 15000;
+const API_POST_TIMEOUT_MS = 20000;
 
 function createApiRequestError(response) {
   const error = new Error(`API request failed with status ${response.status}`);
@@ -1208,11 +1209,6 @@ async function loadRoomRecoveryCandidates() {
     console.warn("Gagal memuat daftar room recovery.", error);
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
-    showInlineNotice(
-      `Gagal memuat status recovery room: ${error.message}`,
-      "error",
-      "rooms"
-    );
   } finally {
     isLoadingRoomRecovery = false;
     renderRooms();
@@ -20893,14 +20889,28 @@ async function saveCashierClosing() {
 }
 
 async function postApiAction(payload) {
-  const response = await fetch(API_BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/plain;charset=utf-8",
-    },
-    cache: "no-store",
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_POST_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(API_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      cache: "no-store",
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Permintaan ke server terlalu lama. Coba ulang beberapa saat lagi.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`Permintaan gagal dengan status ${response.status}.`);
