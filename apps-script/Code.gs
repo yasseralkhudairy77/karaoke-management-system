@@ -8854,6 +8854,184 @@ function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) 
   return rows;
 }
 
+function getFnbOrdersForSessionBonusFinalization_(roomId, roomStartTime, testContext) {
+  var normalizedStartTime = normalizeFnbOrderDateTime_(roomStartTime);
+  var orderItemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+
+  return readFnbOrdersOrEmpty_().filter(function (order) {
+    if (testContext && testContext.is_test) {
+      if (!isTestDataValue_(order.is_test) || String(order.test_run_id || "").trim() !== String(testContext.test_run_id || "").trim()) {
+        return false;
+      }
+    } else if (!isProductionDataRow_(order)) {
+      return false;
+    }
+
+    var status = String(order.order_status || "").trim().toLowerCase();
+    return String(order.room_id || "").trim() === String(roomId || "").trim()
+      && normalizeFnbOrderDateTime_(order.room_start_time) === normalizedStartTime
+      && ["open", "paid", "billed"].indexOf(status) !== -1;
+  }).map(function (order) {
+    var orderId = String(order.order_id || "").trim();
+    return {
+      order_id: orderId,
+      room_id: order.room_id || "",
+      room_name: order.room_name || "",
+      room_start_time: normalizeFnbOrderDateTime_(order.room_start_time),
+      order_status: order.order_status || "",
+      order_total: Number(order.order_total) || 0,
+      cashier_name: order.cashier_name || "",
+      note: order.note || "",
+      created_at: normalizeFnbOrderDateTime_(order.created_at),
+      updated_at: normalizeFnbOrderDateTime_(order.updated_at),
+      items: orderItemsByOrderId[orderId] || [],
+    };
+  });
+}
+
+function getExistingActiveLcSalesBonusOrderMap_() {
+  if (!sheetExists_("LcSalesBonusLogs")) {
+    return {};
+  }
+
+  return readSheetAsObjects_("LcSalesBonusLogs").reduce(function (map, row) {
+    var orderId = String(row.order_id || "").trim();
+    if (orderId && !isLcFinanceRowVoided_(row)) {
+      map[orderId] = true;
+    }
+    return map;
+  }, {});
+}
+
+function buildFinalLcBonusRecipients_(session, workLogRows, lcMasterRows) {
+  var defaultDurationMinutes = Number(session && session.booked_duration_minutes) || 60;
+  var assignments = parseLcAssignments_({
+    lc_assignments: session ? session.lc_assignments : "",
+    lc_ids: session ? session.lc_ids : "",
+  }, defaultDurationMinutes);
+  var latestLogByLcId = getLatestLcWorkLogByLcIdForSession_(workLogRows || [], session ? session.session_id : "");
+  var recipients = [];
+  var seen = {};
+
+  assignments.forEach(function (assignment) {
+    var lcId = String(assignment.lc_id || "").trim();
+    if (!lcId || lcId === "PENDING" || seen[lcId]) {
+      return;
+    }
+
+    var latestLog = latestLogByLcId[lcId] ? latestLogByLcId[lcId].log : null;
+    var lcMaster = findLcMasterById_(lcMasterRows || [], lcId);
+    var durationMinutes = Number(assignment.duration_minutes)
+      || inferLcWorkLogDurationMinutes_(latestLog || {})
+      || defaultDurationMinutes;
+
+    seen[lcId] = true;
+    recipients.push({
+      lc_id: lcId,
+      lc_name: latestLog && latestLog.lc_name ? latestLog.lc_name : (lcMaster ? lcMaster.lc_name : lcId),
+      duration_minutes: Math.max(1, Math.round(durationMinutes)),
+    });
+  });
+
+  if (recipients.length === 0) {
+    Object.keys(latestLogByLcId).forEach(function (lcId) {
+      var log = latestLogByLcId[lcId].log || {};
+      recipients.push({
+        lc_id: lcId,
+        lc_name: log.lc_name || lcId,
+        duration_minutes: Math.max(1, inferLcWorkLogDurationMinutes_(log) || defaultDurationMinutes),
+      });
+    });
+  }
+
+  return recipients;
+}
+
+function appendFinalizedLcSalesBonusLogsForSession_(session, roomId, roomStartTime, fnbOrders, transactionId, cashierName, finalizedAt, testContext) {
+  if (testContext && testContext.is_test) {
+    return [];
+  }
+
+  ensureLcSalesBonusLogsSheet_();
+
+  var orders = Array.isArray(fnbOrders) && fnbOrders.length
+    ? fnbOrders
+    : getFnbOrdersForSessionBonusFinalization_(roomId, roomStartTime, testContext);
+  var existingOrderMap = getExistingActiveLcSalesBonusOrderMap_();
+  var workLogRows = sheetExists_("LcWorkLogs") ? readSheetAsObjects_("LcWorkLogs") : [];
+  var lcMasterRows = sheetExists_("LcMaster") ? readSheetAsObjects_("LcMaster") : [];
+  var recipients = buildFinalLcBonusRecipients_(session || {}, workLogRows, lcMasterRows);
+
+  if (recipients.length === 0) {
+    return [];
+  }
+
+  var totalWeight = recipients.reduce(function (sum, recipient) {
+    return sum + (Number(recipient.duration_minutes) || 0);
+  }, 0);
+  if (totalWeight <= 0) {
+    totalWeight = recipients.length;
+  }
+
+  var rows = [];
+  var createdAt = finalizedAt || toJakartaIsoString_(new Date());
+
+  orders.forEach(function (order) {
+    var orderId = String(order.order_id || "").trim();
+    if (!orderId || existingOrderMap[orderId]) {
+      return;
+    }
+
+    (order.items || []).forEach(function (item) {
+      var bonusPerItem = Number(item.bonus_sales_lc || item.bonus_per_item) || 0;
+      var quantity = Number(item.quantity) || 0;
+      var totalBonus = bonusPerItem * quantity;
+      if (totalBonus <= 0) {
+        return;
+      }
+
+      var allocated = 0;
+      recipients.forEach(function (recipient, index) {
+        var recipientWeight = Number(recipient.duration_minutes) || 0;
+        var isLast = index === recipients.length - 1;
+        var share = totalWeight > 0 ? recipientWeight / totalWeight : 1 / recipients.length;
+        var bonusTotal = isLast ? totalBonus - allocated : Math.floor(totalBonus * share);
+        allocated += bonusTotal;
+        if (bonusTotal <= 0) {
+          return;
+        }
+
+        rows.push({
+          bonus_log_id: generateLcFinanceId_("LCBONUS"),
+          operational_date: normalizeLcFinanceOperationalDate_(order.created_at || createdAt),
+          transaction_id: String(transactionId || "").trim(),
+          order_id: orderId,
+          menu_id: item.menu_id || "",
+          menu_name: item.menu_name || "",
+          category: item.category || "",
+          lc_id: recipient.lc_id,
+          lc_name: recipient.lc_name,
+          quantity: quantity * share,
+          bonus_per_item: bonusPerItem,
+          bonus_total: bonusTotal,
+          source_status: "checkout_final",
+          payroll_id: "",
+          created_at: createdAt,
+          created_by: cashierName || order.cashier_name || "Kasir",
+          voided_at: "",
+          void_reason: "",
+        });
+      });
+    });
+  });
+
+  rows.forEach(function (row) {
+    appendObjectRow_(ensureLcSalesBonusLogsSheet_(), row);
+  });
+
+  return rows;
+}
+
 function getTodayTransactions_() {
   return getTransactionsByPeriod_("today", "", "");
 }
@@ -11291,11 +11469,25 @@ function closeSession_(roomId, cashierName) {
       }
     }
 
+    var lcSalesBonusLogs = activeRoomSession && activeRoomSession.session
+      ? appendFinalizedLcSalesBonusLogsForSession_(
+        activeRoomSession.session,
+        room.room_id || "",
+        startTime || "",
+        null,
+        transaction ? transaction.transaction_id : prepayTxId,
+        cashierName || "Kasir",
+        endTime,
+        testContext
+      )
+      : [];
+
     return {
       ok: true,
       message: "Sesi berhasil diselesaikan.",
       transaction: transaction,
       fnb_orders: fnbOrders,
+      lc_sales_bonus_logs: lcSalesBonusLogs,
       stock_movements: stockResult.movements,
       stock_warnings: stockResult.warnings,
     };
@@ -12078,9 +12270,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
     ensureFnbOrderItemsSheet_();
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
-    var lcSalesBonusLogs = testContext.is_test
-      ? []
-      : appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName || "Kasir");
+    var lcSalesBonusLogs = [];
 
     if (isPaid) {
       var transaction = {

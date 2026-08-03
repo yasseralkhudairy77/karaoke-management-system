@@ -20403,6 +20403,7 @@ async function closeSession(roomId) {
       ...(data.transaction || {}),
       fnb_orders: Array.isArray(data.fnb_orders) ? data.fnb_orders : [],
       stock_movements: Array.isArray(data.stock_movements) ? data.stock_movements : [],
+      lc_sales_bonus_logs: Array.isArray(data.lc_sales_bonus_logs) ? data.lc_sales_bonus_logs : [],
     };
     stockWarningMessages = Array.isArray(data.stock_warnings) ? data.stock_warnings : [];
 
@@ -20412,7 +20413,10 @@ async function closeSession(roomId) {
 
     try {
       await sendLocalTvCommand(roomId, "power_off", "close_session");
-      showInlineNotice("Sesi berhasil diselesaikan. TV dimatikan.");
+      const bonusCount = transaction.lc_sales_bonus_logs.length;
+      showInlineNotice(bonusCount > 0
+        ? `Sesi berhasil diselesaikan. ${bonusCount} bonus sales LC difinalkan. TV dimatikan.`
+        : "Sesi berhasil diselesaikan. TV dimatikan.");
     } catch (tvError) {
       showInlineNotice(`Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
     }
