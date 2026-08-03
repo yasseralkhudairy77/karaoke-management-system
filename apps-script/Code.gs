@@ -1311,6 +1311,7 @@ function getRooms_() {
     // Get LC IDs from active session - IMPORTANT: Must check all relevant statuses
     var lcIds = "";
     var lcAssignments = "";
+    var activeSession = latestSessionByRoom[String(room.room_id || "").trim()] || null;
     var debugInfo = {
       room_id: room.room_id,
       lcIds_initial: lcIds,
@@ -1320,7 +1321,6 @@ function getRooms_() {
     };
 
     try {
-      var activeSession = latestSessionByRoom[String(room.room_id || "").trim()] || null;
       debugInfo.activeSession_found = !!activeSession;
       
       if (activeSession && activeSession.session) {
@@ -1336,6 +1336,17 @@ function getRooms_() {
     }
 
     debugInfo.lcIds_final = lcIds;
+    var activeSessionIsTest = activeSession && activeSession.session && isTestDataValue_(activeSession.session.is_test);
+    var roomIsTest = isTestDataValue_(room.is_test);
+    var roomTestRunId = activeSessionIsTest
+      ? String(activeSession.session.test_run_id || "").trim()
+      : String(room.test_run_id || "").trim();
+    var roomTestCreatedBy = activeSessionIsTest
+      ? String(activeSession.session.test_created_by || "").trim()
+      : String(room.test_created_by || "").trim();
+    var roomTestNote = activeSessionIsTest
+      ? String(activeSession.session.test_note || "").trim()
+      : String(room.test_note || "").trim();
 
     var roomObj = {
       room_id: room.room_id || "",
@@ -1353,6 +1364,10 @@ function getRooms_() {
       lc_ids: lcIds,
       lc_assignments: lcAssignments,
       lc_companion_ids: lcIds,
+      is_test: activeSessionIsTest || roomIsTest ? "TRUE" : "",
+      test_run_id: activeSessionIsTest || roomIsTest ? roomTestRunId : "",
+      test_created_by: activeSessionIsTest || roomIsTest ? roomTestCreatedBy : "",
+      test_note: activeSessionIsTest || roomIsTest ? roomTestNote : "",
       _debug_lc_info: debugInfo,
     };
 

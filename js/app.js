@@ -2759,10 +2759,35 @@ async function loadOpenFnbOrders() {
   renderRooms();
 
   try {
-    const data = await fetchOpenFnbOrdersFromApi();
+    const globalData = await fetchOpenFnbOrdersFromApi();
+    const testRooms = rooms.filter((room) => {
+      const isTestRoom = room.is_test === true || String(room.is_test || "").trim().toLowerCase() === "true";
+      return isTestRoom && room.status === "occupied" && room.room_id;
+    });
+    const testResults = await Promise.allSettled(
+      testRooms.map((room) => fetchOpenFnbOrdersFromApi(room.room_id, ""))
+    );
 
-    openFnbOrders = Array.isArray(data.orders) ? data.orders : [];
-    openFnbOrderSummary = data.summary || null;
+    const mergedOrdersById = new Map();
+    (Array.isArray(globalData.orders) ? globalData.orders : []).forEach((order) => {
+      if (order.order_id) {
+        mergedOrdersById.set(order.order_id, order);
+      }
+    });
+    testResults.forEach((result) => {
+      if (result.status !== "fulfilled") {
+        console.warn("Gagal memuat open order F&B testing.", result.reason);
+        return;
+      }
+      (Array.isArray(result.value.orders) ? result.value.orders : []).forEach((order) => {
+        if (order.order_id) {
+          mergedOrdersById.set(order.order_id, order);
+        }
+      });
+    });
+
+    openFnbOrders = Array.from(mergedOrdersById.values());
+    openFnbOrderSummary = calculateOpenFnbOrdersSummary(openFnbOrders);
   } catch (error) {
     console.warn("Gagal memuat open order F&B.", error);
     openFnbOrders = [];
