@@ -48,6 +48,14 @@ export function formatReceipt58mm(receiptData, options = {}) {
 
   pushReceiptHeader(lines, business, width);
 
+  if (isReceiptTestTransaction(transaction.raw)) {
+    lines.push(centerReceiptText("*** TEST ***", width));
+    lines.push(centerReceiptText("BUKAN TRANSAKSI", width));
+    if (transaction.raw?.test_run_id) {
+      pushReceiptField(lines, "TEST ID", transaction.raw.test_run_id, width);
+    }
+  }
+
   if (print.isReprint) {
     lines.push(centerReceiptText("*** CETAK ULANG ***", width));
     lines.push(centerReceiptText(`Cetak ulang ke-${getNumber(print.reprintNumber)}`, width));
@@ -132,6 +140,10 @@ export function formatReceipt58mm(receiptData, options = {}) {
   }
 
   return lines.join("\n");
+}
+
+function isReceiptTestTransaction(transaction) {
+  return transaction?.is_test === true || String(transaction?.is_test || "").trim().toLowerCase() === "true";
 }
 
 function pushReceiptHeader(lines, business, width) {

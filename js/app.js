@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=owner-test-mode-v1";
 import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -214,6 +214,40 @@ function isLocalTvBridgeEnabled() {
 
 function canUseDevShortSessions() {
   return Boolean(DEV_SHORT_SESSION_ENABLED && roleMeetsRequired(getCurrentOperatorRole(), "manager"));
+}
+
+function canUseOwnerTestMode() {
+  return getCurrentOperatorRole() === "owner";
+}
+
+function buildOwnerTestModePayload() {
+  if (!canUseOwnerTestMode() || !ownerTestModeEnabled) {
+    return {};
+  }
+
+  return {
+    is_test: true,
+    admin_pin: ownerTestModePin.trim(),
+    test_note: ownerTestModeNote.trim(),
+  };
+}
+
+function validateOwnerTestModeBeforeSubmit() {
+  if (!ownerTestModeEnabled) {
+    return true;
+  }
+
+  if (!canUseOwnerTestMode()) {
+    showInlineNotice("Mode testing hanya tersedia untuk owner.", "error");
+    return false;
+  }
+
+  if (!ownerTestModePin.trim()) {
+    showInlineNotice("PIN owner wajib diisi untuk Mode Testing.", "error");
+    return false;
+  }
+
+  return true;
 }
 
 function getMinimumSessionMinutes() {
@@ -882,6 +916,13 @@ let bookingTypeSelection = "regular";
 let bookingPackageSelection = "";
 let customerNameInput = "";
 let bookingCartItems = [];
+let ownerTestModeEnabled = false;
+let ownerTestModePin = "";
+let ownerTestModeNote = "";
+let lastOwnerTestRunId = "";
+let cleanupTestRunIdInput = "";
+let cleanupTestOwnerPinInput = "";
+let isCleaningTestRun = false;
 let prepayCartItems = [];
 let isLoadingPrepayFnb = false;
 let prepayFnbError = "";
@@ -3499,6 +3540,10 @@ function normalizeRooms(rawRooms) {
       package_id: room.package_id || "",
       lc_ids: String(room.lc_ids || "").trim(),
       lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
+      is_test: room.is_test === true || String(room.is_test || "").trim().toLowerCase() === "true",
+      test_run_id: String(room.test_run_id || "").trim(),
+      test_created_by: String(room.test_created_by || "").trim(),
+      test_note: String(room.test_note || "").trim(),
       _debug_lc_info: room._debug_lc_info || null,
     };
   });
@@ -4652,6 +4697,10 @@ function getTransactionFinalTotal(transaction) {
   return (Number(transaction?.room_total) || 0)
     + (Number(transaction?.fnb_total) || 0)
     + (Number(transaction?.lc_total) || 0);
+}
+
+function isTestTransaction(transaction) {
+  return transaction?.is_test === true || String(transaction?.is_test || "").trim().toLowerCase() === "true";
 }
 
 function getTransactionRoomTotal(transaction) {
@@ -6052,7 +6101,9 @@ function createBillingSummaryElement(transaction) {
   const title = document.createElement("h2");
   title.className = "billing-summary-title";
   title.id = "billing-summary-title";
-  title.textContent = "Ringkasan Tagihan";
+  title.textContent = isTestTransaction(transaction)
+    ? "Ringkasan Tagihan TEST"
+    : "Ringkasan Tagihan";
 
   const actions = document.createElement("div");
   actions.className = "billing-summary-actions";
@@ -6077,6 +6128,7 @@ function createBillingSummaryElement(transaction) {
   grid.className = "billing-summary-grid";
 
   const items = [
+    ...(isTestTransaction(transaction) ? [["Mode", `TEST - ${transaction?.test_run_id || "Tanpa ID"}`, "billing-status-unpaid"]] : []),
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
@@ -6297,7 +6349,9 @@ function createReceiptPrintElement(transaction) {
   const title = document.createElement("h2");
   title.className = "receipt-print-title";
   title.id = "receipt-print-title";
-  title.textContent = "Struk Tagihan";
+  title.textContent = isTestTransaction(transaction)
+    ? "TEST - BUKAN TRANSAKSI"
+    : "Struk Tagihan";
 
   const meta = document.createElement("p");
   meta.className = "receipt-print-meta";
@@ -6813,6 +6867,17 @@ function createRoomCard(room) {
     topLine.append(name, status);
   }
 
+  if (room.is_test === true || String(room.is_test || "").toLowerCase() === "true") {
+    const testBadge = document.createElement("span");
+    testBadge.className = "room-status-badge";
+    testBadge.style.backgroundColor = "rgba(245, 158, 11, 0.18)";
+    testBadge.style.color = "#fbbf24";
+    testBadge.style.border = "1px solid rgba(245, 158, 11, 0.45)";
+    testBadge.style.fontWeight = "900";
+    testBadge.textContent = "TEST";
+    topLine.appendChild(testBadge);
+  }
+
   const meta = document.createElement("div");
   meta.className = "room-meta";
 
@@ -6938,6 +7003,9 @@ function createRoomWaitingPaymentInfoElement(room) {
   const items = [
     ["Pelanggan", room.customer_name || "-"],
   ];
+  if (room.is_test) {
+    items.unshift(["Mode", `TEST ${room.test_run_id || ""}`.trim()]);
+  }
   if (room.package_id) {
     const pkg = packages.find(p => p.package_id === room.package_id);
     items.push(["Paket", pkg ? pkg.package_name : room.package_id]);
@@ -6974,6 +7042,10 @@ function createRoomBookingInfoElement(room) {
     ["Mulai", getRoomTimeLabel(room.start_time)],
     ["Selesai", getRoomTimeLabel(room.scheduled_end_time)],
   ];
+
+  if (room.is_test) {
+    rows.unshift(["Mode", `TEST ${room.test_run_id || ""}`.trim()]);
+  }
 
   const lcIds = String(room.lc_ids || "").trim();
   if (lcIds) {
@@ -7057,6 +7129,61 @@ function createDurationSelectionElement(room) {
   const title = document.createElement("p");
   title.className = "duration-selection-title";
   title.textContent = `Pilih durasi/paket untuk ${room.room_name}`;
+  panel.appendChild(title);
+
+  if (canUseOwnerTestMode()) {
+    const testBox = document.createElement("div");
+    testBox.style.border = "1px solid rgba(245, 158, 11, 0.55)";
+    testBox.style.background = "rgba(245, 158, 11, 0.12)";
+    testBox.style.padding = "10px";
+    testBox.style.borderRadius = "8px";
+    testBox.style.display = "grid";
+    testBox.style.gap = "8px";
+
+    const toggleLabel = document.createElement("label");
+    toggleLabel.style.display = "flex";
+    toggleLabel.style.alignItems = "center";
+    toggleLabel.style.gap = "8px";
+    toggleLabel.style.fontWeight = "800";
+    toggleLabel.style.color = "#fbbf24";
+
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.dataset.action = "toggle-owner-test-mode";
+    toggle.checked = ownerTestModeEnabled;
+
+    const toggleText = document.createElement("span");
+    toggleText.textContent = "Mode Testing Owner";
+    toggleLabel.append(toggle, toggleText);
+    testBox.appendChild(toggleLabel);
+
+    if (ownerTestModeEnabled) {
+      const warning = document.createElement("p");
+      warning.className = "state-message";
+      warning.style.margin = "0";
+      warning.textContent = "Data akan diberi marker TEST, tidak masuk laporan/closing/stok production, dan bisa dibersihkan per Test Run.";
+      testBox.appendChild(warning);
+
+      const pinInput = document.createElement("input");
+      pinInput.className = "duration-custom-input";
+      pinInput.type = "password";
+      pinInput.inputMode = "numeric";
+      pinInput.placeholder = "PIN Owner untuk testing";
+      pinInput.dataset.action = "update-owner-test-mode-pin";
+      pinInput.value = ownerTestModePin;
+      testBox.appendChild(pinInput);
+
+      const noteInput = document.createElement("input");
+      noteInput.className = "duration-custom-input";
+      noteInput.type = "text";
+      noteInput.placeholder = "Catatan test run";
+      noteInput.dataset.action = "update-owner-test-mode-note";
+      noteInput.value = ownerTestModeNote;
+      testBox.appendChild(noteInput);
+    }
+
+    panel.appendChild(testBox);
+  }
 
   // Customer Name input
   const nameField = document.createElement("div");
@@ -15266,7 +15393,70 @@ function createSettingsPanelElement() {
     getActiveSettingsSectionElement()
   );
 
+  if (getCurrentOperatorRole() === "owner") {
+    panel.appendChild(createOwnerTestingCleanupSection());
+  }
+
   return panel;
+}
+
+function createOwnerTestingCleanupSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section";
+  section.style.border = "1px solid rgba(245, 158, 11, 0.45)";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Cleanup Data Testing";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Hanya menghapus row dengan is_test=TRUE dan test_run_id yang sama.";
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const form = document.createElement("div");
+  form.className = "settings-control-row";
+
+  const idField = document.createElement("label");
+  idField.className = "master-form-field";
+  const idLabel = document.createElement("span");
+  idLabel.className = "master-form-label";
+  idLabel.textContent = "Test Run ID";
+  const idInput = document.createElement("input");
+  idInput.className = "master-form-input";
+  idInput.dataset.action = "update-cleanup-test-run-id";
+  idInput.placeholder = "TEST-YYYYMMDD...";
+  idInput.value = cleanupTestRunIdInput || lastOwnerTestRunId;
+  idField.append(idLabel, idInput);
+
+  const pinField = document.createElement("label");
+  pinField.className = "master-form-field";
+  const pinLabel = document.createElement("span");
+  pinLabel.className = "master-form-label";
+  pinLabel.textContent = "PIN Owner";
+  const pinInput = document.createElement("input");
+  pinInput.className = "master-form-input";
+  pinInput.type = "password";
+  pinInput.inputMode = "numeric";
+  pinInput.dataset.action = "update-cleanup-test-owner-pin";
+  pinInput.value = cleanupTestOwnerPinInput;
+  pinField.append(pinLabel, pinInput);
+
+  const button = document.createElement("button");
+  button.className = "master-button danger";
+  button.type = "button";
+  button.dataset.action = "cleanup-test-run";
+  button.disabled = isCleaningTestRun || !API_BASE_URL.trim();
+  button.textContent = isCleaningTestRun ? "Membersihkan..." : "Bersihkan Test Run";
+
+  form.append(idField, pinField, button);
+  section.append(header, form);
+
+  return section;
 }
 
 function findMasterItem(type, id) {
@@ -19815,6 +20005,10 @@ async function startSession(roomId, durationMinutes) {
     return;
   }
 
+  if (!validateOwnerTestModeBeforeSubmit()) {
+    return;
+  }
+
   setActionButtonsDisabled(true);
 
   try {
@@ -19823,6 +20017,7 @@ async function startSession(roomId, durationMinutes) {
       room_id: roomId,
       duration_minutes: selectedDuration,
       dev_test_duration: canUseDevShortSessions(),
+      ...buildOwnerTestModePayload(),
     });
 
     if (!data || data.ok !== true) {
@@ -19838,6 +20033,7 @@ async function startSession(roomId, durationMinutes) {
 
     durationSelectionRoomId = "";
     customDurationMinutes = "";
+    lastOwnerTestRunId = data.test_run_id || lastOwnerTestRunId;
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memulai sesi.", "error");
@@ -19861,6 +20057,10 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
 
   if (selectedDuration < getMinimumSessionMinutes()) {
     showInlineNotice(getMinimumSessionMessage(), "error");
+    return;
+  }
+
+  if (!validateOwnerTestModeBeforeSubmit()) {
     return;
   }
 
@@ -19891,6 +20091,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
         quantity: item.quantity
       })),
       idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
+      ...buildOwnerTestModePayload(),
     });
 
     if (!data || data.ok !== true) {
@@ -19902,6 +20103,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
     durationSelectionRoomId = "";
     customDurationMinutes = "";
     durationPaymentMethod = "cash";
+    lastOwnerTestRunId = data.test_run_id || lastOwnerTestRunId;
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyiapkan booking room.", "error");
@@ -19962,6 +20164,7 @@ async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
       throw new Error(data?.error || "Gagal memproses pembayaran.");
     }
     showInlineNotice(data.message || "Pembayaran berhasil diproses.");
+    lastOwnerTestRunId = data.test_run_id || data.transaction?.test_run_id || lastOwnerTestRunId;
     clearPayAndStartIdempotencyKey(roomId, paymentMethod); // bersihkan cache key setelah sukses
     prepayCartItems = []; // clear cashier cart on success
     paymentSelectionRoomId = "";
@@ -20578,6 +20781,68 @@ async function executeDeleteTransaction(transactionId, adminPin, authData) {
   } finally {
     deletingTransactionIds.delete(transactionId);
     setActionButtonsDisabled(false);
+  }
+}
+
+async function cleanupTestRun() {
+  if (getCurrentOperatorRole() !== "owner") {
+    showInlineNotice("Cleanup data testing hanya tersedia untuk owner.", "error");
+    return;
+  }
+
+  const testRunId = (cleanupTestRunIdInput || lastOwnerTestRunId || "").trim();
+  const ownerPin = cleanupTestOwnerPinInput.trim();
+
+  if (!testRunId) {
+    showInlineNotice("Isi Test Run ID yang akan dibersihkan.", "error");
+    return;
+  }
+
+  if (!ownerPin) {
+    showInlineNotice("PIN owner wajib diisi untuk cleanup data testing.", "error");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Bersihkan permanen semua data testing untuk ${testRunId}? Data production tidak akan disentuh.`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  isCleaningTestRun = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "cleanupTestRun",
+      test_run_id: testRunId,
+      admin_pin: ownerPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal membersihkan data testing.");
+    }
+
+    cleanupTestRunIdInput = "";
+    cleanupTestOwnerPinInput = "";
+    if (lastOwnerTestRunId === testRunId) {
+      lastOwnerTestRunId = "";
+    }
+    showInlineNotice(data.message || "Data testing berhasil dibersihkan.");
+    await Promise.all([
+      loadRooms(),
+      loadTransactionsTabData({ force: true }),
+      loadTodayFnbOrders(),
+      loadTodayStockMovements(),
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membersihkan data testing.", "error");
+  } finally {
+    isCleaningTestRun = false;
+    renderRooms();
   }
 }
 
@@ -21294,6 +21559,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "cleanup-test-run") {
+    await cleanupTestRun();
+    return;
+  }
+
   if (action === "show-transaction-summary") {
     showTransactionFromHistory(button.dataset.transactionId || "");
     return;
@@ -21493,6 +21763,28 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-owner-test-mode-pin") {
+    ownerTestModePin = field.value.replace(/\D/g, "");
+    field.value = ownerTestModePin;
+    return;
+  }
+
+  if (action === "update-owner-test-mode-note") {
+    ownerTestModeNote = field.value;
+    return;
+  }
+
+  if (action === "update-cleanup-test-run-id") {
+    cleanupTestRunIdInput = field.value.trim();
+    return;
+  }
+
+  if (action === "update-cleanup-test-owner-pin") {
+    cleanupTestOwnerPinInput = field.value.replace(/\D/g, "");
+    field.value = cleanupTestOwnerPinInput;
+    return;
+  }
+
   if (action === "update-fnb-order-note") {
     updateFnbOrderNote(field.value);
     return;
@@ -21619,6 +21911,18 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const ownerTestToggle = event.target.closest("[data-action='toggle-owner-test-mode']");
+
+  if (ownerTestToggle) {
+    ownerTestModeEnabled = Boolean(ownerTestToggle.checked);
+    if (!ownerTestModeEnabled) {
+      ownerTestModePin = "";
+      ownerTestModeNote = "";
+    }
+    renderRooms();
+    return;
+  }
+
   const durationPaymentField = event.target.closest("[data-action='update-duration-payment-method']");
 
   if (durationPaymentField) {

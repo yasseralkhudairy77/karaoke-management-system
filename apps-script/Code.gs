@@ -9,6 +9,12 @@
  */
 
 var SERVICE_NAME = "karaoke-pos-api";
+var TEST_DATA_EXTRA_HEADERS = [
+  "is_test",
+  "test_run_id",
+  "test_created_by",
+  "test_note",
+];
 var FNB_V25A_BOOKING_MODE_REGULAR = "regular";
 var FNB_V25A_BOOKING_MODE_PACKAGE = "package";
 var FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE = "room_fnb_bundle";
@@ -99,6 +105,8 @@ var CASHIER_CLOSINGS_HEADERS = [
   "total_revenue",
   "note",
   "created_at",
+  "is_test",
+  "test_run_id",
 ];
 var FNB_ORDERS_HEADERS = [
   "order_id",
@@ -114,6 +122,10 @@ var FNB_ORDERS_HEADERS = [
   "cancel_reason",
   "cancelled_by",
   "cancelled_at",
+  "is_test",
+  "test_run_id",
+  "test_created_by",
+  "test_note",
 ];
 var FNB_ORDER_ITEMS_HEADERS = [
   "order_id",
@@ -125,6 +137,8 @@ var FNB_ORDER_ITEMS_HEADERS = [
   "subtotal",
   "bonus_sales_lc",
   "created_at",
+  "is_test",
+  "test_run_id",
 ];
 var CASHIER_CLOSING_TRANSACTIONS_HEADERS = [
   "closing_transaction_id",
@@ -149,6 +163,8 @@ var CASHIER_CLOSING_TRANSACTIONS_HEADERS = [
   "cashier_name",
   "transaction_created_at",
   "snapshot_at",
+  "is_test",
+  "test_run_id",
 ];
 var CASHIER_CLOSING_FNB_ITEMS_HEADERS = [
   "closing_fnb_item_id",
@@ -166,6 +182,8 @@ var CASHIER_CLOSING_FNB_ITEMS_HEADERS = [
   "subtotal",
   "order_created_at",
   "snapshot_at",
+  "is_test",
+  "test_run_id",
 ];
 var CASHIER_CLOSING_LC_DETAILS_HEADERS = [
   "closing_lc_detail_id",
@@ -190,6 +208,8 @@ var CASHIER_CLOSING_LC_DETAILS_HEADERS = [
   "bonus_per_item",
   "bonus_total",
   "snapshot_at",
+  "is_test",
+  "test_run_id",
 ];
 var RECEIPT_PRINT_LOGS_HEADERS = [
   "print_log_id",
@@ -200,6 +220,8 @@ var RECEIPT_PRINT_LOGS_HEADERS = [
   "cashier_name",
   "printed_at",
   "note",
+  "is_test",
+  "test_run_id",
 ];
 var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_total",
@@ -209,6 +231,10 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "lc_total",
   "promo_code",
   "promo_discount",
+  "is_test",
+  "test_run_id",
+  "test_created_by",
+  "test_note",
 ];
 var PROMO_MASTER_HEADERS = [
   "code",
@@ -240,6 +266,8 @@ var LC_WORK_LOG_HEADERS = [
   "created_at",
   "closed_at",
   "payroll_id",
+  "is_test",
+  "test_run_id",
 ];
 var LC_PAYROLL_HISTORY_HEADERS = [
   "payroll_id",
@@ -341,6 +369,8 @@ var STOCK_MOVEMENTS_HEADERS = [
   "stock_after",
   "note",
   "cashier_name",
+  "is_test",
+  "test_run_id",
 ];
 var ROOMS_BOOKING_HEADERS = [
   "booked_duration_minutes",
@@ -348,6 +378,10 @@ var ROOMS_BOOKING_HEADERS = [
   "customer_name",
   "package_id",
   "lc_ids",
+  "is_test",
+  "test_run_id",
+  "test_created_by",
+  "test_note",
 ];
 var ROOM_TIME_LOGS_HEADERS = [
   "log_id",
@@ -363,6 +397,8 @@ var ROOM_TIME_LOGS_HEADERS = [
   "cashier_name",
   "note",
   "idempotency_key",
+  "is_test",
+  "test_run_id",
 ];
 var ROOM_RECOVERY_LOGS_HEADERS = [
   "log_id",
@@ -548,6 +584,10 @@ var ROOM_SESSION_HEADERS = [
   "prepayment_transaction_id",
   "lc_ids",
   "lc_assignments",
+  "is_test",
+  "test_run_id",
+  "test_created_by",
+  "test_note",
 ];
 var SESSION_PACKAGE_HEADERS = [
   "session_package_id",
@@ -984,6 +1024,10 @@ function doPost(e) {
 
     if (action === "deleteTransaction") {
       return jsonResponse(deleteTransaction_(payload));
+    }
+
+    if (action === "cleanupTestRun") {
+      return jsonResponse(cleanupTestRun_(payload));
     }
 
     if (action === "logReceiptPrint") {
@@ -6333,6 +6377,161 @@ function setRowValues_(sheet, headerMap, rowNumber, objectData) {
   });
 }
 
+function deleteRowsByTestRunId_(sheetName, testRunId) {
+  if (!sheetExists_(sheetName)) {
+    return 0;
+  }
+
+  var sheet = getSheet_(sheetName);
+  var headerMap = getHeaderMap_(sheet);
+
+  if (!headerMap.test_run_id || !headerMap.is_test) {
+    return 0;
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var deleted = 0;
+
+  for (var rowIndex = values.length - 1; rowIndex >= 1; rowIndex--) {
+    var row = values[rowIndex];
+    var isTest = isTestDataValue_(row[headerMap.is_test - 1]);
+    var rowTestRunId = String(row[headerMap.test_run_id - 1] || "").trim();
+
+    if (isTest && rowTestRunId === testRunId) {
+      sheet.deleteRow(rowIndex + 1);
+      deleted += 1;
+    }
+  }
+
+  return deleted;
+}
+
+function cleanupTestRun_(payload) {
+  var request = payload || {};
+  var testRunId = String(request.test_run_id || "").trim();
+
+  if (!testRunId) {
+    return { ok: false, success: false, error: "test_run_id wajib diisi." };
+  }
+
+  var authResult = validateAdminPinPayload_(
+    request.admin_pin,
+    "owner",
+    "cleanup_test_run",
+    request.changed_by || request.cashier_name || "Owner",
+    true
+  );
+
+  if (!authResult.success) {
+    return {
+      ok: false,
+      success: false,
+      error: "Cleanup data testing membutuhkan PIN owner yang valid.",
+    };
+  }
+
+  if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+    var activeTestSessions = readSheetAsObjects_(ROOM_SESSIONS_SHEET).filter(function (session) {
+      return isTestDataValue_(session.is_test)
+        && String(session.test_run_id || "").trim() === testRunId
+        && ["starting", "active", "closing"].indexOf(String(session.status || "").trim().toLowerCase()) !== -1;
+    });
+
+    if (activeTestSessions.length > 0) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada session testing aktif. Selesaikan atau batalkan session testing sebelum cleanup.",
+        active_sessions: activeTestSessions.map(function (session) {
+          return {
+            session_id: session.session_id || "",
+            room_id: session.room_id || "",
+            status: session.status || "",
+          };
+        }),
+      };
+    }
+  }
+
+  if (sheetExists_("Rooms")) {
+    var activeTestRooms = readSheetAsObjects_("Rooms").filter(function (room) {
+      var status = String(room.status || "").trim().toLowerCase();
+      return isTestDataValue_(room.is_test)
+        && String(room.test_run_id || "").trim() === testRunId
+        && ["occupied", "waiting_payment", "paid_waiting_start"].indexOf(status) !== -1;
+    });
+
+    if (activeTestRooms.length > 0) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada room testing aktif. Selesaikan/cleaning-kan room sebelum cleanup.",
+        active_rooms: activeTestRooms.map(function (room) {
+          return {
+            room_id: room.room_id || "",
+            room_name: room.room_name || "",
+            status: room.status || "",
+          };
+        }),
+      };
+    }
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return createLockBusyResponse_("Sistem sedang memproses cleanup lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var deleted = {};
+    [
+      "ReceiptPrintLogs",
+      "CashierClosingLcDetails",
+      "CashierClosingFnbItems",
+      "CashierClosingTransactions",
+      "StockMovements",
+      "LcWorkLogs",
+      "RoomTimeLogs",
+      "FnbOrderItems",
+      "FnbOrders",
+      "Transactions",
+      ROOM_SESSIONS_SHEET
+    ].forEach(function (sheetName) {
+      deleted[sheetName] = deleteRowsByTestRunId_(sheetName, testRunId);
+    });
+
+    if (sheetExists_("Rooms")) {
+      var roomsSheet = ensureRoomsBookingColumns_();
+      var roomsHeaderMap = getHeaderMap_(roomsSheet);
+      var rooms = roomsSheet.getDataRange().getValues();
+      for (var roomRowIndex = 1; roomRowIndex < rooms.length; roomRowIndex++) {
+        var roomRow = rooms[roomRowIndex];
+        if (
+          roomsHeaderMap.test_run_id &&
+          String(roomRow[roomsHeaderMap.test_run_id - 1] || "").trim() === testRunId
+        ) {
+          setRowValues_(roomsSheet, roomsHeaderMap, roomRowIndex + 1, {
+            is_test: "",
+            test_run_id: "",
+            test_created_by: "",
+            test_note: "",
+          });
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Data testing berhasil dibersihkan.",
+      test_run_id: testRunId,
+      deleted: deleted,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function validateRoomMasterPayload_(payload, isUpdate) {
   var roomName = String(payload.room_name || "").trim();
   var ratePerHour = Number(payload.rate_per_hour);
@@ -7412,7 +7611,23 @@ function deleteLcMaster_(payload) {
 
 function appendLcWorkLog_(log) {
   var sheet = ensureLcWorkLogsSheet_();
-  appendObjectRow_(sheet, log);
+  var entry = Object.assign({}, log || {});
+
+  if (!isTestDataValue_(entry.is_test) && entry.session_id && sheetExists_(ROOM_SESSIONS_SHEET)) {
+    var sessions = readSheetAsObjects_(ROOM_SESSIONS_SHEET);
+    for (var i = sessions.length - 1; i >= 0; i--) {
+      var session = sessions[i];
+      if (String(session.session_id || "").trim() === String(entry.session_id || "").trim()) {
+        if (isTestDataValue_(session.is_test)) {
+          entry.is_test = "TRUE";
+          entry.test_run_id = session.test_run_id || "";
+        }
+        break;
+      }
+    }
+  }
+
+  appendObjectRow_(sheet, entry);
 }
 
 function normalizeLcDurationMinutes_(value, defaultDurationMinutes) {
@@ -7672,6 +7887,10 @@ function getLcWorkReports_(period, startDate, endDate) {
   }
   
   var filteredLogs = dedupeLcWorkLogsBySessionAndLc_(logs.filter(function(log) {
+    if (!isProductionDataRow_(log)) {
+      return false;
+    }
+
     var createdTime = log.created_at || log.closed_at || "";
     if (!createdTime) return false;
     var logOperationalDate = getOperationalDateString_(createdTime);
@@ -8033,6 +8252,10 @@ function getPendingLcPayroll_(startDate, endDate) {
   var financeGroups = buildLcPayrollFinanceGroups_(range);
 
   var filteredLogs = dedupeLcWorkLogsBySessionAndLc_(logs.filter(function(log) {
+    if (!isProductionDataRow_(log)) {
+      return false;
+    }
+
     var status = String(log.status || "").trim().toLowerCase();
     if (status !== "done") {
       return false;
@@ -8204,6 +8427,10 @@ function processLcPayroll_(payload) {
 
     for (var i = 0; i < logs.length; i++) {
       var log = logs[i];
+      if (!isProductionDataRow_(log)) {
+        continue;
+      }
+
       var status = String(log.status || "").trim().toLowerCase();
       var isUnpaid = !log.payroll_id || String(log.payroll_id).trim() === "";
       var effectiveTime = log.closed_at || log.created_at || "";
@@ -8640,6 +8867,10 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
 
   var transactions = readSheetAsObjects_("Transactions")
     .filter(function (transaction) {
+      if (!isProductionDataRow_(transaction)) {
+        return false;
+      }
+
       if (periodResult.period === "all") {
         return true;
       }
@@ -8733,6 +8964,10 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
 
   var filteredTransactions = readSheetAsObjects_("Transactions")
     .filter(function (transaction) {
+      if (!isProductionDataRow_(transaction)) {
+        return false;
+      }
+
       if (periodResult.period === "all") {
         return true;
       }
@@ -9367,6 +9602,8 @@ function startSession_(roomId, durationMinutes, options) {
     };
   }
 
+  var testContext = buildTestContextFromPayload_(options || {}, "owner");
+
   if (normalizedPeriod === "last_month") {
     var dateParts = activeOperationalDate.split("-");
     var firstOfThisMonth = new Date(Date.UTC(Number(dateParts[0]), Number(dateParts[1]) - 1, 1, 5, 0, 0));
@@ -9418,17 +9655,20 @@ function startSession_(roomId, durationMinutes, options) {
 
     var now = toJakartaIsoString_(new Date());
     var scheduledEndTime = addMinutesToJakartaIsoString_(now, bookedDurationMinutes);
+    var testFields = getTestFields_(testContext);
 
     sheet.getRange(rowNumber, statusColumn).setValue("occupied");
     sheet.getRange(rowNumber, startTimeColumn).setValue(now);
     sheet.getRange(rowNumber, bookedDurationColumn).setValue(bookedDurationMinutes);
     sheet.getRange(rowNumber, scheduledEndTimeColumn).setValue(scheduledEndTime);
     sheet.getRange(rowNumber, updatedAtColumn).setValue(now);
+    setRowValues_(sheet, headerMap, rowNumber, testFields);
 
     return {
       ok: true,
-      message: "Sesi berhasil dimulai.",
+      message: testContext.is_test ? "Sesi testing berhasil dimulai." : "Sesi berhasil dimulai.",
       room: getRoomFromRow_(sheet, headerMap, rowNumber),
+      test_run_id: testContext.test_run_id || "",
     };
   } finally {
     lock.releaseLock();
@@ -9475,6 +9715,8 @@ function prepareRoomSession_(payload) {
       error: "Metode pembayaran tidak dikenal.",
     };
   }
+
+  var testContext = buildTestContextFromPayload_(request, "owner");
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) {
@@ -9692,6 +9934,7 @@ function prepareRoomSession_(payload) {
       lc_ids: lcIds,
       lc_assignments: lcAssignmentsJson,
     };
+    Object.assign(session, getTestFields_(testContext));
 
     appendRoomSession_(session);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
@@ -9709,11 +9952,12 @@ function prepareRoomSession_(payload) {
     if (roomsHeaderMap.lc_ids) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
     }
+    setRowValues_(roomsSheet, roomsHeaderMap, rowNumber, getTestFields_(testContext));
 
     SpreadsheetApp.flush();
     var fnbItems = request.fnb_items;
     if (Array.isArray(fnbItems) && fnbItems.length > 0) {
-      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dipesan via Resepsionis", "", "unpaid");
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dipesan via Resepsionis", "", "unpaid", testContext);
       if (!fnbResult.ok) {
         throw new Error("Gagal menyimpan pesanan F&B: " + fnbResult.error);
       }
@@ -9725,6 +9969,7 @@ function prepareRoomSession_(payload) {
       message: "Booking room berhasil disiapkan. Room menunggu siap diaktifkan waiters.",
       room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
       session: session,
+      test_run_id: testContext.test_run_id || "",
     };
   } finally {
     lock.releaseLock();
@@ -9796,6 +10041,19 @@ function payAndStartSession_(payload) {
     }
 
     var session = sessionResult.session;
+    var testContext = isTestDataValue_(session.is_test)
+      ? {
+          is_test: true,
+          test_run_id: String(session.test_run_id || "").trim(),
+          test_created_by: String(session.test_created_by || "").trim(),
+          test_note: String(session.test_note || "").trim(),
+        }
+      : {
+          is_test: false,
+          test_run_id: "",
+          test_created_by: "",
+          test_note: "",
+        };
     var durationMinutes = Number(session.booked_duration_minutes) || 0;
     var ratePerHour = Number(room.rate_per_hour) || 0;
     var upfrontCharge = 0;
@@ -9922,7 +10180,7 @@ function payAndStartSession_(payload) {
     var fnbOrderIds = "";
     var fnbItems = request.fnb_items;
     if (Array.isArray(fnbItems) && fnbItems.length > 0) {
-      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dibayar via Prepayment Kasir", "", "unpaid");
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dibayar via Prepayment Kasir", "", "unpaid", testContext);
       if (!fnbResult.ok) {
         throw new Error("Gagal memproses F&B Prepayment: " + fnbResult.error);
       }
@@ -9932,9 +10190,10 @@ function payAndStartSession_(payload) {
       // Ubah status order F&B menjadi paid
       markFnbOrdersAsPaid_([fnbOrderIds], now);
       
-      // Potong stok F&B
-      var detailedOrder = Object.assign({}, fnbResult.order, { items: fnbResult.items });
-      deductStockForFnbOrders_([detailedOrder], transactionId, cashierName, now);
+      if (!testContext.is_test) {
+        var detailedOrder = Object.assign({}, fnbResult.order, { items: fnbResult.items });
+        deductStockForFnbOrders_([detailedOrder], transactionId, cashierName, now);
+      }
     }
 
     // Create Transaction 1 (Upfront)
@@ -9959,10 +10218,11 @@ function payAndStartSession_(payload) {
       promo_code: promoCode,
       promo_discount: promoDiscount
     };
+    Object.assign(transaction, getTestFields_(testContext));
     appendTransaction_(transaction);
 
     // Mark voucher as used in database
-    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+    if (!isTestDataValue_(transaction.is_test) && appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
       var promoSheet = ensurePromoMasterSheet_();
       var promoHeaderMap = getHeaderMap_(promoSheet);
       var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", promoCode);
@@ -9976,7 +10236,7 @@ function payAndStartSession_(payload) {
     }
 
     // Deduct stock for package F&B
-    if (session.booking_mode === "package" && session.package_id) {
+    if (!testContext.is_test && session.booking_mode === "package" && session.package_id) {
       deductPackageStock_(session.package_id, transactionId, cashierName, now);
     }
 
@@ -10004,13 +10264,17 @@ function payAndStartSession_(payload) {
     if (roomsHeaderMap.lc_ids) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
     }
+    setRowValues_(roomsSheet, roomsHeaderMap, rowNumber, getTestFields_(testContext));
 
     return {
       ok: true,
       success: true,
-      message: "Pembayaran awal lunas. Room menunggu siap diaktifkan waiters.",
+      message: testContext.is_test
+        ? "Pembayaran awal testing diproses. Room menunggu siap diaktifkan waiters."
+        : "Pembayaran awal lunas. Room menunggu siap diaktifkan waiters.",
       room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
       transaction: transaction,
+      test_run_id: testContext.test_run_id || "",
     };
   } finally {
     lock.releaseLock();
@@ -10384,6 +10648,12 @@ function activatePreparedSession_(roomId, cashierName) {
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue(scheduledEndTime);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+    setRowValues_(roomsSheet, roomsHeaderMap, rowNumber, getTestFields_({
+      is_test: isTestDataValue_(session.is_test),
+      test_run_id: session.test_run_id || "",
+      test_created_by: session.test_created_by || "",
+      test_note: session.test_note || "",
+    }));
 
     // Sinkronkan start_time F&B orders yang dibayar prepayment
     syncPrepaidFnbOrdersStartTime_(normalizedRoomId, now);
@@ -10447,6 +10717,14 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
 
     var room = getRowObject_(sheet, headerMap, rowNumber);
     var status = String(room.status || "").trim();
+    var testContext = isTestDataValue_(room.is_test)
+      ? {
+          is_test: true,
+          test_run_id: String(room.test_run_id || "").trim(),
+          test_created_by: String(room.test_created_by || "").trim(),
+          test_note: String(room.test_note || "").trim(),
+        }
+      : getActiveRoomSessionTestContext_(roomId);
     var existingExtendLogs = readSheetAsObjectsOrEmpty_("RoomTimeLogs");
 
     if (normalizedIdempotencyKey) {
@@ -10547,6 +10825,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
       note: String(note || "").trim(),
       idempotency_key: normalizedIdempotencyKey,
     };
+    Object.assign(logEntry, getTestFields_(testContext));
 
     try {
       appendRoomTimeLog_(logEntry);
@@ -10656,6 +10935,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
         created_at: now,
         transaction_type: "room_extension",
       };
+      Object.assign(transaction, getTestFields_(testContext));
       appendTransaction_(transaction);
     }
 
@@ -10713,6 +10993,14 @@ function closeSession_(roomId, cashierName) {
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
     var status = String(room.status || "").trim().toLowerCase();
     var activeRoomSession = findLatestRoomSessionForRoom_(roomId, ["active"]);
+    var testContext = isTestDataValue_(room.is_test)
+      ? {
+          is_test: true,
+          test_run_id: String(room.test_run_id || "").trim(),
+          test_created_by: String(room.test_created_by || "").trim(),
+          test_note: String(room.test_note || "").trim(),
+        }
+      : getActiveRoomSessionTestContext_(roomId);
 
     if (status !== "occupied") {
       if (activeRoomSession && activeRoomSession.session) {
@@ -10824,6 +11112,13 @@ function closeSession_(roomId, cashierName) {
       var sessionEndTimeMs = endDate.getTime();
       
       var relatedExtensionTxs = readSheetAsObjects_("Transactions").filter(function (tx) {
+        if (!isProductionDataRow_(tx) && !testContext.is_test) {
+          return false;
+        }
+        if (testContext.is_test && !isTestDataValue_(tx.is_test)) {
+          return false;
+        }
+
         if (String(tx.room_id || "").trim() !== String(room.room_id || "").trim()) {
           return false;
         }
@@ -10896,12 +11191,15 @@ function closeSession_(roomId, cashierName) {
         billing_basis: isPrepay ? "prepay_add_on" : billing.billing_basis,
         transaction_type: "session_checkout",
       };
+      Object.assign(transaction, getTestFields_(testContext));
 
       appendTransaction_(transaction);
-      stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      if (!testContext.is_test) {
+        stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      }
       
       // Deduct package stock if it is a postpaid package session
-      if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.booking_mode === "package" && !isPrepay) {
+      if (!testContext.is_test && activeRoomSession && activeRoomSession.session && activeRoomSession.session.booking_mode === "package" && !isPrepay) {
         var postpaidPackageId = String(activeRoomSession.session.package_id || "").trim();
         if (postpaidPackageId) {
           deductPackageStock_(postpaidPackageId, transaction.transaction_id, transaction.cashier_name, endTime);
@@ -10934,6 +11232,12 @@ function closeSession_(roomId, cashierName) {
     if (roomsHeaderMap.package_id) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
     }
+    setRowValues_(roomsSheet, roomsHeaderMap, rowNumber, {
+      is_test: "",
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    });
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(endTime);
 
     if (activeRoomSession) {
@@ -11458,7 +11762,7 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
     }
 
     // Tandai voucher terpakai
-    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+    if (!testContext.is_test && appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
       var promoSheet = ensurePromoMasterSheet_();
       var promoHeaderMap = getHeaderMap_(promoSheet);
       var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", prCode);
@@ -11595,6 +11899,10 @@ function saveCashierClosing_(cashActual, note, cashierName) {
 function calculateCashierClosingSummary_() {
   var periodResult = parseTransactionPeriod_("today", "", "");
   var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    if (!isProductionDataRow_(transaction)) {
+      return false;
+    }
+
     return matchesOperationalPeriod_(
       resolveTransactionOperationalDateString_(transaction),
       periodResult
@@ -11644,9 +11952,15 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testContextInput) {
   var normalizedRoomId = String(roomId || "").trim();
   var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
+  var testContext = testContextInput && testContextInput.is_test
+    ? testContextInput
+    : getActiveRoomSessionTestContext_(normalizedRoomId);
+  if (!testContext.is_test) {
+    testContext = getRoomSheetTestContext_(normalizedRoomId);
+  }
 
   if (!normalizedRoomId) {
     return {
@@ -11688,6 +12002,14 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       }
 
       room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+      if (isTestDataValue_(room.is_test)) {
+        testContext = {
+          is_test: true,
+          test_run_id: String(room.test_run_id || "").trim(),
+          test_created_by: String(room.test_created_by || "").trim(),
+          test_note: String(room.test_note || "").trim(),
+        };
+      }
       var status = String(room.status || "").trim().toLowerCase();
 
       if (status !== "occupied" && status !== "waiting_payment" && status !== "paid_waiting_start") {
@@ -11732,8 +12054,9 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       created_at: timestamp,
       updated_at: timestamp,
     };
+    Object.assign(order, getTestFields_(testContext));
     var orderItems = normalizedItems.map(function (item) {
-      return {
+      var orderItem = {
         order_id: order.order_id,
         menu_id: item.menu_id,
         menu_name: item.menu_name,
@@ -11744,13 +12067,20 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
         bonus_sales_lc: item.bonus_sales_lc,
         created_at: timestamp,
       };
+      Object.assign(orderItem, {
+        is_test: testContext.is_test ? "TRUE" : "",
+        test_run_id: testContext.is_test ? testContext.test_run_id || "" : "",
+      });
+      return orderItem;
     });
 
     ensureFnbOrdersSheet_();
     ensureFnbOrderItemsSheet_();
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
-    var lcSalesBonusLogs = appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName || "Kasir");
+    var lcSalesBonusLogs = testContext.is_test
+      ? []
+      : appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName || "Kasir");
 
     if (isPaid) {
       var transaction = {
@@ -11771,10 +12101,13 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
         created_at: timestamp,
         transaction_type: "fnb_addon",
       };
+      Object.assign(transaction, getTestFields_(testContext));
       appendTransaction_(transaction);
 
-      var detailedOrder = Object.assign({}, order, { items: orderItems });
-      deductStockForFnbOrders_([detailedOrder], transaction.transaction_id, transaction.cashier_name, timestamp);
+      if (!testContext.is_test) {
+        var detailedOrder = Object.assign({}, order, { items: orderItems });
+        deductStockForFnbOrders_([detailedOrder], transaction.transaction_id, transaction.cashier_name, timestamp);
+      }
     }
 
     return {
@@ -11819,6 +12152,7 @@ function payOpenFnbOrder_(payload) {
     var totalAccumulated = 0;
     var allDetailedOrderItems = [];
     var processedOrders = [];
+    var paymentTestContext = null;
 
     for (var i = 0; i < orderIds.length; i++) {
       var orderId = orderIds[i];
@@ -11830,6 +12164,18 @@ function payOpenFnbOrder_(payload) {
       var orderObj = getRowObject_(ordersSheet, ordersHeaderMap, rowNumber);
       if (orderObj.order_status !== "open") {
         throw new Error("Order F&B " + orderId + " sudah lunas atau dibatalkan.");
+      }
+
+      var orderIsTest = isTestDataValue_(orderObj.is_test);
+      if (paymentTestContext === null) {
+        paymentTestContext = {
+          is_test: orderIsTest,
+          test_run_id: orderIsTest ? String(orderObj.test_run_id || "").trim() : "",
+          test_created_by: orderIsTest ? String(orderObj.test_created_by || "").trim() : "",
+          test_note: orderIsTest ? String(orderObj.test_note || "").trim() : "",
+        };
+      } else if (Boolean(paymentTestContext.is_test) !== Boolean(orderIsTest)) {
+        throw new Error("Order F&B testing dan production tidak boleh dibayar dalam satu transaksi.");
       }
 
       // Mark order as paid
@@ -11868,6 +12214,7 @@ function payOpenFnbOrder_(payload) {
       created_at: timestamp,
       transaction_type: "fnb_addon",
     };
+    Object.assign(transaction, getTestFields_(paymentTestContext || {}));
 
     appendTransaction_(transaction);
 
@@ -11895,9 +12242,11 @@ function payOpenFnbOrder_(payload) {
       items: consolidatedItems
     };
 
-    var stockResult = deductStockForFnbOrders_([dummyDetailedOrder], transactionId, cashierName, timestamp);
-    stockMovements = stockResult.movements;
-    stockWarnings = stockResult.warnings;
+    if (!(paymentTestContext && paymentTestContext.is_test)) {
+      var stockResult = deductStockForFnbOrders_([dummyDetailedOrder], transactionId, cashierName, timestamp);
+      stockMovements = stockResult.movements;
+      stockWarnings = stockResult.warnings;
+    }
 
     return {
       ok: true,
@@ -11915,7 +12264,19 @@ function payOpenFnbOrder_(payload) {
 }
 
 function getOpenFnbOrders_(roomId, roomStartTime) {
+  var openFnbTestContext = getActiveRoomSessionTestContext_(roomId);
+  if (!openFnbTestContext.is_test) {
+    openFnbTestContext = getRoomSheetTestContext_(roomId);
+  }
   var orders = readFnbOrdersOrEmpty_().filter(function (order) {
+    if (openFnbTestContext.is_test) {
+      if (!isTestDataValue_(order.is_test) || String(order.test_run_id || "").trim() !== String(openFnbTestContext.test_run_id || "").trim()) {
+        return false;
+      }
+    } else if (!isProductionDataRow_(order)) {
+      return false;
+    }
+
     var isOpen = String(order.order_status || "").trim() === "open";
     var matchesRoom = !roomId || String(order.room_id || "").trim() === String(roomId).trim();
     var orderRoomStartTime = normalizeFnbOrderDateTime_(order.room_start_time);
@@ -12064,9 +12425,17 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
         created_at: now,
         transaction_type: "fnb_refund",
       };
+      Object.assign(refundTransaction, getTestFields_({
+        is_test: isTestDataValue_(order.is_test),
+        test_run_id: order.test_run_id || "",
+        test_created_by: order.test_created_by || "",
+        test_note: order.test_note || "",
+      }));
       appendTransaction_(refundTransaction);
 
-      restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+      if (!isTestDataValue_(order.is_test)) {
+        restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+      }
     }
 
     sheet.getRange(rowNumber, headerMap.order_status).setValue("cancelled");
@@ -12120,6 +12489,10 @@ function getTodayFnbOrdersByPeriod_(status, roomId, period, startDate, endDate) 
   var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
   var orders = readFnbOrdersOrEmpty_()
     .filter(function (order) {
+      if (!isProductionDataRow_(order)) {
+        return false;
+      }
+
       var orderStatus = String(order.order_status || "").trim().toLowerCase();
       var matchesStatus = !normalizedStatus || orderStatus === normalizedStatus;
       var matchesRoom = !normalizedRoomId || String(order.room_id || "").trim() === normalizedRoomId;
@@ -12234,6 +12607,10 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
 
   var movements = readSheetAsObjectsOrEmpty_("StockMovements")
     .filter(function (movement) {
+      if (!isProductionDataRow_(movement)) {
+        return false;
+      }
+
       var movementTypeValue = String(movement.movement_type || "").trim().toLowerCase();
       var referenceTypeValue = String(movement.reference_type || "").trim().toLowerCase();
       var operationalDate = getOperationalDateString_(movement.created_at);
@@ -12319,6 +12696,10 @@ function getTodayFnbSalesReportByPeriod_(period, startDate, endDate) {
 
   if (sheetExists_("FnbOrders")) {
     readFnbOrdersOrEmpty_().forEach(function (order) {
+      if (!isProductionDataRow_(order)) {
+        return;
+      }
+
       var orderStatus = String(order.order_status || "").trim().toLowerCase();
       var orderId = order.order_id || "";
       var operationalDate = resolveFnbOrderOperationalDateString_(order);
@@ -12621,9 +13002,21 @@ function sheetExists_(sheetName) {
 
 function getOpenFnbOrdersForSession_(roomId, roomStartTime) {
   var normalizedStartTime = normalizeFnbOrderDateTime_(roomStartTime);
+  var fnbTestContext = getActiveRoomSessionTestContext_(roomId);
+  if (!fnbTestContext.is_test) {
+    fnbTestContext = getRoomSheetTestContext_(roomId);
+  }
 
   return readFnbOrdersOrEmpty_()
     .filter(function (order) {
+      if (fnbTestContext.is_test) {
+        if (!isTestDataValue_(order.is_test) || String(order.test_run_id || "").trim() !== String(fnbTestContext.test_run_id || "").trim()) {
+          return false;
+        }
+      } else if (!isProductionDataRow_(order)) {
+        return false;
+      }
+
       return (
         String(order.room_id || "").trim() === String(roomId || "").trim() &&
         normalizeFnbOrderDateTime_(order.room_start_time) === normalizedStartTime &&
@@ -14763,6 +15156,7 @@ function logReceiptPrint_(payload) {
   try {
     var sheet = ensureReceiptPrintLogsSheet_();
     var headerMap = getHeaderMap_(sheet);
+    var transaction = getRowObject_(transactionsSheet, transactionsHeaderMap, transactionRowNumber);
     var existingCount = countRowsByValue_(sheet, headerMap, "transaction_id", transactionId);
     var sequence = existingCount + 1;
     var now = toJakartaIsoString_(new Date());
@@ -14782,6 +15176,10 @@ function logReceiptPrint_(payload) {
       printed_at: now,
       note: String(request.note || "").trim(),
     };
+    Object.assign(logEntry, {
+      is_test: isTestDataValue_(transaction.is_test) ? "TRUE" : "",
+      test_run_id: isTestDataValue_(transaction.is_test) ? transaction.test_run_id || "" : "",
+    });
 
     appendObjectRow_(sheet, logEntry);
 
@@ -14866,6 +15264,10 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
   });
 
   var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    if (!isProductionDataRow_(transaction)) {
+      return false;
+    }
+
     return resolveTransactionOperationalDateString_(transaction) === operationalDate;
   });
   var transactionIdByOrderId = {};
@@ -14900,6 +15302,8 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
       cashier_name: transaction.cashier_name || "",
       transaction_created_at: transaction.created_at || "",
       snapshot_at: snapshotAt,
+      is_test: transaction.is_test || "",
+      test_run_id: transaction.test_run_id || "",
     };
   });
 
@@ -14907,6 +15311,10 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
   if (sheetExists_("FnbOrders") && sheetExists_("FnbOrderItems")) {
     var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
     readFnbOrdersOrEmpty_().filter(function (order) {
+      if (!isProductionDataRow_(order)) {
+        return false;
+      }
+
       return resolveFnbOrderOperationalDateString_(order) === operationalDate;
     }).forEach(function (order) {
       var orderId = String(order.order_id || "").trim();
@@ -14927,6 +15335,8 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
           subtotal: Number(item.subtotal) || 0,
           order_created_at: order.created_at || "",
           snapshot_at: snapshotAt,
+          is_test: order.is_test || "",
+          test_run_id: order.test_run_id || "",
         });
       });
     });
@@ -14935,6 +15345,10 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
   var lcDetailRows = [];
   if (sheetExists_("LcWorkLogs")) {
     readSheetAsObjects_("LcWorkLogs").filter(function (workLog) {
+      if (!isProductionDataRow_(workLog)) {
+        return false;
+      }
+
       return normalizeLcFinanceOperationalDate_(workLog.created_at) === operationalDate;
     }).forEach(function (workLog) {
       var sessionId = String(workLog.session_id || "").trim();
@@ -14964,6 +15378,8 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
         bonus_per_item: 0,
         bonus_total: 0,
         snapshot_at: snapshotAt,
+        is_test: workLog.is_test || "",
+        test_run_id: workLog.test_run_id || "",
       });
     });
   }
@@ -14998,6 +15414,8 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
         bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
         bonus_total: Number(bonusLog.bonus_total) || 0,
         snapshot_at: snapshotAt,
+        is_test: "",
+        test_run_id: "",
       });
     });
   }
@@ -15428,6 +15846,129 @@ function getMinimumSessionErrorMessage_(payload) {
   return "Durasi minimal " + getMinimumSessionMinutes_(payload) + " menit.";
 }
 
+function isTestDataValue_(value) {
+  if (value === true) {
+    return true;
+  }
+
+  var normalized = String(value || "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "test";
+}
+
+function isProductionDataRow_(row) {
+  return !isTestDataValue_(row && row.is_test);
+}
+
+function generateTestRunId_() {
+  return "TEST-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function buildTestContextFromPayload_(payload, requiredRole) {
+  var request = payload || {};
+  var wantsTest = isTestDataValue_(request.is_test) || isTestDataValue_(request.test_mode);
+
+  if (!wantsTest) {
+    return {
+      is_test: false,
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    };
+  }
+
+  var authResult = validateAdminPinPayload_(
+    request.admin_pin,
+    requiredRole || "owner",
+    "start_test_run",
+    request.cashier_name || request.changed_by || "Owner",
+    true
+  );
+
+  if (!authResult.success) {
+    throw new Error("Mode testing hanya boleh diaktifkan oleh owner dengan PIN valid.");
+  }
+
+  var ownerName = authResult.employee && authResult.employee.employee_name
+    ? authResult.employee.employee_name
+    : request.cashier_name || "Owner";
+
+  return {
+    is_test: true,
+    test_run_id: String(request.test_run_id || "").trim() || generateTestRunId_(),
+    test_created_by: ownerName,
+    test_note: String(request.test_note || "").trim(),
+  };
+}
+
+function getTestFields_(context) {
+  var testContext = context || {};
+  return {
+    is_test: testContext.is_test ? "TRUE" : "",
+    test_run_id: testContext.is_test ? String(testContext.test_run_id || "").trim() : "",
+    test_created_by: testContext.is_test ? String(testContext.test_created_by || "").trim() : "",
+    test_note: testContext.is_test ? String(testContext.test_note || "").trim() : "",
+  };
+}
+
+function getActiveRoomSessionTestContext_(roomId) {
+  var activeSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active", "closing"]);
+  if (!activeSession || !activeSession.session || !isTestDataValue_(activeSession.session.is_test)) {
+    return {
+      is_test: false,
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    };
+  }
+
+  return {
+    is_test: true,
+    test_run_id: String(activeSession.session.test_run_id || "").trim(),
+    test_created_by: String(activeSession.session.test_created_by || "").trim(),
+    test_note: String(activeSession.session.test_note || "").trim(),
+  };
+}
+
+function getRoomSheetTestContext_(roomId) {
+  if (!roomId || !sheetExists_("Rooms")) {
+    return {
+      is_test: false,
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    };
+  }
+
+  var sheet = ensureRoomsBookingColumns_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", roomId);
+  if (!rowNumber) {
+    return {
+      is_test: false,
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    };
+  }
+
+  var room = getRowObject_(sheet, headerMap, rowNumber);
+  if (!isTestDataValue_(room.is_test)) {
+    return {
+      is_test: false,
+      test_run_id: "",
+      test_created_by: "",
+      test_note: "",
+    };
+  }
+
+  return {
+    is_test: true,
+    test_run_id: String(room.test_run_id || "").trim(),
+    test_created_by: String(room.test_created_by || "").trim(),
+    test_note: String(room.test_note || "").trim(),
+  };
+}
+
 function generateTransactionId_() {
   const prefix = "TRX-";
   const uuidPart = Utilities.getUuid().slice(0, 8).toUpperCase(); // 8 karakter unik
@@ -15686,6 +16227,12 @@ function getRoomFromRow_(sheet, headerMap, rowNumber) {
     tv_device_id: room.tv_device_id || "",
     updated_at: room.updated_at || null,
     lc_ids: lcIds,
+    customer_name: room.customer_name || "",
+    package_id: room.package_id || "",
+    is_test: room.is_test || "",
+    test_run_id: room.test_run_id || "",
+    test_created_by: room.test_created_by || "",
+    test_note: room.test_note || "",
   };
 }
 
