@@ -6939,7 +6939,7 @@ function createRoomCard(room) {
     selectLcButton.className = "room-button room-button-lc";
     selectLcButton.type = "button";
     selectLcButton.dataset.action = "show-lc-selection";
-    selectLcButton.textContent = "Pilih LC";
+    selectLcButton.textContent = "Input LC Final";
 
     actions.append(sessionButton, extendButton, selectLcButton);
   } else {
@@ -7202,72 +7202,6 @@ function createDurationSelectionElement(room) {
   nameField.append(nameLabel, nameInput);
   panel.appendChild(nameField);
 
-  // Lady Companion (LC) Selection
-  const lcField = document.createElement("div");
-  lcField.style.display = "flex";
-  lcField.style.flexDirection = "column";
-  lcField.style.gap = "4px";
-  lcField.style.marginTop = "8px";
-
-  const lcLabel = document.createElement("span");
-  lcLabel.className = "duration-payment-label";
-  lcLabel.textContent = "Jumlah LC (Orang):";
-
-  const lcSelect = document.createElement("select");
-  lcSelect.className = "duration-payment-select";
-  lcSelect.style.width = "100%";
-
-  ensureLcSelectionStateForRoom(room);
-  const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
-  const currentLcCount = activeLcIds.length;
-
-  for (let i = 0; i <= 10; i++) {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = i === 0 ? "Tanpa LC" : `${i} Orang`;
-    opt.selected = currentLcCount === i;
-    lcSelect.appendChild(opt);
-  }
-
-  lcSelect.onchange = (e) => {
-    const count = parseInt(e.target.value) || 0;
-    const placeholderArray = [];
-    for (let i = 0; i < count; i++) {
-      placeholderArray.push("PENDING");
-    }
-    selectedLcIdsForRoom[room.room_id] = placeholderArray;
-    renderRooms();
-  };
-
-  lcField.append(lcLabel, lcSelect);
-
-  if (currentLcCount > 0) {
-    const durationLabel = document.createElement("span");
-    durationLabel.className = "duration-payment-label";
-    durationLabel.textContent = "Durasi LC:";
-
-    const durationInput = document.createElement("input");
-    durationInput.className = "duration-custom-input";
-    durationInput.type = "number";
-    durationInput.min = "1";
-    durationInput.step = "1";
-    durationInput.value = String(getLcDurationForRoom(room, "PENDING"));
-    durationInput.placeholder = "Menit";
-    durationInput.onchange = (e) => {
-      setLcDurationForRoom(room, "PENDING", e.target.value);
-      renderRooms();
-    };
-
-    const durationHint = document.createElement("span");
-    durationHint.style.fontSize = "0.75rem";
-    durationHint.style.color = "rgba(255, 255, 255, 0.55)";
-    durationHint.textContent = `Untuk ${currentLcCount} LC pending. Isi menit, contoh 60 = 1 jam.`;
-
-    lcField.append(durationLabel, durationInput, durationHint);
-  }
-
-  panel.appendChild(lcField);
-
   // F&B Selection Section
   const fnbField = document.createElement("div");
   fnbField.style.display = "flex";
@@ -7459,13 +7393,12 @@ function createDurationSelectionElement(room) {
       const selectedPkgId = pkgSelect.value || bookingPackageSelection;
       const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
       if (selectedPkg) {
-        const activeLcIds = (selectedLcIdsForRoom[room.room_id] || []).join(",");
         await prepareRoomSession(
           room.room_id,
           selectedPkg.duration_minutes,
           customerNameInput,
           selectedPkgId,
-          activeLcIds,
+          "",
           `${room.room_id}:package:${selectedPkgId}`
         );
         customerNameInput = "";
@@ -8290,77 +8223,7 @@ function createPaymentSelectionElement(room) {
 
   panel.appendChild(fnbPrepayField);
 
-  // LC Selector Field for Cashier (Hanya Kasir)
-  if (role !== "receptionist") {
-    const lcSelectField = document.createElement("div");
-    lcSelectField.style.display = "flex";
-    lcSelectField.style.flexDirection = "column";
-    lcSelectField.style.gap = "4px";
-    lcSelectField.style.marginTop = "8px";
-    lcSelectField.style.marginBottom = "8px";
-
-    const lcSelectLabel = document.createElement("span");
-    lcSelectLabel.className = "duration-payment-label";
-    lcSelectLabel.style.fontWeight = "bold";
-    lcSelectLabel.textContent = "Lady Companion (LC):";
-
-    const lcSelectDropdown = document.createElement("select");
-    lcSelectDropdown.className = "duration-payment-select";
-    lcSelectDropdown.style.width = "100%";
-
-    ensureLcSelectionStateForRoom(room);
-    const currentLcCount = (selectedLcIdsForRoom[room.room_id] || []).length;
-
-    for (let i = 0; i <= 10; i++) {
-      const opt = document.createElement("option");
-      opt.value = String(i);
-      opt.textContent = i === 0 ? "Tanpa LC" : `${i} Orang`;
-      opt.selected = currentLcCount === i;
-      lcSelectDropdown.appendChild(opt);
-    }
-
-    lcSelectDropdown.onchange = (e) => {
-      const count = parseInt(e.target.value) || 0;
-      const placeholderArray = [];
-      for (let i = 0; i < count; i++) {
-        placeholderArray.push("PENDING");
-      }
-      selectedLcIdsForRoom[room.room_id] = placeholderArray;
-      setLcDurationForRoom(room, "PENDING", getDefaultLcDurationMinutes(room));
-      renderRooms(); // Re-render to update the summary, calculator shortcuts, and breakdown!
-    };
-
-    lcSelectField.append(lcSelectLabel, lcSelectDropdown);
-
-    if (currentLcCount > 0) {
-      const lcDurationLabel = document.createElement("span");
-      lcDurationLabel.className = "duration-payment-label";
-      lcDurationLabel.textContent = "Durasi LC:";
-
-      const lcDurationInput = document.createElement("input");
-      lcDurationInput.className = "duration-custom-input";
-      lcDurationInput.type = "number";
-      lcDurationInput.min = "1";
-      lcDurationInput.step = "1";
-      lcDurationInput.value = String(getLcDurationForRoom(room, "PENDING"));
-      lcDurationInput.placeholder = "Menit";
-      lcDurationInput.onchange = (e) => {
-        setLcDurationForRoom(room, "PENDING", e.target.value);
-        renderRooms();
-      };
-
-      const lcDurationHint = document.createElement("span");
-      lcDurationHint.style.fontSize = "0.75rem";
-      lcDurationHint.style.color = "rgba(255, 255, 255, 0.55)";
-      lcDurationHint.textContent = `Untuk ${currentLcCount} LC pending. Isi menit, contoh 120 = 2 jam.`;
-
-      lcSelectField.append(lcDurationLabel, lcDurationInput, lcDurationHint);
-    }
-
-    panel.appendChild(lcSelectField);
-  }
-
-  // Kalkulasi Room Prepay + LC Fee
+  // Kalkulasi Room Prepay. LC direkap final di akhir sesi.
   let roomPrepayCharge = 0;
   if (room.package_id) {
     const pkg = packages.find(p => p.package_id === room.package_id);
@@ -8369,29 +8232,7 @@ function createPaymentSelectionElement(room) {
     roomPrepayCharge = Math.ceil((Number(room.booked_duration_minutes) || 0) / 60 * (Number(room.rate_per_hour) || 0));
   }
 
-  ensureLcSelectionStateForRoom(room);
-  const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
-
-  let lcFeeTotal = 0;
-  if (activeLcIds && activeLcIds.length > 0) {
-    // Hitung rata-rata tarif dari semua LC aktif (untuk preview slot PENDING)
-    const activeLcList = lcs.filter(l => l.status === "active");
-    const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
-    const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-
-    activeLcIds.forEach(id => {
-      const lcDuration = getLcDurationForRoom(room, id);
-      if (id === "PENDING") {
-        lcFeeTotal += calculateLcCharge(lcDuration, avgRate);
-      } else {
-        const found = lcs.find(l => l.lc_id === id);
-        const rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
-        lcFeeTotal += calculateLcCharge(lcDuration, rate);
-      }
-    });
-  }
-
-  let activeGrandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
+  let activeGrandTotal = roomPrepayCharge + fnbTotal;
 
   // Ringkasan Pembayaran (Billing Summary)
   const billingSummary = document.createElement("div");
@@ -8416,57 +8257,6 @@ function createPaymentSelectionElement(room) {
   roomRow.style.color = "rgba(255, 255, 255, 0.8)";
   roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(roomPrepayCharge)}</span>`;
   billingSummary.appendChild(roomRow);
-
-  const lcRow = document.createElement("div");
-  lcRow.style.display = "flex";
-  lcRow.style.flexDirection = "column";
-  lcRow.style.gap = "4px";
-  lcRow.style.fontSize = "0.85rem";
-  lcRow.style.color = "rgba(255, 255, 255, 0.8)";
-  
-  if (lcFeeTotal > 0) {
-    const mainLcRow = document.createElement("div");
-    mainLcRow.style.display = "flex";
-    mainLcRow.style.justifyContent = "space-between";
-    mainLcRow.innerHTML = `<span>Jasa LC (${activeLcIds.length} Orang):</span> <span>${formatCurrency(lcFeeTotal)}</span>`;
-    lcRow.appendChild(mainLcRow);
-
-    const breakdownList = document.createElement("div");
-    breakdownList.style.display = "flex";
-    breakdownList.style.flexDirection = "column";
-    breakdownList.style.gap = "2px";
-    breakdownList.style.paddingLeft = "12px";
-    breakdownList.style.fontSize = "0.75rem";
-    breakdownList.style.color = "rgba(255, 255, 255, 0.6)";
-
-    const activeLcList = lcs.filter(l => l.status === "active");
-    const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
-    const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-
-    activeLcIds.forEach((id, index) => {
-      let lcName = "";
-      let rate = 0;
-      if (id === "PENDING") {
-        lcName = `LC ${index + 1} (Belum Dipilih)`;
-        rate = avgRate;
-      } else {
-        const found = lcs.find(l => l.lc_id === id);
-        lcName = found ? found.lc_name : `LC ${index + 1}`;
-        rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
-      }
-      const lcDuration = getLcDurationForRoom(room, id);
-      const itemCost = calculateLcCharge(lcDuration, rate);
-      
-      const itemRow = document.createElement("div");
-      itemRow.style.display = "flex";
-      itemRow.style.justifyContent = "space-between";
-      itemRow.innerHTML = `<span>- ${lcName} (${formatCurrency(rate)}/jam x ${formatLcDurationShort(lcDuration)})</span> <span>${formatCurrency(itemCost)}</span>`;
-      breakdownList.appendChild(itemRow);
-    });
-    
-    lcRow.appendChild(breakdownList);
-    billingSummary.appendChild(lcRow);
-  }
 
   const fnbRow = document.createElement("div");
   fnbRow.style.display = "flex";
@@ -19442,7 +19232,7 @@ function createSelectLcModalOverlay(room) {
 
   const title = document.createElement("p");
   title.className = "lc-selection-title";
-  title.textContent = `Pilih LC untuk ${room.room_name}`;
+  title.textContent = `Input LC Final untuk ${room.room_name}`;
 
   const lcIdsRaw = String(room.lc_ids || "").trim();
   const allIds = lcIdsRaw.split(",").map(id => id.trim()).filter(Boolean);
@@ -20076,12 +19866,6 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
   renderRooms();
 
   try {
-    const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId, booked_duration_minutes: selectedDuration };
-    const lcAssignmentsPayload = buildLcAssignmentsPayloadForRoom({
-      ...room,
-      booked_duration_minutes: selectedDuration,
-    });
-
     const data = await postApiAction({
       action: "prepareRoomSession",
       room_id: roomId,
@@ -20091,8 +19875,8 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       cashier_name: getLoggedInOperatorName(),
       customer_name: customerName,
       package_id: packageId,
-      lc_ids: lcIds,
-      lc_assignments: lcAssignmentsPayload,
+      lc_ids: "",
+      lc_assignments: "",
       fnb_items: bookingCartItems.map(item => ({
         menu_id: item.menu_id,
         quantity: item.quantity
@@ -20150,17 +19934,13 @@ async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
   setActionButtonsDisabled(true);
   renderRooms();
   try {
-    const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
-    const activeLcIds = selectedLcIdsForRoom[roomId] || [];
-    const lcIdsStr = activeLcIds.join(",");
-
     const data = await postApiAction({
       action: "payAndStartSession",
       room_id: roomId,
       payment_method: paymentMethod,
       promo_code: promoCode,
-      lc_ids: lcIdsStr,
-      lc_assignments: buildLcAssignmentsPayloadForRoom(room),
+      lc_ids: "",
+      lc_assignments: "",
       cashier_name: getLoggedInOperatorName(),
       fnb_items: prepayCartItems.map(item => ({
         menu_id: item.menu_id,
@@ -21607,11 +21387,8 @@ async function handleRoomAction(event) {
   if (action === "prepare-room-session-duration") {
     const roomId = button.dataset.roomId || "";
     const durationMinutes = Number(button.dataset.durationMinutes);
-    const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
-    await prepareRoomSession(roomId, durationMinutes, customerNameInput, "", activeLcIds, `${roomId}:${durationMinutes}`);
+    await prepareRoomSession(roomId, durationMinutes, customerNameInput, "", "", `${roomId}:${durationMinutes}`);
     customerNameInput = "";
-    delete selectedLcIdsForRoom[roomId];
-    delete selectedLcDurationsForRoom[roomId];
     return;
   }
 
@@ -21629,11 +21406,8 @@ async function handleRoomAction(event) {
     }
 
     const roomId = button.dataset.roomId || "";
-    const activeLcIds = (selectedLcIdsForRoom[roomId] || []).join(",");
-    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", activeLcIds, `${roomId}:custom`);
+    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", "", `${roomId}:custom`);
     customerNameInput = "";
-    delete selectedLcIdsForRoom[roomId];
-    delete selectedLcDurationsForRoom[roomId];
     return;
   }
 
