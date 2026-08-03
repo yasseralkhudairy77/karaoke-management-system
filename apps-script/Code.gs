@@ -6416,9 +6416,9 @@ function cleanupTestRun_(payload) {
 
   var authResult = validateAdminPinPayload_(
     request.admin_pin,
-    "owner",
+    "manager",
     "cleanup_test_run",
-    request.changed_by || request.cashier_name || "Owner",
+    request.changed_by || request.cashier_name || "Manager",
     true
   );
 
@@ -6426,7 +6426,7 @@ function cleanupTestRun_(payload) {
     return {
       ok: false,
       success: false,
-      error: "Cleanup data testing membutuhkan PIN owner yang valid.",
+      error: "Cleanup data testing membutuhkan PIN manager/owner yang valid.",
     };
   }
 
@@ -9602,7 +9602,7 @@ function startSession_(roomId, durationMinutes, options) {
     };
   }
 
-  var testContext = buildTestContextFromPayload_(options || {}, "owner");
+  var testContext = buildTestContextFromPayload_(options || {}, "manager");
 
   if (normalizedPeriod === "last_month") {
     var dateParts = activeOperationalDate.split("-");
@@ -9716,7 +9716,7 @@ function prepareRoomSession_(payload) {
     };
   }
 
-  var testContext = buildTestContextFromPayload_(request, "owner");
+  var testContext = buildTestContextFromPayload_(request, "manager");
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) {
@@ -15878,19 +15878,19 @@ function buildTestContextFromPayload_(payload, requiredRole) {
 
   var authResult = validateAdminPinPayload_(
     request.admin_pin,
-    requiredRole || "owner",
+    requiredRole || "manager",
     "start_test_run",
-    request.cashier_name || request.changed_by || "Owner",
+    request.cashier_name || request.changed_by || "Manager",
     true
   );
 
   if (!authResult.success) {
-    throw new Error("Mode testing hanya boleh diaktifkan oleh owner dengan PIN valid.");
+    throw new Error("Mode testing hanya boleh diaktifkan oleh manager/owner dengan PIN valid.");
   }
 
   var ownerName = authResult.employee && authResult.employee.employee_name
     ? authResult.employee.employee_name
-    : request.cashier_name || "Owner";
+    : request.cashier_name || "Manager";
 
   return {
     is_test: true,

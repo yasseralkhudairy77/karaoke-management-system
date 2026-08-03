@@ -218,7 +218,7 @@ function canUseDevShortSessions() {
 }
 
 function canUseOwnerTestMode() {
-  return getCurrentOperatorRole() === "owner";
+  return roleMeetsRequired(getCurrentOperatorRole(), "manager");
 }
 
 function buildOwnerTestModePayload() {
@@ -239,12 +239,12 @@ function validateOwnerTestModeBeforeSubmit() {
   }
 
   if (!canUseOwnerTestMode()) {
-    showInlineNotice("Mode testing hanya tersedia untuk owner.", "error");
+    showInlineNotice("Mode testing hanya tersedia untuk Manager Operasional.", "error");
     return false;
   }
 
   if (!ownerTestModePin.trim()) {
-    showInlineNotice("PIN owner wajib diisi untuk Mode Testing.", "error");
+    showInlineNotice("PIN Manager Operasional wajib diisi untuk Mode Testing.", "error");
     return false;
   }
 
@@ -7149,7 +7149,7 @@ function createDurationSelectionElement(room) {
     toggle.checked = ownerTestModeEnabled;
 
     const toggleText = document.createElement("span");
-    toggleText.textContent = "Mode Testing Owner";
+    toggleText.textContent = "Mode Testing Operasional";
     toggleLabel.append(toggle, toggleText);
     testBox.appendChild(toggleLabel);
 
@@ -7164,7 +7164,7 @@ function createDurationSelectionElement(room) {
       pinInput.className = "duration-custom-input";
       pinInput.type = "password";
       pinInput.inputMode = "numeric";
-      pinInput.placeholder = "PIN Owner untuk testing";
+      pinInput.placeholder = "PIN Manager untuk testing";
       pinInput.dataset.action = "update-owner-test-mode-pin";
       pinInput.value = ownerTestModePin;
       testBox.appendChild(pinInput);
@@ -15433,7 +15433,7 @@ function createOwnerTestingCleanupSection() {
   pinField.className = "master-form-field";
   const pinLabel = document.createElement("span");
   pinLabel.className = "master-form-label";
-  pinLabel.textContent = "PIN Owner";
+  pinLabel.textContent = "PIN Manager/Owner";
   const pinInput = document.createElement("input");
   pinInput.className = "master-form-input";
   pinInput.type = "password";
@@ -20781,8 +20781,8 @@ async function executeDeleteTransaction(transactionId, adminPin, authData) {
 }
 
 async function cleanupTestRun() {
-  if (getCurrentOperatorRole() !== "owner") {
-    showInlineNotice("Cleanup data testing hanya tersedia untuk owner.", "error");
+  if (!roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    showInlineNotice("Cleanup data testing hanya tersedia untuk Manager Operasional.", "error");
     return;
   }
 
@@ -20795,7 +20795,7 @@ async function cleanupTestRun() {
   }
 
   if (!ownerPin) {
-    showInlineNotice("PIN owner wajib diisi untuk cleanup data testing.", "error");
+    showInlineNotice("PIN Manager Operasional wajib diisi untuk cleanup data testing.", "error");
     return;
   }
 
