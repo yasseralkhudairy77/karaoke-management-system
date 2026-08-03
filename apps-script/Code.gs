@@ -674,13 +674,6 @@ function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
 
   try {
-    if (action === "debugReadSheet") {
-      return jsonResponse({
-        ok: true,
-        data: readSheetAsObjects_(e.parameter.sheet)
-      });
-    }
-
     if (action === "health") {
       return jsonResponse(healthCheck_());
     }
@@ -689,6 +682,24 @@ function doGet(e) {
       return jsonResponse({
         ok: true,
         rooms: getRooms_(),
+      });
+    }
+
+    if (action === "getTransactionsTabData") {
+      var period = e.parameter.period;
+      var startDate = e.parameter.start_date;
+      var endDate = e.parameter.end_date;
+      
+      var transactionsResult = getTransactionsByPeriod_(period, startDate, endDate);
+      var closingsResult = getCashierClosingsByPeriod_(period, startDate, endDate);
+      
+      return jsonResponse({
+        ok: true,
+        transactions: transactionsResult.transactions,
+        summary: transactionsResult.summary,
+        closings: closingsResult.closings,
+        closingsSummary: closingsResult.summary,
+        metadata: buildOperationalPeriodMetadata_(parseTransactionPeriod_(period, startDate, endDate))
       });
     }
 
@@ -969,6 +980,10 @@ function doPost(e) {
 
     if (action === "markTransactionPaid") {
       return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
+    }
+
+    if (action === "deleteTransaction") {
+      return jsonResponse(deleteTransaction_(payload));
     }
 
     if (action === "logReceiptPrint") {
@@ -15296,7 +15311,20 @@ function generateClosingId_() {
 }
 
 function getJakartaDateString_(date) {
-  return Utilities.formatDate(date, "Asia/Jakarta", "yyyy-MM-dd");
+  if (!date) {
+    return "";
+  }
+  var d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) {
+    return "";
+  }
+  // Asia/Jakarta is UTC+7 offset, so we shift it by +7 hours (7 * 3600 * 1000)
+  var localTime = new Date(d.getTime() + 7 * 3600000);
+  var year = localTime.getUTCFullYear();
+  var month = localTime.getUTCMonth() + 1;
+  var day = localTime.getUTCDate();
+  
+  return year + "-" + (month < 10 ? "0" : "") + month + "-" + (day < 10 ? "0" : "") + day;
 }
 
 function addMinutesToJakartaIsoString_(isoString, minutes) {
@@ -16118,3 +16146,163 @@ function restoreSessionCheckout_(payload) {
     lock.releaseLock();
   }
 }
+
+function deleteTransaction_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  
+  if (!transactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+  
+  // 1. PIN verification
+  var authResult = validateAdminPinPayload_(
+    request.admin_pin,
+    "manager",
+    "delete_transaction_" + transactionId,
+    request.changed_by || "Manager",
+    true
+  );
+  
+  if (!authResult.success) {
+    return {
+      ok: false,
+      success: false,
+      error: "Delete transaction membutuhkan PIN owner/manager yang valid.",
+      block_reason: authResult.block_reason
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+
+  try {
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // 2. Dapatkan transaksi
+    var txSheet = spreadsheet.getSheetByName("Transactions");
+    if (!txSheet) {
+      return { ok: false, success: false, error: "Sheet Transactions tidak ditemukan." };
+    }
+    var txHeaderMap = getHeaderMap_(txSheet);
+    var txRowNum = findRowByValue_(txSheet, txHeaderMap, "transaction_id", transactionId);
+    if (!txRowNum) {
+      return { ok: false, success: false, error: "Transaksi tidak ditemukan." };
+    }
+    
+    var transaction = getRowObject_(txSheet, txHeaderMap, txRowNum);
+    var now = toJakartaIsoString_(new Date());
+
+    // 3. Batalkan F&B Orders terkait (ubah status ke cancelled)
+    var fnbOrderIdsStr = String(transaction.fnb_order_ids || "").trim();
+    if (fnbOrderIdsStr) {
+      var fnbOrderIds = fnbOrderIdsStr.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+      var fnbSheet = spreadsheet.getSheetByName("FnbOrders");
+      if (fnbSheet) {
+        var fnbHeaderMap = getHeaderMap_(fnbSheet);
+        fnbOrderIds.forEach(function(orderId) {
+          var fnbRowNum = findRowByValue_(fnbSheet, fnbHeaderMap, "order_id", orderId);
+          if (fnbRowNum) {
+            fnbSheet.getRange(fnbRowNum, fnbHeaderMap.order_status).setValue("cancelled");
+            fnbSheet.getRange(fnbRowNum, fnbHeaderMap.updated_at).setValue(now);
+          }
+        });
+      }
+    }
+
+    // 4. Void related RoomSessions
+    var sessionsSheet = spreadsheet.getSheetByName("RoomSessions");
+    if (sessionsSheet) {
+      var sessionsHeaderMap = getHeaderMap_(sessionsSheet);
+      var sessionsRows = readSheetAsObjects_("RoomSessions");
+      for (var s = 0; s < sessionsRows.length; s++) {
+        var closedTxId = String(sessionsRows[s].closed_transaction_id || "").trim();
+        var prepayTxId = String(sessionsRows[s].prepayment_transaction_id || "").trim();
+        if (closedTxId === transactionId || prepayTxId === transactionId) {
+          var sessionRowNumber = s + 2;
+          sessionsSheet.getRange(sessionRowNumber, sessionsHeaderMap.status).setValue("voided");
+          sessionsSheet.getRange(sessionRowNumber, sessionsHeaderMap.updated_at).setValue(now);
+        }
+      }
+    }
+
+    // 5. Void related LcWorkLogs
+    var lcWorkLogsSheet = spreadsheet.getSheetByName("LcWorkLogs");
+    if (lcWorkLogsSheet) {
+      var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+      var workLogsRows = readSheetAsObjects_("LcWorkLogs");
+      
+      var sessionIdsToVoid = [];
+      if (sessionsSheet) {
+        var sessionsRowsLocal = readSheetAsObjects_("RoomSessions");
+        sessionsRowsLocal.forEach(function(sess) {
+          if (String(sess.closed_transaction_id || "").trim() === transactionId || String(sess.prepayment_transaction_id || "").trim() === transactionId) {
+            if (sess.session_id) {
+              sessionIdsToVoid.push(String(sess.session_id).trim());
+            }
+          }
+        });
+      }
+
+      for (var w = 0; w < workLogsRows.length; w++) {
+        var logSessionId = String(workLogsRows[w].session_id || "").trim();
+        if (sessionIdsToVoid.indexOf(logSessionId) !== -1) {
+          var logRowNum = w + 2;
+          lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("voided");
+        }
+      }
+    }
+
+    // 6. Hapus ReceiptPrintLogs jika ada
+    var printSheet = spreadsheet.getSheetByName("ReceiptPrintLogs");
+    if (printSheet) {
+      var printRows = readSheetAsObjects_("ReceiptPrintLogs");
+      for (var p = printRows.length - 1; p >= 0; p--) {
+        if (String(printRows[p].transaction_id || "").trim() === transactionId) {
+          printSheet.deleteRow(p + 2);
+        }
+      }
+    }
+
+    // 7. Hapus dari CashierClosingTransactions snapshot jika ada
+    var closingTxSheet = spreadsheet.getSheetByName("CashierClosingTransactions");
+    if (closingTxSheet) {
+      var closingTxRows = readSheetAsObjects_("CashierClosingTransactions");
+      for (var c = closingTxRows.length - 1; c >= 0; c--) {
+        if (String(closingTxRows[c].transaction_id || "").trim() === transactionId) {
+          closingTxSheet.deleteRow(c + 2);
+        }
+      }
+    }
+
+    // 8. Hapus transaksi dari sheet Transactions
+    txSheet.deleteRow(txRowNum);
+
+    // 9. Tulis log audit aktivitas penghapusan
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: transaction.room_name || transaction.room_id || "",
+      action_type: "delete_permanent",
+      old_value: transaction,
+      new_value: null,
+      changed_by: authResult.employee ? authResult.employee.employee_name : (request.changed_by || "Manager"),
+      note: request.note || "Hapus transaksi via Dashboard",
+      result: "success"
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi " + transactionId + " berhasil dihapus secara permanen."
+    };
+    
+  } catch (err) {
+    return { ok: false, success: false, error: err.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+

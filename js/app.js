@@ -136,6 +136,25 @@ function buildApiUrl(action, params = null) {
 }
 
 const API_GET_RETRYABLE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
+const API_GET_TIMEOUT_MS = 15000;
+
+function createApiRequestError(response) {
+  const error = new Error(`API request failed with status ${response.status}`);
+  error.status = response.status;
+  return error;
+}
+
+function getApiRequestErrorMessage(error) {
+  if (error?.status === 404) {
+    return "API tidak ditemukan (404). Periksa URL Web App di js/config.js dan pastikan Apps Script sudah di-deploy sebagai Web App yang aktif.";
+  }
+
+  if (error?.code === "API_TIMEOUT" || error?.name === "AbortError") {
+    return "API terlalu lama merespons. Coba refresh tab transaksi; jika berulang, Apps Script sedang lambat atau perlu optimasi sheet.";
+  }
+
+  return error?.message || "API request failed.";
+}
 
 async function fetchApiGet(url, options = {}) {
   const attempts = Math.max(1, Number(options.attempts) || 2);
@@ -145,8 +164,24 @@ async function fetchApiGet(url, options = {}) {
     let response = null;
 
     try {
-      response = await fetch(url, { cache: "no-store" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS);
+
+      try {
+        response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
     } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeoutError = new Error("API request timed out.");
+        timeoutError.code = "API_TIMEOUT";
+        throw timeoutError;
+      }
+
       lastError = error;
       if (attempt === attempts) {
         throw error;
@@ -158,7 +193,7 @@ async function fetchApiGet(url, options = {}) {
     }
 
     if (response) {
-      lastError = new Error(`API request failed with status ${response.status}`);
+      lastError = createApiRequestError(response);
       if (!API_GET_RETRYABLE_STATUSES.has(response.status) || attempt === attempts) {
         throw lastError;
       }
@@ -382,6 +417,9 @@ let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
 let todayTransactionsRequest = null;
+let transactionsTabDataCacheKey = "";
+let transactionsTabDataCacheTime = 0;
+let isLoadingTransactionsTabData = false;
 let todayCashierClosingsRequest = null;
 let transactionHistoryFilter = "all";
 let transactionPeriodFilter = "today";
@@ -738,6 +776,7 @@ let cashierClosingConfirmationVisible = false;
 let lastCashierClosing = null;
 let isSavingCashierClosing = false;
 const markingTransactionPaidIds = new Set(); // track per-transactionId mark-paid in progress
+const deletingTransactionIds = new Set(); // track per-transactionId delete in progress
 let todayCashierClosings = [];
 let todayCashierClosingSummary = null;
 let selectedClosingForPrint = null;
@@ -873,6 +912,7 @@ let loginErrorMessage = "";
 let isLoggingIn = false;
 let dashboardDataInitialized = false;
 const PAGINATION_PAGE_SIZE = 10;
+const TRANSACTIONS_TAB_CACHE_TTL_MS = 30000;
 const paginationState = {};
 const OPERATIONAL_OPEN_HOUR = 17;
 const OPERATIONAL_CLOSE_HOUR = 10;
@@ -1218,6 +1258,107 @@ async function loadTodayTransactions() {
 
   todayTransactionsRequest = request;
   return request.promise;
+}
+
+let transactionsTabLoadRequest = null;
+
+function invalidateTransactionsTabDataCache() {
+  transactionsTabDataCacheKey = "";
+  transactionsTabDataCacheTime = 0;
+}
+
+function canUseCachedTransactionsTabData(requestKey) {
+  return Boolean(
+    requestKey
+    && transactionsTabDataCacheKey === requestKey
+    && Date.now() - transactionsTabDataCacheTime < TRANSACTIONS_TAB_CACHE_TTL_MS
+  );
+}
+
+async function loadTransactionsTabData(options = {}) {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  if (!canFetchTransactionPeriodData()) {
+    renderRooms();
+    return;
+  }
+
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
+  const force = Boolean(options.force);
+
+  if (!force && canUseCachedTransactionsTabData(requestKey)) {
+    return;
+  }
+
+  if (transactionsTabLoadRequest?.key === requestKey) {
+    return transactionsTabLoadRequest.promise;
+  }
+
+  isLoadingTransactionsTabData = true;
+  if (activeDashboardTab === "transactions") {
+    renderDashboardTabPanels();
+  }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTransactionsTabDataFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayTransactions = data.transactions;
+        todayTransactionSummary = data.summary;
+        todayCashierClosings = data.closings;
+        todayCashierClosingSummary = data.closingsSummary;
+        lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
+        transactionsTabDataCacheKey = requestKey;
+        transactionsTabDataCacheTime = Date.now();
+        isLoadingTransactionsTabData = false;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat data transaksi & closing.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        isLoadingTransactionsTabData = false;
+        showInlineNotice(
+          `Gagal memuat data transaksi: ${getApiRequestErrorMessage(error)}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (transactionsTabLoadRequest === request) {
+        transactionsTabLoadRequest = null;
+      }
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        isLoadingTransactionsTabData = false;
+      }
+    }
+  })();
+
+  transactionsTabLoadRequest = request;
+  return request.promise;
+}
+
+async function fetchTransactionsTabDataFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTransactionsTabData", Object.fromEntries(params.entries()))
+  );
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "Gagal memuat data transaksi & closing.");
+  }
+
+  return {
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+    summary: data.summary || null,
+    closings: Array.isArray(data.closings) ? data.closings : [],
+    closingsSummary: data.closingsSummary || null,
+  };
 }
 
 async function fetchTodayTransactionsFromApi(params = buildTransactionPeriodQueryParams()) {
@@ -2894,7 +3035,7 @@ function setTransactionHistoryFilter(filter) {
 
   transactionHistoryFilter = filter;
   resetPaginationPage("transactions");
-  renderRooms();
+  renderDashboardTabPanels();
 }
 
 function getTransactionPeriodTitleSuffix() {
@@ -2931,8 +3072,7 @@ function setTransactionPeriodFilter(period) {
     transactionCustomStartDate = "";
     transactionCustomEndDate = "";
     transactionPeriodNotice = "";
-    loadTodayTransactions();
-    loadTodayCashierClosings();
+    loadTransactionsTabData();
     return;
   }
 
@@ -2964,8 +3104,7 @@ async function applyTransactionCustomPeriod() {
   transactionPeriodNotice = "";
   resetPaginationPage("transactions");
   resetPaginationPage("cashierClosings");
-  await loadTodayTransactions();
-  await loadTodayCashierClosings();
+  await loadTransactionsTabData();
 }
 
 function getFilteredTodayTransactions() {
@@ -3036,7 +3175,7 @@ async function findTransactionForAction(button) {
 
     if (!transaction) {
       showInlineNotice("Memuat ulang riwayat transaksi...");
-      await loadTodayTransactions();
+      await loadTransactionsTabData({ force: true });
       transaction = findTodayTransactionById(transactionId)
         || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
         || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
@@ -9784,7 +9923,7 @@ function showPayOpenFnbOrderModal(order) {
       await Promise.all([
         loadOpenFnbOrders(),
         loadTodayFnbOrders(),
-        loadTodayTransactions()
+        loadTransactionsTabData({ force: true })
       ]);
     } catch (err) {
       errorNotice.textContent = err.message || "Gagal memproses pembayaran.";
@@ -12488,7 +12627,9 @@ function createTransactionHistoryElement() {
   list.className = "transaction-list";
   const filteredTransactions = getFilteredTodayTransactions();
 
-  if (filteredTransactions.length === 0) {
+  if (isLoadingTransactionsTabData) {
+    list.appendChild(createStateMessage("Memuat data transaksi..."));
+  } else if (filteredTransactions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "state-message";
     empty.textContent = getEmptyTransactionMessage();
@@ -12505,6 +12646,34 @@ function createTransactionHistoryElement() {
     header,
     createTransactionPeriodFilterElement(),
     summaryGrid,
+    createTransactionFilterElement(),
+    list
+  );
+
+  return history;
+}
+
+function renderTransactionsClosing() {
+  return createTransactionsClosingElement();
+}
+
+function createTransactionsClosingElement() {
+  const closing = document.createElement("section");
+  closing.className = "transaction-history transaction-closing-panel";
+  closing.setAttribute("aria-labelledby", "transaction-closing-title");
+
+  const header = document.createElement("div");
+  header.className = "transaction-history-header";
+
+  const title = document.createElement("h2");
+  title.id = "transaction-closing-title";
+  title.textContent = `Shift Kasir - ${getTransactionPeriodTitleSuffix()}`;
+
+  header.appendChild(title);
+
+  closing.append(
+    header,
+    createTransactionPeriodFilterElement(),
     createCashierRevenueSummaryElement(calculateCashierRevenueSummary(todayTransactions)),
     createCashierClosingTriggerElement(),
     cashierClosingPreviewVisible
@@ -12513,12 +12682,10 @@ function createTransactionHistoryElement() {
     renderCashierClosingHistory(),
     closingPrintPreviewVisible && selectedClosingForPrint
       ? createClosingPrintPreviewElement(selectedClosingForPrint)
-      : document.createDocumentFragment(),
-    createTransactionFilterElement(),
-    list
+      : document.createDocumentFragment()
   );
 
-  return history;
+  return closing;
 }
 
 function createCashierClosingTriggerElement() {
@@ -12558,7 +12725,9 @@ function createCashierClosingHistoryElement() {
   const list = document.createElement("div");
   list.className = "cashier-closing-history-list";
 
-  if (todayCashierClosings.length === 0) {
+  if (isLoadingTransactionsTabData) {
+    list.appendChild(createStateMessage("Memuat riwayat closing kasir..."));
+  } else if (todayCashierClosings.length === 0) {
     const empty = document.createElement("p");
     empty.className = "state-message";
     empty.textContent = getEmptyCashierClosingMessage();
@@ -13509,6 +13678,16 @@ function createTransactionActionsElement(transaction) {
   printButton.textContent = transaction?.payment_status === "paid" ? "Cetak Ulang" : "Cetak Struk";
   actions.appendChild(printButton);
 
+  if (roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "transaction-action-button btn-danger";
+    deleteButton.type = "button";
+    deleteButton.dataset.action = "delete-transaction";
+    deleteButton.dataset.transactionId = transaction?.transaction_id || "";
+    deleteButton.textContent = "Hapus Transaksi";
+    actions.appendChild(deleteButton);
+  }
+
   if (transaction?.payment_status !== "unpaid") {
     return actions;
   }
@@ -13566,7 +13745,7 @@ function setPaginationPage(key, page) {
   const state = getPaginationState(key);
   const totalPages = getPaginationTotalPages(state.totalItems || 0);
   state.page = Math.max(1, Math.min(Number(page) || 1, totalPages));
-  renderRooms();
+  renderDashboardTabPanels();
 }
 
 function clampPaginationPage(key, totalItems) {
@@ -15918,7 +16097,7 @@ async function refreshActiveTabData() {
       }
       break;
     case "transactions":
-      loads.push(loadTodayTransactions(), loadTodayCashierClosings());
+      loads.push(loadTransactionsTabData());
       break;
     case "audit":
       loads.push(loadTodayRoomTimeLogs());
@@ -18834,7 +19013,7 @@ function appendDashboardTabContent(panel, tabKey) {
           panel.appendChild(renderTransactionHistory());
         } else if (activeTransactionsSubTab === "closing") {
           // Shift Kasir UI – reuse the same transaction history which already includes closing components
-          panel.appendChild(renderTransactionHistory());
+          panel.appendChild(renderTransactionsClosing());
         }
         break;
       }
@@ -19793,7 +19972,7 @@ async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
     }
     await Promise.all([
       loadRooms(),
-      loadTodayTransactions()
+      loadTransactionsTabData({ force: true })
     ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal memproses pembayaran.", "error");
@@ -20051,7 +20230,7 @@ async function closeSession(roomId) {
       loadInventoryItems(),
       loadMenuItems(),
       loadTodayFnbSalesReport(),
-      loadTodayTransactions()
+      loadTransactionsTabData({ force: true })
     ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan sesi.", "error");
@@ -20309,11 +20488,95 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
     }
 
     showInlineNotice("Pembayaran berhasil ditandai lunas.");
-    await loadTodayTransactions();
+    await loadTransactionsTabData({ force: true });
   } catch (error) {
     showInlineNotice(error.message || "Gagal menandai pembayaran lunas.", "error");
   } finally {
     markingTransactionPaidIds.delete(transactionId);
+    setActionButtonsDisabled(false);
+  }
+}
+
+async function deleteTransaction(transactionId) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  if (!transactionId) {
+    return;
+  }
+
+  if (deletingTransactionIds.has(transactionId)) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Apakah Anda yakin ingin menghapus transaksi ${transactionId} secara permanen? Tindakan ini tidak dapat dibatalkan.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Manager Hapus Transaksi",
+    message: `Masukkan PIN owner/manager untuk menghapus transaksi ${transactionId}.`,
+    requestedAction: `delete_transaction_${transactionId}`,
+    requiredRole: "manager",
+    validatePin: false,
+    onSuccess: (authData, adminPin) => executeDeleteTransaction(transactionId, adminPin, authData),
+  });
+}
+
+async function executeDeleteTransaction(transactionId, adminPin, authData) {
+  if (deletingTransactionIds.has(transactionId)) {
+    return { success: false };
+  }
+
+  deletingTransactionIds.add(transactionId);
+  setActionButtonsDisabled(true);
+
+  try {
+    const data = await postApiAction({
+      action: "deleteTransaction",
+      transaction_id: transactionId,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Gagal menghapus transaksi.";
+      showInlineNotice(message, "error");
+
+      if (adminPinModal) {
+        adminPinModal = {
+          ...adminPinModal,
+          pin: "",
+          error: message,
+        };
+      }
+      return { success: false, message };
+    }
+
+    const message = data.message || "Transaksi berhasil dihapus secara permanen.";
+    adminPinModal = null;
+    showInlineNotice(message);
+
+    if (lastTransaction?.transaction_id === transactionId) {
+      lastTransaction = null;
+    }
+
+    await loadTransactionsTabData({ force: true });
+    renderRooms();
+
+    return { success: true, message };
+  } catch (error) {
+    console.error("Gagal menghapus transaksi.", error);
+    const message = "Terjadi kendala saat menghapus transaksi. Silakan coba lagi.";
+    showInlineNotice(message, "error");
+    return { success: false, message };
+  } finally {
+    deletingTransactionIds.delete(transactionId);
     setActionButtonsDisabled(false);
   }
 }
@@ -21025,6 +21288,12 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "delete-transaction") {
+    const transactionId = button.dataset.transactionId || "";
+    await deleteTransaction(transactionId);
+    return;
+  }
+
   if (action === "show-transaction-summary") {
     showTransactionFromHistory(button.dataset.transactionId || "");
     return;
@@ -21540,8 +21809,17 @@ async function initializeDashboard() {
 
   dashboardDataInitialized = true;
   renderRooms();
-  await loadRooms();
-  await loadPackages();
-  await loadLcs();
+
+  const initialLoads = [
+    loadRooms(),
+    loadPackages(),
+    loadLcs(),
+  ];
+
+  if (activeDashboardTab === "transactions") {
+    initialLoads.push(loadTransactionsTabData());
+  }
+
+  await Promise.allSettled(initialLoads);
   await refreshActiveTabData();
 }

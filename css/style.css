@@ -8288,3 +8288,57 @@ body::after {
   color: #ff6b6b !important;
 }
 
+/* Custom overrides to make transaction actions layout horizontally as text links with separators */
+.transaction-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-top: 4px !important;
+}
+
+.transaction-actions .transaction-action-button {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  min-height: auto !important;
+  width: auto !important;
+  color: #3b82f6 !important; /* Blue link color */
+  font-size: 0.85rem !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  text-decoration: underline !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.transaction-actions .transaction-action-button:hover {
+  color: #60a5fa !important;
+  background: transparent !important;
+}
+
+/* Red link for delete button to stand out safely */
+.transaction-actions .transaction-action-button.btn-danger {
+  color: #ef4444 !important;
+}
+
+.transaction-actions .transaction-action-button.btn-danger:hover {
+  color: #f87171 !important;
+}
+
+/* Separator styling */
+.transaction-actions .transaction-action-button::after {
+  content: " |" !important;
+  margin-left: 8px !important;
+  color: var(--muted) !important;
+  display: inline-block !important;
+  text-decoration: none !important;
+  pointer-events: none !important;
+}
+
+.transaction-actions .transaction-action-button:last-child::after {
+  content: "" !important;
+}
+
+
