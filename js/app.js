@@ -4169,7 +4169,13 @@ async function saveFnbOrder() {
   renderRooms();
 
   try {
-    const data = await postApiAction(buildFnbOrderPayload());
+    const payload = buildFnbOrderPayload();
+    let data = await postApiAction(payload);
+    if (data && data.ok !== true && isRetryableFnbSaveBusyError(data.error)) {
+      showInlineNotice("Server sedang menyelesaikan proses lain. Mencoba simpan ulang...", "warning");
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      data = await postApiAction(payload);
+    }
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menyimpan order F&B.");
@@ -4221,6 +4227,11 @@ async function saveFnbOrder() {
     isSavingFnbOrder = false;
     renderRooms();
   }
+}
+
+function isRetryableFnbSaveBusyError(message) {
+  const text = String(message || "").toLowerCase();
+  return text.includes("sedang memproses") || text.includes("lock") || text.includes("coba lagi sebentar");
 }
 
 function findFnbOrderById(orderId) {

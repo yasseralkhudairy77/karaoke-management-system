@@ -12196,8 +12196,8 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   }
 
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(2000)) {
-    return { ok: false, error: "Sistem sedang memproses pembatalan order lain. Coba lagi sebentar." };
+  if (!lock.tryLock(10000)) {
+    return { ok: false, error: "Sistem sedang memproses order F&B atau transaksi lain. Coba simpan lagi sebentar." };
   }
 
   try {
