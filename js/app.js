@@ -6314,6 +6314,17 @@ function createBillingBreakdownElement(transaction) {
     breakdown.appendChild(orders);
   }
 
+  const lcSalesBonusLogs = Array.isArray(transaction?.lc_sales_bonus_logs) ? transaction.lc_sales_bonus_logs : [];
+  const lcSalesBonusTotal = lcSalesBonusLogs.reduce((sum, log) => {
+    return sum + (Number(log.bonus_total) || 0);
+  }, 0);
+  if (lcSalesBonusLogs.length > 0) {
+    const bonusInfo = document.createElement("p");
+    bonusInfo.className = "billing-fnb-orders";
+    bonusInfo.textContent = `Bonus Sales LC internal: ${lcSalesBonusLogs.length} log, total ${formatCurrency(lcSalesBonusTotal)}. Tidak menambah tagihan konsumen.`;
+    breakdown.appendChild(bonusInfo);
+  }
+
   return breakdown;
 }
 
@@ -20314,7 +20325,10 @@ async function closeSession(roomId) {
         ? `Sesi berhasil diselesaikan. ${bonusCount} bonus sales LC difinalkan. TV dimatikan.`
         : "Sesi berhasil diselesaikan. TV dimatikan.");
     } catch (tvError) {
-      showInlineNotice(`Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
+      const bonusCount = transaction.lc_sales_bonus_logs.length;
+      showInlineNotice(bonusCount > 0
+        ? `Sesi berhasil diselesaikan. ${bonusCount} bonus sales LC difinalkan. Namun TV gagal dimatikan: ${tvError.message}`
+        : `Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
     }
 
     if (transaction.transaction_id) {

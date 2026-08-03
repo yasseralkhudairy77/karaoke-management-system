@@ -305,6 +305,8 @@ var LC_SALES_BONUS_LOG_HEADERS = [
   "created_by",
   "voided_at",
   "void_reason",
+  "is_test",
+  "test_run_id",
 ];
 var LC_CASH_ADVANCES_HEADERS = [
   "cash_advance_id",
@@ -8112,6 +8114,10 @@ function getPendingLcSalesBonusRows_(range) {
     row.__row_number = index + 2;
     return row;
   }).filter(function (row) {
+    if (!isProductionDataRow_(row)) {
+      return false;
+    }
+
     var status = String(row.source_status || "").trim().toLowerCase();
     var isUnpaid = !String(row.payroll_id || "").trim();
     return isUnpaid &&
@@ -8195,7 +8201,9 @@ function getLcFinanceSummary_(period, startDate, endDate) {
   ensureLcFinanceFoundation_();
 
   var salesBonusLogs = filterLcFinanceRowsByPeriod_(
-    readSheetAsObjects_("LcSalesBonusLogs"),
+    readSheetAsObjects_("LcSalesBonusLogs").filter(function (row) {
+      return isProductionDataRow_(row);
+    }),
     periodResult
   ).filter(function (row) {
     return !isLcFinanceRowVoided_(row);
@@ -8963,10 +8971,6 @@ function buildFinalLcBonusRecipients_(session, workLogRows, lcMasterRows) {
 }
 
 function appendFinalizedLcSalesBonusLogsForSession_(session, roomId, roomStartTime, fnbOrders, transactionId, cashierName, finalizedAt, testContext) {
-  if (testContext && testContext.is_test) {
-    return [];
-  }
-
   ensureLcSalesBonusLogsSheet_();
 
   var orders = Array.isArray(fnbOrders) && fnbOrders.length
@@ -9035,6 +9039,8 @@ function appendFinalizedLcSalesBonusLogsForSession_(session, roomId, roomStartTi
           created_by: cashierName || order.cashier_name || "Kasir",
           voided_at: "",
           void_reason: "",
+          is_test: testContext && testContext.is_test ? "TRUE" : "",
+          test_run_id: testContext && testContext.is_test ? String(testContext.test_run_id || "").trim() : "",
         });
       });
     });
@@ -15597,6 +15603,10 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
 
   if (sheetExists_("LcSalesBonusLogs")) {
     readSheetAsObjects_("LcSalesBonusLogs").filter(function (bonusLog) {
+      if (!isProductionDataRow_(bonusLog)) {
+        return false;
+      }
+
       var bonusDate = String(bonusLog.operational_date || "").trim()
         || normalizeLcFinanceOperationalDate_(bonusLog.created_at);
       return bonusDate === operationalDate && !String(bonusLog.voided_at || "").trim();
@@ -15625,8 +15635,8 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
         bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
         bonus_total: Number(bonusLog.bonus_total) || 0,
         snapshot_at: snapshotAt,
-        is_test: "",
-        test_run_id: "",
+        is_test: bonusLog.is_test || "",
+        test_run_id: bonusLog.test_run_id || "",
       });
     });
   }
