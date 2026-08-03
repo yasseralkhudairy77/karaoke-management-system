@@ -12,9 +12,9 @@ import {
   DEV_SHORT_SESSION_ENABLED,
   LOCAL_TV_BRIDGE_ENABLED,
   LOCAL_TV_BRIDGE_URL,
-} from "./config.js?v=owner-test-mode-v1";
+} from "./config.js?v=room-fnb-card-v1";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=owner-test-mode-v1";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=room-fnb-card-v1";
 import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -6900,6 +6900,10 @@ function createRoomCard(room) {
   }
 
   const statusLabel = getStatusLabel(room.status);
+  const roomOpenFnbOrders = room.status === "occupied" ? getOpenFnbOrdersForRoom(room) : [];
+  const roomOpenFnbTotal = roomOpenFnbOrders.reduce((sum, order) => {
+    return sum + (Number(order.order_total) || 0);
+  }, 0);
   let sessionButtonLabel = getSessionButtonLabel(room.status);
   if (room.status === "waiting_payment") {
     if (getCurrentOperatorRole() === "receptionist") {
@@ -6930,7 +6934,7 @@ function createRoomCard(room) {
     openBillBadge.style.borderRadius = "4px";
     openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
     openBillBadge.style.fontWeight = "bold";
-    openBillBadge.textContent = "Open Bill";
+    openBillBadge.textContent = roomOpenFnbTotal > 0 ? `F&B ${formatCurrency(roomOpenFnbTotal)}` : "Open Bill";
     topLine.append(name, status, openBillBadge);
   } else {
     topLine.append(name, status);
@@ -6952,9 +6956,8 @@ function createRoomCard(room) {
 
   if (room.status === "occupied") {
     meta.appendChild(createRoomBookingInfoElement(room));
-    const openOrders = getOpenFnbOrdersForRoom(room);
-    if (openOrders.length > 0) {
-      meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders));
+    if (roomOpenFnbOrders.length > 0) {
+      meta.appendChild(createRoomOpenFnbBreakdownElement(roomOpenFnbOrders));
     }
   } else if (room.status === "waiting_payment" || room.status === "paid_waiting_start") {
     meta.appendChild(createRoomWaitingPaymentInfoElement(room));
