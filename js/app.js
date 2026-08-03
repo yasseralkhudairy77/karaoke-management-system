@@ -3972,12 +3972,9 @@ function getSelectedRoomOpenFnbOrders() {
     return [];
   }
 
-  const roomStartTime = getSelectedFbRoomStartTime();
-
   return openFnbOrders.filter((order) => {
     return (
       order.room_id === selectedRoom.room_id &&
-      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
       order.order_status === "open"
     );
   });
@@ -6771,14 +6768,13 @@ function createRoomRecoveryCandidateElement(candidate) {
 }
 
 function getOpenFnbOrdersForRoom(room) {
-  if (room.status !== "occupied" || !room.start_time) {
+  if (room.status !== "occupied") {
     return [];
   }
-  const roomStartTime = formatJakartaIsoString(room.start_time);
+
   return openFnbOrders.filter((order) => {
     return (
       order.room_id === room.room_id &&
-      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
       order.order_status === "open"
     );
   });
@@ -6813,21 +6809,43 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
 
   const aggregatedItems = {};
   let totalFbAmount = 0;
+  const orderTotalAmount = openOrders.reduce((sum, order) => {
+    return sum + (Number(order.order_total) || 0);
+  }, 0);
 
   openOrders.forEach((order) => {
     (order.items || []).forEach((item) => {
       const name = item.menu_name || "-";
       const qty = Number(item.quantity) || 0;
       const price = Number(item.price) || 0;
+      const subtotal = Number(item.subtotal) || (qty * price);
       if (!aggregatedItems[name]) {
         aggregatedItems[name] = { quantity: 0, price: price };
       }
       aggregatedItems[name].quantity += qty;
-      totalFbAmount += qty * price;
+      totalFbAmount += subtotal;
     });
   });
 
-  Object.entries(aggregatedItems).forEach(([name, data]) => {
+  const aggregatedEntries = Object.entries(aggregatedItems);
+
+  if (aggregatedEntries.length === 0) {
+    const summaryRow = document.createElement("div");
+    summaryRow.style.display = "flex";
+    summaryRow.style.justifyContent = "space-between";
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = `${openOrders.length} order F&B open`;
+
+    const amountSpan = document.createElement("span");
+    amountSpan.textContent = formatCurrency(orderTotalAmount);
+    amountSpan.style.color = "rgba(255, 255, 255, 0.5)";
+
+    summaryRow.append(labelSpan, amountSpan);
+    itemsList.appendChild(summaryRow);
+  }
+
+  aggregatedEntries.forEach(([name, data]) => {
     const itemRow = document.createElement("div");
     itemRow.style.display = "flex";
     itemRow.style.justifyContent = "space-between";
@@ -6864,7 +6882,7 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
   const footerLabel = document.createElement("span");
   footerLabel.textContent = "Total F&B:";
   const footerVal = document.createElement("span");
-  footerVal.textContent = formatCurrency(totalFbAmount);
+  footerVal.textContent = formatCurrency(orderTotalAmount || totalFbAmount);
 
   footer.append(footerLabel, footerVal);
   container.appendChild(footer);
