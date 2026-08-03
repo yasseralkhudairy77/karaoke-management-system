@@ -329,6 +329,28 @@ function formatLcDurationShort(minutes) {
   return `${duration} menit`;
 }
 
+function getPackageForRoom(room) {
+  const packageId = String(room?.package_id || "").trim();
+  if (!packageId) {
+    return null;
+  }
+
+  return packages.find((pkg) => String(pkg.package_id || "").trim() === packageId) || null;
+}
+
+function getRoomPriceLabel(room) {
+  const pkg = getPackageForRoom(room);
+  if (pkg) {
+    return `${currencyFormatter.format(Number(pkg.selling_price) || 0)} / paket`;
+  }
+
+  if (room?.package_id) {
+    return `${room.package_id} / paket`;
+  }
+
+  return `${currencyFormatter.format(Number(room?.rate_per_hour) || 0)} / jam`;
+}
+
 async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
   if (!isLocalTvBridgeEnabled()) {
     return {
@@ -6465,7 +6487,7 @@ function createRoomCard(room) {
 
   const rate = document.createElement("p");
   rate.className = "rate";
-  rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
+  rate.textContent = getRoomPriceLabel(room);
 
   meta.appendChild(rate);
 
@@ -6583,12 +6605,17 @@ function createRoomBookingInfoElement(room) {
   const info = document.createElement("div");
   info.className = "room-booking-info";
   const timeState = getRoomTimeState(room);
+  const roomPackage = getPackageForRoom(room);
 
   const rows = [
     ["Durasi", formatDurationMinutes(room.booked_duration_minutes)],
     ["Mulai", getRoomTimeLabel(room.start_time)],
     ["Selesai", getRoomTimeLabel(room.scheduled_end_time)],
   ];
+
+  if (room.package_id) {
+    rows.unshift(["Paket", roomPackage ? roomPackage.package_name : room.package_id]);
+  }
 
   const lcIds = String(room.lc_ids || "").trim();
   if (lcIds) {
