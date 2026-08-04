@@ -2242,6 +2242,7 @@ body::after {
   box-shadow: var(--shadow), var(--maintenance-glow);
 }
 
+.room-card.booked,
 .room-card.paid-waiting-start {
   background: linear-gradient(160deg, var(--paid-waiting-start), var(--paid-waiting-start-deep));
   box-shadow: var(--shadow), var(--paid-waiting-start-glow);
@@ -7896,6 +7897,7 @@ body::after {
     var(--surface);
 }
 
+.room-card.booked,
 .room-card.paid-waiting-start {
   background:
     linear-gradient(160deg, rgba(75, 134, 217, 0.96), rgba(21, 58, 112, 0.98)),

@@ -485,6 +485,12 @@ const ROOM_STATUS_CONFIG = {
     tone: "warning",
     buttonLabel: "Tidak Tersedia",
   },
+  booked: {
+    label: "Menunggu Mulai",
+    className: "booked",
+    tone: "info",
+    buttonLabel: "Mulai Sesi",
+  },
   paid_waiting_start: {
     label: "Menunggu Mulai",
     className: "paid-waiting-start",
@@ -5639,6 +5645,10 @@ function getBillingBasisLabel(basis) {
     return "Durasi Aktual";
   }
 
+  if (basis === "package_postpaid") {
+    return "Paket Postpaid + Tambahan";
+  }
+
   return "";
 }
 
@@ -6445,12 +6455,10 @@ function createRoomCard(room) {
 
   const statusLabel = getStatusLabel(room.status);
   let sessionButtonLabel = getSessionButtonLabel(room.status);
-  if (room.status === "waiting_payment") {
-    if (getCurrentOperatorRole() === "receptionist") {
-      sessionButtonLabel = "Detail / Batal";
-    } else {
-      sessionButtonLabel = "Bayar & Mulai";
-    }
+  if (["booked", "waiting_payment"].includes(room.status)) {
+    sessionButtonLabel = getCurrentOperatorRole() === "receptionist"
+      ? "Menunggu Kasir"
+      : "Mulai Sesi";
   }
 
   const topLine = document.createElement("div");
@@ -6489,7 +6497,7 @@ function createRoomCard(room) {
     if (openOrders.length > 0) {
       meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders));
     }
-  } else if (room.status === "waiting_payment" || room.status === "paid_waiting_start") {
+  } else if (["booked", "waiting_payment", "paid_waiting_start"].includes(room.status)) {
     meta.appendChild(createRoomWaitingPaymentInfoElement(room));
   } else if (room.status === "cleaning") {
     meta.appendChild(createRoomOperationalStatusInfoElement(room.status));
@@ -6537,19 +6545,25 @@ function createRoomCard(room) {
     selectLcButton.textContent = "Pilih LC";
 
     actions.append(sessionButton, extendButton, selectLcButton);
+  } else if (["booked", "waiting_payment"].includes(room.status)) {
+    const cancelBookingButton = document.createElement("button");
+    cancelBookingButton.className = "room-button room-button-secondary";
+    cancelBookingButton.type = "button";
+    cancelBookingButton.dataset.action = "cancel-booking";
+    cancelBookingButton.dataset.roomId = room.room_id;
+    cancelBookingButton.textContent = "Batalkan Booking";
+    sessionButton.disabled = isActivatingPreparedSession || getCurrentOperatorRole() === "receptionist";
+    actions.append(sessionButton, cancelBookingButton);
   } else {
     actions.append(sessionButton);
   }
 
   const isDurationActive = durationSelectionRoomId === room.room_id && room.status === "available";
-  const isPaymentActive = paymentSelectionRoomId === room.room_id && room.status === "waiting_payment";
   const isExtendActive = extendSelectionRoomId === room.room_id && room.status === "occupied";
   const isLcActive = lcSelectionRoomId === room.room_id && room.status === "occupied";
 
   if (isDurationActive) {
     card.appendChild(createDurationSelectionElement(room));
-  } else if (isPaymentActive) {
-    card.appendChild(createPaymentSelectionElement(room));
   } else if (isExtendActive) {
     card.appendChild(createExtendSelectionElement(room));
   } else if (isLcActive) {
@@ -19230,7 +19244,7 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       room_id: roomId,
       duration_minutes: selectedDuration,
       dev_test_duration: canUseDevShortSessions(),
-      payment_method: "cash",
+      payment_method: "",
       cashier_name: getLoggedInOperatorName(),
       customer_name: customerName,
       package_id: packageId,
@@ -19247,11 +19261,10 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       throw new Error(data?.error || "Gagal menyiapkan booking room.");
     }
 
-    showInlineNotice(data.message || "Booking room berhasil disiapkan.");
-    bookingCartItems = []; // clear receptionist cart on success
+    showInlineNotice(data.message || "Booking room berhasil disimpan. Mulai sesi saat pelanggan masuk room.");
+    bookingCartItems = [];
     durationSelectionRoomId = "";
     customDurationMinutes = "";
-    durationPaymentMethod = "cash";
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyiapkan booking room.", "error");
@@ -19478,10 +19491,10 @@ async function activatePreparedSession(roomId) {
 
     try {
       await sendLocalTvCommand(roomId, "power_on", "activate_prepared_session");
-      showInlineNotice(`${data.message || "Countdown room berhasil dimulai."} TV dinyalakan.`);
+      showInlineNotice(`${data.message || "Sesi postpaid berhasil dimulai."} TV dinyalakan.`);
     } catch (tvError) {
       showInlineNotice(
-        `${data.message || "Countdown room berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
+        `${data.message || "Sesi postpaid berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
         "warning"
       );
     }
@@ -20575,6 +20588,14 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "cancel-booking") {
+    const bookingRoomId = button.dataset.roomId || roomId || "";
+    if (confirm("Batalkan booking room ini?")) {
+      await cancelBooking(bookingRoomId);
+    }
+    return;
+  }
+
   if (action === "show-extend-selection") {
     if (getCurrentOperatorRole() === "receptionist") {
       showInlineNotice("Resepsionis tidak diizinkan menambah waktu.", "error");
@@ -20656,8 +20677,8 @@ async function handleRoomAction(event) {
     return;
   }
 
-  if (room.status === "waiting_payment") {
-    showPaymentSelection(roomId);
+  if (["booked", "waiting_payment", "paid_waiting_start"].includes(room.status)) {
+    await activatePreparedSession(roomId);
     return;
   }
 
@@ -20668,11 +20689,6 @@ async function handleRoomAction(event) {
 
   if (room.status === "maintenance") {
     showInlineNotice("Ruangan sedang dalam perbaikan.", "error");
-    return;
-  }
-
-  if (room.status === "paid_waiting_start") {
-    await activatePreparedSession(roomId);
     return;
   }
 

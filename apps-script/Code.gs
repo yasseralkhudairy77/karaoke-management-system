@@ -9365,7 +9365,7 @@ function prepareRoomSession_(payload) {
     };
 
     appendRoomSession_(session);
-    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("waiting_payment");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("booked");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
@@ -9393,7 +9393,7 @@ function prepareRoomSession_(payload) {
     return {
       ok: true,
       success: true,
-      message: "Booking room berhasil disiapkan. Silakan arahkan pelanggan melakukan pembayaran ke kasir.",
+      message: "Booking room berhasil disimpan. Mulai sesi saat pelanggan sudah masuk room.",
       room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
       session: session,
     };
@@ -9688,52 +9688,97 @@ function payAndStartSession_(payload) {
   }
 }
 
+function getPostpaidPackageContext_(packageId) {
+  var normalizedPackageId = String(packageId || "").trim();
+  var packageMaster = readSheetAsObjects_("PackageMaster").find(function (item) {
+    return String(item.package_id || "").trim() === normalizedPackageId;
+  });
+
+  if (!packageMaster) {
+    throw new Error("Paket sesi tidak ditemukan: " + normalizedPackageId);
+  }
+
+  var packageDetails = readSheetAsObjects_("PackageDetail").filter(function (detail) {
+    return String(detail.package_id || "").trim() === normalizedPackageId;
+  });
+  var includedTalentCount = packageDetails.reduce(function (total, detail) {
+    var componentType = String(detail.component_type || "").trim().toLowerCase();
+    var componentRefId = String(detail.component_ref_id || "").trim().toUpperCase();
+    var componentName = String(detail.component_name || "").trim().toLowerCase();
+    var isTalent = componentType === "service"
+      && (componentRefId === "SVC-TALENT" || componentName.indexOf("talent") !== -1);
+
+    return total + (isTalent ? Number(detail.qty) || 0 : 0);
+  }, 0);
+
+  return {
+    package_id: normalizedPackageId,
+    package_name: packageMaster.package_name || normalizedPackageId,
+    selling_price: Number(packageMaster.selling_price) || 0,
+    duration_minutes: Number(packageMaster.duration_minutes) || 0,
+    included_talent_count: Math.max(0, Math.floor(includedTalentCount)),
+  };
+}
+
+function calculatePackageIncludedLcCredit_(workLogs, packageContext) {
+  var includedCount = Number(packageContext && packageContext.included_talent_count) || 0;
+  var includedDuration = Number(packageContext && packageContext.duration_minutes) || 0;
+
+  if (includedCount <= 0 || includedDuration <= 0) {
+    return 0;
+  }
+
+  return (workLogs || []).filter(function (log) {
+    var lcId = String(log.lc_id || "").trim();
+    return lcId && lcId !== "PENDING";
+  }).slice(0, includedCount).reduce(function (credit, log) {
+    var hourlyRate = Number(log.rate_per_hour) || 0;
+    var loggedDuration = inferLcWorkLogDurationMinutes_(log) || includedDuration;
+    var coveredDuration = Math.min(loggedDuration, includedDuration);
+    var coveredAmount = calculateLcRateForDuration_(coveredDuration, hourlyRate);
+
+    return credit + Math.min(Number(log.rate) || 0, coveredAmount);
+  }, 0);
+}
+
+function calculatePostpaidPackageRoomTotal_(durationMinutes, packageContext, ratePerHour) {
+  var includedDuration = Number(packageContext && packageContext.duration_minutes) || 0;
+  var packagePrice = Number(packageContext && packageContext.selling_price) || 0;
+  var excessMinutes = Math.max(0, (Number(durationMinutes) || 0) - includedDuration);
+
+  return packagePrice + Math.ceil(excessMinutes / 60 * (Number(ratePerHour) || 0));
+}
+
 function deductPackageStock_(packageId, transactionId, cashierName, now) {
   try {
-    var detailsSheet = ensurePackageDetailSheet_();
-    var details = readSheetAsObjects_("PackageDetail");
-    var packageDetails = details.filter(function (detail) {
-      return String(detail.package_id || "").trim() === packageId;
+    var packageItems = readSheetAsObjects_("PackageDetail").filter(function (detail) {
+      var componentType = String(detail.component_type || "").trim().toLowerCase();
+      var refId = String(detail.component_ref_id || "").trim();
+      return String(detail.package_id || "").trim() === String(packageId || "").trim()
+        && ["menu", "inventory"].indexOf(componentType) !== -1
+        && refId.indexOf("MENU-") === 0
+        && Number(detail.qty) > 0;
+    }).map(function (detail) {
+      return {
+        menu_id: String(detail.component_ref_id || "").trim(),
+        menu_name: detail.component_name || detail.component_ref_id,
+        quantity: Number(detail.qty) || 0,
+      };
     });
 
-    var inventorySheet = getSheet_("Inventory");
-    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
-    var movementsSheet = ensureStockMovementsSheet_();
+    if (packageItems.length === 0) {
+      return { movements: [], warnings: [] };
+    }
 
-    packageDetails.forEach(function (detail) {
-      if (String(detail.component_type || "").trim().toLowerCase() === "menu" || String(detail.component_type || "").trim().toLowerCase() === "inventory") {
-        var refId = String(detail.component_ref_id || "").trim();
-        var qty = Number(detail.qty) || 0;
-        if (refId && qty > 0) {
-          var rowNumber = findRowByValue_(inventorySheet, inventoryHeaderMap, "stock_item_id", refId);
-          if (rowNumber) {
-            var stockBefore = Number(inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).getValue()) || 0;
-            var stockAfter = stockBefore - qty;
-
-            inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).setValue(stockAfter);
-            inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
-
-            var movement = {
-              movement_id: "MVT-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000),
-              created_at: now,
-              stock_item_id: refId,
-              stock_item_name: String(detail.component_name || "").trim(),
-              movement_type: "out",
-              reference_type: "transaction",
-              reference_id: transactionId,
-              qty_change: -qty,
-              stock_before: stockBefore,
-              stock_after: stockAfter,
-              note: "Pengurangan otomatis paket " + packageId,
-              cashier_name: cashierName,
-            };
-            appendObjectRow_(movementsSheet, movement);
-          }
-        }
-      }
-    });
+    return deductStockForFnbOrders_([
+      {
+        order_id: "PACKAGE-" + packageId,
+        items: packageItems,
+      },
+    ], transactionId, cashierName, now);
   } catch (err) {
     Logger.log("Gagal mengurangi stok paket: " + err.message);
+    return { movements: [], warnings: ["Stok paket gagal diperbarui: " + err.message] };
   }
 }
 
@@ -9819,8 +9864,8 @@ function cancelBooking_(payload) {
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
     var status = String(room.status || "").trim().toLowerCase();
 
-    if (status !== "waiting_payment") {
-      return { ok: false, success: false, error: "Hanya booking belum bayar yang bisa dibatalkan." };
+    if (["booked", "waiting_payment"].indexOf(status) === -1) {
+      return { ok: false, success: false, error: "Hanya booking yang belum dimulai yang bisa dibatalkan." };
     }
 
     var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
@@ -10002,11 +10047,11 @@ function activatePreparedSession_(roomId, cashierName) {
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
     var status = String(room.status || "").trim().toLowerCase();
 
-    if (status !== "paid_waiting_start") {
+    if (["booked", "waiting_payment", "paid_waiting_start"].indexOf(status) === -1) {
       return {
         ok: false,
         success: false,
-        error: "Room belum berada pada status menunggu mulai.",
+        error: "Room belum berada pada status booking yang siap dimulai.",
       };
     }
 
@@ -10056,7 +10101,9 @@ function activatePreparedSession_(roomId, cashierName) {
     roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue(scheduledEndTime);
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
 
-    // Sinkronkan start_time F&B orders yang dibayar prepayment
+    ensureActiveLcWorkLogsForSession_(session, now);
+
+    // Sinkronkan order F&B yang dibuat saat booking dengan sesi aktif.
     syncPrepaidFnbOrdersStartTime_(normalizedRoomId, now);
 
     return {
@@ -10069,6 +10116,68 @@ function activatePreparedSession_(roomId, cashierName) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function ensureActiveLcWorkLogsForSession_(session, startedAt) {
+  var assignments = parseLcAssignments_(
+    {
+      lc_ids: session.lc_ids,
+      lc_assignments: session.lc_assignments,
+    },
+    Number(session.booked_duration_minutes) || 60
+  );
+
+  if (assignments.length === 0) {
+    return;
+  }
+
+  var existingLogs = readSheetAsObjectsOrEmpty_("LcWorkLogs").filter(function (log) {
+    return String(log.session_id || "").trim() === String(session.session_id || "").trim()
+      && String(log.status || "").trim().toLowerCase() === "active";
+  });
+
+  if (existingLogs.length > 0) {
+    return;
+  }
+
+  var lcMasterRows = readSheetAsObjects_("LcMaster");
+  var activeRates = lcMasterRows.filter(function (lc) {
+    return String(lc.status || "").trim().toLowerCase() === "active";
+  }).map(function (lc) {
+    return Number(lc.rate_per_room) || 0;
+  }).filter(function (rate) {
+    return rate > 0;
+  });
+  var averageRate = activeRates.length > 0
+    ? activeRates.reduce(function (sum, rate) { return sum + rate; }, 0) / activeRates.length
+    : 0;
+
+  assignments.forEach(function (assignment, index) {
+    var lcId = String(assignment.lc_id || "").trim();
+    var durationMinutes = normalizeLcDurationMinutes_(
+      assignment.duration_minutes,
+      Number(session.booked_duration_minutes) || 60
+    );
+    var lc = lcMasterRows.find(function (item) {
+      return String(item.lc_id || "").trim() === lcId;
+    });
+    var hourlyRate = lcId === "PENDING"
+      ? averageRate
+      : Number(lc && lc.rate_per_room) || 0;
+
+    appendLcWorkLog_({
+      log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + (lcId || "PENDING") + "-" + index + "-" + Math.floor(Math.random() * 100),
+      session_id: session.session_id,
+      lc_id: lcId || "PENDING",
+      lc_name: lcId === "PENDING" ? "Belum Dipilih" : (lc && lc.lc_name || lcId),
+      rate: calculateLcRateForDuration_(durationMinutes, hourlyRate),
+      duration_minutes: durationMinutes,
+      rate_per_hour: hourlyRate,
+      status: "active",
+      created_at: startedAt,
+      closed_at: "",
+    });
+  });
 }
 
 function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, paymentStatus) {
@@ -10384,6 +10493,7 @@ function closeSession_(roomId, cashierName) {
     var initialPaidMinutes = 0;
     var prepaidRoomTotal = 0;
     var prepaidLcTotal = 0;
+    var postpaidPackageContext = null;
     
     if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.prepayment_transaction_id) {
       isPrepay = true;
@@ -10416,6 +10526,21 @@ function closeSession_(roomId, cashierName) {
       
       var excessMinutes = Math.max(0, durationMinutes - initialPaidMinutes);
       roomTotal = Math.ceil((excessMinutes / 60) * ratePerHour);
+    }
+
+    if (
+      !isPrepay &&
+      activeRoomSession &&
+      activeRoomSession.session &&
+      String(activeRoomSession.session.booking_mode || "").trim().toLowerCase() === "package"
+    ) {
+      postpaidPackageContext = getPostpaidPackageContext_(activeRoomSession.session.package_id);
+      roomTotal = calculatePostpaidPackageRoomTotal_(
+        durationMinutes,
+        postpaidPackageContext,
+        ratePerHour
+      );
+      billing.billing_basis = "package_postpaid";
     }
 
     var prepaidExtensionsAmount = 0;
@@ -10463,7 +10588,10 @@ function closeSession_(roomId, cashierName) {
           totalLcCost += Number(log.rate) || 0;
         });
         
-        lcFeeTotal = Math.max(0, totalLcCost - prepaidLcTotal);
+        var includedLcCredit = postpaidPackageContext
+          ? calculatePackageIncludedLcCredit_(workLogRowsForLc, postpaidPackageContext)
+          : 0;
+        lcFeeTotal = Math.max(0, totalLcCost - prepaidLcTotal - includedLcCredit);
       } catch (lcErr) {
         Logger.log("Error calculating LC checkout fee: " + lcErr.message);
         throw lcErr;
@@ -10504,6 +10632,16 @@ function closeSession_(roomId, cashierName) {
 
       appendTransaction_(transaction);
       stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      if (postpaidPackageContext) {
+        var packageStockResult = deductPackageStock_(
+          postpaidPackageContext.package_id,
+          transaction.transaction_id,
+          transaction.cashier_name,
+          endTime
+        );
+        stockResult.movements = stockResult.movements.concat(packageStockResult.movements || []);
+        stockResult.warnings = stockResult.warnings.concat(packageStockResult.warnings || []);
+      }
       markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
       fnbOrders = detailedFnbOrders.map(function (order) {
         order.order_status = "billed";
@@ -11133,10 +11271,10 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
       var status = String(room.status || "").trim().toLowerCase();
 
-      if (status !== "occupied" && status !== "waiting_payment") {
+      if (status !== "occupied" && status !== "booked" && status !== "waiting_payment") {
         return {
           ok: false,
-          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau menunggu pembayaran.",
+          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau sudah dibooking.",
         };
       }
 
@@ -14776,13 +14914,8 @@ function appendRoomSession_(session) {
 }
 
 function buildPreparedSessionNote_(paymentMethod, note) {
-  var paymentLabel = paymentMethod === "transfer"
-    ? "Transfer/QRIS"
-    : "Cash";
   var userNote = String(note || "").trim();
-  var parts = [
-    "Prepared session; payment method confirmed: " + paymentLabel,
-  ];
+  var parts = ["Postpaid booking; payment due at checkout"];
 
   if (userNote) {
     parts.push(userNote);
