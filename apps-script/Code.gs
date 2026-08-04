@@ -954,6 +954,10 @@ function doPost(e) {
       return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
     }
 
+    if (action === "deleteTransaction") {
+      return jsonResponse(deleteTransaction_(payload));
+    }
+
     if (action === "logReceiptPrint") {
       return jsonResponse(logReceiptPrint_(payload));
     }
@@ -11067,6 +11071,369 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
       message: "Pembayaran berhasil ditandai lunas.",
       transaction: getRowObject_(sheet, headerMap, rowNumber),
     };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureDeletedTransactionsSheet_(transactionHeaders) {
+  var archiveHeaders = (transactionHeaders || []).slice();
+  ["deleted_at", "deleted_by", "delete_reason"].forEach(function (header) {
+    if (archiveHeaders.indexOf(header) === -1) {
+      archiveHeaders.push(header);
+    }
+  });
+  return ensureSheetColumns_("DeletedTransactions", archiveHeaders);
+}
+
+function findTransactionClosingReference_(transactionId) {
+  if (!sheetExists_("CashierClosingTransactions")) {
+    return null;
+  }
+
+  return readSheetAsObjects_("CashierClosingTransactions").find(function (row) {
+    return String(row.transaction_id || "").trim() === String(transactionId || "").trim();
+  }) || null;
+}
+
+function restoreStockMovementsForDeletedTransaction_(transactionId, deletedBy, deletedAt) {
+  if (!sheetExists_("StockMovements")) {
+    return [];
+  }
+
+  var allMovements = readSheetAsObjects_("StockMovements");
+  var sourceMovements = allMovements.filter(function (movement) {
+    return String(movement.reference_id || "").trim() === String(transactionId || "").trim()
+      && String(movement.movement_type || "").trim().toLowerCase() === "out"
+      && Number(movement.qty_change) < 0;
+  });
+  var reversalReferenceId = "DELETE-" + transactionId;
+  var requiredByStockItem = {};
+  var alreadyRestoredByStockItem = {};
+
+  sourceMovements.forEach(function (source) {
+    var stockItemId = String(source.stock_item_id || "").trim();
+    requiredByStockItem[stockItemId] = (requiredByStockItem[stockItemId] || 0)
+      + Math.abs(Number(source.qty_change) || 0);
+  });
+  allMovements.forEach(function (movement) {
+    if (
+      String(movement.reference_id || "").trim() === reversalReferenceId
+      && String(movement.movement_type || "").trim().toLowerCase() === "in"
+      && Number(movement.qty_change) > 0
+    ) {
+      var stockItemId = String(movement.stock_item_id || "").trim();
+      alreadyRestoredByStockItem[stockItemId] = (alreadyRestoredByStockItem[stockItemId] || 0)
+        + Number(movement.qty_change);
+    }
+  });
+  var inventoryMap = getInventoryMap_();
+  var restoredMovements = [];
+
+  Object.keys(requiredByStockItem).forEach(function (stockItemId) {
+    var inventory = inventoryMap[stockItemId] || inventoryMap[stockItemId.toLowerCase()];
+    if (!inventory) {
+      throw new Error("Inventory untuk pembalikan stok tidak ditemukan: " + stockItemId);
+    }
+
+    var restoredQty = requiredByStockItem[stockItemId] - (alreadyRestoredByStockItem[stockItemId] || 0);
+    if (restoredQty <= 0) {
+      return;
+    }
+    var stockBefore = toStockNumber_(inventory.stock_qty);
+    var stockAfter = stockBefore + restoredQty;
+    inventory.sheet.getRange(inventory.row_number, inventory.header_map.stock_qty).setValue(stockAfter);
+    if (inventory.header_map.updated_at) {
+      inventory.sheet.getRange(inventory.row_number, inventory.header_map.updated_at).setValue(deletedAt);
+    }
+    inventory.stock_qty = stockAfter;
+
+    var reversal = {
+      movement_id: generateStockMovementId_(),
+      created_at: deletedAt,
+      stock_item_id: inventory.stock_item_id,
+      stock_item_name: inventory.stock_item_name,
+      movement_type: "in",
+      reference_type: "transaction",
+      reference_id: reversalReferenceId,
+      qty_change: restoredQty,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      note: "Pembalikan stok karena transaksi dihapus: " + transactionId,
+      cashier_name: deletedBy,
+    };
+    appendStockMovement_(reversal);
+    restoredMovements.push(reversal);
+  });
+
+  return restoredMovements;
+}
+
+function cancelUnreferencedFnbOrdersForDeletedTransaction_(transaction, remainingTransactions, deletedBy, reason, deletedAt) {
+  var orderIds = parseCommaSeparatedIds_(transaction.fnb_order_ids);
+  if (orderIds.length === 0 || !sheetExists_("FnbOrders")) {
+    return [];
+  }
+
+  var referencedByOtherTransaction = {};
+  (remainingTransactions || []).forEach(function (otherTransaction) {
+    parseCommaSeparatedIds_(otherTransaction.fnb_order_ids).forEach(function (orderId) {
+      referencedByOtherTransaction[orderId] = true;
+    });
+  });
+  var ordersSheet = ensureFnbOrdersSheetColumns_();
+  var orderHeaders = getHeaderMap_(ordersSheet);
+  var cancelledOrderIds = [];
+
+  orderIds.forEach(function (orderId) {
+    if (referencedByOtherTransaction[orderId]) {
+      return;
+    }
+    var rowNumber = findRowByValue_(ordersSheet, orderHeaders, "order_id", orderId);
+    if (!rowNumber) {
+      return;
+    }
+    setRowValues_(ordersSheet, orderHeaders, rowNumber, {
+      order_status: "cancelled",
+      cancel_reason: "Transaksi dihapus owner: " + reason,
+      cancelled_by: deletedBy,
+      cancelled_at: deletedAt,
+      updated_at: deletedAt,
+    });
+    cancelledOrderIds.push(orderId);
+  });
+
+  if (cancelledOrderIds.length > 0 && sheetExists_("LcSalesBonusLogs")) {
+    var bonusSheet = ensureLcSalesBonusLogsSheet_();
+    var bonusHeaders = getHeaderMap_(bonusSheet);
+    var bonusRows = readSheetAsObjects_("LcSalesBonusLogs");
+    bonusRows.forEach(function (bonus, index) {
+      if (
+        cancelledOrderIds.indexOf(String(bonus.order_id || "").trim()) !== -1 &&
+        !String(bonus.voided_at || "").trim()
+      ) {
+        setRowValues_(bonusSheet, bonusHeaders, index + 2, {
+          voided_at: deletedAt,
+          void_reason: "Transaksi dihapus owner: " + reason,
+        });
+      }
+    });
+  }
+
+  return cancelledOrderIds;
+}
+
+function releasePromoForDeletedTransaction_(transactionId, deletedAt) {
+  if (!sheetExists_("PromoMaster")) {
+    return false;
+  }
+
+  var promoSheet = ensurePromoMasterSheet_();
+  var promoHeaders = getHeaderMap_(promoSheet);
+  var promoRows = readSheetAsObjects_("PromoMaster");
+  var released = false;
+  promoRows.forEach(function (promo, index) {
+    if (String(promo.used_in_transaction_id || "").trim() === String(transactionId || "").trim()) {
+      setRowValues_(promoSheet, promoHeaders, index + 2, {
+        used_in_transaction_id: "",
+        used_at: "",
+        status: "active",
+        updated_at: deletedAt,
+      });
+      released = true;
+    }
+  });
+  return released;
+}
+
+function unlinkDeletedTransactionFromSession_(transactionId, deletedAt, reason) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return "";
+  }
+
+  var sheet = ensureRoomSessionsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rows = readSheetAsObjects_(ROOM_SESSIONS_SHEET);
+  var sessionId = "";
+  rows.forEach(function (session, index) {
+    var closedId = String(session.closed_transaction_id || "").trim();
+    var prepayId = String(session.prepayment_transaction_id || "").trim();
+    if (closedId !== transactionId && prepayId !== transactionId) {
+      return;
+    }
+    var updates = {
+      updated_at: deletedAt,
+      note: [String(session.note || "").trim(), "Transaksi dihapus owner: " + reason].filter(Boolean).join(" | "),
+    };
+    if (closedId === transactionId) {
+      updates.closed_transaction_id = "";
+    }
+    if (prepayId === transactionId) {
+      updates.prepayment_transaction_id = "";
+    }
+    setRowValues_(sheet, headerMap, index + 2, updates);
+    sessionId = session.session_id || sessionId;
+  });
+  return sessionId;
+}
+
+function deleteTransaction_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  var reason = String(request.reason || "").trim();
+  var confirmation = String(request.confirmation || "").trim().toUpperCase();
+
+  if (!transactionId) {
+    return masterBlockedResponse_("transaction_id wajib diisi.", "EMPTY_TRANSACTION_ID");
+  }
+  if (reason.length < 5) {
+    return masterBlockedResponse_("Alasan penghapusan minimal 5 karakter.", "DELETE_REASON_REQUIRED");
+  }
+  if (confirmation !== "HAPUS") {
+    return masterBlockedResponse_("Konfirmasi penghapusan tidak valid.", "DELETE_CONFIRMATION_REQUIRED");
+  }
+
+  var auth = validateAdminPinPayload_(
+    request.owner_pin,
+    "owner",
+    "delete_transaction",
+    request.changed_by || "Owner",
+    true
+  );
+  if (!auth.ok) {
+    return masterBlockedResponse_(auth.message || "PIN owner tidak valid.", auth.block_reason || "INVALID_OWNER_PIN");
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterBlockedResponse_("Sistem sedang memproses transaksi lain. Coba lagi sebentar.", "LOCK_BUSY");
+  }
+
+  try {
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getSheetHeaders_(transactionsSheet);
+    var transactionHeaderMap = getHeaderMap_(transactionsSheet);
+    var rowNumber = findRowByValue_(transactionsSheet, transactionHeaderMap, "transaction_id", transactionId);
+    if (!rowNumber) {
+      return masterBlockedResponse_("Transaksi tidak ditemukan atau sudah dihapus.", "TRANSACTION_NOT_FOUND");
+    }
+
+    var transaction = getRowObject_(transactionsSheet, transactionHeaderMap, rowNumber);
+    if (getTransactionAmount_(transaction) < 0) {
+      return masterBlockedResponse_("Transaksi refund tidak dapat dihapus dari menu ini.", "REFUND_DELETE_BLOCKED");
+    }
+
+    var closingReference = findTransactionClosingReference_(transactionId);
+    if (closingReference) {
+      appendMasterDataAuditLog_({
+        entity_type: "transaction",
+        entity_id: transactionId,
+        entity_name: transaction.room_name || transactionId,
+        action_type: "delete_permanent",
+        old_value: transaction,
+        new_value: "",
+        changed_by: auth.employee.employee_name,
+        note: reason,
+        result: "blocked",
+        block_reason: "TRANSACTION_ALREADY_CLOSED",
+      });
+      return masterBlockedResponse_(
+        "Transaksi sudah masuk closing kasir " + (closingReference.closing_id || "") + " dan tidak dapat dihapus.",
+        "TRANSACTION_ALREADY_CLOSED",
+        { closing_id: closingReference.closing_id || "" }
+      );
+    }
+
+    var deletedAt = toJakartaIsoString_(new Date());
+    var deletedBy = auth.employee.employee_name || request.changed_by || "Owner";
+    var remainingTransactions = readSheetAsObjects_("Transactions").filter(function (item) {
+      return String(item.transaction_id || "").trim() !== transactionId;
+    });
+    var transactionOrderIds = parseCommaSeparatedIds_(transaction.fnb_order_ids);
+    var linkedTransactions = remainingTransactions.filter(function (item) {
+      var otherOrderIds = parseCommaSeparatedIds_(item.fnb_order_ids);
+      return transactionOrderIds.some(function (orderId) {
+        return otherOrderIds.indexOf(orderId) !== -1;
+      });
+    });
+    if (linkedTransactions.length > 0) {
+      return masterBlockedResponse_(
+        "Transaksi memiliki transaksi lain yang memakai order F&B yang sama dan tidak dapat dihapus langsung.",
+        "TRANSACTION_HAS_LINKED_TRANSACTION",
+        {
+          linked_transaction_ids: linkedTransactions.map(function (item) {
+            return item.transaction_id || "";
+          }).filter(Boolean),
+        }
+      );
+    }
+    var archiveSheet = ensureDeletedTransactionsSheet_(transactionHeaders);
+    var archiveHeaderMap = getHeaderMap_(archiveSheet);
+    var archivedRowNumber = findRowByValue_(archiveSheet, archiveHeaderMap, "transaction_id", transactionId);
+    if (!archivedRowNumber) {
+      appendObjectRow_(archiveSheet, Object.assign({}, transaction, {
+        deleted_at: deletedAt,
+        deleted_by: deletedBy,
+        delete_reason: reason,
+      }));
+    }
+
+    var restoredMovements = restoreStockMovementsForDeletedTransaction_(transactionId, deletedBy, deletedAt);
+    var cancelledOrderIds = cancelUnreferencedFnbOrdersForDeletedTransaction_(
+      transaction,
+      remainingTransactions,
+      deletedBy,
+      reason,
+      deletedAt
+    );
+    var promoReleased = releasePromoForDeletedTransaction_(transactionId, deletedAt);
+    var sessionId = unlinkDeletedTransactionFromSession_(transactionId, deletedAt, reason);
+
+    transactionsSheet.deleteRow(rowNumber);
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: transaction.room_name || transactionId,
+      action_type: "delete_permanent",
+      old_value: transaction,
+      new_value: {
+        archived_sheet: "DeletedTransactions",
+        restored_stock_movement_count: restoredMovements.length,
+        cancelled_order_ids: cancelledOrderIds,
+        promo_released: promoReleased,
+        session_id: sessionId,
+      },
+      changed_by: deletedBy,
+      note: reason,
+      result: "success",
+      block_reason: "",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi berhasil dihapus dan diarsipkan.",
+      transaction_id: transactionId,
+      archived_sheet: "DeletedTransactions",
+      restored_stock_movement_count: restoredMovements.length,
+      cancelled_order_ids: cancelledOrderIds,
+      promo_released: promoReleased,
+      session_id: sessionId,
+    };
+  } catch (error) {
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: transactionId,
+      action_type: "delete_permanent",
+      old_value: "",
+      new_value: "",
+      changed_by: auth.employee.employee_name || "Owner",
+      note: reason,
+      result: "blocked",
+      block_reason: "DELETE_FAILED: " + error.message,
+    });
+    return masterBlockedResponse_("Penghapusan transaksi gagal: " + error.message, "DELETE_FAILED");
   } finally {
     lock.releaseLock();
   }

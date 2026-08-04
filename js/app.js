@@ -805,6 +805,8 @@ let isLoadingPackageDetails = false;
 let activeSettingsSubTab = "rooms";
 let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
+let transactionDeleteConfirmation = null;
+let isDeletingTransaction = false;
 let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
@@ -964,6 +966,7 @@ function isUserBusy() {
     receiptPrintVisible ||
     adminPinModal ||
     deleteMasterConfirmation ||
+    transactionDeleteConfirmation ||
     deleteLcConfirmation ||
     roomRecoveryConfirmation
   ) {
@@ -981,7 +984,8 @@ function isUserBusy() {
     isSavingAddInventoryItem ||
     isSavingLc ||
     isDeletingLc ||
-    isDeletingMasterData
+    isDeletingMasterData ||
+    isDeletingTransaction
   ) {
     return true;
   }
@@ -12105,7 +12109,13 @@ function createTransactionHistoryElement() {
       ? createClosingPrintPreviewElement(selectedClosingForPrint)
       : document.createDocumentFragment(),
     createTransactionFilterElement(),
-    list
+    list,
+    transactionDeleteConfirmation
+      ? createTransactionDeleteConfirmationElement()
+      : document.createDocumentFragment(),
+    adminPinModal
+      ? createAdminPinModalElement()
+      : document.createDocumentFragment()
   );
 
   return history;
@@ -13099,6 +13109,16 @@ function createTransactionActionsElement(transaction) {
   printButton.textContent = transaction?.payment_status === "paid" ? "Cetak Ulang" : "Cetak Struk";
   actions.appendChild(printButton);
 
+  if (getCurrentOperatorRole() === "owner") {
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "transaction-action-button transaction-delete-button";
+    deleteButton.type = "button";
+    deleteButton.dataset.action = "open-delete-transaction";
+    deleteButton.dataset.transactionId = transaction?.transaction_id || "";
+    deleteButton.textContent = "Hapus Transaksi";
+    actions.appendChild(deleteButton);
+  }
+
   if (transaction?.payment_status !== "unpaid") {
     return actions;
   }
@@ -13130,6 +13150,248 @@ function createTransactionActionsElement(transaction) {
   actions.appendChild(payControl);
 
   return actions;
+}
+
+function getTransactionById(transactionId) {
+  return todayTransactions.find((transaction) => (
+    String(transaction?.transaction_id || "") === String(transactionId || "")
+  )) || null;
+}
+
+function openTransactionDeleteConfirmation(transactionId) {
+  if (getCurrentOperatorRole() !== "owner") {
+    showInlineNotice("Hanya akun owner yang dapat menghapus transaksi.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+
+  transactionDeleteConfirmation = {
+    transactionId,
+    typedText: "",
+    reason: "",
+  };
+  renderRooms();
+}
+
+function closeTransactionDeleteConfirmation() {
+  if (isDeletingTransaction || isValidatingAdminPin) {
+    return;
+  }
+
+  transactionDeleteConfirmation = null;
+  renderRooms();
+}
+
+function updateTransactionDeleteConfirmation(field, value) {
+  if (!transactionDeleteConfirmation || !["typedText", "reason"].includes(field)) {
+    return;
+  }
+
+  transactionDeleteConfirmation = {
+    ...transactionDeleteConfirmation,
+    [field]: value,
+  };
+}
+
+function syncTransactionDeleteConfirmationControls() {
+  const modal = queryDashboard(".transaction-delete-modal");
+  if (!modal || !transactionDeleteConfirmation) {
+    return;
+  }
+
+  const submitButton = modal.querySelector("[data-role='delete-transaction-submit']");
+  if (submitButton) {
+    submitButton.disabled = isDeletingTransaction
+      || transactionDeleteConfirmation.typedText !== "HAPUS"
+      || String(transactionDeleteConfirmation.reason || "").trim().length < 5;
+  }
+}
+
+function createTransactionDeleteField(labelText, field, value) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const input = document.createElement("input");
+  input.className = "master-form-input";
+  input.type = "text";
+  input.dataset.action = "update-delete-transaction-confirmation";
+  input.dataset.field = field;
+  input.value = value || "";
+
+  wrapper.append(label, input);
+  return wrapper;
+}
+
+function createTransactionDeleteConfirmationElement() {
+  if (!transactionDeleteConfirmation) {
+    return document.createDocumentFragment();
+  }
+
+  const transaction = getTransactionById(transactionDeleteConfirmation.transactionId) || {};
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-delete-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-delete-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-delete-title";
+  title.textContent = "Hapus Transaksi";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Transaksi akan diarsipkan untuk audit. Stok dan order F&B terkait akan dibalik. Transaksi yang sudah masuk closing kasir tidak dapat dihapus.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+  [
+    ["ID", transaction.transaction_id],
+    ["Room", transaction.room_name || transaction.room_id],
+    ["Total", formatCurrency(getTransactionFinalTotal(transaction))],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const reasonField = createTransactionDeleteField(
+    "Alasan penghapusan (minimal 5 karakter)",
+    "reason",
+    transactionDeleteConfirmation.reason
+  );
+  const typedField = createTransactionDeleteField(
+    "Ketik HAPUS",
+    "typedText",
+    transactionDeleteConfirmation.typedText
+  );
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-delete-transaction";
+  cancelButton.textContent = "Batal";
+
+  const deleteButton = document.createElement("button");
+  deleteButton.className = "master-button danger";
+  deleteButton.type = "button";
+  deleteButton.dataset.action = "submit-delete-transaction";
+  deleteButton.dataset.role = "delete-transaction-submit";
+  deleteButton.disabled = isDeletingTransaction
+    || transactionDeleteConfirmation.typedText !== "HAPUS"
+    || String(transactionDeleteConfirmation.reason || "").trim().length < 5;
+  deleteButton.textContent = isDeletingTransaction ? "Menghapus..." : "Hapus Transaksi";
+
+  actions.append(cancelButton, deleteButton);
+  dialog.append(title, warning, details, reasonField, typedField, actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function formatTransactionDeleteError(data) {
+  const blockReason = String(data?.block_reason || "").trim().toUpperCase();
+  if (["INVALID_OWNER_PIN", "INVALID_PIN", "INSUFFICIENT_ROLE", "EMPTY_PIN"].includes(blockReason)) {
+    return "PIN tidak valid atau akun tersebut bukan owner.";
+  }
+  if (blockReason === "TRANSACTION_ALREADY_CLOSED") {
+    return data?.message || "Transaksi sudah masuk closing kasir dan tidak dapat dihapus.";
+  }
+  return data?.message || data?.error || "Transaksi gagal dihapus.";
+}
+
+function submitTransactionDeleteConfirmation() {
+  if (!transactionDeleteConfirmation || isDeletingTransaction) {
+    return;
+  }
+
+  const reason = String(transactionDeleteConfirmation.reason || "").trim();
+  if (reason.length < 5 || transactionDeleteConfirmation.typedText !== "HAPUS") {
+    showInlineNotice("Isi alasan dan ketik HAPUS untuk melanjutkan.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Owner",
+    message: `Masukkan PIN owner untuk menghapus transaksi ${transactionDeleteConfirmation.transactionId}.`,
+    requestedAction: "delete_transaction",
+    requiredRole: "owner",
+    validatePin: false,
+    forcePrompt: true,
+    onSuccess: (authData, ownerPin) => executeDeleteTransaction(ownerPin),
+  });
+}
+
+async function executeDeleteTransaction(ownerPin) {
+  if (!transactionDeleteConfirmation || isDeletingTransaction) {
+    return { success: false };
+  }
+
+  isDeletingTransaction = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "deleteTransaction",
+      transaction_id: transactionDeleteConfirmation.transactionId,
+      reason: String(transactionDeleteConfirmation.reason || "").trim(),
+      confirmation: transactionDeleteConfirmation.typedText,
+      owner_pin: ownerPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = formatTransactionDeleteError(data);
+      showInlineNotice(message, "error");
+      if (adminPinModal) {
+        adminPinModal = { ...adminPinModal, pin: "", error: message };
+      }
+      return { success: false, message };
+    }
+
+    adminPinModal = null;
+    transactionDeleteConfirmation = null;
+    showInlineNotice("Transaksi berhasil dihapus dan dicatat di arsip audit.");
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadOpenFnbOrders(),
+      loadTodayFnbOrders(),
+      loadInventoryItems(),
+      loadTodayStockMovements(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+      loadTodayFnbSalesReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat menghapus transaksi.";
+    showInlineNotice(message, "error");
+    if (adminPinModal) {
+      adminPinModal = { ...adminPinModal, pin: "", error: message };
+    }
+    return { success: false, message };
+  } finally {
+    isDeletingTransaction = false;
+    renderRooms();
+  }
 }
 
 function queryDashboard(selector) {
@@ -14991,9 +15253,9 @@ function createDeleteField(labelText, field, value) {
   return wrapper;
 }
 
-function openAdminPinModal({ title, message, requestedAction, requiredRole = "manager", validatePin = true, onSuccess }) {
+function openAdminPinModal({ title, message, requestedAction, requiredRole = "manager", validatePin = true, forcePrompt = false, onSuccess }) {
   const operatorPin = getLoggedInOperatorPin();
-  if (isOperatorLoggedIn() && roleMeetsRequired(currentOperator.role, requiredRole) && operatorPin) {
+  if (!forcePrompt && isOperatorLoggedIn() && roleMeetsRequired(currentOperator.role, requiredRole) && operatorPin) {
     console.log("openAdminPinModal: Bypassing PIN modal, operator role matches or exceeds required role.");
     if (typeof onSuccess === "function") {
       setTimeout(async () => {
@@ -20188,6 +20450,21 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-delete-transaction") {
+    openTransactionDeleteConfirmation(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "close-delete-transaction") {
+    closeTransactionDeleteConfirmation();
+    return;
+  }
+
+  if (action === "submit-delete-transaction") {
+    submitTransactionDeleteConfirmation();
+    return;
+  }
+
   if (action === "close-admin-pin-modal") {
     closeAdminPinModal();
     return;
@@ -20842,6 +21119,12 @@ function handleDashboardInput(event) {
   if (action === "update-delete-master-confirmation") {
     updateDeleteMasterConfirmation(field.dataset.field, field.value);
     syncDeleteMasterConfirmationControls();
+    return;
+  }
+
+  if (action === "update-delete-transaction-confirmation") {
+    updateTransactionDeleteConfirmation(field.dataset.field, field.value);
+    syncTransactionDeleteConfirmationControls();
     return;
   }
 
