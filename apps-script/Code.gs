@@ -1004,7 +1004,8 @@ function doPost(e) {
         payload.test_mode,
         payload.test_run_id,
         payload.test_note,
-        payload.customer_name
+        payload.customer_name,
+        payload.order_id
       ));
     }
 
@@ -11160,7 +11161,7 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testMode, testRunId, testNote, customerName) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testMode, testRunId, testNote, customerName, clientOrderId) {
   var normalizedRoomId = String(roomId || "").trim();
   var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
   var testContext = getActiveRoomSessionTestContext_(normalizedRoomId);
@@ -11204,6 +11205,24 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   }
 
   try {
+    var orderId = String(clientOrderId || "").trim();
+    if (orderId && sheetExists_("FnbOrders")) {
+      var ordersSheet = getSheet_("FnbOrders");
+      var ordersHeaderMap = getHeaderMap_(ordersSheet);
+      var fnbOrderRow = findFnbOrderRowById_(orderId, ordersSheet, ordersHeaderMap);
+      if (fnbOrderRow) {
+        var existingOrder = getFnbOrderObjectFromRow_(ordersSheet, fnbOrderRow);
+        var detailedOrders = getFnbOrdersWithItemsByIds_([orderId]);
+        return {
+          ok: true,
+          message: "Order F&B sudah tersimpan (duplikat dicegah).",
+          order: existingOrder,
+          items: detailedOrders.length > 0 ? detailedOrders[0].items : [],
+        };
+      }
+    } else if (!orderId) {
+      orderId = generateFnbOrderId_();
+    }
     var room = null;
     if (isGeneralOrder) {
       var name = String(customerName || "").trim();
@@ -11249,7 +11268,6 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
         };
       }
     }
-
     var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
     var method = String(paymentMethod || "").trim().toLowerCase();
 
@@ -11264,7 +11282,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       ? toJakartaIsoString_(room.start_time)
       : room.start_time;
     var order = {
-      order_id: generateFnbOrderId_(),
+      order_id: orderId,
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       room_start_time: roomStartTime || "",

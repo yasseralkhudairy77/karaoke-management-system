@@ -963,6 +963,7 @@ let isCancellingFnbOrder = false;
 let isSettlingFnbOrder = false;
 let fnbOrderNote = "";
 let fnbCustomerName = "";
+let currentFnbOrderId = null;
 let fnbOrderPaymentMethod = "room_bill";
 let activeFnbSubTab = "order";
 let activeTransactionsSubTab = "history";
@@ -3984,6 +3985,18 @@ function updateFnbOrderNote(value) {
   fnbOrderNote = value;
 }
 
+function generateFnbOrderId() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+  const rand = Math.floor(Math.random() * 1000);
+  return `FNB-${year}${month}${day}-${hours}${minutes}${seconds}-${rand}`;
+}
+
 function buildFnbOrderPayload() {
   const isTestingOrder = fnbOrderMode === "testing";
   const isPostpaid = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "open_bill";
@@ -4002,6 +4015,7 @@ function buildFnbOrderPayload() {
     test_run_id: isTestingOrder ? fnbTestRunId : "",
     test_note: isTestingOrder ? "F&B menu testing" : "",
     customer_name: (fnbOrderMode === "general" || isTestingOrder) ? fnbCustomerName : "",
+    order_id: currentFnbOrderId || "",
   };
 }
 
@@ -4039,6 +4053,10 @@ async function saveFnbOrder() {
     return;
   }
 
+  if (!currentFnbOrderId) {
+    currentFnbOrderId = generateFnbOrderId();
+  }
+
   isSavingFnbOrder = true;
   renderRooms();
 
@@ -4056,6 +4074,7 @@ async function saveFnbOrder() {
     fbCartItems = [];
     fnbOrderNote = "";
     fnbCustomerName = "";
+    currentFnbOrderId = null;
     const originalPaymentMethod = fnbOrderPaymentMethod;
     fnbOrderPaymentMethod = fnbOrderMode === "room" ? "room_bill" : "cash";
     showInlineNotice(
