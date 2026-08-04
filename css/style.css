@@ -7568,6 +7568,30 @@ body::after {
   min-width: 0;
 }
 
+.general-fnb-bills {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.general-fnb-bill-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.general-fnb-payment {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(170px, auto);
+  gap: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .general-fnb-payment {
+    grid-template-columns: 1fr;
+  }
+}
+
 .fb-cart-total {
   position: sticky;
   bottom: 0;

@@ -856,6 +856,10 @@ let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
 let fnbOrderPaymentMethod = "room_bill";
+let generalFnbCustomerName = "";
+let selectedGeneralFnbBillId = "";
+let generalFnbBillPaymentMethods = {};
+let isSettlingGeneralFnbBill = false;
 let activeFnbSubTab = "order";
 let activeTransactionsSubTab = "history";
 let openFnbOrders = [];
@@ -980,6 +984,7 @@ function isUserBusy() {
     isSavingSessionLcs ||
     isExtendingSession ||
     isSavingFnbOrder ||
+    isSettlingGeneralFnbBill ||
     isCancellingFnbOrder ||
     isSavingStockAdjustment ||
     isSavingAddInventoryItem ||
@@ -3497,9 +3502,9 @@ function setFnbOrderMode(mode) {
 
   if (nextMode === "general") {
     selectedFbRoomId = "";
-    if (fnbOrderPaymentMethod === "room_bill") {
-      fnbOrderPaymentMethod = "cash";
-    }
+    fnbOrderPaymentMethod = "general_bill";
+  } else {
+    fnbOrderPaymentMethod = "room_bill";
   }
 
   renderRooms();
@@ -3790,8 +3795,44 @@ function updateFnbOrderNote(value) {
   fnbOrderNote = value;
 }
 
+function updateGeneralFnbCustomerName(value) {
+  generalFnbCustomerName = value;
+}
+
+function getOpenGeneralFnbBills() {
+  const bills = new Map();
+  openFnbOrders
+    .filter((order) => String(order.room_id || "").trim().toUpperCase() === "FNB-GENERAL")
+    .forEach((order) => {
+      const billId = String(order.general_bill_id || order.order_id || "").trim();
+      if (!billId) return;
+      if (!bills.has(billId)) {
+        bills.set(billId, {
+          general_bill_id: billId,
+          customer_name: order.customer_name || "Tanpa Nama",
+          orders: [],
+          total_amount: 0,
+          total_items: 0,
+          created_at: order.created_at || "",
+        });
+      }
+      const bill = bills.get(billId);
+      bill.orders.push(order);
+      bill.total_amount += Number(order.order_total) || 0;
+      bill.total_items += (order.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+    });
+  return [...bills.values()].sort((first, second) => new Date(first.created_at) - new Date(second.created_at));
+}
+
+function selectGeneralFnbBill(generalBillId) {
+  selectedGeneralFnbBillId = generalBillId || "";
+  const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === selectedGeneralFnbBillId);
+  generalFnbCustomerName = bill?.customer_name || "";
+  renderRooms();
+}
+
 function buildFnbOrderPayload() {
-  const isRoomBill = fnbOrderPaymentMethod === "room_bill";
+  const isOpenBill = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "general_bill";
   return {
     action: "saveFnbOrder",
     room_id: fnbOrderMode === "general" ? "FNB-GENERAL" : selectedFbRoomId,
@@ -3801,8 +3842,10 @@ function buildFnbOrderPayload() {
     })),
     cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
-    payment_method: isRoomBill ? "" : fnbOrderPaymentMethod,
-    payment_status: isRoomBill ? "unpaid" : "paid",
+    payment_method: isOpenBill ? "" : fnbOrderPaymentMethod,
+    payment_status: isOpenBill ? "unpaid" : "paid",
+    customer_name: fnbOrderMode === "general" ? generalFnbCustomerName.trim() : "",
+    general_bill_id: fnbOrderMode === "general" ? selectedGeneralFnbBillId : "",
   };
 }
 
@@ -3825,8 +3868,8 @@ async function saveFnbOrder() {
     return;
   }
 
-  if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill") {
-    showInlineNotice("Order F&B umum harus dibayar tunai atau transfer.", "error");
+  if (isGeneralOrder && !generalFnbCustomerName.trim()) {
+    showInlineNotice("Nama pemesan wajib diisi untuk order F&B umum.", "error");
     return;
   }
 
@@ -3856,7 +3899,15 @@ async function saveFnbOrder() {
     fbCartItems = [];
     fnbOrderNote = "";
     const originalPaymentMethod = fnbOrderPaymentMethod;
-    fnbOrderPaymentMethod = "room_bill";
+    if (isGeneralOrder && data.order?.order_status === "open") {
+      selectedGeneralFnbBillId = data.order.general_bill_id || selectedGeneralFnbBillId;
+      generalFnbCustomerName = data.order.customer_name || generalFnbCustomerName;
+      fnbOrderPaymentMethod = "general_bill";
+    } else {
+      selectedGeneralFnbBillId = "";
+      generalFnbCustomerName = "";
+      fnbOrderPaymentMethod = isGeneralOrder ? "general_bill" : "room_bill";
+    }
     showInlineNotice("Order F&B berhasil disimpan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
@@ -3871,7 +3922,9 @@ async function saveFnbOrder() {
       const tempTransaction = {
         transaction_id: data.order.order_id,
         room_id: data.order.room_id,
-        room_name: data.order.room_name,
+        room_name: data.order.customer_name
+          ? `${data.order.room_name} - ${data.order.customer_name}`
+          : data.order.room_name,
         start_time: "",
         end_time: data.order.created_at,
         duration_minutes: 0,
@@ -3884,7 +3937,9 @@ async function saveFnbOrder() {
         payment_status: "paid",
         cashier_name: data.order.cashier_name,
         created_at: data.order.created_at,
-        transaction_type: "fnb_addon"
+        transaction_type: "fnb_addon",
+        customer_name: data.order.customer_name || "",
+        general_bill_id: data.order.general_bill_id || "",
       };
       
       showReceiptPrint(tempTransaction);
@@ -8816,6 +8871,7 @@ function createFbOrderPanelElement() {
     header,
     createFbRoomControlElement(),
     createFbRoomInfoElement(),
+    createGeneralFnbBillControlElement(),
     createFbCartElement(),
     createFbCartTotalElement(),
     createFbPaymentMethodElement(),
@@ -8857,7 +8913,7 @@ function createFbRoomControlElement() {
   if (fnbOrderMode === "general") {
     const info = document.createElement("p");
     info.className = "fb-room-warning";
-    info.textContent = "Order ini tidak dikaitkan ke room dan dibayar terpisah.";
+    info.textContent = "Order tidak terkait room. Simpan ke open bill pelanggan, lalu bayar sekaligus di akhir.";
     control.appendChild(info);
     return control;
   }
@@ -8899,6 +8955,55 @@ function createFbRoomControlElement() {
 
   control.append(label, select);
 
+  return control;
+}
+
+function createGeneralFnbBillControlElement() {
+  if (fnbOrderMode !== "general") {
+    return document.createDocumentFragment();
+  }
+
+  const control = document.createElement("div");
+  control.className = "fb-room-control general-fnb-bill-control";
+
+  const billLabel = document.createElement("label");
+  billLabel.className = "transaction-label";
+  billLabel.setAttribute("for", "generalFnbBillSelect");
+  billLabel.textContent = "Open Bill Pelanggan";
+
+  const billSelect = document.createElement("select");
+  billSelect.className = "fb-room-select";
+  billSelect.id = "generalFnbBillSelect";
+  billSelect.dataset.action = "select-general-fnb-bill";
+
+  const newOption = document.createElement("option");
+  newOption.value = "";
+  newOption.textContent = "Buat tagihan pelanggan baru";
+  billSelect.appendChild(newOption);
+
+  getOpenGeneralFnbBills().forEach((bill) => {
+    const option = document.createElement("option");
+    option.value = bill.general_bill_id;
+    option.textContent = `${bill.customer_name} - ${formatCurrency(bill.total_amount)}`;
+    billSelect.appendChild(option);
+  });
+  billSelect.value = selectedGeneralFnbBillId;
+
+  const customerLabel = document.createElement("label");
+  customerLabel.className = "transaction-label";
+  customerLabel.setAttribute("for", "generalFnbCustomerName");
+  customerLabel.textContent = "Nama Pemesan";
+
+  const customerInput = document.createElement("input");
+  customerInput.className = "master-form-input";
+  customerInput.id = "generalFnbCustomerName";
+  customerInput.type = "text";
+  customerInput.placeholder = "Nama pelanggan / pemesan";
+  customerInput.dataset.action = "update-general-fnb-customer-name";
+  customerInput.value = generalFnbCustomerName;
+  customerInput.disabled = Boolean(selectedGeneralFnbBillId);
+
+  control.append(billLabel, billSelect, customerLabel, customerInput);
   return control;
 }
 
@@ -9069,6 +9174,14 @@ function createFbPaymentMethodElement() {
     select.appendChild(roomBillOpt);
   }
 
+  if (isGeneralOrder) {
+    const generalBillOpt = document.createElement("option");
+    generalBillOpt.value = "general_bill";
+    generalBillOpt.textContent = "Postpaid (Open Bill Pelanggan)";
+    if (fnbOrderPaymentMethod === "general_bill") generalBillOpt.selected = true;
+    select.appendChild(generalBillOpt);
+  }
+
   const cashOpt = document.createElement("option");
   cashOpt.value = "cash";
   cashOpt.textContent = "Tunai / Cash";
@@ -9121,6 +9234,7 @@ function createLastFnbOrderElement(order, items) {
 
   [
     ["ID Order", order?.order_id || "-"],
+    ["Pemesan", order?.customer_name || "-"],
     ["Ruangan", order?.room_name || order?.room_id || "-"],
     ["Total Order", formatCurrency(order?.order_total)],
     ["Jumlah Item", `${Array.isArray(items) ? items.length : 0} item`],
@@ -9181,6 +9295,7 @@ function createFbOrderActionsElement() {
   const selectedRoom = getSelectedFbRoom();
   const canSave =
     (fnbOrderMode === "general" || (Boolean(selectedRoom) && isFbOrderRoomSelectable(selectedRoom))) &&
+    (fnbOrderMode !== "general" || Boolean(generalFnbCustomerName.trim())) &&
     fbCartItems.length > 0 &&
     !isSavingFnbOrder;
 
@@ -9198,11 +9313,135 @@ function createFbOrderActionsElement() {
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Bayar & Kirim Order";
+  const isPostpaid = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "general_bill";
+  saveButton.textContent = isSavingFnbOrder
+    ? "Memproses..."
+    : isPostpaid ? "Simpan ke Open Bill" : "Bayar & Kirim Order";
 
   actions.append(clearButton, saveButton);
 
   return actions;
+}
+
+function createOpenGeneralFnbBillsElement() {
+  const bills = getOpenGeneralFnbBills();
+  if (getSelectedFbRoom() || bills.length === 0) {
+    return document.createDocumentFragment();
+  }
+
+  const section = document.createElement("section");
+  section.className = "general-fnb-bills";
+
+  const title = document.createElement("h3");
+  title.className = "open-fnb-title";
+  title.textContent = "Tagihan F&B Umum";
+  section.appendChild(title);
+
+  bills.forEach((bill) => {
+    const card = document.createElement("article");
+    card.className = "open-fnb-card general-fnb-bill-card";
+
+    const header = document.createElement("div");
+    header.className = "open-fnb-card-header";
+    const identity = document.createElement("div");
+    const customer = document.createElement("h3");
+    customer.className = "open-fnb-order-id";
+    customer.textContent = bill.customer_name;
+    const meta = document.createElement("p");
+    meta.className = "open-fnb-meta";
+    meta.textContent = `${bill.general_bill_id} - ${bill.orders.length} order - ${bill.total_items} item`;
+    identity.append(customer, meta);
+    const total = document.createElement("p");
+    total.className = "open-fnb-total";
+    total.textContent = formatCurrency(bill.total_amount);
+    header.append(identity, total);
+
+    const orderList = document.createElement("div");
+    orderList.className = "open-fnb-items";
+    bill.orders.forEach((order) => {
+      const row = document.createElement("div");
+      row.className = "open-fnb-item";
+      const label = document.createElement("span");
+      label.textContent = `${order.order_id} - ${formatDateTimeLabel(order.created_at)}`;
+      const amount = document.createElement("strong");
+      amount.textContent = formatCurrency(order.order_total);
+      row.append(label, amount);
+      orderList.appendChild(row);
+    });
+
+    const payment = document.createElement("div");
+    payment.className = "transaction-pay-control general-fnb-payment";
+    const method = document.createElement("select");
+    method.className = "transaction-pay-select";
+    method.dataset.action = "update-general-fnb-payment-method";
+    method.dataset.generalBillId = bill.general_bill_id;
+    [["cash", "Cash"], ["transfer", "Transfer / QRIS"]].forEach(([value, labelText]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = labelText;
+      method.appendChild(option);
+    });
+    method.value = generalFnbBillPaymentMethods[bill.general_bill_id] || "cash";
+
+    const payButton = document.createElement("button");
+    payButton.className = "transaction-pay-button";
+    payButton.type = "button";
+    payButton.dataset.action = "settle-general-fnb-bill";
+    payButton.dataset.generalBillId = bill.general_bill_id;
+    payButton.disabled = isSettlingGeneralFnbBill;
+    payButton.textContent = isSettlingGeneralFnbBill ? "Memproses..." : "Bayar & Cetak Nota";
+    payment.append(method, payButton);
+
+    card.append(header, orderList, payment);
+    section.appendChild(card);
+  });
+
+  return section;
+}
+
+async function settleGeneralFnbBill(generalBillId) {
+  if (!generalBillId || isSettlingGeneralFnbBill) return;
+  const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
+  if (!bill) {
+    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    return;
+  }
+
+  isSettlingGeneralFnbBill = true;
+  renderRooms();
+  try {
+    const data = await postApiAction({
+      action: "settleGeneralFnbBill",
+      general_bill_id: generalBillId,
+      payment_method: generalFnbBillPaymentMethods[generalBillId] || "cash",
+      cashier_name: getLoggedInOperatorName(),
+    });
+    if (!data || data.ok !== true || !data.transaction) {
+      throw new Error(data?.error || data?.message || "Pembayaran open bill gagal.");
+    }
+
+    const transaction = data.transaction;
+    transactionFnbDetails[transaction.transaction_id] = Array.isArray(data.orders) ? data.orders : bill.orders;
+    delete generalFnbBillPaymentMethods[generalBillId];
+    if (selectedGeneralFnbBillId === generalBillId) {
+      selectedGeneralFnbBillId = "";
+      generalFnbCustomerName = "";
+    }
+    showInlineNotice("Tagihan F&B umum berhasil dibayar.");
+    await Promise.all([
+      loadOpenFnbOrders(),
+      loadTodayFnbOrders(),
+      loadTodayTransactions(),
+      loadInventoryItems(),
+      loadTodayStockMovements(),
+    ]);
+    showReceiptPrint(transaction);
+  } catch (error) {
+    showInlineNotice(error.message || "Pembayaran open bill gagal.", "error");
+  } finally {
+    isSettlingGeneralFnbBill = false;
+    renderRooms();
+  }
 }
 
 function createOpenFnbOrdersPanelElement() {
@@ -9227,14 +9466,18 @@ function createOpenFnbOrdersPanelElement() {
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
 
-  const orders = getSelectedRoomOpenFnbOrders();
-  const summary = calculateOpenFnbOrdersSummary(orders);
+  const allOrders = getSelectedRoomOpenFnbOrders();
+  const orders = getSelectedFbRoom()
+    ? allOrders
+    : allOrders.filter((order) => String(order.room_id || "").trim().toUpperCase() !== "FNB-GENERAL");
+  const generalBills = getSelectedFbRoom() ? [] : getOpenGeneralFnbBills();
+  const summary = calculateOpenFnbOrdersSummary(allOrders);
   const list = document.createElement("div");
   list.className = "open-fnb-list";
 
   if (isLoadingOpenFnbOrders) {
     list.appendChild(createStateMessage("Memuat open order F&B..."));
-  } else if (orders.length === 0) {
+  } else if (orders.length === 0 && generalBills.length === 0) {
     const empty = document.createElement("p");
     empty.className = "open-fnb-empty";
     empty.textContent = getOpenFnbEmptyMessage();
@@ -9252,6 +9495,7 @@ function createOpenFnbOrdersPanelElement() {
     createOpenFnbSummaryElement(summary),
     createOpenFnbFilterNoteElement(),
     createOpenFnbActionsElement(),
+    createOpenGeneralFnbBillsElement(),
     list
   );
 
@@ -9333,7 +9577,7 @@ function createOpenFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "open-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
+  meta.textContent = `${order.customer_name ? `Pemesan: ${order.customer_name} - ` : ""}${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -9598,7 +9842,7 @@ function createTodayFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "today-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
+  meta.textContent = `${order.customer_name ? `Pemesan: ${order.customer_name} - ` : ""}${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -20750,6 +20994,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "settle-general-fnb-bill") {
+    await settleGeneralFnbBill(button.dataset.generalBillId || "");
+    return;
+  }
+
   if (action === "refresh-open-fnb-orders") {
     await loadOpenFnbOrders();
     return;
@@ -21072,6 +21321,17 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-general-fnb-customer-name") {
+    updateGeneralFnbCustomerName(field.value);
+    const saveButton = queryDashboard("[data-action='save-fnb-order']");
+    if (saveButton) {
+      const canSave = Boolean(generalFnbCustomerName.trim()) && fbCartItems.length > 0 && !isSavingFnbOrder;
+      saveButton.disabled = !canSave;
+      saveButton.classList.toggle("disabled", !canSave);
+    }
+    return;
+  }
+
   if (action === "update-fb-payment-method") {
     fnbOrderPaymentMethod = field.value;
     return;
@@ -21261,7 +21521,19 @@ function handleDashboardChange(event) {
     return;
   }
 
-  const roomSelect = event.target.closest(".fb-room-select");
+  const roomSelect = event.target.closest("#fbRoomSelect");
+
+  const generalBillSelect = event.target.closest("[data-action='select-general-fnb-bill']");
+  if (generalBillSelect) {
+    selectGeneralFnbBill(generalBillSelect.value);
+    return;
+  }
+
+  const generalBillPayment = event.target.closest("[data-action='update-general-fnb-payment-method']");
+  if (generalBillPayment) {
+    generalFnbBillPaymentMethods[generalBillPayment.dataset.generalBillId || ""] = generalBillPayment.value;
+    return;
+  }
 
   if (roomSelect) {
     setSelectedFbRoom(roomSelect.value);
