@@ -4225,7 +4225,7 @@ async function settleGeneralFnbOrder(orderId, paymentMethod) {
     return;
   }
 
-  isSettlingFnbOrder = true;
+  isSettlingFnbOrder = orderId;
   renderRooms();
 
   try {
@@ -9586,13 +9586,16 @@ function createFnbSettlementActionsElement(order) {
     paymentMethod.appendChild(option);
   });
 
+  const isThisOrderSettling = isSettlingFnbOrder === order.order_id;
+  const isAnyOrderSettling = Boolean(isSettlingFnbOrder);
+
   const button = document.createElement("button");
-  button.className = isSettlingFnbOrder ? "fnb-cancel-button disabled" : "transaction-pay-button";
+  button.className = isAnyOrderSettling ? "fnb-cancel-button disabled" : "transaction-pay-button";
   button.type = "button";
   button.dataset.action = "settle-fnb-order";
   button.dataset.orderId = order.order_id || "";
-  button.disabled = isSettlingFnbOrder;
-  button.textContent = isSettlingFnbOrder ? "Memproses Pelunasan..." : "Tandai Lunas";
+  button.disabled = isAnyOrderSettling;
+  button.textContent = isThisOrderSettling ? "Memproses Pelunasan..." : "Tandai Lunas";
 
   actions.append(paymentMethod, button);
   return actions;
