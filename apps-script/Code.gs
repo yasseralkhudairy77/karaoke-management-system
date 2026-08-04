@@ -2930,7 +2930,6 @@ function appendTvControlLogFromResponse_(response, triggerSource, cashierName, t
 }
 
 function getMenuItems_() {
-  ensureMenuStockColumns_();
   var inventoryMap = {};
   try {
     var inventoryItems = getInventoryItems_();
@@ -5506,8 +5505,6 @@ function normalizeBooleanString_(value) {
 }
 
 function getInventoryItems_() {
-  ensureInventorySheetColumns_();
-
   var items = readSheetAsObjects_("Inventory")
     .map(function (item) {
       var stockItemId = item.stock_item_id || item.item_id || "";
@@ -11905,8 +11902,6 @@ function getLowStockItemsForReport_() {
   if (!sheetExists_("Inventory")) {
     return [];
   }
-
-  ensureInventorySheetColumns_();
 
   return readSheetAsObjects_("Inventory")
     .map(function (item) {
