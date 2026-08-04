@@ -1251,6 +1251,12 @@ function getRooms_() {
 
   var tvDevicesByRoom = getTvDevicesByRoomMap_();
   var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_();
+  var latestActiveSessionByRoom = getLatestRoomSessionsByRoom_([
+    "starting",
+    "active",
+    "closing",
+    "paid_waiting_start",
+  ]);
 
   return readSheetAsObjects_("Rooms").map(function (room) {
     var tvDevice = tvDevicesByRoom[String(room.room_id || "").trim()] || null;
@@ -1271,8 +1277,7 @@ function getRooms_() {
     };
 
     try {
-      // Try to find session with any of these statuses
-      activeSession = findLatestRoomSessionForRoom_(room.room_id || "", ["starting", "active", "closing", "paid_waiting_start"]);
+      activeSession = latestActiveSessionByRoom[String(room.room_id || "").trim()] || null;
       debugInfo.activeSession_found = !!activeSession;
       
       if (activeSession && activeSession.session) {
@@ -15247,6 +15252,66 @@ function healthCheck_() {
     service: SERVICE_NAME,
     timestamp: new Date().toISOString(),
   };
+}
+
+function getLatestRoomSessionsByRoom_(statuses) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return {};
+  }
+
+  var allowedStatuses = {};
+  (statuses || []).forEach(function (status) {
+    allowedStatuses[String(status || "").trim().toLowerCase()] = true;
+  });
+
+  var sheet = ensureRoomSessionsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var latestByRoom = {};
+
+  values.slice(1).forEach(function (row, index) {
+    var isEmptyRow = row.every(function (cell) {
+      return cell === "" || cell === null;
+    });
+
+    if (isEmptyRow) {
+      return;
+    }
+
+    var session = {};
+    headers.forEach(function (header, headerIndex) {
+      if (header) {
+        session[header] = normalizeCellValue_(header, row[headerIndex]);
+      }
+    });
+
+    var roomKey = String(session.room_id || "").trim();
+    var normalizedStatus = String(session.status || "").trim().toLowerCase();
+    if (!roomKey || !allowedStatuses[normalizedStatus]) {
+      return;
+    }
+
+    var updatedAt = session.updated_at || session.created_at || "";
+    var updatedTime = new Date(updatedAt).getTime();
+    var current = latestByRoom[roomKey];
+
+    if (!current || (isNaN(updatedTime) ? 0 : updatedTime) >= current.updatedTime) {
+      latestByRoom[roomKey] = {
+        session: session,
+        rowNumber: index + 2,
+        updatedTime: isNaN(updatedTime) ? 0 : updatedTime,
+        sheet: sheet,
+        headerMap: headerMap,
+      };
+    }
+  });
+
+  return latestByRoom;
 }
 
 function isTestDataValue_(value) {

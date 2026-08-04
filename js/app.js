@@ -142,7 +142,25 @@ async function fetchPeriodApiResponse(url) {
       requestUrl.searchParams.set("_retry", `${Date.now()}-${attempt}`);
     }
 
-    const response = await fetch(requestUrl.toString(), { cache: "no-store" });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    let response;
+
+    try {
+      response = await fetch(requestUrl.toString(), {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const action = requestUrl.searchParams.get("action") || "API";
+        throw new Error(`${action} timeout setelah 20 detik.`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (response.status !== 404 || attempt === 1) {
       return response;
@@ -1097,12 +1115,10 @@ async function loadRooms() {
 }
 
 async function fetchRoomsFromApi() {
-  const response = await fetch(buildApiUrl("getRooms"), {
-    cache: "no-store",
-  });
+  const response = await fetchPeriodApiResponse(buildApiUrl("getRooms"));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getRooms API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1239,7 +1255,7 @@ async function fetchTodayTransactionsFromApi() {
   );
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getTodayTransactions API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1348,7 +1364,7 @@ async function fetchOwnerReportEndpoint(action) {
   const response = await fetchPeriodApiResponse(buildApiUrl(action, Object.fromEntries(params.entries())));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`${action} API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1466,7 +1482,7 @@ async function fetchTodayCashierClosingsFromApi() {
   );
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getTodayCashierClosings API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1510,12 +1526,10 @@ async function loadMenuItems() {
 }
 
 async function fetchMenuItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
-    cache: "no-store",
-  });
+  const response = await fetchPeriodApiResponse(buildApiUrl("getMenuItems"));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getMenuItems API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1570,10 +1584,10 @@ async function loadInventoryItems() {
 }
 
 async function fetchInventoryItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems`);
+  const response = await fetchPeriodApiResponse(buildApiUrl("getInventoryItems"));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getInventoryItems API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1589,10 +1603,10 @@ async function fetchInventoryItemsFromApi() {
 }
 
 async function fetchEmployeesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getEmployees`);
+  const response = await fetchPeriodApiResponse(buildApiUrl("getEmployees"));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getEmployees API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -1605,10 +1619,10 @@ async function fetchEmployeesFromApi() {
 }
 
 async function fetchPackagesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getPackages`);
+  const response = await fetchPeriodApiResponse(buildApiUrl("getPackages"));
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getPackages API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -2322,7 +2336,7 @@ async function fetchRoomUsageReportFromApi() {
   );
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getRoomUsageReport API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -2353,7 +2367,7 @@ async function fetchActiveShiftRoomUsageReportFromApi() {
   );
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`getRoomUsageReport API request failed with status ${response.status}`);
   }
 
   const data = await response.json();
@@ -21170,7 +21184,6 @@ async function initializeDashboard() {
   renderRooms();
   await loadRooms();
   await loadPackages();
-  await loadLcs();
 
   const initialLoads = [];
 
