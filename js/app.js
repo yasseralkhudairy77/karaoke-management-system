@@ -135,6 +135,25 @@ function buildApiUrl(action, params = null) {
   return url.toString();
 }
 
+async function fetchPeriodApiResponse(url) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const requestUrl = new URL(url);
+    if (attempt > 0) {
+      requestUrl.searchParams.set("_retry", `${Date.now()}-${attempt}`);
+    }
+
+    const response = await fetch(requestUrl.toString(), { cache: "no-store" });
+
+    if (response.status !== 404 || attempt === 1) {
+      return response;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 650));
+  }
+
+  return fetch(url, { cache: "no-store" });
+}
+
 function isLocalTvBridgeEnabled() {
   const hostname = String(window.location.hostname || "").toLowerCase();
   const isGitHubPages = hostname === "github.io" || hostname.endsWith(".github.io");
@@ -416,10 +435,12 @@ let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
 let transactionPeriodNotice = "";
+let transactionPeriodRequestVersion = 0;
 let ownerReportPeriodFilter = "today";
 let ownerReportCustomStartDate = "";
 let ownerReportCustomEndDate = "";
 let ownerReportPeriodNotice = "";
+let ownerReportRequestVersion = 0;
 let ownerReportTransactionSummary = null;
 let ownerReportRoomUsageSummary = null;
 let ownerReportFnbSalesSummary = null;
@@ -916,6 +937,7 @@ let roomUsageSummary = null;
 let roomUsageItems = [];
 let roomUsageTransactions = [];
 let isLoadingRoomUsageReport = false;
+let roomUsageRequestVersion = 0;
 let isLoadingOwnerDashboard = false;
 let ownerRoomUsageSummary = null;
 const ROOM_USAGE_PERIOD_OPTIONS = [
@@ -1177,7 +1199,7 @@ function canFetchTransactionPeriodData() {
   return Boolean(transactionCustomStartDate && transactionCustomEndDate);
 }
 
-async function loadTodayTransactions() {
+async function loadTodayTransactions(requestVersion = transactionPeriodRequestVersion) {
   if (!API_BASE_URL.trim()) {
     return;
   }
@@ -1190,10 +1212,18 @@ async function loadTodayTransactions() {
   try {
     const data = await fetchTodayTransactionsFromApi();
 
+    if (requestVersion !== transactionPeriodRequestVersion) {
+      return;
+    }
+
     todayTransactions = data.transactions;
     todayTransactionSummary = data.summary;
     renderRooms();
   } catch (error) {
+    if (requestVersion !== transactionPeriodRequestVersion) {
+      return;
+    }
+
     console.warn("Gagal memuat riwayat transaksi.", error);
     showInlineNotice(error.message || "Gagal memuat riwayat transaksi.", "error");
     todayTransactions = [];
@@ -1204,7 +1234,9 @@ async function loadTodayTransactions() {
 
 async function fetchTodayTransactionsFromApi() {
   const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(
+    buildApiUrl("getTodayTransactions", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1271,6 +1303,7 @@ function setOwnerReportPeriodFilter(period) {
   }
 
   ownerReportPeriodFilter = period;
+  ownerReportRequestVersion += 1;
 
   if (period !== "custom") {
     ownerReportCustomStartDate = "";
@@ -1306,14 +1339,13 @@ async function applyOwnerReportCustomPeriod() {
   }
 
   ownerReportPeriodNotice = "";
+  ownerReportRequestVersion += 1;
   await loadOwnerPeriodReport();
 }
 
 async function fetchOwnerReportEndpoint(action) {
   const params = buildOwnerReportPeriodQueryParams();
-  const response = await fetch(buildApiUrl(action, Object.fromEntries(params.entries())), {
-    cache: "no-store",
-  });
+  const response = await fetchPeriodApiResponse(buildApiUrl(action, Object.fromEntries(params.entries())));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1338,27 +1370,47 @@ async function loadOwnerPeriodReport() {
     return;
   }
 
+  const requestVersion = ownerReportRequestVersion;
   isLoadingOwnerReport = true;
   renderRooms();
 
   try {
-    const [
-      transactionData,
-      roomUsageData,
-      fnbSalesData,
-      closingData,
-    ] = await Promise.all([
+    const results = await Promise.allSettled([
       fetchOwnerReportEndpoint("getTodayTransactions"),
       fetchOwnerReportEndpoint("getRoomUsageReport"),
       fetchOwnerReportEndpoint("getTodayFnbSalesReport"),
       fetchOwnerReportEndpoint("getTodayCashierClosings"),
     ]);
 
-    ownerReportTransactionSummary = transactionData.summary || null;
-    ownerReportRoomUsageSummary = roomUsageData.summary || null;
-    ownerReportFnbSalesSummary = fnbSalesData.summary || null;
-    ownerReportCashierClosings = Array.isArray(closingData.closings) ? closingData.closings : [];
+    if (requestVersion !== ownerReportRequestVersion) {
+      return;
+    }
+
+    const [transactionResult, roomUsageResult, fnbSalesResult, closingResult] = results;
+    const failedResults = results.filter((result) => result.status === "rejected");
+
+    if (failedResults.length === results.length) {
+      throw failedResults[0].reason;
+    }
+
+    const transactionData = transactionResult.status === "fulfilled" ? transactionResult.value : null;
+    const roomUsageData = roomUsageResult.status === "fulfilled" ? roomUsageResult.value : null;
+    const fnbSalesData = fnbSalesResult.status === "fulfilled" ? fnbSalesResult.value : null;
+    const closingData = closingResult.status === "fulfilled" ? closingResult.value : null;
+
+    ownerReportTransactionSummary = transactionData?.summary || null;
+    ownerReportRoomUsageSummary = roomUsageData?.summary || null;
+    ownerReportFnbSalesSummary = fnbSalesData?.summary || null;
+    ownerReportCashierClosings = Array.isArray(closingData?.closings) ? closingData.closings : [];
+
+    if (failedResults.length > 0) {
+      showInlineNotice("Sebagian laporan belum tersedia. Coba refresh setelah beberapa detik.", "warning");
+    }
   } catch (error) {
+    if (requestVersion !== ownerReportRequestVersion) {
+      return;
+    }
+
     console.warn("Gagal memuat laporan owner periode.", error);
     showInlineNotice(error.message || "Gagal memuat laporan owner periode.", "error");
     ownerReportTransactionSummary = null;
@@ -1366,12 +1418,14 @@ async function loadOwnerPeriodReport() {
     ownerReportFnbSalesSummary = null;
     ownerReportCashierClosings = [];
   } finally {
-    isLoadingOwnerReport = false;
-    renderRooms();
+    if (requestVersion === ownerReportRequestVersion) {
+      isLoadingOwnerReport = false;
+      renderRooms();
+    }
   }
 }
 
-async function loadTodayCashierClosings() {
+async function loadTodayCashierClosings(requestVersion = transactionPeriodRequestVersion) {
   if (!API_BASE_URL.trim()) {
     return;
   }
@@ -1384,11 +1438,19 @@ async function loadTodayCashierClosings() {
   try {
     const data = await fetchTodayCashierClosingsFromApi();
 
+    if (requestVersion !== transactionPeriodRequestVersion) {
+      return;
+    }
+
     todayCashierClosings = data.closings;
     todayCashierClosingSummary = data.summary;
     lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
     renderRooms();
   } catch (error) {
+    if (requestVersion !== transactionPeriodRequestVersion) {
+      return;
+    }
+
     console.warn("Gagal memuat riwayat closing.", error);
     showInlineNotice(error.message || "Gagal memuat riwayat closing.", "error");
     todayCashierClosings = [];
@@ -1399,7 +1461,9 @@ async function loadTodayCashierClosings() {
 
 async function fetchTodayCashierClosingsFromApi() {
   const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(
+    buildApiUrl("getTodayCashierClosings", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2153,6 +2217,7 @@ function setRoomUsagePeriodFilter(period) {
   }
 
   roomUsagePeriodFilter = period;
+  roomUsageRequestVersion += 1;
   resetPaginationPage("roomUsage");
   resetPaginationPage("roomUsageTransactions");
 
@@ -2190,12 +2255,13 @@ async function applyRoomUsageCustomPeriod() {
   }
 
   roomUsagePeriodNotice = "";
+  roomUsageRequestVersion += 1;
   resetPaginationPage("roomUsage");
   resetPaginationPage("roomUsageTransactions");
   await loadRoomUsageReport();
 }
 
-async function loadRoomUsageReport() {
+async function loadRoomUsageReport(requestVersion = roomUsageRequestVersion) {
   roomUsageSummary = null;
 
   if (!API_BASE_URL.trim()) {
@@ -2216,18 +2282,28 @@ async function loadRoomUsageReport() {
   try {
     const data = await fetchRoomUsageReportFromApi();
 
+    if (requestVersion !== roomUsageRequestVersion) {
+      return;
+    }
+
     roomUsageSummary = data.summary || null;
     roomUsageItems = Array.isArray(data.room_usage) ? data.room_usage : [];
     roomUsageTransactions = Array.isArray(data.transactions) ? data.transactions : [];
   } catch (error) {
+    if (requestVersion !== roomUsageRequestVersion) {
+      return;
+    }
+
     console.warn("Gagal memuat laporan pemakaian room.", error);
     showInlineNotice(error.message || "Gagal memuat laporan pemakaian room.", "error");
     roomUsageSummary = null;
     roomUsageItems = [];
     roomUsageTransactions = [];
   } finally {
-    isLoadingRoomUsageReport = false;
-    renderRooms();
+    if (requestVersion === roomUsageRequestVersion) {
+      isLoadingRoomUsageReport = false;
+      renderRooms();
+    }
   }
 }
 
@@ -2241,7 +2317,9 @@ async function fetchRoomUsageReportFromApi() {
   }
 
   const params = buildRoomUsagePeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2270,7 +2348,9 @@ async function fetchActiveShiftRoomUsageReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2906,6 +2986,7 @@ function setTransactionPeriodFilter(period) {
   }
 
   transactionPeriodFilter = period;
+  transactionPeriodRequestVersion += 1;
   resetPaginationPage("transactions");
   resetPaginationPage("cashierClosings");
 
@@ -2944,6 +3025,7 @@ async function applyTransactionCustomPeriod() {
   }
 
   transactionPeriodNotice = "";
+  transactionPeriodRequestVersion += 1;
   resetPaginationPage("transactions");
   resetPaginationPage("cashierClosings");
   await loadTodayTransactions();
@@ -21092,45 +21174,45 @@ async function initializeDashboard() {
 
   const initialLoads = [];
 
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock") || canAccessDashboardTab("rooms")) {
+  if (activeDashboardTab === "fnb" || activeDashboardTab === "stock" || activeDashboardTab === "rooms") {
     initialLoads.push(loadInventoryItems());
   }
 
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("rooms")) {
+  if (activeDashboardTab === "fnb" || activeDashboardTab === "rooms") {
     initialLoads.push(loadMenuItems());
   }
 
-  if (canAccessDashboardTab("fnb")) {
+  if (activeDashboardTab === "fnb") {
     initialLoads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
   }
 
-  if (canAccessDashboardTab("stock")) {
+  if (activeDashboardTab === "stock") {
     initialLoads.push(loadTodayStockMovements());
   }
 
-  if (canAccessDashboardTab("reports")) {
-    if (isValidReportSubTab("owner")) {
+  if (activeDashboardTab === "reports") {
+    if (activeReportSubTab === "owner" && isValidReportSubTab("owner")) {
       initialLoads.push(loadOwnerDashboardSummary(), loadOwnerPeriodReport());
     }
 
-    if (isValidReportSubTab("fnb")) {
+    if (activeReportSubTab === "fnb" && isValidReportSubTab("fnb")) {
       initialLoads.push(loadTodayFnbSalesReport());
     }
 
-    if (isValidReportSubTab("room")) {
+    if (activeReportSubTab === "room" && isValidReportSubTab("room")) {
       initialLoads.push(loadRoomUsageReport());
     }
 
-    if (isValidReportSubTab("cashier")) {
+    if (activeReportSubTab === "cashier" && isValidReportSubTab("cashier")) {
       initialLoads.push(loadTodayCashierClosings());
     }
   }
 
-  if (canAccessDashboardTab("audit")) {
+  if (activeDashboardTab === "audit") {
     initialLoads.push(loadTodayRoomTimeLogs());
   }
 
-  if (canAccessDashboardTab("transactions")) {
+  if (activeDashboardTab === "transactions") {
     initialLoads.push(loadTodayTransactions(), loadTodayCashierClosings());
   }
 

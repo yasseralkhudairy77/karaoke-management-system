@@ -25,6 +25,7 @@ var LEGACY_TEST_TRANSACTION_IDS = {
 var DEV_SHORT_SESSION_ENABLED = true;
 var DEV_MIN_SESSION_MINUTES = 1;
 var MIN_SESSION_MINUTES = 15;
+var PERIOD_REPORT_CACHE_TTL_SECONDS = 20;
 var NUMERIC_FIELDS = {
   rate_per_hour: true,
   duration_minutes: true,
@@ -8416,20 +8417,7 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
     return periodResult;
   }
 
-  var transactions = readSheetAsObjects_("Transactions")
-    .filter(function (transaction) {
-      if (!isProductionDataRow_(transaction)) {
-        return false;
-      }
-
-      if (periodResult.period === "all") {
-        return true;
-      }
-
-      var transactionDate = resolveTransactionOperationalDateString_(transaction);
-
-      return matchesOperationalPeriod_(transactionDate, periodResult);
-    })
+  var transactions = getProductionTransactionsForPeriod_(periodResult)
     .map(function (transaction) {
       return {
         transaction_id: transaction.transaction_id || "",
@@ -8515,21 +8503,7 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
     return periodResult;
   }
 
-  var filteredTransactions = readSheetAsObjects_("Transactions")
-    .filter(function (transaction) {
-      if (!isProductionDataRow_(transaction)) {
-        return false;
-      }
-
-      if (periodResult.period === "all") {
-        return true;
-      }
-
-      return matchesOperationalPeriod_(
-        resolveTransactionOperationalDateString_(transaction),
-        periodResult
-      );
-    })
+  var filteredTransactions = getProductionTransactionsForPeriod_(periodResult)
     .map(function (transaction) {
       return mapRoomUsageTransactionRow_(transaction);
     })
@@ -12474,6 +12448,75 @@ function readFnbOrderItemsOrEmpty_() {
   return readSheetAsObjectsOrEmpty_("FnbOrderItems").map(function (item) {
     return normalizeFnbOrderItemRow_(item);
   });
+}
+
+function getProductionTransactionsForPeriod_(periodResult) {
+  var cacheKey = [
+    "production_transactions",
+    periodResult.period,
+    periodResult.startDate || "all",
+    periodResult.endDate || "all",
+  ].join("_").replace(/[^A-Za-z0-9_-]/g, "");
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(cacheKey);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (error) {
+      cache.remove(cacheKey);
+    }
+  }
+
+  var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    if (!isProductionDataRow_(transaction)) {
+      return false;
+    }
+
+    if (periodResult.period === "all") {
+      return true;
+    }
+
+    return matchesOperationalPeriod_(
+      resolveTransactionOperationalDateString_(transaction),
+      periodResult
+    );
+  }).map(function (transaction) {
+    return {
+      transaction_id: transaction.transaction_id || "",
+      room_id: transaction.room_id || "",
+      room_name: transaction.room_name || "",
+      start_time: transaction.start_time || "",
+      end_time: transaction.end_time || "",
+      duration_minutes: Number(transaction.duration_minutes) || 0,
+      rate_per_hour: Number(transaction.rate_per_hour) || 0,
+      room_total: Number(transaction.room_total) || 0,
+      fnb_total: Number(transaction.fnb_total) || 0,
+      lc_total: Number(transaction.lc_total) || 0,
+      promo_code: transaction.promo_code || "",
+      promo_discount: Number(transaction.promo_discount) || 0,
+      grand_total: getTransactionAmount_(transaction),
+      fnb_order_ids: transaction.fnb_order_ids || "",
+      transaction_type: transaction.transaction_type || "session_checkout",
+      payment_method: transaction.payment_method || "",
+      payment_status: transaction.payment_status || "",
+      cashier_name: transaction.cashier_name || "",
+      created_at: transaction.created_at || "",
+      is_test: transaction.is_test || "",
+      test_run_id: transaction.test_run_id || "",
+    };
+  });
+
+  try {
+    var serialized = JSON.stringify(transactions);
+    if (serialized.length <= 95000) {
+      cache.put(cacheKey, serialized, PERIOD_REPORT_CACHE_TTL_SECONDS);
+    }
+  } catch (error) {
+    // Cache is an optimization only; the report remains valid without it.
+  }
+
+  return transactions;
 }
 
 function normalizeFnbOrderItemRow_(item) {
