@@ -202,7 +202,7 @@ async function executeApiGet(url) {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 35000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     let response;
 
     try {
@@ -213,7 +213,7 @@ async function executeApiGet(url) {
     } catch (error) {
       if (error?.name === "AbortError") {
         const action = requestUrl.searchParams.get("action") || "API";
-        throw new Error(`${action} timeout setelah 35 detik.`);
+        throw new Error(`${action} timeout setelah 60 detik.`);
       }
 
       throw error;
