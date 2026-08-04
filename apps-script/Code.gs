@@ -1223,20 +1223,25 @@ function getSheet_(sheetName) {
 
 function readSheetAsObjects_(sheetName) {
   var sheet = getSheet_(sheetName);
-  var values = sheet.getDataRange().getValues();
-
-  if (values.length < 2) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
     return [];
   }
+  var values = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
 
   var headers = values[0].map(function (header) {
     return String(header).trim();
   });
 
   return values.slice(1).reduce(function (rows, row) {
-    var isEmptyRow = row.every(function (cell) {
-      return cell === "" || cell === null;
-    });
+    var isEmptyRow = true;
+    for (var j = 0; j < row.length; j++) {
+      var val = row[j];
+      if (val !== "" && val !== null && val !== undefined) {
+        isEmptyRow = false;
+        break;
+      }
+    }
 
     if (isEmptyRow) {
       return rows;
