@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ProductionDeploymentId = "AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1"
+$ProductionDeploymentId = "AKfycbzjBoz2FvaRqTdsmdR-eYQBRvzPVqGV0lf-FPJlDgfFDQ0bxSWr8JVpgxICBwIkI7CK"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Set-Location $ScriptDir

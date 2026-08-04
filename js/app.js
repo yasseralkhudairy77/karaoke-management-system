@@ -12,7 +12,7 @@ import {
   DEV_SHORT_SESSION_ENABLED,
   LOCAL_TV_BRIDGE_ENABLED,
   LOCAL_TV_BRIDGE_URL,
-} from "./config.js";
+} from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
 import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
@@ -1438,20 +1438,40 @@ async function loadMenuItems() {
     renderRooms();
   } catch (error) {
     console.warn("Gagal memuat Menu F&B.", error);
-    menuItems = [];
-    menuErrorMessage = "Gagal memuat menu F&B.";
+    menuErrorMessage = menuItems.length === 0 ? "Gagal memuat menu F&B." : "";
     menuLoading = false;
     renderRooms();
   }
 }
 
 async function fetchMenuItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
-    cache: "no-store",
-  });
+  let response = null;
+  let lastError = null;
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
+        cache: "no-store",
+      });
+      lastError = response.ok
+        ? null
+        : new Error(`API request failed with status ${response.status}`);
+    } catch (error) {
+      response = null;
+      lastError = error;
+    }
+
+    if (response?.ok) {
+      break;
+    }
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+
+  if (!response?.ok) {
+    throw lastError || new Error("API request failed.");
   }
 
   const data = await response.json();
@@ -8568,9 +8588,9 @@ function createMenuPanelElement() {
 
   if (!API_BASE_URL.trim()) {
     list.appendChild(createStateMessage("Menu F&B hanya tersedia saat terhubung ke server."));
-  } else if (menuLoading) {
+  } else if (menuLoading && menuItems.length === 0) {
     list.appendChild(createStateMessage("Memuat menu F&B..."));
-  } else if (menuErrorMessage) {
+  } else if (menuErrorMessage && menuItems.length === 0) {
     list.appendChild(createStateMessage(menuErrorMessage, "error"));
   } else if (menuItems.length === 0) {
     list.appendChild(createStateMessage("Belum ada menu F&B."));
@@ -15435,10 +15455,7 @@ function refreshActiveTabData() {
       loadRoomRecoveryCandidates();
       break;
     case "fnb":
-      loadInventoryItems();
-      loadMenuItems();
-      loadOpenFnbOrders();
-      loadTodayFnbOrders();
+      refreshFnbTabData();
       break;
     case "stock":
       loadInventoryItems();
@@ -15490,6 +15507,18 @@ function refreshActiveTabData() {
     default:
       break;
   }
+}
+
+async function refreshFnbTabData() {
+  if (menuItems.length === 0) {
+    await loadMenuItems();
+  }
+
+  await Promise.all([
+    loadInventoryItems(),
+    loadOpenFnbOrders(),
+    loadTodayFnbOrders(),
+  ]);
 }
 
 // ==========================================
@@ -21013,14 +21042,14 @@ async function initializeDashboard() {
   await loadPackages();
   await loadLcs();
 
+  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("rooms")) {
+    await loadMenuItems();
+  }
+
   const initialLoads = [];
 
   if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock") || canAccessDashboardTab("rooms")) {
     initialLoads.push(loadInventoryItems());
-  }
-
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("rooms")) {
-    initialLoads.push(loadMenuItems());
   }
 
   if (canAccessDashboardTab("fnb")) {
