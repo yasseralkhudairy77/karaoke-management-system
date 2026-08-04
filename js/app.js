@@ -815,6 +815,7 @@ let addInventoryItemForm = null;
 let isSavingAddInventoryItem = false;
 let lcs = [];
 let isLoadingLcs = false;
+let lcLoadError = "";
 let lcWorkReports = [];
 let isLoadingLcWorkReports = false;
 let activeLcSubTab = "master";
@@ -16227,17 +16228,42 @@ async function loadLcs(force = false) {
   }
 
   isLoadingLcs = true;
+  lcLoadError = "";
   if (activeDashboardTab === "lc") {
     renderRooms();
   }
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcMasterList`);
-    const data = await response.json();
-    if (data && data.success) {
-      lcs = data.lcs || [];
+    let data = null;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await fetch(`${API_BASE_URL}?action=getLcMasterList&_=${Date.now()}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`Server LC merespons status ${response.status}.`);
+        }
+        data = await response.json();
+        if (!data || data.success !== true || !Array.isArray(data.lcs)) {
+          throw new Error(data?.error || data?.message || "Respons daftar LC tidak valid.");
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        }
+      }
     }
+
+    if (!data || data.success !== true || !Array.isArray(data.lcs)) {
+      throw lastError || new Error("Daftar LC gagal dimuat.");
+    }
+    lcs = data.lcs;
   } catch (error) {
     console.error("Error loading LCs:", error);
+    lcLoadError = error.message || "Daftar LC gagal dimuat.";
   } finally {
     isLoadingLcs = false;
     if (activeDashboardTab === "lc") {
@@ -18873,7 +18899,7 @@ function updateExtendSessionNote(value) {
 let pendingLcSelections = {};
 let pendingLcDurations = {};
 
-function showLcSelection(roomId) {
+async function showLcSelection(roomId) {
   lcSelectionRoomId = roomId;
   pendingLcSelections = {};
   pendingLcDurations = {};
@@ -18889,6 +18915,9 @@ function showLcSelection(roomId) {
         }
       });
     }
+  }
+  if (lcs.length === 0 || lcLoadError) {
+    await loadLcs(true);
   }
   renderRooms();
 }
@@ -18917,7 +18946,11 @@ function createSelectLcModalOverlay(room) {
   counter.className = "lc-selection-counter";
   counter.textContent = `Terpilih: ${selectedCount} orang`;
 
-  const availableLcs = lcs.filter(lc => lc.status === "active" && (lc.availability === "available" || pendingLcSelections[lc.lc_id]));
+  const availableLcs = lcs.filter((lc) => {
+    const status = String(lc.status || "").trim().toLowerCase();
+    const availability = String(lc.availability || "available").trim().toLowerCase();
+    return status === "active" && (availability === "available" || pendingLcSelections[lc.lc_id]);
+  });
 
   const listContainer = document.createElement("div");
   listContainer.className = "lc-selection-list";
@@ -18925,8 +18958,20 @@ function createSelectLcModalOverlay(room) {
   if (availableLcs.length === 0) {
     const noLcMsg = document.createElement("p");
     noLcMsg.className = "lc-selection-empty";
-    noLcMsg.textContent = "Tidak ada LC yang tersedia saat ini.";
+    noLcMsg.textContent = lcLoadError
+      ? "Daftar LC gagal dimuat. Tekan Muat Ulang."
+      : "Tidak ada LC yang tersedia saat ini.";
     listContainer.appendChild(noLcMsg);
+
+    if (lcLoadError) {
+      const reloadButton = document.createElement("button");
+      reloadButton.className = "room-button room-button-secondary";
+      reloadButton.type = "button";
+      reloadButton.dataset.action = "reload-lc-selection";
+      reloadButton.textContent = isLoadingLcs ? "Memuat..." : "Muat Ulang";
+      reloadButton.disabled = isLoadingLcs;
+      listContainer.appendChild(reloadButton);
+    }
   } else {
     availableLcs.forEach(lc => {
       const itemLabel = document.createElement("label");
@@ -20887,7 +20932,13 @@ async function handleRoomAction(event) {
       showInlineNotice("Resepsionis tidak diizinkan memilih LC.", "error");
       return;
     }
-    showLcSelection(button.dataset.roomId || roomId || "");
+    await showLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "reload-lc-selection") {
+    await loadLcs(true);
+    renderRooms();
     return;
   }
 

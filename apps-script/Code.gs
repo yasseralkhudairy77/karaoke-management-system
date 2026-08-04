@@ -827,6 +827,14 @@ function doGet(e) {
       return jsonResponse(getEmployees_());
     }
 
+    if (action === "getApiCapabilities") {
+      return jsonResponse({
+        ok: true,
+        success: true,
+        lc_assignment_dry_run: true,
+      });
+    }
+
     if (action === "getLcMasterList") {
       return jsonResponse(getLcMasterList_());
     }
@@ -10748,7 +10756,7 @@ function assignSessionLcs_(payload) {
   }
 
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(2000)) {
+  if (!lock.tryLock(5000)) {
     return { ok: false, success: false, error: "Sistem sedang memproses LC room lain. Coba lagi sebentar." };
   }
 
@@ -10809,6 +10817,19 @@ function assignSessionLcs_(payload) {
       if (foundLc.availability === "busy" && !currentLcIds.includes(newId)) {
         return { ok: false, success: false, error: "LC " + foundLc.lc_name + " sedang sibuk di room lain." };
       }
+    }
+
+    if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
+      return {
+        ok: true,
+        success: true,
+        dry_run: true,
+        message: "Validasi pilihan LC berhasil tanpa menyimpan perubahan.",
+        room_id: roomId,
+        session_id: session.session_id || "",
+        session_status: session.status || "",
+        lc_ids: newLcIds.join(","),
+      };
     }
 
     var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
