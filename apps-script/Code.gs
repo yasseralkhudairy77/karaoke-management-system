@@ -16032,3 +16032,106 @@ function normalizeCompareDate_(val) {
   }
   return clean;
 }
+
+function cleanupTestData_20260804() {
+  var startTime1 = new Date("2026-08-04T10:00:00+07:00").getTime();
+  var endTime1 = new Date("2026-08-04T15:47:00+07:00").getTime();
+  
+  var startTime2 = new Date("2028-08-04T10:00:00+07:00").getTime();
+  var endTime2 = new Date("2028-08-04T15:47:00+07:00").getTime();
+
+  function isWithinRange(dateStr) {
+    if (!dateStr) return false;
+    var d = new Date(dateStr);
+    var t = d.getTime();
+    if (isNaN(t)) return false;
+    return (t >= startTime1 && t <= endTime1) || (t >= startTime2 && t <= endTime2);
+  }
+
+  var sheetsToProcess = [
+    { name: "FnbOrders", dateCol: "created_at", idCol: "order_id" },
+    { name: "FnbOrderItems", dateCol: "created_at", idCol: "order_id" },
+    { name: "Transactions", dateCol: "created_at", idCol: "transaction_id" },
+    { name: "StockMovements", dateCol: "created_at", idCol: "movement_id" },
+    { name: "RoomTimeLogs", dateCol: "created_at", idCol: "log_id" },
+    { name: "RoomRecoveryLogs", dateCol: "timestamp", idCol: "log_id" }
+  ];
+
+  var deletedOrderIds = {};
+
+  // First pass: collect deleted order IDs from FnbOrders
+  if (sheetExists_("FnbOrders")) {
+    var sheet = getSheet_("FnbOrders");
+    var data = sheet.getDataRange().getValues();
+    var headerMap = getHeaderMap_(sheet);
+    for (var i = 1; i < data.length; i++) {
+      var createdAt = data[i][headerMap.created_at - 1];
+      var orderId = data[i][headerMap.order_id - 1];
+      if (isWithinRange(createdAt)) {
+        deletedOrderIds[orderId] = true;
+      }
+    }
+  }
+
+  // Second pass: process StockMovements to restore Inventory quantities
+  if (sheetExists_("StockMovements") && sheetExists_("Inventory")) {
+    var smSheet = getSheet_("StockMovements");
+    var smData = smSheet.getDataRange().getValues();
+    var smHeaderMap = getHeaderMap_(smSheet);
+    
+    var invSheet = getSheet_("Inventory");
+    var invData = invSheet.getDataRange().getValues();
+    var invHeaderMap = getHeaderMap_(invSheet);
+    
+    var invRows = {}; // Map stock_item_id to sheet row number (1-indexed)
+    for (var i = 1; i < invData.length; i++) {
+      var itemId = String(invData[i][invHeaderMap.stock_item_id - 1]).trim();
+      if (itemId) {
+        invRows[itemId] = i + 1;
+      }
+    }
+
+    for (var i = 1; i < smData.length; i++) {
+      var createdAt = smData[i][smHeaderMap.created_at - 1];
+      var refId = smData[i][smHeaderMap.reference_id - 1];
+      if (isWithinRange(createdAt) || deletedOrderIds[refId]) {
+        var itemId = String(smData[i][smHeaderMap.stock_item_id - 1]).trim();
+        var qtyChange = Number(smData[i][smHeaderMap.qty_change - 1]) || 0;
+        
+        var invRow = invRows[itemId];
+        if (invRow && qtyChange !== 0) {
+          var currentStock = Number(invSheet.getRange(invRow, invHeaderMap.stock_qty).getValue()) || 0;
+          invSheet.getRange(invRow, invHeaderMap.stock_qty).setValue(currentStock - qtyChange);
+          Logger.log("Restored inventory for " + itemId + ": " + currentStock + " -> " + (currentStock - qtyChange));
+        }
+      }
+    }
+  }
+
+  // Third pass: delete matching rows in each sheet
+  sheetsToProcess.forEach(function(cfg) {
+    if (!sheetExists_(cfg.name)) return;
+    var sheet = getSheet_(cfg.name);
+    var data = sheet.getDataRange().getValues();
+    var headerMap = getHeaderMap_(sheet);
+    
+    // Process in reverse to avoid index shifts
+    for (var i = data.length - 1; i >= 1; i--) {
+      var dateVal = data[i][headerMap[cfg.dateCol] - 1];
+      var idVal = data[i][headerMap[cfg.idCol] - 1];
+      
+      var shouldDelete = isWithinRange(dateVal);
+      
+      if (!shouldDelete && cfg.name === "FnbOrderItems" && deletedOrderIds[idVal]) {
+        shouldDelete = true;
+      }
+      
+      if (shouldDelete) {
+        sheet.deleteRow(i + 1);
+        Logger.log("Deleted row " + (i + 1) + " from " + cfg.name);
+      }
+    }
+  });
+
+  Logger.log("Cleanup completed!");
+}
