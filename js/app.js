@@ -960,6 +960,7 @@ let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
+let isSettlingFnbOrder = false;
 let fnbOrderNote = "";
 let fnbOrderPaymentMethod = "room_bill";
 let activeFnbSubTab = "order";
@@ -1092,6 +1093,7 @@ function isUserBusy() {
     isExtendingSession ||
     isSavingFnbOrder ||
     isCancellingFnbOrder ||
+    isSettlingFnbOrder ||
     isSavingStockAdjustment ||
     isSavingAddInventoryItem ||
     isSavingLc ||
@@ -3910,7 +3912,7 @@ function calculateOpenFnbOrdersSummary(orders) {
 }
 
 function setTodayFnbOrderStatusFilter(status) {
-  if (!["all", "open", "billed", "cancelled"].includes(status)) {
+  if (!["all", "open", "paid", "billed", "cancelled"].includes(status)) {
     return;
   }
 
@@ -3949,6 +3951,9 @@ function calculateTodayFnbOrderSummary(orders) {
     if (order.order_status === "open") {
       summary.open_orders += 1;
       summary.open_amount += orderTotal;
+    } else if (order.order_status === "paid") {
+      summary.paid_orders += 1;
+      summary.paid_amount += orderTotal;
     } else if (order.order_status === "billed") {
       summary.billed_orders += 1;
       summary.billed_amount += orderTotal;
@@ -3961,10 +3966,12 @@ function calculateTodayFnbOrderSummary(orders) {
   }, {
     total_orders: 0,
     open_orders: 0,
+    paid_orders: 0,
     billed_orders: 0,
     cancelled_orders: 0,
     total_items: 0,
     open_amount: 0,
+    paid_amount: 0,
     billed_amount: 0,
     cancelled_amount: 0,
     total_amount: 0,
@@ -3977,7 +3984,7 @@ function updateFnbOrderNote(value) {
 
 function buildFnbOrderPayload() {
   const isTestingOrder = fnbOrderMode === "testing";
-  const isRoomBill = fnbOrderPaymentMethod === "room_bill" && !isTestingOrder;
+  const isPostpaid = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "open_bill";
   return {
     action: "saveFnbOrder",
     room_id: fnbOrderMode === "room" ? selectedFbRoomId : "FNB-GENERAL",
@@ -3987,8 +3994,8 @@ function buildFnbOrderPayload() {
     })),
     cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
-    payment_method: isRoomBill ? "" : fnbOrderPaymentMethod,
-    payment_status: isRoomBill ? "unpaid" : "paid",
+    payment_method: fnbOrderPaymentMethod,
+    payment_status: isPostpaid ? "unpaid" : "paid",
     test_mode: isTestingOrder,
     test_run_id: isTestingOrder ? fnbTestRunId : "",
     test_note: isTestingOrder ? "F&B menu testing" : "",
@@ -4016,7 +4023,7 @@ async function saveFnbOrder() {
   }
 
   if (isGeneralOrder && fnbOrderPaymentMethod === "room_bill") {
-    showInlineNotice("Order F&B umum harus dibayar tunai atau transfer.", "error");
+    showInlineNotice("Order F&B umum tidak dapat dimasukkan ke tagihan room.", "error");
     return;
   }
 
@@ -4046,11 +4053,15 @@ async function saveFnbOrder() {
     fbCartItems = [];
     fnbOrderNote = "";
     const originalPaymentMethod = fnbOrderPaymentMethod;
-    fnbOrderPaymentMethod = "room_bill";
+    fnbOrderPaymentMethod = fnbOrderMode === "room" ? "room_bill" : "cash";
     showInlineNotice(
       isTestingOrder
-        ? "Order F&B TEST berhasil disimpan. Data tidak masuk production dan tidak memotong stok."
-        : "Order F&B berhasil disimpan."
+        ? (data.order?.order_status === "open"
+          ? "Open Bill F&B TEST berhasil dibuat. Data tetap terisolasi dari production."
+          : "Order F&B TEST berhasil disimpan. Data tidak masuk production dan tidak memotong stok.")
+        : (data.order?.order_status === "open"
+          ? "Open Bill F&B berhasil dibuat dan masuk Antrean F&B."
+          : "Order F&B berhasil disimpan.")
     );
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
@@ -4177,6 +4188,71 @@ async function cancelFnbOrder(orderId, reason) {
     showInlineNotice(error.message || "Gagal membatalkan order F&B.", "error");
   } finally {
     isCancellingFnbOrder = false;
+    renderRooms();
+  }
+}
+
+async function settleGeneralFnbOrder(orderId, paymentMethod) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (isSettlingFnbOrder) {
+    return;
+  }
+
+  isSettlingFnbOrder = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "settleGeneralFnbOrder",
+      order_id: orderId,
+      payment_method: paymentMethod,
+      cashier_name: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal melunasi Open Bill F&B.");
+    }
+
+    const detailedOrder = {
+      ...(data.order || {}),
+      items: Array.isArray(data.items) ? data.items : [],
+    };
+
+    if (lastFnbOrder?.order?.order_id === orderId) {
+      lastFnbOrder = {
+        order: data.order || null,
+        items: detailedOrder.items,
+      };
+    }
+
+    if (data.order?.order_id) {
+      transactionFnbDetails[data.order.order_id] = [detailedOrder];
+    }
+
+    showInlineNotice(
+      data.order?.is_test
+        ? "Open Bill F&B TEST berhasil dilunasi. Data tetap terisolasi dari production."
+        : "Open Bill F&B berhasil dilunasi."
+    );
+
+    if (data.transaction) {
+      showReceiptPrint(data.transaction);
+    }
+
+    if (!data.order?.is_test) {
+      await loadOpenFnbOrders();
+      await loadTodayFnbOrders();
+      await loadInventoryItems();
+      await loadMenuItems();
+    }
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal melunasi Open Bill F&B.", "error");
+  } finally {
+    isSettlingFnbOrder = false;
     renderRooms();
   }
 }
@@ -9314,8 +9390,8 @@ function createFbCartTotalElement() {
 
 function createFbPaymentMethodElement() {
   const selectedRoom = getSelectedFbRoom();
-  const isGeneralOrder = fnbOrderMode === "general";
-  if ((!isGeneralOrder && (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom))) || fbCartItems.length === 0) {
+  const isStandaloneOrder = fnbOrderMode === "general" || fnbOrderMode === "testing";
+  if ((!isStandaloneOrder && (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom))) || fbCartItems.length === 0) {
     return document.createDocumentFragment();
   }
 
@@ -9332,12 +9408,18 @@ function createFbPaymentMethodElement() {
   select.id = "fbPaymentMethodSelect";
   select.dataset.action = "update-fb-payment-method";
 
-  if (!isGeneralOrder) {
+  if (!isStandaloneOrder) {
     const roomBillOpt = document.createElement("option");
     roomBillOpt.value = "room_bill";
     roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
     if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
     select.appendChild(roomBillOpt);
+  } else {
+    const openBillOpt = document.createElement("option");
+    openBillOpt.value = "open_bill";
+    openBillOpt.textContent = "Open Bill / Bayar Nanti";
+    if (fnbOrderPaymentMethod === "open_bill") openBillOpt.selected = true;
+    select.appendChild(openBillOpt);
   }
 
   const cashOpt = document.createElement("option");
@@ -9413,7 +9495,7 @@ function createLastFnbOrderElement(order, items) {
     grid.appendChild(item);
   });
 
-  saved.append(title, grid);
+  saved.append(title, grid, createFnbSettlementActionsElement(order));
 
   return saved;
 }
@@ -9446,12 +9528,50 @@ function getFnbOrderStatusClass(status) {
   return "unknown";
 }
 
+function canSettleGeneralFnbOrder(order) {
+  return String(order?.room_id || "").trim().toUpperCase() === "FNB-GENERAL" &&
+    String(order?.order_status || "").trim().toLowerCase() === "open";
+}
+
+function createFnbSettlementActionsElement(order) {
+  if (!canSettleGeneralFnbOrder(order)) {
+    return document.createDocumentFragment();
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "fnb-cancel-actions";
+
+  const paymentMethod = document.createElement("select");
+  paymentMethod.className = "transaction-pay-select fnb-settle-payment-method";
+
+  [
+    ["cash", "Lunasi Cash"],
+    ["transfer", "Lunasi Transfer / QRIS"],
+  ].forEach(([value, labelText]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = labelText;
+    paymentMethod.appendChild(option);
+  });
+
+  const button = document.createElement("button");
+  button.className = isSettlingFnbOrder ? "fnb-cancel-button disabled" : "transaction-pay-button";
+  button.type = "button";
+  button.dataset.action = "settle-fnb-order";
+  button.dataset.orderId = order.order_id || "";
+  button.disabled = isSettlingFnbOrder;
+  button.textContent = isSettlingFnbOrder ? "Memproses Pelunasan..." : "Tandai Lunas";
+
+  actions.append(paymentMethod, button);
+  return actions;
+}
+
 function createFbOrderActionsElement() {
   const actions = document.createElement("div");
   actions.className = "fb-order-actions";
   const selectedRoom = getSelectedFbRoom();
   const canSave =
-    (fnbOrderMode === "general" || (Boolean(selectedRoom) && isFbOrderRoomSelectable(selectedRoom))) &&
+    (fnbOrderMode === "general" || fnbOrderMode === "testing" || (Boolean(selectedRoom) && isFbOrderRoomSelectable(selectedRoom))) &&
     fbCartItems.length > 0 &&
     !isSavingFnbOrder;
 
@@ -9469,7 +9589,9 @@ function createFbOrderActionsElement() {
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Memproses..." : "Bayar & Kirim Order";
+  saveButton.textContent = isSavingFnbOrder
+    ? "Memproses..."
+    : (fnbOrderPaymentMethod === "open_bill" ? "Buka Bill & Kirim Order" : "Bayar & Kirim Order");
 
   actions.append(clearButton, saveButton);
 
@@ -9647,6 +9769,8 @@ function createFnbOrderCancelActionsElement(order) {
   const actions = document.createElement("div");
   actions.className = "fnb-cancel-actions";
 
+  actions.appendChild(createFnbSettlementActionsElement(order));
+
   const button = document.createElement("button");
   const canCancel = getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
 
@@ -9753,6 +9877,7 @@ function createTodayFnbSummaryElement(summary) {
   [
     ["Total Order", Number(summary.total_orders) || 0],
     ["Open", Number(summary.open_orders) || 0],
+    ["Lunas", Number(summary.paid_orders) || 0],
     ["Billed", Number(summary.billed_orders) || 0],
     ["Dibatalkan", Number(summary.cancelled_orders) || 0],
     ["Nilai Batal", formatCurrency(summary.cancelled_amount)],
@@ -9786,6 +9911,7 @@ function createTodayFnbToolbarElement() {
   [
     ["all", "Semua"],
     ["open", "Open"],
+    ["paid", "Lunas"],
     ["billed", "Billed"],
     ["cancelled", "Dibatalkan"],
   ].forEach(([status, labelText]) => {
@@ -20805,6 +20931,13 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "settle-fnb-order") {
+    const actions = button.closest(".fnb-cancel-actions");
+    const paymentMethod = actions?.querySelector(".fnb-settle-payment-method")?.value || "cash";
+    await settleGeneralFnbOrder(button.dataset.orderId || "", paymentMethod);
+    return;
+  }
+
   if (action === "filter-today-fnb-status") {
     setTodayFnbOrderStatusFilter(button.dataset.status || "all");
     return;
@@ -21026,6 +21159,7 @@ function handleDashboardInput(event) {
 
   if (action === "update-fb-payment-method") {
     fnbOrderPaymentMethod = field.value;
+    renderRooms();
     return;
   }
 

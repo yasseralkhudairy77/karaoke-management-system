@@ -1007,6 +1007,14 @@ function doPost(e) {
       ));
     }
 
+    if (action === "settleGeneralFnbOrder") {
+      return jsonResponse(settleGeneralFnbOrder_(
+        payload.order_id,
+        payload.payment_method,
+        payload.cashier_name
+      ));
+    }
+
     if (action === "previewSessionPricing") {
       return jsonResponse(previewSessionPricing_(payload));
     }
@@ -11312,6 +11320,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
         created_at: timestamp,
         transaction_type: "fnb_addon",
       };
+      Object.assign(transaction, getTestFields_(testContext));
       appendTransaction_(transaction);
 
       var detailedOrder = Object.assign({}, order, { items: orderItems });
@@ -11326,6 +11335,101 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       order: order,
       items: orderItems,
       lc_sales_bonus_logs: lcSalesBonusLogs,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function settleGeneralFnbOrder_(orderId, paymentMethod, cashierName) {
+  var normalizedOrderId = String(orderId || "").trim();
+  var normalizedPaymentMethod = String(paymentMethod || "").trim().toLowerCase();
+  var user = String(cashierName || "Kasir").trim() || "Kasir";
+
+  if (!normalizedOrderId) {
+    return { ok: false, error: "order_id wajib diisi." };
+  }
+
+  if (["cash", "transfer"].indexOf(normalizedPaymentMethod) === -1) {
+    return { ok: false, error: "Metode pelunasan harus cash atau transfer/QRIS." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return { ok: false, error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar." };
+  }
+
+  try {
+    if (!sheetExists_("FnbOrders")) {
+      return { ok: false, error: "Order F&B tidak ditemukan." };
+    }
+
+    var sheet = ensureFnbOrdersSheetColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var rowNumber = findFnbOrderRowById_(normalizedOrderId, sheet, headerMap);
+
+    if (!rowNumber) {
+      return { ok: false, error: "Order F&B tidak ditemukan." };
+    }
+
+    var order = getFnbOrderObjectFromRow_(sheet, rowNumber);
+    var currentStatus = String(order.order_status || "").trim().toLowerCase();
+
+    if (String(order.room_id || "").trim().toUpperCase() !== FNB_GENERAL_ROOM_ID) {
+      return { ok: false, error: "Hanya Open Bill F&B Umum yang dapat dilunasi dari menu ini." };
+    }
+
+    if (currentStatus !== "open") {
+      return {
+        ok: false,
+        error: currentStatus === "paid" ? "Open Bill ini sudah lunas." : "Status order tidak dapat dilunasi.",
+      };
+    }
+
+    var detailedOrders = getFnbOrdersWithItemsByIds_([normalizedOrderId]);
+    if (detailedOrders.length === 0) {
+      return { ok: false, error: "Detail order F&B tidak ditemukan." };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var transaction = {
+      transaction_id: generateTransactionId_(),
+      room_id: order.room_id || FNB_GENERAL_ROOM_ID,
+      room_name: order.room_name || FNB_GENERAL_ROOM_NAME,
+      start_time: order.created_at || "",
+      end_time: now,
+      duration_minutes: 0,
+      rate_per_hour: 0,
+      room_total: 0,
+      fnb_total: Number(order.order_total) || 0,
+      grand_total: Number(order.order_total) || 0,
+      fnb_order_ids: order.order_id,
+      payment_method: normalizedPaymentMethod,
+      payment_status: "paid",
+      cashier_name: user,
+      created_at: now,
+      transaction_type: "fnb_addon",
+    };
+    Object.assign(transaction, getTestFields_(order));
+    appendTransaction_(transaction);
+
+    sheet.getRange(rowNumber, headerMap.order_status).setValue("paid");
+    if (headerMap.updated_at) {
+      sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
+    }
+
+    if (!isTestDataValue_(order.is_test)) {
+      deductStockForFnbOrders_(detailedOrders, transaction.transaction_id, user, now);
+    }
+
+    order = getFnbOrderObjectFromRow_(sheet, rowNumber);
+
+    return {
+      ok: true,
+      message: "Open Bill F&B berhasil dilunasi.",
+      order: order,
+      items: detailedOrders[0].items || [],
+      transaction: transaction,
     };
   } finally {
     lock.releaseLock();
@@ -11494,9 +11598,12 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
         created_at: now,
         transaction_type: "fnb_refund",
       };
+      Object.assign(refundTransaction, getTestFields_(order));
       appendTransaction_(refundTransaction);
 
-      restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+      if (!isTestDataValue_(order.is_test)) {
+        restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+      }
     }
 
     sheet.getRange(rowNumber, headerMap.order_status).setValue("cancelled");
@@ -11532,7 +11639,7 @@ function getTodayFnbOrdersByPeriod_(status, roomId, period, startDate, endDate) 
   var normalizedStatus = String(status || "").trim().toLowerCase();
   var normalizedRoomId = String(roomId || "").trim();
 
-  if (normalizedStatus && ["open", "billed", "cancelled"].indexOf(normalizedStatus) === -1) {
+  if (normalizedStatus && ["open", "paid", "billed", "cancelled"].indexOf(normalizedStatus) === -1) {
     return {
       ok: false,
       error: "Status order F&B tidak dikenal.",
@@ -11599,6 +11706,9 @@ function getTodayFnbOrdersByPeriod_(status, roomId, period, startDate, endDate) 
     if (order.order_status === "open") {
       result.open_orders += 1;
       result.open_amount += orderTotal;
+    } else if (order.order_status === "paid") {
+      result.paid_orders += 1;
+      result.paid_amount += orderTotal;
     } else if (order.order_status === "billed") {
       result.billed_orders += 1;
       result.billed_amount += orderTotal;
@@ -11621,10 +11731,12 @@ function createTodayFnbOrderEmptySummary_() {
   return {
     total_orders: 0,
     open_orders: 0,
+    paid_orders: 0,
     billed_orders: 0,
     cancelled_orders: 0,
     total_items: 0,
     open_amount: 0,
+    paid_amount: 0,
     billed_amount: 0,
     cancelled_amount: 0,
     total_amount: 0,
@@ -12147,6 +12259,10 @@ function getFnbOrdersWithItemsByIds_(orderIds) {
         note: order.note || "",
         created_at: normalizeFnbOrderDateTime_(order.created_at),
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
+        is_test: order.is_test || "",
+        test_run_id: order.test_run_id || "",
+        test_created_by: order.test_created_by || "",
+        test_note: order.test_note || "",
         items: itemsByOrderId[orderId] || [],
       };
     })
@@ -12467,6 +12583,10 @@ function getFnbOrderObjectFromRow_(sheet, rowNumber) {
     cancel_reason: order.cancel_reason || "",
     cancelled_by: order.cancelled_by || "",
     cancelled_at: normalizeFnbOrderDateTime_(order.cancelled_at),
+    is_test: order.is_test || "",
+    test_run_id: order.test_run_id || "",
+    test_created_by: order.test_created_by || "",
+    test_note: order.test_note || "",
   };
 }
 
