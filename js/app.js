@@ -12,7 +12,7 @@ import {
   DEV_SHORT_SESSION_ENABLED,
   LOCAL_TV_BRIDGE_ENABLED,
   LOCAL_TV_BRIDGE_URL,
-} from "./config.js";
+} from "./config.js?v=fnb-detail-fix-v1";
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
 import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
@@ -2603,17 +2603,24 @@ async function fetchTodayFnbOrdersFromApi() {
 }
 
 async function fetchFnbOrdersByIds(orderIds) {
-  if (!API_BASE_URL.trim() || orderIds.length === 0) {
+  const normalizedOrderIds = normalizeFnbOrderIds(orderIds);
+
+  if (!API_BASE_URL.trim() || normalizedOrderIds.length === 0) {
     return [];
   }
 
   const params = new URLSearchParams({
     action: "getFnbOrdersByIds",
-    order_ids: orderIds.join(","),
+    order_ids: normalizedOrderIds.join(","),
   });
   const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
+    if (response.status === 404) {
+      console.warn("Endpoint detail F&B belum tersedia di deployment API aktif.");
+      return [];
+    }
+
     throw new Error(`API request failed with status ${response.status}`);
   }
 
@@ -2624,6 +2631,17 @@ async function fetchFnbOrdersByIds(orderIds) {
   }
 
   return data.orders;
+}
+
+function normalizeFnbOrderIds(orderIds) {
+  const sourceOrderIds = Array.isArray(orderIds)
+    ? orderIds
+    : String(orderIds || "").split(",");
+
+  return sourceOrderIds
+    .map((orderId) => String(orderId || "").trim())
+    .filter(Boolean)
+    .filter((orderId, index, ids) => ids.indexOf(orderId) === index);
 }
 
 function setDataSourceBadge(label, type = "default") {
@@ -4424,22 +4442,15 @@ function getTransactionFnbTotal(transaction) {
 }
 
 function getTransactionFnbOrderIds(transaction) {
-  if (!transaction?.fnb_order_ids) {
-    return [];
-  }
-
-  return String(transaction.fnb_order_ids)
-    .split(",")
-    .map((orderId) => orderId.trim())
-    .filter(Boolean)
-    .filter((orderId, index, orderIds) => orderIds.indexOf(orderId) === index);
+  return normalizeFnbOrderIds(transaction?.fnb_order_ids);
 }
 
 function getReceiptFnbOrders(transaction) {
   const transactionId = transaction?.transaction_id || "";
+  const loadedOrders = transactionId ? transactionFnbDetails[transactionId] : null;
 
-  if (transactionId && transactionFnbDetails[transactionId]) {
-    return transactionFnbDetails[transactionId];
+  if (Array.isArray(loadedOrders) && loadedOrders.length > 0) {
+    return loadedOrders;
   }
 
   if (Array.isArray(transaction?.fnb_orders)) {
@@ -4449,22 +4460,87 @@ function getReceiptFnbOrders(transaction) {
   return [];
 }
 
+function getLoadedTransactionFnbDetails(transactionId) {
+  const loadedOrders = transactionId ? transactionFnbDetails[transactionId] : null;
+  return Array.isArray(loadedOrders) && loadedOrders.length > 0 ? loadedOrders : null;
+}
+
+function getCachedFnbOrdersByIds(orderIds) {
+  const normalizedOrderIds = normalizeFnbOrderIds(orderIds);
+
+  if (normalizedOrderIds.length === 0) {
+    return [];
+  }
+
+  const orderIdMap = normalizedOrderIds.reduce((map, orderId) => {
+    map[orderId] = true;
+    return map;
+  }, {});
+  const sources = [
+    Array.isArray(todayFnbOrders) ? todayFnbOrders : [],
+    Array.isArray(openFnbOrders) ? openFnbOrders : [],
+  ];
+  const ordersById = {};
+
+  sources.forEach((orders) => {
+    orders.forEach((order) => {
+      const orderId = String(order?.order_id || "").trim();
+
+      if (orderIdMap[orderId] && !ordersById[orderId]) {
+        ordersById[orderId] = order;
+      }
+    });
+  });
+
+  return normalizedOrderIds
+    .map((orderId) => ordersById[orderId])
+    .filter(Boolean);
+}
+
+function cachedFnbOrdersCoverIds(orderIds, orders) {
+  const normalizedOrderIds = normalizeFnbOrderIds(orderIds);
+
+  if (normalizedOrderIds.length === 0) {
+    return true;
+  }
+
+  const loadedOrderIds = (Array.isArray(orders) ? orders : [])
+    .map((order) => String(order?.order_id || "").trim())
+    .filter(Boolean);
+
+  return normalizedOrderIds.every((orderId) => loadedOrderIds.includes(orderId));
+}
+
 async function loadFnbDetailsForTransaction(transaction) {
   const transactionId = transaction?.transaction_id || "";
   const orderIds = getTransactionFnbOrderIds(transaction);
 
-  if (!transactionId || orderIds.length === 0 || transactionFnbDetails[transactionId]) {
+  if (!transactionId || orderIds.length === 0 || getLoadedTransactionFnbDetails(transactionId)) {
     return;
+  }
+
+  const cachedOrders = getCachedFnbOrdersByIds(orderIds);
+
+  if (cachedOrders.length > 0) {
+    transactionFnbDetails[transactionId] = cachedOrders;
+    renderRooms();
+
+    if (cachedFnbOrdersCoverIds(orderIds, cachedOrders)) {
+      return;
+    }
   }
 
   isLoadingTransactionFnbDetails = true;
   renderRooms();
 
   try {
-    transactionFnbDetails[transactionId] = await fetchFnbOrdersByIds(orderIds);
+    const apiOrders = await fetchFnbOrdersByIds(orderIds);
+    transactionFnbDetails[transactionId] = apiOrders.length > 0
+      ? apiOrders
+      : cachedOrders;
   } catch (error) {
     console.warn("Gagal memuat detail F&B transaksi.", error);
-    transactionFnbDetails[transactionId] = [];
+    transactionFnbDetails[transactionId] = cachedOrders;
   } finally {
     isLoadingTransactionFnbDetails = false;
     renderRooms();
@@ -5852,7 +5928,7 @@ function createBillingFnbDetailsElement(transaction) {
   title.textContent = "Detail F&B";
 
   const transactionId = transaction?.transaction_id || "";
-  const orders = transactionFnbDetails[transactionId] || transaction?.fnb_orders || [];
+  const orders = getReceiptFnbOrders(transaction);
 
   detail.appendChild(title);
 
@@ -19376,7 +19452,8 @@ async function showPaymentSelection(roomId) {
     if (result.orders.length > 0) {
       showInlineNotice(`Ditemukan ${result.orders.length} pesanan F&B open. Memuat rincian...`, "info");
       const orderIds = result.orders.map(o => o.order_id);
-      const detailedOrders = await fetchFnbOrdersByIds(orderIds);
+      const fetchedOrders = await fetchFnbOrdersByIds(orderIds);
+      const detailedOrders = fetchedOrders.length > 0 ? fetchedOrders : result.orders;
       console.log("showPaymentSelection: detailedOrders:", detailedOrders);
       if (paymentSelectionRoomId !== roomId) return; // check again
       

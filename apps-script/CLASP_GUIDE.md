@@ -61,7 +61,7 @@ clasp create-deployment --deploymentId "<PRODUCTION_DEPLOYMENT_ID>" --versionNum
 Deployment ID production yang dipakai:
 
 ```text
-AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1
+AKfycbxEGx1bHZs4n5JEhcguczAJKBoRSsgqcwVzYoMP_cmmHmogS7dzV_1y6f4GUAEHrIZH
 ```
 
 Catatan:

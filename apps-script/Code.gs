@@ -11981,17 +11981,23 @@ function parseCommaSeparatedIds_(value) {
 }
 
 function getFnbOrdersWithItemsByIds_(orderIds) {
-  if (!orderIds || orderIds.length === 0) {
+  var normalizedOrderIds = parseCommaSeparatedIds_(Array.isArray(orderIds) ? orderIds.join(",") : orderIds);
+
+  if (!normalizedOrderIds || normalizedOrderIds.length === 0) {
     return [];
   }
 
-  var idMap = orderIds.reduce(function (map, orderId) {
+  var idMap = normalizedOrderIds.reduce(function (map, orderId) {
     map[orderId] = true;
     return map;
   }, {});
-  var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+  var orderSortIndex = normalizedOrderIds.reduce(function (map, orderId, index) {
+    map[orderId] = index;
+    return map;
+  }, {});
+  var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsByOrderIds_(normalizedOrderIds));
 
-  return readFnbOrdersOrEmpty_()
+  return readSheetRowsByValuesOrEmpty_("FnbOrders", "order_id", normalizedOrderIds)
     .filter(function (order) {
       return idMap[order.order_id];
     })
@@ -12011,6 +12017,9 @@ function getFnbOrdersWithItemsByIds_(orderIds) {
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
         items: itemsByOrderId[orderId] || [],
       };
+    })
+    .sort(function (first, second) {
+      return (orderSortIndex[first.order_id] || 0) - (orderSortIndex[second.order_id] || 0);
     });
 }
 
@@ -12335,16 +12344,120 @@ function readFnbOrdersOrEmpty_() {
 
 function readFnbOrderItemsOrEmpty_() {
   return readSheetAsObjectsOrEmpty_("FnbOrderItems").map(function (item) {
-    return {
-      order_id: item.order_id || "",
-      menu_id: item.menu_id || "",
-      menu_name: item.menu_name || "",
-      category: item.category || "",
-      price: Number(item.price) || 0,
-      quantity: Number(item.quantity) || 0,
-      subtotal: Number(item.subtotal) || 0,
-      created_at: normalizeFnbOrderDateTime_(item.created_at),
-    };
+    return normalizeFnbOrderItemRow_(item);
+  });
+}
+
+function normalizeFnbOrderItemRow_(item) {
+  return {
+    order_id: item.order_id || "",
+    menu_id: item.menu_id || "",
+    menu_name: item.menu_name || "",
+    category: item.category || "",
+    price: Number(item.price) || 0,
+    quantity: Number(item.quantity) || 0,
+    subtotal: Number(item.subtotal) || 0,
+    created_at: normalizeFnbOrderDateTime_(item.created_at),
+  };
+}
+
+function readSheetRowsByValuesOrEmpty_(sheetName, columnName, values) {
+  var normalizedValues = Array.isArray(values)
+    ? values.reduce(function (ids, rawId) {
+      var id = String(rawId || "").trim();
+
+      if (id && ids.indexOf(id) === -1) {
+        ids.push(id);
+      }
+
+      return ids;
+    }, [])
+    : parseCommaSeparatedIds_(values);
+
+  if (normalizedValues.length === 0 || !sheetExists_(sheetName)) {
+    return [];
+  }
+
+  var sheet = getSheet_(sheetName);
+  var headerMap = getHeaderMap_(sheet);
+  var targetColumn = headerMap[columnName];
+  var lastRow = sheet.getLastRow();
+
+  if (!targetColumn || lastRow < 2) {
+    return [];
+  }
+
+  var rowNumberMap = {};
+  var searchRange = sheet.getRange(2, targetColumn, lastRow - 1, 1);
+
+  normalizedValues.forEach(function (value) {
+    searchRange
+      .createTextFinder(value)
+      .matchEntireCell(true)
+      .findAll()
+      .forEach(function (cell) {
+        rowNumberMap[cell.getRow()] = true;
+      });
+  });
+
+  return readSheetRowsAsObjects_(sheet, headerMap, Object.keys(rowNumberMap).map(function (rowNumber) {
+    return Number(rowNumber);
+  }));
+}
+
+function readSheetRowsAsObjects_(sheet, headerMap, rowNumbers) {
+  var normalizedRowNumbers = rowNumbers
+    .filter(function (rowNumber) {
+      return Number(rowNumber) >= 2;
+    })
+    .sort(function (first, second) {
+      return first - second;
+    });
+
+  if (normalizedRowNumbers.length === 0) {
+    return [];
+  }
+
+  var rows = [];
+  var lastColumn = sheet.getLastColumn();
+  var groupStart = normalizedRowNumbers[0];
+  var groupEnd = normalizedRowNumbers[0];
+
+  function appendGroupRows_(startRow, endRow) {
+    var values = sheet.getRange(startRow, 1, endRow - startRow + 1, lastColumn).getValues();
+
+    values.forEach(function (rowValues) {
+      rows.push(buildSheetObjectFromRowValues_(headerMap, rowValues));
+    });
+  }
+
+  for (var index = 1; index < normalizedRowNumbers.length; index++) {
+    var rowNumber = normalizedRowNumbers[index];
+
+    if (rowNumber === groupEnd + 1) {
+      groupEnd = rowNumber;
+      continue;
+    }
+
+    appendGroupRows_(groupStart, groupEnd);
+    groupStart = rowNumber;
+    groupEnd = rowNumber;
+  }
+
+  appendGroupRows_(groupStart, groupEnd);
+  return rows;
+}
+
+function buildSheetObjectFromRowValues_(headerMap, rowValues) {
+  return Object.keys(headerMap).reduce(function (row, header) {
+    row[header] = normalizeCellValue_(header, rowValues[headerMap[header] - 1]);
+    return row;
+  }, {});
+}
+
+function readFnbOrderItemsByOrderIds_(orderIds) {
+  return readSheetRowsByValuesOrEmpty_("FnbOrderItems", "order_id", orderIds).map(function (item) {
+    return normalizeFnbOrderItemRow_(item);
   });
 }
 
