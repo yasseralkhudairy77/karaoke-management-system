@@ -880,6 +880,7 @@ let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
 let fnbOrderMode = "room";
+let fnbTestRunId = "";
 let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
@@ -3575,14 +3576,22 @@ function setSelectedFbRoom(roomId) {
 }
 
 function setFnbOrderMode(mode) {
-  const nextMode = mode === "general" ? "general" : "room";
+  const nextMode = ["general", "testing"].includes(mode) ? mode : "room";
+
+  if (nextMode === "testing" && !roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    showInlineNotice("Mode testing F&B hanya tersedia untuk manager atau owner.", "error");
+    return;
+  }
+
   fnbOrderMode = nextMode;
 
-  if (nextMode === "general") {
+  if (nextMode === "general" || nextMode === "testing") {
     selectedFbRoomId = "";
-    if (fnbOrderPaymentMethod === "room_bill") {
-      fnbOrderPaymentMethod = "cash";
-    }
+    fnbOrderPaymentMethod = "cash";
+  }
+
+  if (nextMode === "testing" && !fnbTestRunId) {
+    fnbTestRunId = `FNB-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   }
 
   renderRooms();
@@ -3874,10 +3883,11 @@ function updateFnbOrderNote(value) {
 }
 
 function buildFnbOrderPayload() {
-  const isRoomBill = fnbOrderPaymentMethod === "room_bill";
+  const isTestingOrder = fnbOrderMode === "testing";
+  const isRoomBill = fnbOrderPaymentMethod === "room_bill" && !isTestingOrder;
   return {
     action: "saveFnbOrder",
-    room_id: fnbOrderMode === "general" ? "FNB-GENERAL" : selectedFbRoomId,
+    room_id: fnbOrderMode === "room" ? selectedFbRoomId : "FNB-GENERAL",
     items: fbCartItems.map((item) => ({
       menu_id: item.menu_id,
       quantity: item.quantity,
@@ -3886,6 +3896,9 @@ function buildFnbOrderPayload() {
     note: fnbOrderNote,
     payment_method: isRoomBill ? "" : fnbOrderPaymentMethod,
     payment_status: isRoomBill ? "unpaid" : "paid",
+    test_mode: isTestingOrder,
+    test_run_id: isTestingOrder ? fnbTestRunId : "",
+    test_note: isTestingOrder ? "F&B menu testing" : "",
   };
 }
 
@@ -3896,7 +3909,8 @@ async function saveFnbOrder() {
   }
 
   const selectedRoom = getSelectedFbRoom();
-  const isGeneralOrder = fnbOrderMode === "general";
+  const isTestingOrder = fnbOrderMode === "testing";
+  const isGeneralOrder = fnbOrderMode === "general" || isTestingOrder;
 
   if (!isGeneralOrder && !selectedRoom) {
     showInlineNotice("Pilih ruangan terlebih dahulu.", "error");
@@ -3940,7 +3954,11 @@ async function saveFnbOrder() {
     fnbOrderNote = "";
     const originalPaymentMethod = fnbOrderPaymentMethod;
     fnbOrderPaymentMethod = "room_bill";
-    showInlineNotice("Order F&B berhasil disimpan.");
+    showInlineNotice(
+      isTestingOrder
+        ? "Order F&B TEST berhasil disimpan. Data tidak masuk production dan tidak memotong stok."
+        : "Order F&B berhasil disimpan."
+    );
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
@@ -8972,10 +8990,16 @@ function createFbRoomControlElement() {
 
   const modeButtons = document.createElement("div");
   modeButtons.className = "fb-order-mode-buttons";
-  [
+  const modeOptions = [
     ["room", "Order Room"],
     ["general", "Order F&B Umum"],
-  ].forEach(([mode, labelText]) => {
+  ];
+
+  if (roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    modeOptions.push(["testing", "F&B Testing"]);
+  }
+
+  modeOptions.forEach(([mode, labelText]) => {
     const button = document.createElement("button");
     button.className = fnbOrderMode === mode ? "fb-order-mode-button active" : "fb-order-mode-button";
     button.type = "button";
@@ -8986,6 +9010,14 @@ function createFbRoomControlElement() {
   });
 
   control.append(modeLabel, modeButtons);
+
+  if (fnbOrderMode === "testing") {
+    const info = document.createElement("p");
+    info.className = "fb-room-warning";
+    info.textContent = "Mode TEST: order ditandai sebagai data testing, tidak masuk laporan production dan tidak memotong stok.";
+    control.appendChild(info);
+    return control;
+  }
 
   if (fnbOrderMode === "general") {
     const info = document.createElement("p");
@@ -9040,6 +9072,19 @@ function createFbRoomInfoElement() {
   info.className = "fb-room-info";
 
   const selectedRoom = getSelectedFbRoom();
+
+  if (fnbOrderMode === "testing") {
+    const roomName = document.createElement("p");
+    roomName.className = "fb-cart-name";
+    roomName.textContent = "F&B Testing";
+
+    const roomStatus = document.createElement("p");
+    roomStatus.className = "fb-cart-meta";
+    roomStatus.textContent = fnbTestRunId ? `Run: ${fnbTestRunId}` : "Run testing baru";
+
+    info.append(roomName, roomStatus);
+    return info;
+  }
 
   if (fnbOrderMode === "general") {
     const roomName = document.createElement("p");

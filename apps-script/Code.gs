@@ -1000,7 +1000,10 @@ function doPost(e) {
         payload.cashier_name,
         payload.note,
         payload.payment_method,
-        payload.payment_status
+        payload.payment_status,
+        payload.test_mode,
+        payload.test_run_id,
+        payload.test_note
       ));
     }
 
@@ -7458,6 +7461,7 @@ function getLcWorkReports_(period, startDate, endDate) {
   }
   
   var filteredLogs = logs.filter(function(log) {
+    if (!isProductionDataRow_(log)) return false;
     var createdTime = log.created_at || log.closed_at || "";
     if (!createdTime) return false;
     var logOperationalDate = getOperationalDateString_(createdTime);
@@ -7653,6 +7657,10 @@ function getLcMasterById_(lcId) {
 
 function filterLcFinanceRowsByPeriod_(rows, periodResult) {
   return rows.filter(function (row) {
+    if (!isProductionDataRow_(row)) {
+      return false;
+    }
+
     var operationalDate = resolveLcFinanceOperationalDate_(row);
     return operationalDate && matchesOperationalPeriod_(operationalDate, periodResult);
   });
@@ -7666,7 +7674,8 @@ function getPendingLcSalesBonusRows_(range) {
   }).filter(function (row) {
     var status = String(row.source_status || "").trim().toLowerCase();
     var isUnpaid = !String(row.payroll_id || "").trim();
-    return isUnpaid &&
+    return isProductionDataRow_(row) &&
+      isUnpaid &&
       !isLcFinanceRowVoided_(row) &&
       status !== "cancelled" &&
       status !== "voided" &&
@@ -7750,7 +7759,7 @@ function getLcFinanceSummary_(period, startDate, endDate) {
     readSheetAsObjects_("LcSalesBonusLogs"),
     periodResult
   ).filter(function (row) {
-    return !isLcFinanceRowVoided_(row);
+    return isProductionDataRow_(row) && !isLcFinanceRowVoided_(row);
   });
   var cashAdvances = filterLcFinanceRowsByPeriod_(
     readSheetAsObjects_("LcCashAdvances"),
@@ -8405,6 +8414,7 @@ function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) 
   });
 
   rows.forEach(function (row) {
+    Object.assign(row, getTestFields_(order));
     appendObjectRow_(ensureLcSalesBonusLogsSheet_(), row);
   });
 
@@ -11144,7 +11154,7 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testMode, testRunId, testNote) {
   var normalizedRoomId = String(roomId || "").trim();
   var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
   var testContext = getActiveRoomSessionTestContext_(normalizedRoomId);
@@ -11169,6 +11179,22 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     return { ok: false, error: "Sistem sedang memproses order F&B atau transaksi lain. Coba simpan lagi sebentar." };
+  }
+
+  if (isTestDataValue_(testMode)) {
+    if (!isGeneralOrder) {
+      return {
+        ok: false,
+        error: "Mode testing F&B harus menggunakan Order F&B Umum.",
+      };
+    }
+
+    testContext = {
+      is_test: true,
+      test_run_id: normalizeFnbTestRunId_(testRunId),
+      test_created_by: String(cashierName || "Kasir").trim(),
+      test_note: String(testNote || "F&B menu testing").trim(),
+    };
   }
 
   try {
@@ -11732,6 +11758,10 @@ function getTodayFnbSalesReportByPeriod_(period, startDate, endDate) {
 
   if (sheetExists_("FnbOrders")) {
     readFnbOrdersOrEmpty_().forEach(function (order) {
+      if (!isProductionDataRow_(order)) {
+        return;
+      }
+
       var orderStatus = String(order.order_status || "").trim().toLowerCase();
       var orderId = order.order_id || "";
       var operationalDate = resolveFnbOrderOperationalDateString_(order);
@@ -12680,6 +12710,16 @@ function normalizeFnbOrderDateTime_(value) {
 
 function generateFnbOrderId_() {
   return "FNB-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function normalizeFnbTestRunId_(value) {
+  var normalized = String(value || "").trim().replace(/[^A-Za-z0-9_-]/g, "").substring(0, 80);
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return "FNB-TEST-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
 function generateStockMovementId_() {
