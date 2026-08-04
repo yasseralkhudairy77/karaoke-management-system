@@ -117,6 +117,10 @@ const currencyFormatter = new Intl.NumberFormat("id-ID", {
 });
 const ROOM_WARNING_SOUND_DURATION_MS = 180;
 const ROOM_WARNING_SOUND_FREQUENCY_HZ = 880;
+const API_GET_MAX_CONCURRENCY = 2;
+let activeApiGetCount = 0;
+const pendingApiGetTasks = [];
+const inFlightApiGetRequests = new Map();
 
 function buildApiUrl(action, params = null) {
   const url = new URL(API_BASE_URL);
@@ -135,7 +139,36 @@ function buildApiUrl(action, params = null) {
   return url.toString();
 }
 
-async function fetchPeriodApiResponse(url) {
+function getApiRequestKey(url) {
+  const requestUrl = new URL(url);
+  requestUrl.searchParams.delete("_cb");
+  requestUrl.searchParams.delete("_retry");
+  requestUrl.searchParams.sort();
+  return requestUrl.toString();
+}
+
+function drainApiGetQueue() {
+  while (activeApiGetCount < API_GET_MAX_CONCURRENCY && pendingApiGetTasks.length > 0) {
+    const task = pendingApiGetTasks.shift();
+    activeApiGetCount += 1;
+
+    task.run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeApiGetCount -= 1;
+        drainApiGetQueue();
+      });
+  }
+}
+
+function scheduleApiGet(run) {
+  return new Promise((resolve, reject) => {
+    pendingApiGetTasks.push({ run, resolve, reject });
+    drainApiGetQueue();
+  });
+}
+
+async function executeApiGet(url) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const requestUrl = new URL(url);
     if (attempt > 0) {
@@ -170,6 +203,22 @@ async function fetchPeriodApiResponse(url) {
   }
 
   return fetch(url, { cache: "no-store" });
+}
+
+function fetchPeriodApiResponse(url) {
+  const requestKey = getApiRequestKey(url);
+  let pendingRequest = inFlightApiGetRequests.get(requestKey);
+
+  if (!pendingRequest) {
+    pendingRequest = scheduleApiGet(() => executeApiGet(url));
+    inFlightApiGetRequests.set(requestKey, pendingRequest);
+    pendingRequest.then(
+      () => inFlightApiGetRequests.delete(requestKey),
+      () => inFlightApiGetRequests.delete(requestKey)
+    );
+  }
+
+  return pendingRequest.then((response) => response.clone());
 }
 
 function isLocalTvBridgeEnabled() {
@@ -1420,6 +1469,10 @@ async function loadOwnerPeriodReport() {
     ownerReportFnbSalesSummary = fnbSalesData?.summary || null;
     ownerReportCashierClosings = Array.isArray(closingData?.closings) ? closingData.closings : [];
 
+    if (ownerReportPeriodFilter === "today" && roomUsageData?.summary) {
+      ownerRoomUsageSummary = roomUsageData.summary;
+    }
+
     if (failedResults.length > 0) {
       showInlineNotice("Sebagian laporan belum tersedia. Coba refresh setelah beberapa detik.", "warning");
     }
@@ -1640,7 +1693,7 @@ async function fetchPackageDetailsFromApi(packageId) {
   params.set("action", "getPackageDetails");
   params.set("package_id", packageId);
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1735,7 +1788,7 @@ async function loadMasterDataAuditLogs(options = {}) {
 
   try {
     const params = buildMasterAuditQueryParams();
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error(`API request failed with status ${response.status}`);
@@ -2407,11 +2460,9 @@ async function loadOwnerDashboardSummary() {
   renderRooms();
 
   try {
-    const roomUsageData = await fetchActiveShiftRoomUsageReportFromApi();
     const inventoryData = await fetchInventoryItemsFromApi();
     const latestRooms = await fetchRoomsFromApi();
 
-    ownerRoomUsageSummary = roomUsageData.summary || null;
     inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
     inventorySummary = inventoryData.summary || null;
     rooms = normalizeRooms(latestRooms);
@@ -2465,7 +2516,7 @@ async function fetchTodayFnbSalesReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2536,7 +2587,7 @@ async function fetchTodayStockMovementsFromApi() {
     params.set("reference_type", stockMovementReferenceFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2625,7 +2676,7 @@ async function fetchOpenFnbOrdersFromApi(roomId = "", roomStartTime = "") {
     params.set("room_start_time", roomStartTime);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2679,7 +2730,7 @@ async function fetchTodayFnbOrdersFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2708,7 +2759,7 @@ async function fetchFnbOrdersByIds(orderIds) {
     action: "getFnbOrdersByIds",
     order_ids: normalizedOrderIds.join(","),
   });
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -3324,7 +3375,7 @@ async function showClosingPrintPreview(closingId) {
       closing_id: closingId,
       _: Date.now().toString(),
     });
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || data?.ok !== true) {
       throw new Error(data?.error || "Rincian closing tidak dapat dimuat.");
@@ -5739,7 +5790,7 @@ function createPaymentControlElement(transaction) {
       }
 
       const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomTotal}`;
-      const res = await fetch(url);
+      const res = await fetchPeriodApiResponse(url);
       const data = await res.json();
       if (data && data.success) {
         appliedPromoCode = data.code;
@@ -8284,7 +8335,7 @@ function createPaymentSelectionElement(room) {
         }
 
         const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomPrepayCharge}`;
-        const res = await fetch(url);
+        const res = await fetchPeriodApiResponse(url);
         const data = await res.json();
         if (data && data.success) {
           appliedPromoCode = data.code;
@@ -15623,6 +15674,27 @@ function setActiveReportSubTab(tabKey) {
 
   activeReportSubTab = tabKey;
   renderRooms();
+  refreshActiveReportSubTabData();
+}
+
+async function refreshActiveReportSubTabData() {
+  switch (activeReportSubTab) {
+    case "owner":
+      await loadOwnerPeriodReport();
+      await loadOwnerDashboardSummary();
+      break;
+    case "fnb":
+      await loadTodayFnbSalesReport();
+      break;
+    case "cashier":
+      await loadTodayCashierClosings();
+      break;
+    case "room":
+      await loadRoomUsageReport();
+      break;
+    default:
+      break;
+  }
 }
 
 function setActiveDashboardTab(tabKey) {
@@ -15662,22 +15734,7 @@ function refreshActiveTabData() {
       loadTodayStockMovements();
       break;
     case "reports":
-      if (isValidReportSubTab("owner")) {
-        loadOwnerPeriodReport();
-        loadOwnerDashboardSummary();
-      }
-
-      if (isValidReportSubTab("fnb")) {
-        loadTodayFnbSalesReport();
-      }
-
-      if (isValidReportSubTab("cashier")) {
-        loadTodayCashierClosings();
-      }
-
-      if (isValidReportSubTab("room")) {
-        loadRoomUsageReport();
-      }
+      refreshActiveReportSubTabData();
       break;
     case "transactions":
       loadTodayTransactions();
@@ -15732,7 +15789,7 @@ async function loadPromos() {
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}?action=getPromos`);
+    const res = await fetchPeriodApiResponse(`${API_BASE_URL}?action=getPromos`);
     const data = await res.json();
     if (data && data.success) {
       promosList = data.promos || [];
@@ -16143,7 +16200,7 @@ async function loadLcs(force = false) {
     renderRooms();
   }
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcMasterList`);
+    const response = await fetchPeriodApiResponse(`${API_BASE_URL}?action=getLcMasterList`);
     const data = await response.json();
     if (data && data.success) {
       lcs = data.lcs || [];
@@ -16174,7 +16231,7 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
     renderRooms();
   }
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
+    const response = await fetchPeriodApiResponse(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
     const data = await response.json();
     if (data && data.success) {
       lcWorkReports = data.reports || [];
@@ -16247,7 +16304,7 @@ async function loadLcFinanceSummary(period = lcFinancePeriod) {
     }
 
     const url = `${API_BASE_URL}?action=getLcFinanceSummary&period=${encodeURIComponent(lcFinancePeriod)}`;
-    const res = await fetch(url);
+    const res = await fetchPeriodApiResponse(url);
     const data = await res.json();
 
     if (data && data.success) {
@@ -16377,7 +16434,7 @@ async function loadLcPayrollDetail(payrollId) {
 
   try {
     const url = `${API_BASE_URL}?action=getLcPayrollDetails&payroll_id=${payrollId}`;
-    const res = await fetch(url);
+    const res = await fetchPeriodApiResponse(url);
     const data = await res.json();
     if (data && data.success) {
       selectedLcPayrollDetail = data;
@@ -16450,7 +16507,7 @@ async function loadLcPayrollData(startDate = "", endDate = "") {
 
   try {
     const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${startDate}&end_date=${endDate}`;
-    const pendingRes = await fetch(pendingUrl);
+    const pendingRes = await fetchPeriodApiResponse(pendingUrl);
     const pendingData = await pendingRes.json();
     if (pendingData && pendingData.success) {
       lcPayrollPendingReports = pendingData.reports || [];
@@ -16459,7 +16516,7 @@ async function loadLcPayrollData(startDate = "", endDate = "") {
     }
 
     const historyUrl = `${API_BASE_URL}?action=getLcPayrollHistory`;
-    const historyRes = await fetch(historyUrl);
+    const historyRes = await fetchPeriodApiResponse(historyUrl);
     const historyData = await historyRes.json();
     if (historyData && historyData.success) {
       lcPayrollHistory = historyData.history || [];
@@ -18995,7 +19052,7 @@ async function fetchTodayRoomTimeLogsFromApi() {
     params.set("room_id", roomTimeLogRoomFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchPeriodApiResponse(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -20425,8 +20482,7 @@ async function handleRoomAction(event) {
   if (action === "switch-report-subtab") {
     const subtab = button.dataset.reportTab;
     if (subtab && REPORT_SUB_TABS.some((t) => t.key === subtab)) {
-      activeReportSubTab = subtab;
-      renderDashboardTabPanels();
+      setActiveReportSubTab(subtab);
     }
     return;
   }
@@ -21249,21 +21305,7 @@ async function initializeDashboard() {
   }
 
   if (activeDashboardTab === "reports") {
-    if (activeReportSubTab === "owner" && isValidReportSubTab("owner")) {
-      initialLoads.push(loadOwnerDashboardSummary(), loadOwnerPeriodReport());
-    }
-
-    if (activeReportSubTab === "fnb" && isValidReportSubTab("fnb")) {
-      initialLoads.push(loadTodayFnbSalesReport());
-    }
-
-    if (activeReportSubTab === "room" && isValidReportSubTab("room")) {
-      initialLoads.push(loadRoomUsageReport());
-    }
-
-    if (activeReportSubTab === "cashier" && isValidReportSubTab("cashier")) {
-      initialLoads.push(loadTodayCashierClosings());
-    }
+    initialLoads.push(refreshActiveReportSubTabData());
   }
 
   if (activeDashboardTab === "audit") {
