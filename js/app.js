@@ -161,11 +161,37 @@ function drainApiGetQueue() {
   }
 }
 
+function cancelPendingApiGetTasks() {
+  const cancelledTasks = pendingApiGetTasks.splice(0);
+
+  cancelledTasks.forEach((task) => {
+    const error = new Error("Request dibatalkan karena pengguna berpindah menu.");
+    error.name = "ApiRequestCancelledError";
+    task.reject(error);
+  });
+}
+
+function isApiRequestCancelled(error) {
+  return error?.name === "ApiRequestCancelledError";
+}
+
 function scheduleApiGet(run) {
   return new Promise((resolve, reject) => {
     pendingApiGetTasks.push({ run, resolve, reject });
     drainApiGetQueue();
   });
+}
+
+function executeCoordinatedApiGet(url) {
+  if (globalThis.navigator?.locks?.request) {
+    return globalThis.navigator.locks.request(
+      "karaoke-management-api-get",
+      { mode: "exclusive" },
+      () => executeApiGet(url)
+    );
+  }
+
+  return executeApiGet(url);
 }
 
 async function executeApiGet(url) {
@@ -210,7 +236,7 @@ function fetchPeriodApiResponse(url) {
   let pendingRequest = inFlightApiGetRequests.get(requestKey);
 
   if (!pendingRequest) {
-    pendingRequest = scheduleApiGet(() => executeApiGet(url));
+    pendingRequest = scheduleApiGet(() => executeCoordinatedApiGet(url));
     inFlightApiGetRequests.set(requestKey, pendingRequest);
     pendingRequest.then(
       () => inFlightApiGetRequests.delete(requestKey),
@@ -981,7 +1007,10 @@ let isLoadingRoomRecovery = false;
 let isRecoveringRoom = false;
 let roomRecoveryConfirmation = null;
 let roomRecoveryLoadStarted = false;
+let silentRoomsReloadInFlight = false;
+let lastRoomRecoveryRefreshAt = 0;
 let activeDashboardTab = loadActiveDashboardTab();
+let dashboardTabRequestVersion = 0;
 let activeReportSubTab = "owner";
 let currentOperator = loadOperatorSession();
 let loginPin = "";
@@ -993,6 +1022,8 @@ const paginationState = {};
 const OPERATIONAL_OPEN_HOUR = 17;
 const OPERATIONAL_CLOSE_HOUR = 10;
 const OPERATIONAL_WINDOW_MINUTES = 1020;
+const ROOM_AUTO_REFRESH_INTERVAL_MS = 30000;
+const ROOM_RECOVERY_REFRESH_INTERVAL_MS = 60000;
 let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
@@ -1074,38 +1105,26 @@ function isUserBusy() {
 }
 
 async function silentReloadRooms() {
-  if (!API_BASE_URL.trim()) {
+  if (!API_BASE_URL.trim() || silentRoomsReloadInFlight) {
     return;
   }
 
-  try {
-    const promises = [fetchRoomsFromApi()];
-    const isReceptionist = getCurrentOperatorRole() === "receptionist";
-    if (!isReceptionist) {
-      promises.push(
-        postApiAction({
-          action: "getExpiredRoomRecoveryList",
-          grace_minutes: 5,
-          include_invalid_end_time: true,
-        }).catch((err) => {
-          console.warn("Gagal memuat kandidat recovery di background", err);
-          return null;
-        })
-      );
-    }
+  silentRoomsReloadInFlight = true;
 
-    const [roomsData, recoveryData] = await Promise.all(promises);
+  try {
+    const roomsData = await fetchRoomsFromApi();
+    const isReceptionist = getCurrentOperatorRole() === "receptionist";
 
     rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
 
-    if (recoveryData && recoveryData.ok === true) {
-      roomRecoveryCandidates = Array.isArray(recoveryData.candidates) ? recoveryData.candidates : [];
-      roomRecoverySummary = {
-        expired_count: Number(recoveryData.expired_count) || 0,
-        invalid_count: Number(recoveryData.invalid_count) || 0,
-        total_rooms_checked: Number(recoveryData.total_rooms_checked) || 0,
-      };
+    if (
+      !isReceptionist &&
+      activeDashboardTab === "rooms" &&
+      document.visibilityState === "visible" &&
+      Date.now() - lastRoomRecoveryRefreshAt >= ROOM_RECOVERY_REFRESH_INTERVAL_MS
+    ) {
+      await loadRoomRecoveryCandidates();
     }
 
     if (isUserBusy() || activeDashboardTab !== "rooms") {
@@ -1117,6 +1136,8 @@ async function silentReloadRooms() {
     console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
   } catch (error) {
     console.warn("Silent refresh gagal:", error);
+  } finally {
+    silentRoomsReloadInFlight = false;
   }
 }
 
@@ -1194,14 +1215,20 @@ async function loadRoomRecoveryCandidates() {
 
   roomRecoveryLoadStarted = true;
   isLoadingRoomRecovery = true;
+  lastRoomRecoveryRefreshAt = Date.now();
   renderRooms();
 
   try {
-    const data = await postApiAction({
-      action: "getExpiredRoomRecoveryList",
+    const response = await fetchPeriodApiResponse(buildApiUrl("getExpiredRoomRecoveryList", {
       grace_minutes: 5,
       include_invalid_end_time: true,
-    });
+    }));
+
+    if (!response.ok) {
+      throw new Error(`getExpiredRoomRecoveryList API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
 
     const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
 
@@ -1221,6 +1248,10 @@ async function loadRoomRecoveryCandidates() {
       invalid_count: roomRecoverySummary.invalid_count,
     });
   } catch (error) {
+    if (isApiRequestCancelled(error)) {
+      return;
+    }
+
     console.warn("Gagal memuat daftar room recovery.", error);
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
@@ -1552,6 +1583,7 @@ async function fetchTodayCashierClosingsFromApi() {
 }
 
 async function loadMenuItems() {
+  const requestVersion = dashboardTabRequestVersion;
   menuErrorMessage = "";
   menuLoading = true;
   renderRooms();
@@ -1566,16 +1598,26 @@ async function loadMenuItems() {
   try {
     const data = await fetchMenuItemsFromApi();
 
+    if (requestVersion !== dashboardTabRequestVersion) {
+      return;
+    }
+
     menuItems = Array.isArray(data.menu_items) ? data.menu_items : [];
     console.log("Menu F&B dimuat:", menuItems.length);
     menuLoading = false;
     renderRooms();
   } catch (error) {
+    if (requestVersion !== dashboardTabRequestVersion || isApiRequestCancelled(error)) {
+      return;
+    }
+
     console.warn("Gagal memuat Menu F&B.", error);
     menuItems = [];
     menuErrorMessage = "Gagal memuat menu F&B.";
-    menuLoading = false;
-    renderRooms();
+    if (requestVersion === dashboardTabRequestVersion) {
+      menuLoading = false;
+      renderRooms();
+    }
   }
 }
 
@@ -15672,6 +15714,10 @@ function setActiveReportSubTab(tabKey) {
     return;
   }
 
+  transactionPeriodRequestVersion += 1;
+  ownerReportRequestVersion += 1;
+  roomUsageRequestVersion += 1;
+  cancelPendingApiGetTasks();
   activeReportSubTab = tabKey;
   renderRooms();
   refreshActiveReportSubTabData();
@@ -15702,6 +15748,11 @@ function setActiveDashboardTab(tabKey) {
     return;
   }
 
+  dashboardTabRequestVersion += 1;
+  transactionPeriodRequestVersion += 1;
+  ownerReportRequestVersion += 1;
+  roomUsageRequestVersion += 1;
+  cancelPendingApiGetTasks();
   activeDashboardTab = tabKey;
   saveActiveDashboardTab(tabKey);
   renderRooms();
@@ -21256,9 +21307,9 @@ if (dashboardShell) {
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
-// Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
+// Refresh ringan hanya dari tab yang sedang terlihat.
 setInterval(async () => {
-  if (!isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
+  if (document.visibilityState !== "visible" || !isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
     return;
   }
   if (isUserBusy()) {
@@ -21266,7 +21317,7 @@ setInterval(async () => {
     return;
   }
   await silentReloadRooms();
-}, 10000);
+}, ROOM_AUTO_REFRESH_INTERVAL_MS);
 
 async function initializeDashboard() {
   renderOperatorHeader();
