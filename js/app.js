@@ -202,7 +202,7 @@ async function executeApiGet(url) {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
     let response;
 
     try {
@@ -213,7 +213,7 @@ async function executeApiGet(url) {
     } catch (error) {
       if (error?.name === "AbortError") {
         const action = requestUrl.searchParams.get("action") || "API";
-        throw new Error(`${action} timeout setelah 20 detik.`);
+        throw new Error(`${action} timeout setelah 35 detik.`);
       }
 
       throw error;
@@ -962,6 +962,7 @@ let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
 let isSettlingFnbOrder = false;
 let fnbOrderNote = "";
+let fnbCustomerName = "";
 let fnbOrderPaymentMethod = "room_bill";
 let activeFnbSubTab = "order";
 let activeTransactionsSubTab = "history";
@@ -3683,6 +3684,7 @@ function setFnbOrderMode(mode) {
   if (nextMode === "general" || nextMode === "testing") {
     selectedFbRoomId = "";
     fnbOrderPaymentMethod = "cash";
+    fnbCustomerName = "";
   }
 
   if (nextMode === "testing" && !fnbTestRunId) {
@@ -3999,6 +4001,7 @@ function buildFnbOrderPayload() {
     test_mode: isTestingOrder,
     test_run_id: isTestingOrder ? fnbTestRunId : "",
     test_note: isTestingOrder ? "F&B menu testing" : "",
+    customer_name: (fnbOrderMode === "general" || isTestingOrder) ? fnbCustomerName : "",
   };
 }
 
@@ -4052,6 +4055,7 @@ async function saveFnbOrder() {
     };
     fbCartItems = [];
     fnbOrderNote = "";
+    fnbCustomerName = "";
     const originalPaymentMethod = fnbOrderPaymentMethod;
     fnbOrderPaymentMethod = fnbOrderMode === "room" ? "room_bill" : "cash";
     showInlineNotice(
@@ -9180,19 +9184,28 @@ function createFbRoomControlElement() {
 
   control.append(modeLabel, modeButtons);
 
-  if (fnbOrderMode === "testing") {
+  if (fnbOrderMode === "testing" || fnbOrderMode === "general") {
     const info = document.createElement("p");
     info.className = "fb-room-warning";
-    info.textContent = "Mode TEST: order ditandai sebagai data testing, tidak masuk laporan production dan tidak memotong stok.";
+    info.textContent = fnbOrderMode === "testing"
+      ? "Mode TEST: order ditandai sebagai data testing, tidak masuk laporan production dan tidak memotong stok."
+      : "Order ini tidak dikaitkan ke room dan dibayar terpisah.";
     control.appendChild(info);
-    return control;
-  }
 
-  if (fnbOrderMode === "general") {
-    const info = document.createElement("p");
-    info.className = "fb-room-warning";
-    info.textContent = "Order ini tidak dikaitkan ke room dan dibayar terpisah.";
-    control.appendChild(info);
+    const nameLabel = document.createElement("label");
+    nameLabel.className = "transaction-label";
+    nameLabel.setAttribute("for", "fbCustomerNameInput");
+    nameLabel.textContent = "Nama Pelanggan / Nomor Meja";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "fb-room-select";
+    nameInput.id = "fbCustomerNameInput";
+    nameInput.placeholder = "Masukkan nama / nomor meja (opsional)...";
+    nameInput.value = fnbCustomerName;
+    nameInput.dataset.action = "update-fnb-customer-name";
+
+    control.append(nameLabel, nameInput);
     return control;
   }
 
@@ -21154,6 +21167,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-fnb-order-note") {
     updateFnbOrderNote(field.value);
+    return;
+  }
+
+  if (action === "update-fnb-customer-name") {
+    fnbCustomerName = field.value;
     return;
   }
 

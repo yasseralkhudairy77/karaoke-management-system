@@ -1003,7 +1003,8 @@ function doPost(e) {
         payload.payment_status,
         payload.test_mode,
         payload.test_run_id,
-        payload.test_note
+        payload.test_note,
+        payload.customer_name
       ));
     }
 
@@ -11159,7 +11160,7 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testMode, testRunId, testNote) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, testMode, testRunId, testNote, customerName) {
   var normalizedRoomId = String(roomId || "").trim();
   var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
   var testContext = getActiveRoomSessionTestContext_(normalizedRoomId);
@@ -11205,9 +11206,10 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   try {
     var room = null;
     if (isGeneralOrder) {
+      var name = String(customerName || "").trim();
       room = {
         room_id: FNB_GENERAL_ROOM_ID,
-        room_name: FNB_GENERAL_ROOM_NAME,
+        room_name: name ? FNB_GENERAL_ROOM_NAME + " - " + name : FNB_GENERAL_ROOM_NAME,
         start_time: "",
       };
     } else {
