@@ -416,18 +416,20 @@ function normalizePayment(transaction) {
 }
 
 function normalizeTotals(transaction) {
-  const roomTotal = getNumber(transaction.room_total);
+  const netRoomTotal = getNumber(transaction.room_total);
   const fnbTotal = getNumber(transaction.fnb_total);
   const lcTotal = getNumber(transaction.lc_total);
   const grandTotal = getNumber(transaction.grand_total);
   const promoCode = getText(transaction.promo_code);
   const promoDiscount = getNumber(transaction.promo_discount);
+  const grossRoomTotal = promoDiscount > 0 ? netRoomTotal + promoDiscount : netRoomTotal;
 
   return {
-    roomTotal,
+    roomTotal: grossRoomTotal,
+    netRoomTotal,
     fnbTotal,
     lcTotal,
-    grandTotal: grandTotal > 0 ? grandTotal : roomTotal + fnbTotal + lcTotal,
+    grandTotal: grandTotal > 0 ? grandTotal : netRoomTotal + fnbTotal + lcTotal,
     promoCode,
     promoDiscount,
   };

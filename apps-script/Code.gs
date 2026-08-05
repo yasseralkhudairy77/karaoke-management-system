@@ -11167,26 +11167,25 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
       };
     }
 
+    var existingDiscount = Number(transaction.promo_discount) || 0;
     var roomTotal = Number(transaction.room_total) || 0;
     var fnbTotal = Number(transaction.fnb_total) || 0;
     var lcTotal = Number(transaction.lc_total) || 0;
 
     var prCode = String(promoCode || "").trim().toUpperCase();
-    var promoDiscount = 0;
+    var promoDiscount = existingDiscount;
     var appliedPromo = null;
 
     if (prCode) {
-      var promoRes = validatePromoCode_({ code: prCode, room_total: roomTotal });
+      var grossRoomTotal = existingDiscount > 0 ? roomTotal + existingDiscount : roomTotal;
+      var promoRes = validatePromoCode_({ code: prCode, room_total: grossRoomTotal });
       if (!promoRes.ok || !promoRes.success) {
         return { ok: false, error: promoRes.error || "Gagal menerapkan kode promo." };
       }
       promoDiscount = promoRes.discount;
       appliedPromo = promoRes;
 
-      roomTotal = roomTotal - promoDiscount;
-      if (roomTotal < 0) {
-        roomTotal = 0;
-      }
+      roomTotal = Math.max(0, grossRoomTotal - promoDiscount);
     }
 
     var grandTotal = roomTotal + fnbTotal + lcTotal;

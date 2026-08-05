@@ -21935,7 +21935,11 @@ async function handleRoomAction(event) {
     const transactionId = button.dataset.transactionId || summary?.dataset.transactionId || "";
     const paymentMethod = summary?.querySelector(".billing-payment-select")?.value || "";
     const promoInput = summary?.querySelector(".billing-payment-promo-input");
-    const promoCode = promoInput ? promoInput.getAttribute("data-applied-promo-code") || "" : "";
+    let promoCode = promoInput ? promoInput.getAttribute("data-applied-promo-code") || "" : "";
+
+    if (!promoCode && promoInput && promoInput.value.trim()) {
+      promoCode = promoInput.value.trim().toUpperCase();
+    }
 
     await markTransactionPaid(transactionId, paymentMethod, promoCode, { updateBillingSummary: true });
     return;
