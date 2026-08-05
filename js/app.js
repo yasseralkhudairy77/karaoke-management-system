@@ -21385,7 +21385,10 @@ async function saveCashierClosing() {
 }
 
 async function postApiAction(payload) {
-  const response = await fetch(API_BASE_URL, {
+  const actionParam = payload && payload.action
+    ? `?action=${encodeURIComponent(payload.action)}`
+    : "";
+  const response = await fetch(`${API_BASE_URL}${actionParam}`, {
     method: "POST",
     headers: {
       "Content-Type": "text/plain;charset=utf-8",
