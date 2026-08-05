@@ -21017,7 +21017,74 @@ async function activatePreparedSession(roomId) {
   }
 }
 
-async function closeSession(roomId) {
+function showLcWarningModal(roomId) {
+  const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId, room_name: roomId };
+  const modalOverlay = document.createElement("div");
+  modalOverlay.className = "erp-modal-overlay active";
+  modalOverlay.style.zIndex = "10000";
+
+  const modalBox = document.createElement("div");
+  modalBox.className = "erp-modal-box";
+  modalBox.style.maxWidth = "440px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.alignItems = "center";
+  header.style.gap = "10px";
+  header.style.marginBottom = "14px";
+
+  const icon = document.createElement("span");
+  icon.style.fontSize = "24px";
+  icon.textContent = "⚠️";
+
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "16px";
+  title.style.fontWeight = "800";
+  title.style.color = "var(--warning, #f59e0b)";
+  title.textContent = "Peringatan Pilihan LC";
+
+  header.append(icon, title);
+
+  const bodyText = document.createElement("p");
+  bodyText.style.fontSize = "13px";
+  bodyText.style.lineHeight = "1.5";
+  bodyText.style.color = "var(--text)";
+  bodyText.style.marginBottom = "20px";
+  bodyText.innerHTML = `Ruangan <strong>${escapeHtml(room.room_name || roomId)}</strong> belum memiliki LC yang diinput.<br><br>Apakah transaksi ini memang <strong>TANPA LC</strong>, atau Anda belum/lupa menginput LC?`;
+
+  const btnContainer = document.createElement("div");
+  btnContainer.style.display = "flex";
+  btnContainer.style.gap = "10px";
+  btnContainer.style.justifyContent = "flex-end";
+
+  const btnInputNow = document.createElement("button");
+  btnInputNow.className = "erp-btn erp-btn-primary";
+  btnInputNow.style.padding = "8px 14px";
+  btnInputNow.style.fontWeight = "700";
+  btnInputNow.textContent = "+ Input LC Sekarang";
+  btnInputNow.onclick = () => {
+    document.body.removeChild(modalOverlay);
+    lcSelectionRoomId = roomId;
+    renderRooms();
+  };
+
+  const btnProceedNoLc = document.createElement("button");
+  btnProceedNoLc.className = "erp-btn erp-btn-secondary";
+  btnProceedNoLc.style.padding = "8px 14px";
+  btnProceedNoLc.textContent = "Lanjutkan Tanpa LC";
+  btnProceedNoLc.onclick = async () => {
+    document.body.removeChild(modalOverlay);
+    await closeSession(roomId, { skipLcWarning: true });
+  };
+
+  btnContainer.append(btnProceedNoLc, btnInputNow);
+  modalBox.append(header, bodyText, btnContainer);
+  modalOverlay.appendChild(modalBox);
+  document.body.appendChild(modalOverlay);
+}
+
+async function closeSession(roomId, options = {}) {
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan menyelesaikan sesi.", "error");
     return;
@@ -21028,12 +21095,18 @@ async function closeSession(roomId) {
     return;
   }
 
+  const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
+  const currentLcIdsRaw = String(room.lc_ids || "").trim();
+  const activeLcIds = selectedLcIdsForRoom[roomId] || (currentLcIdsRaw ? currentLcIdsRaw.split(",").map(i => i.trim()).filter(Boolean) : []);
+
+  if (activeLcIds.length === 0 && !options?.skipLcWarning) {
+    showLcWarningModal(roomId);
+    return;
+  }
+
   setActionButtonsDisabled(true);
 
   try {
-    const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
-    const activeLcIds = selectedLcIdsForRoom[roomId] || [];
-
     const data = await postApiAction({
       action: "closeSession",
       room_id: roomId,
