@@ -1025,7 +1025,7 @@ function doPost(e) {
     }
 
     if (action === "closeSession") {
-      return jsonResponse(closeSession_(payload.room_id, payload.cashier_name));
+      return jsonResponse(closeSession_(payload.room_id, payload.cashier_name, payload));
     }
 
     if (action === "markTransactionPaid") {
@@ -10557,7 +10557,7 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
   }
 }
 
-function closeSession_(roomId, cashierName) {
+function closeSession_(roomId, cashierName, requestPayload) {
   if (!roomId) {
     return {
       ok: false,
@@ -10725,6 +10725,20 @@ function closeSession_(roomId, cashierName) {
     if (activeRoomSession && activeRoomSession.session) {
       try {
         var sessionForLc = activeRoomSession.session;
+        var reqPayload = requestPayload || {};
+        if (reqPayload.lc_ids !== undefined || reqPayload.lc_assignments !== undefined) {
+          try {
+            assignSessionLcs_({
+              room_id: roomId,
+              lc_ids: reqPayload.lc_ids,
+              lc_assignments: reqPayload.lc_assignments,
+              changed_by: cashierName || "Kasir",
+            });
+          } catch (assignErr) {
+            Logger.log("Error auto-assigning LCs on closeSession: " + assignErr.message);
+          }
+        }
+
         var workLogRowsForLc = readSheetAsObjects_("LcWorkLogs").filter(function(log) {
           return String(log.session_id || "").trim() === String(sessionForLc.session_id || "").trim();
         });

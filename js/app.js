@@ -21031,9 +21031,14 @@ async function closeSession(roomId) {
   setActionButtonsDisabled(true);
 
   try {
+    const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
+    const activeLcIds = selectedLcIdsForRoom[roomId] || [];
+
     const data = await postApiAction({
       action: "closeSession",
       room_id: roomId,
+      lc_ids: activeLcIds.join(","),
+      lc_assignments: buildLcAssignmentsPayloadForRoom(room),
       cashier_name: getLoggedInOperatorName(),
     });
 
