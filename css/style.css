@@ -4707,6 +4707,151 @@ body::after {
   cursor: wait;
 }
 
+.stock-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.stock-subnav-button {
+  border: 1px solid rgba(212, 160, 49, 0.45);
+  border-radius: 999px;
+  background: rgba(11, 9, 7, 0.78);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 10px 16px;
+}
+
+.stock-subnav-button.active,
+.stock-subnav-button:hover,
+.stock-subnav-button:focus-visible {
+  background: rgba(212, 160, 49, 0.22);
+  border-color: rgba(212, 160, 49, 0.9);
+  color: var(--text);
+}
+
+.inventory-audit-workspace {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+}
+
+.inventory-audit-list,
+.inventory-audit-detail {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.inventory-audit-list-item {
+  background: rgba(14, 11, 8, 0.82);
+  border: 1px solid rgba(212, 160, 49, 0.28);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+}
+
+.inventory-audit-list-item.active,
+.inventory-audit-list-item:hover,
+.inventory-audit-list-item:focus-visible {
+  background: rgba(212, 160, 49, 0.16);
+  border-color: rgba(212, 160, 49, 0.9);
+}
+
+.inventory-audit-list-title {
+  font-weight: 900;
+}
+
+.inventory-audit-list-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.inventory-audit-header-card {
+  align-items: center;
+  border: 1px solid rgba(212, 160, 49, 0.28);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px;
+}
+
+.inventory-audit-header-card .stock-movements-subtitle {
+  grid-column: 1 / -1;
+}
+
+.inventory-audit-table-wrap {
+  border: 1px solid rgba(212, 160, 49, 0.18);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.inventory-audit-table td strong,
+.inventory-audit-table td small {
+  display: block;
+}
+
+.inventory-audit-table td small {
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.inventory-audit-count-input {
+  min-width: 96px;
+}
+
+.inventory-audit-diff {
+  font-weight: 900;
+}
+
+.inventory-audit-diff.shortage {
+  color: var(--occupied);
+}
+
+.inventory-audit-diff.overage {
+  color: var(--available);
+}
+
+.inventory-audit-diff.neutral {
+  color: var(--muted);
+}
+
+.stock-movements-badge.draft,
+.stock-movements-badge.counting {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+
+.stock-movements-badge.submitted {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.stock-movements-badge.posted {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+@media (max-width: 767px) {
+  .inventory-audit-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-audit-header-card {
+    grid-template-columns: 1fr;
+  }
+}
+
 .stock-movements-list {
   display: grid;
   gap: 10px;

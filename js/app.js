@@ -843,6 +843,16 @@ let stockMovementItemFilter = "all";
 let stockMovementTypeFilter = "all";
 let stockMovementReferenceFilter = "all";
 let isLoadingStockMovements = false;
+let activeStockSubTab = "position";
+let inventoryAudits = [];
+let inventoryAuditSummary = null;
+let selectedInventoryAudit = null;
+let selectedInventoryAuditLines = [];
+let inventoryAuditCountDraft = {};
+let inventoryAuditReasonDraft = {};
+let inventoryAuditNoteDraft = {};
+let isLoadingInventoryAudits = false;
+let isSavingInventoryAudit = false;
 let todayFnbSalesSummary = null;
 let todayFnbMenuSales = [];
 let lowStockReportItems = [];
@@ -2513,13 +2523,299 @@ function setStockMovementTypeFilter(movementType) {
 }
 
 function setStockMovementReferenceFilter(referenceType) {
-  if (!["all", "transaction", "manual_adjustment"].includes(referenceType)) {
+  if (!["all", "transaction", "manual_adjustment", "stock_audit"].includes(referenceType)) {
     return;
   }
 
   stockMovementReferenceFilter = referenceType;
   resetPaginationPage("stockMovements");
   loadTodayStockMovements();
+}
+
+async function loadInventoryAudits({ selectLatest = false } = {}) {
+  if (!API_BASE_URL.trim()) {
+    inventoryAudits = [];
+    inventoryAuditSummary = null;
+    selectedInventoryAudit = null;
+    selectedInventoryAuditLines = [];
+    renderRooms();
+    return;
+  }
+
+  isLoadingInventoryAudits = true;
+  renderRooms();
+
+  try {
+    const data = await fetchInventoryAuditsFromApi();
+    inventoryAudits = Array.isArray(data.audits) ? data.audits : [];
+    inventoryAuditSummary = data.summary || null;
+
+    const shouldSelectLatest = selectLatest || (!selectedInventoryAudit && inventoryAudits.length > 0);
+    if (shouldSelectLatest && inventoryAudits[0]?.audit_id) {
+      await selectInventoryAudit(inventoryAudits[0].audit_id, { renderAfter: false });
+    } else if (selectedInventoryAudit?.audit_id) {
+      const exists = inventoryAudits.some((audit) => audit.audit_id === selectedInventoryAudit.audit_id);
+      if (!exists) {
+        selectedInventoryAudit = null;
+        selectedInventoryAuditLines = [];
+      }
+    }
+  } catch (error) {
+    console.warn("Gagal memuat Stock Opname.", error);
+    showInlineNotice(error.message || "Gagal memuat Stock Opname.", "error");
+    inventoryAudits = [];
+    inventoryAuditSummary = null;
+  } finally {
+    isLoadingInventoryAudits = false;
+    renderRooms();
+  }
+}
+
+async function fetchInventoryAuditsFromApi() {
+  const response = await fetch(buildApiUrl("getInventoryAudits", { status: "all", limit: 20 }), {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true || !Array.isArray(data.audits)) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return data;
+}
+
+async function selectInventoryAudit(auditId, { renderAfter = true } = {}) {
+  if (!auditId || !API_BASE_URL.trim()) {
+    return;
+  }
+
+  isLoadingInventoryAudits = true;
+  if (renderAfter) {
+    renderRooms();
+  }
+
+  try {
+    const data = await fetchInventoryAuditDetailsFromApi(auditId);
+    selectedInventoryAudit = data.audit || null;
+    selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : [];
+    hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
+  } catch (error) {
+    console.warn("Gagal memuat detail Stock Opname.", error);
+    showInlineNotice(error.message || "Gagal memuat detail Stock Opname.", "error");
+  } finally {
+    isLoadingInventoryAudits = false;
+    if (renderAfter) {
+      renderRooms();
+    }
+  }
+}
+
+async function fetchInventoryAuditDetailsFromApi(auditId) {
+  const response = await fetch(buildApiUrl("getInventoryAuditDetails", { audit_id: auditId }), {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return data;
+}
+
+function hydrateInventoryAuditDraftsFromLines(lines) {
+  inventoryAuditCountDraft = {};
+  inventoryAuditReasonDraft = {};
+  inventoryAuditNoteDraft = {};
+
+  lines.forEach((line) => {
+    const stockItemId = line.stock_item_id || "";
+    inventoryAuditCountDraft[stockItemId] = line.count_qty === "" || line.count_qty === null || line.count_qty === undefined
+      ? ""
+      : String(Number(line.count_qty) || 0);
+    inventoryAuditReasonDraft[stockItemId] = line.reason_code || "";
+    inventoryAuditNoteDraft[stockItemId] = line.note || "";
+  });
+}
+
+async function createInventoryAudit() {
+  if (isSavingInventoryAudit || !API_BASE_URL.trim()) {
+    return;
+  }
+
+  isSavingInventoryAudit = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "createInventoryAudit",
+      audit_type: "full",
+      scope: "all",
+      started_by: getLoggedInOperatorName(),
+      note: "Stock Opname outlet",
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal membuat Stock Opname.");
+    }
+
+    selectedInventoryAudit = data.audit || null;
+    selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : [];
+    hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
+    await loadInventoryAudits();
+    showInlineNotice("Stock Opname baru dibuat. Silakan input qty fisik outlet.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membuat Stock Opname.", "error");
+  } finally {
+    isSavingInventoryAudit = false;
+    renderRooms();
+  }
+}
+
+function updateInventoryAuditDraft(stockItemId, field, value) {
+  if (!stockItemId) {
+    return;
+  }
+
+  if (field === "count") {
+    inventoryAuditCountDraft = { ...inventoryAuditCountDraft, [stockItemId]: value };
+  } else if (field === "reason") {
+    inventoryAuditReasonDraft = { ...inventoryAuditReasonDraft, [stockItemId]: value };
+  } else if (field === "note") {
+    inventoryAuditNoteDraft = { ...inventoryAuditNoteDraft, [stockItemId]: value };
+  }
+}
+
+function buildInventoryAuditLinesPayload() {
+  return selectedInventoryAuditLines.map((line) => ({
+    stock_item_id: line.stock_item_id,
+    count_qty: inventoryAuditCountDraft[line.stock_item_id],
+    reason_code: inventoryAuditReasonDraft[line.stock_item_id] || "",
+    note: inventoryAuditNoteDraft[line.stock_item_id] || "",
+  }));
+}
+
+async function saveInventoryAuditCounts() {
+  if (!selectedInventoryAudit?.audit_id || isSavingInventoryAudit) {
+    return;
+  }
+
+  isSavingInventoryAudit = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "saveInventoryAuditCounts",
+      audit_id: selectedInventoryAudit.audit_id,
+      lines: buildInventoryAuditLinesPayload(),
+      updated_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal menyimpan hitungan Stock Opname.");
+    }
+
+    selectedInventoryAudit = data.audit || selectedInventoryAudit;
+    selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : selectedInventoryAuditLines;
+    hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
+    await loadInventoryAudits();
+    showInlineNotice("Hitungan fisik Stock Opname tersimpan.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyimpan hitungan Stock Opname.", "error");
+  } finally {
+    isSavingInventoryAudit = false;
+    renderRooms();
+  }
+}
+
+async function submitInventoryAudit() {
+  if (!selectedInventoryAudit?.audit_id || isSavingInventoryAudit) {
+    return;
+  }
+
+  await saveInventoryAuditCounts();
+  isSavingInventoryAudit = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "submitInventoryAudit",
+      audit_id: selectedInventoryAudit.audit_id,
+      submitted_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal submit Stock Opname.");
+    }
+
+    selectedInventoryAudit = data.audit || selectedInventoryAudit;
+    selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : selectedInventoryAuditLines;
+    await loadInventoryAudits();
+    showInlineNotice("Stock Opname disubmit. Menunggu approval pemeriksa.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal submit Stock Opname.", "error");
+  } finally {
+    isSavingInventoryAudit = false;
+    renderRooms();
+  }
+}
+
+function approveInventoryAudit() {
+  if (!selectedInventoryAudit?.audit_id || isSavingInventoryAudit) {
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Approval Stock Opname",
+    message: "Masukkan PIN owner/manager untuk approve dan posting selisih stok.",
+    requestedAction: "approve_inventory_audit",
+    requiredRole: "manager",
+    onSuccess: async (authData, adminPin) => {
+      await executeApproveInventoryAudit(adminPin);
+    }
+  });
+}
+
+async function executeApproveInventoryAudit(adminPin) {
+  isSavingInventoryAudit = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "approveInventoryAudit",
+      audit_id: selectedInventoryAudit.audit_id,
+      admin_pin: adminPin,
+      approved_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal approve Stock Opname.");
+    }
+
+    selectedInventoryAudit = data.audit || selectedInventoryAudit;
+    selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : selectedInventoryAuditLines;
+    await Promise.all([
+      loadInventoryAudits(),
+      loadInventoryItems(),
+      loadTodayStockMovements()
+    ]);
+    showInlineNotice("Stock Opname berhasil di-approve dan stok sudah diposting.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal approve Stock Opname.", "error");
+  } finally {
+    isSavingInventoryAudit = false;
+    renderRooms();
+  }
 }
 
 async function loadOpenFnbOrders() {
@@ -10263,6 +10559,10 @@ function getTodayStockMovementReferenceLabel(referenceType) {
     return "Manual";
   }
 
+  if (referenceType === "stock_audit") {
+    return "Stock Opname";
+  }
+
   return referenceType || "-";
 }
 
@@ -10445,6 +10745,7 @@ function createTodayStockMovementToolbarElement() {
     ["all", "Semua Referensi"],
     ["transaction", "Transaksi"],
     ["manual_adjustment", "Manual Adjustment"],
+    ["stock_audit", "Stock Opname"],
   ].forEach(([referenceType, labelText]) => {
     const button = document.createElement("button");
     button.className = referenceType === stockMovementReferenceFilter
@@ -13313,6 +13614,376 @@ function createTransactionActionsElement(transaction) {
   return actions;
 }
 
+function createStockSubNavElement() {
+  const nav = document.createElement("div");
+  nav.className = "stock-subnav";
+  nav.setAttribute("aria-label", "Sub menu stok");
+
+  [
+    ["position", "Posisi Stok"],
+    ["opname", "Stock Opname"],
+    ["movements", "Mutasi Stok"],
+  ].forEach(([key, label]) => {
+    const button = document.createElement("button");
+    button.className = key === activeStockSubTab ? "stock-subnav-button active" : "stock-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-stock-subtab";
+    button.dataset.stockSubtab = key;
+    button.textContent = label;
+    nav.appendChild(button);
+  });
+
+  return nav;
+}
+
+function createInventoryAuditPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "inventory-audit-panel stock-movements-panel";
+  panel.setAttribute("aria-labelledby", "inventory-audit-title");
+
+  const header = document.createElement("div");
+  header.className = "stock-movements-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h2");
+  title.className = "stock-movements-title";
+  title.id = "inventory-audit-title";
+  title.textContent = "Stock Opname Outlet";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "stock-movements-subtitle";
+  subtitle.textContent = "Hitung qty fisik outlet, analisa selisih, lalu posting stok setelah approval pemeriksa.";
+
+  titleGroup.append(title, subtitle);
+
+  const actions = document.createElement("div");
+  actions.className = "stock-movements-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "stock-movements-button secondary";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-inventory-audits";
+  refreshButton.disabled = isLoadingInventoryAudits || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingInventoryAudits ? "Memuat..." : "Refresh";
+
+  const newButton = document.createElement("button");
+  newButton.className = "stock-movements-button";
+  newButton.type = "button";
+  newButton.dataset.action = "create-inventory-audit";
+  newButton.disabled = isSavingInventoryAudit || isLoadingInventoryAudits || !API_BASE_URL.trim();
+  newButton.textContent = isSavingInventoryAudit ? "Memproses..." : "+ Mulai Stock Opname";
+
+  actions.append(refreshButton, newButton);
+  header.append(titleGroup, actions);
+
+  panel.append(
+    header,
+    createInventoryAuditSummaryElement(),
+    createInventoryAuditWorkspaceElement()
+  );
+
+  return panel;
+}
+
+function createInventoryAuditSummaryElement() {
+  const summary = selectedInventoryAudit || inventoryAuditSummary || {
+    total_items: 0,
+    counted_items: 0,
+    variance_items: 0,
+    absolute_variance_qty: 0,
+  };
+  const grid = document.createElement("div");
+  grid.className = "stock-movements-summary inventory-audit-summary";
+
+  [
+    ["Total Item", Number(summary.total_items) || 0],
+    ["Sudah Dihitung", Number(summary.counted_items) || 0],
+    ["Item Selisih", Number(summary.variance_items) || 0],
+    ["Total Selisih Absolut", Number(summary.absolute_variance_qty) || 0],
+  ].forEach(([labelText, valueText]) => {
+    const card = document.createElement("div");
+    card.className = "stock-movements-summary-card";
+
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText;
+
+    card.append(label, value);
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createInventoryAuditWorkspaceElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "inventory-audit-workspace";
+
+  if (!API_BASE_URL.trim()) {
+    wrapper.appendChild(createStateMessage("Stock Opname hanya tersedia saat terhubung ke server."));
+    return wrapper;
+  }
+
+  wrapper.appendChild(createInventoryAuditListElement());
+
+  if (isLoadingInventoryAudits && !selectedInventoryAudit) {
+    wrapper.appendChild(createStateMessage("Memuat data Stock Opname..."));
+  } else if (!selectedInventoryAudit) {
+    wrapper.appendChild(createStateMessage("Belum ada Stock Opname dipilih. Klik Mulai Stock Opname untuk audit baru."));
+  } else {
+    wrapper.appendChild(createInventoryAuditDetailElement());
+  }
+
+  return wrapper;
+}
+
+function createInventoryAuditListElement() {
+  const aside = document.createElement("aside");
+  aside.className = "inventory-audit-list";
+
+  const title = document.createElement("h3");
+  title.className = "stock-adjustment-title";
+  title.textContent = "Riwayat Opname";
+  aside.appendChild(title);
+
+  if (inventoryAudits.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "stock-movements-empty";
+    empty.textContent = isLoadingInventoryAudits ? "Memuat audit..." : "Belum ada audit inventory.";
+    aside.appendChild(empty);
+    return aside;
+  }
+
+  inventoryAudits.forEach((audit) => {
+    const button = document.createElement("button");
+    button.className = selectedInventoryAudit?.audit_id === audit.audit_id
+      ? "inventory-audit-list-item active"
+      : "inventory-audit-list-item";
+    button.type = "button";
+    button.dataset.action = "select-inventory-audit";
+    button.dataset.auditId = audit.audit_id;
+
+    const name = document.createElement("span");
+    name.className = "inventory-audit-list-title";
+    name.textContent = audit.audit_id;
+
+    const meta = document.createElement("span");
+    meta.className = "inventory-audit-list-meta";
+    meta.textContent = `${getInventoryAuditStatusLabel(audit.status)} - ${Number(audit.variance_items) || 0} selisih`;
+
+    button.append(name, meta);
+    aside.appendChild(button);
+  });
+
+  return aside;
+}
+
+function createInventoryAuditDetailElement() {
+  const detail = document.createElement("div");
+  detail.className = "inventory-audit-detail";
+
+  detail.append(
+    createInventoryAuditHeaderCardElement(),
+    createInventoryAuditLinesTableElement(),
+    createInventoryAuditActionsElement()
+  );
+
+  return detail;
+}
+
+function createInventoryAuditHeaderCardElement() {
+  const card = document.createElement("div");
+  card.className = "inventory-audit-header-card";
+
+  const title = document.createElement("h3");
+  title.className = "stock-adjustment-title";
+  title.textContent = selectedInventoryAudit.audit_id;
+
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge(
+    `stock-movements-badge ${getInventoryAuditStatusClass(selectedInventoryAudit.status)}`,
+    getInventoryAuditStatusTone(selectedInventoryAudit.status)
+  );
+  badge.textContent = getInventoryAuditStatusLabel(selectedInventoryAudit.status);
+
+  const meta = document.createElement("p");
+  meta.className = "stock-movements-subtitle";
+  meta.textContent = `Mulai: ${formatDateTimeLabel(selectedInventoryAudit.started_at)} - Oleh: ${selectedInventoryAudit.started_by || "-"}`;
+
+  card.append(title, badge, meta);
+
+  return card;
+}
+
+function createInventoryAuditLinesTableElement() {
+  const wrap = document.createElement("div");
+  wrap.className = "inventory-audit-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "erp-inventory-table inventory-audit-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Kategori</th>
+        <th>Qty Fisik</th>
+        <th>Selisih</th>
+        <th>Alasan</th>
+        <th>Catatan</th>
+      </tr>
+    </thead>
+  `;
+
+  const tbody = document.createElement("tbody");
+  const isEditable = ["draft", "counting"].includes(selectedInventoryAudit.status);
+
+  selectedInventoryAuditLines.forEach((line) => {
+    tbody.appendChild(createInventoryAuditLineRowElement(line, isEditable));
+  });
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  return wrap;
+}
+
+function createInventoryAuditLineRowElement(line, isEditable) {
+  const tr = document.createElement("tr");
+  const stockItemId = line.stock_item_id || "";
+  const physicalValue = inventoryAuditCountDraft[stockItemId];
+  const bookQty = Number(line.book_qty_snapshot) || 0;
+  const parsedPhysical = physicalValue === "" || physicalValue === undefined ? null : Number(physicalValue);
+  const diff = Number.isFinite(parsedPhysical) ? parsedPhysical - bookQty : Number(line.difference_qty) || 0;
+
+  const nameTd = document.createElement("td");
+  nameTd.innerHTML = `<strong>${escapeHtml(line.stock_item_name || stockItemId || "-")}</strong><small>${escapeHtml(stockItemId)} - Sistem snapshot disembunyikan saat hitung</small>`;
+
+  const categoryTd = document.createElement("td");
+  categoryTd.textContent = `${line.category || "-"} / ${line.unit || "unit"}`;
+
+  const qtyTd = document.createElement("td");
+  const qtyInput = document.createElement("input");
+  qtyInput.className = "stock-adjustment-input inventory-audit-count-input";
+  qtyInput.type = "number";
+  qtyInput.min = "0";
+  qtyInput.step = "1";
+  qtyInput.dataset.action = "update-inventory-audit-count";
+  qtyInput.dataset.stockItemId = stockItemId;
+  qtyInput.value = physicalValue ?? "";
+  qtyInput.disabled = !isEditable || isSavingInventoryAudit;
+  qtyTd.appendChild(qtyInput);
+
+  const diffTd = document.createElement("td");
+  diffTd.className = diff === 0 ? "inventory-audit-diff neutral" : diff < 0 ? "inventory-audit-diff shortage" : "inventory-audit-diff overage";
+  diffTd.textContent = physicalValue === "" || physicalValue === undefined
+    ? "-"
+    : `${diff > 0 ? "+" : ""}${diff}`;
+
+  const reasonTd = document.createElement("td");
+  const reasonSelect = document.createElement("select");
+  reasonSelect.className = "stock-adjustment-select inventory-audit-reason";
+  reasonSelect.dataset.action = "update-inventory-audit-reason";
+  reasonSelect.dataset.stockItemId = stockItemId;
+  reasonSelect.disabled = !isEditable || isSavingInventoryAudit;
+  getInventoryAuditReasonOptions().forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    reasonSelect.appendChild(option);
+  });
+  reasonSelect.value = inventoryAuditReasonDraft[stockItemId] || "";
+  reasonTd.appendChild(reasonSelect);
+
+  const noteTd = document.createElement("td");
+  const noteInput = document.createElement("input");
+  noteInput.className = "stock-adjustment-input inventory-audit-note";
+  noteInput.type = "text";
+  noteInput.placeholder = "Opsional";
+  noteInput.dataset.action = "update-inventory-audit-note";
+  noteInput.dataset.stockItemId = stockItemId;
+  noteInput.value = inventoryAuditNoteDraft[stockItemId] || "";
+  noteInput.disabled = !isEditable || isSavingInventoryAudit;
+  noteTd.appendChild(noteInput);
+
+  tr.append(nameTd, categoryTd, qtyTd, diffTd, reasonTd, noteTd);
+  return tr;
+}
+
+function createInventoryAuditActionsElement() {
+  const actions = document.createElement("div");
+  actions.className = "stock-adjustment-actions inventory-audit-actions";
+  const status = selectedInventoryAudit?.status;
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "stock-adjustment-button secondary";
+  saveButton.type = "button";
+  saveButton.dataset.action = "save-inventory-audit-counts";
+  saveButton.disabled = isSavingInventoryAudit || !["draft", "counting"].includes(status);
+  saveButton.textContent = isSavingInventoryAudit ? "Menyimpan..." : "Simpan Hitungan";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "stock-adjustment-button";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-inventory-audit";
+  submitButton.disabled = isSavingInventoryAudit || !["draft", "counting"].includes(status);
+  submitButton.textContent = "Submit ke Pemeriksa";
+
+  const approveButton = document.createElement("button");
+  approveButton.className = "stock-adjustment-button";
+  approveButton.type = "button";
+  approveButton.dataset.action = "approve-inventory-audit";
+  approveButton.disabled = isSavingInventoryAudit || status !== "submitted";
+  approveButton.textContent = "Approve & Posting";
+
+  actions.append(saveButton, submitButton, approveButton);
+  return actions;
+}
+
+function getInventoryAuditReasonOptions() {
+  return [
+    ["", "Pilih alasan"],
+    ["damaged", "Rusak"],
+    ["expired", "Expired"],
+    ["internal_use", "Pemakaian internal"],
+    ["complimentary", "Complimentary"],
+    ["unrecorded_receipt", "Penerimaan belum tercatat"],
+    ["unrecorded_sale", "Penjualan belum tercatat"],
+    ["unit_error", "Salah satuan"],
+    ["missing", "Hilang"],
+    ["miscount", "Salah hitung"],
+    ["other", "Lainnya"],
+  ];
+}
+
+function getInventoryAuditStatusLabel(status) {
+  const labels = {
+    draft: "Draft",
+    counting: "Counting",
+    submitted: "Menunggu Approval",
+    posted: "Posted",
+  };
+
+  return labels[status] || status || "-";
+}
+
+function getInventoryAuditStatusClass(status) {
+  return ["draft", "counting", "submitted", "posted"].includes(status) ? status : "unknown";
+}
+
+function getInventoryAuditStatusTone(status) {
+  if (status === "posted") {
+    return "success";
+  }
+  if (status === "submitted") {
+    return "warning";
+  }
+  return "neutral";
+}
+
 function getTransactionById(transactionId) {
   return todayTransactions.find((transaction) => (
     String(transaction?.transaction_id || "") === String(transactionId || "")
@@ -15897,6 +16568,7 @@ function refreshActiveTabData() {
     case "stock":
       loadInventoryItems();
       loadTodayStockMovements();
+      loadInventoryAudits();
       break;
     case "reports":
       if (isValidReportSubTab("owner")) {
@@ -18864,10 +19536,14 @@ function appendDashboardTabContent(panel, tabKey) {
         break;
       }
     case "stock":
-      panel.append(
-        createInventoryPanelElement(),
-        createTodayStockMovementsPanelElement()
-      );
+      panel.appendChild(createStockSubNavElement());
+      if (activeStockSubTab === "position") {
+        panel.appendChild(createInventoryPanelElement());
+      } else if (activeStockSubTab === "opname") {
+        panel.appendChild(createInventoryAuditPanelElement());
+      } else if (activeStockSubTab === "movements") {
+        panel.appendChild(createTodayStockMovementsPanelElement());
+      }
       break;
     case "reports":
       panel.append(
@@ -20567,6 +21243,7 @@ function setActionButtonsDisabled(isDisabled) {
       ".room-button, .billing-payment-button, .transaction-filter-button, .transaction-action-button, .transaction-pay-button"
         + ", .cashier-closing-button, .today-fnb-button, .today-fnb-filter-button, .fnb-cancel-button, .inventory-button"
         + ", .stock-adjustment-button, .duration-option-button, .duration-custom-button, .duration-cancel-button"
+        + ", .stock-movements-button, .stock-subnav-button, .inventory-audit-list-item"
         + ", .room-button-extend, .extend-option-button, .extend-custom-button, .extend-cancel-button"
         + ", .room-tv-button, .room-recovery-button"
     )
@@ -20723,6 +21400,52 @@ async function handleRoomAction(event) {
       activeTransactionsSubTab = subtab;
       renderDashboardTabPanels();
     }
+    return;
+  }
+
+  if (action === "switch-stock-subtab") {
+    const subtab = button.dataset.stockSubtab;
+    if (subtab && ["position", "opname", "movements"].includes(subtab)) {
+      activeStockSubTab = subtab;
+      renderDashboardTabPanels();
+      if (subtab === "opname") {
+        await loadInventoryAudits();
+      } else if (subtab === "movements") {
+        await loadTodayStockMovements();
+      } else {
+        await loadInventoryItems();
+      }
+    }
+    return;
+  }
+
+  if (action === "refresh-inventory-audits") {
+    await loadInventoryAudits({ selectLatest: true });
+    return;
+  }
+
+  if (action === "create-inventory-audit") {
+    await createInventoryAudit();
+    return;
+  }
+
+  if (action === "select-inventory-audit") {
+    await selectInventoryAudit(button.dataset.auditId || "");
+    return;
+  }
+
+  if (action === "save-inventory-audit-counts") {
+    await saveInventoryAuditCounts();
+    return;
+  }
+
+  if (action === "submit-inventory-audit") {
+    await submitInventoryAudit();
+    return;
+  }
+
+  if (action === "approve-inventory-audit") {
+    approveInventoryAudit();
     return;
   }
 
@@ -21366,6 +22089,31 @@ function handleDashboardInput(event) {
   if (action === "update-stock-adjustment-note") {
     updateStockAdjustmentForm("note", field.value);
     focusStockAdjustmentField(".stock-adjustment-note");
+    return;
+  }
+
+  if (action === "update-inventory-audit-count") {
+    updateInventoryAuditDraft(field.dataset.stockItemId || "", "count", field.value);
+    const row = field.closest("tr");
+    const diffCell = row?.querySelector(".inventory-audit-diff");
+    const line = selectedInventoryAuditLines.find((item) => item.stock_item_id === field.dataset.stockItemId);
+    const physicalQty = Number(field.value);
+    const bookQty = Number(line?.book_qty_snapshot) || 0;
+    if (diffCell) {
+      if (field.value === "" || !Number.isFinite(physicalQty)) {
+        diffCell.textContent = "-";
+        diffCell.className = "inventory-audit-diff neutral";
+      } else {
+        const diff = physicalQty - bookQty;
+        diffCell.textContent = `${diff > 0 ? "+" : ""}${diff}`;
+        diffCell.className = diff === 0 ? "inventory-audit-diff neutral" : diff < 0 ? "inventory-audit-diff shortage" : "inventory-audit-diff overage";
+      }
+    }
+    return;
+  }
+
+  if (action === "update-inventory-audit-note") {
+    updateInventoryAuditDraft(field.dataset.stockItemId || "", "note", field.value);
   }
 }
 
@@ -21480,6 +22228,13 @@ function handleDashboardChange(event) {
     return;
   }
 
+  const inventoryAuditReasonSelect = event.target.closest("[data-action='update-inventory-audit-reason']");
+
+  if (inventoryAuditReasonSelect) {
+    updateInventoryAuditDraft(inventoryAuditReasonSelect.dataset.stockItemId || "", "reason", inventoryAuditReasonSelect.value);
+    return;
+  }
+
   const roomTimeLogRoomFilterSelect = event.target.closest(".room-time-logs-room-filter");
 
   if (roomTimeLogRoomFilterSelect) {
@@ -21591,7 +22346,7 @@ async function initializeDashboard() {
   }
 
   if (canAccessDashboardTab("stock")) {
-    initialLoads.push(loadTodayStockMovements());
+    initialLoads.push(loadTodayStockMovements(), loadInventoryAudits());
   }
 
   if (canAccessDashboardTab("reports")) {

@@ -1,0 +1,1 @@
+audit_line_id,audit_id,stock_item_id,stock_item_name,category,unit,book_qty_snapshot,count_qty,final_qty,difference_qty,reason_code,note,status,movement_id,updated_at

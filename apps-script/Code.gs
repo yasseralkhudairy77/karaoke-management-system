@@ -46,6 +46,18 @@ var NUMERIC_FIELDS = {
   qty_change: true,
   stock_before: true,
   stock_after: true,
+  total_items: true,
+  counted_items: true,
+  matched_items: true,
+  variance_items: true,
+  shortage_items: true,
+  overage_items: true,
+  absolute_variance_qty: true,
+  net_variance_qty: true,
+  book_qty_snapshot: true,
+  count_qty: true,
+  final_qty: true,
+  difference_qty: true,
   cost_per_unit: true,
   cost_rate: true,
   selling_rate: true,
@@ -346,6 +358,47 @@ var STOCK_MOVEMENTS_HEADERS = [
   "stock_after",
   "note",
   "cashier_name",
+];
+var INVENTORY_AUDIT_HEADERS = [
+  "audit_id",
+  "operational_date",
+  "audit_type",
+  "scope",
+  "status",
+  "started_at",
+  "started_by",
+  "submitted_at",
+  "submitted_by",
+  "approved_at",
+  "approved_by",
+  "posted_at",
+  "posted_by",
+  "note",
+  "total_items",
+  "counted_items",
+  "matched_items",
+  "variance_items",
+  "shortage_items",
+  "overage_items",
+  "absolute_variance_qty",
+  "net_variance_qty"
+];
+var INVENTORY_AUDIT_LINE_HEADERS = [
+  "audit_line_id",
+  "audit_id",
+  "stock_item_id",
+  "stock_item_name",
+  "category",
+  "unit",
+  "book_qty_snapshot",
+  "count_qty",
+  "final_qty",
+  "difference_qty",
+  "reason_code",
+  "note",
+  "status",
+  "movement_id",
+  "updated_at"
 ];
 var ROOMS_BOOKING_HEADERS = [
   "booked_duration_minutes",
@@ -786,6 +839,14 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getInventoryAudits") {
+      return jsonResponse(getInventoryAudits_(e.parameter.status, e.parameter.limit));
+    }
+
+    if (action === "getInventoryAuditDetails") {
+      return jsonResponse(getInventoryAuditDetails_(e.parameter.audit_id));
+    }
+
     if (action === "getTodayFnbSalesReport") {
       return jsonResponse(getTodayFnbSalesReportByPeriod_(
         e.parameter.period,
@@ -1068,6 +1129,22 @@ function doPost(e) {
         payload.note,
         payload.cashier_name
       ));
+    }
+
+    if (action === "createInventoryAudit") {
+      return jsonResponse(createInventoryAudit_(payload));
+    }
+
+    if (action === "saveInventoryAuditCounts") {
+      return jsonResponse(saveInventoryAuditCounts_(payload));
+    }
+
+    if (action === "submitInventoryAudit") {
+      return jsonResponse(submitInventoryAudit_(payload));
+    }
+
+    if (action === "approveInventoryAudit") {
+      return jsonResponse(approveInventoryAudit_(payload));
     }
 
     if (action === "validateAdminPin") {
@@ -11471,6 +11548,609 @@ function deleteTransaction_(payload) {
   }
 }
 
+function getInventoryAudits_(status, limit) {
+  ensureInventoryAuditSheets_();
+
+  var normalizedStatus = String(status || "").trim().toLowerCase();
+  var maxRows = Math.max(1, Math.min(Number(limit) || 20, 100));
+  var audits = readSheetAsObjectsOrEmpty_("InventoryAudits")
+    .map(normalizeInventoryAudit_)
+    .filter(function (audit) {
+      return audit.audit_id && (!normalizedStatus || normalizedStatus === "all" || audit.status === normalizedStatus);
+    })
+    .sort(function (first, second) {
+      return new Date(second.started_at || second.submitted_at || 0).getTime() - new Date(first.started_at || first.submitted_at || 0).getTime();
+    })
+    .slice(0, maxRows);
+
+  return {
+    ok: true,
+    success: true,
+    audits: audits,
+    summary: buildInventoryAuditListSummary_(audits),
+  };
+}
+
+function getInventoryAuditDetails_(auditId) {
+  ensureInventoryAuditSheets_();
+
+  var normalizedAuditId = String(auditId || "").trim();
+
+  if (!normalizedAuditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var auditSheet = ensureInventoryAuditsSheet_();
+  var auditHeaderMap = getHeaderMap_(auditSheet);
+  var auditRow = findRowByValue_(auditSheet, auditHeaderMap, "audit_id", normalizedAuditId);
+
+  if (!auditRow) {
+    return {
+      ok: false,
+      success: false,
+      error: "Audit inventory tidak ditemukan.",
+    };
+  }
+
+  return {
+    ok: true,
+    success: true,
+    audit: normalizeInventoryAudit_(getRowObject_(auditSheet, auditHeaderMap, auditRow)),
+    lines: getInventoryAuditLinesByAuditId_(normalizedAuditId),
+  };
+}
+
+function createInventoryAudit_(payload) {
+  var request = payload || {};
+  var actor = String(request.started_by || request.cashier_name || "Operator").trim() || "Operator";
+  var auditType = normalizeInventoryAuditType_(request.audit_type || "full");
+  var scope = String(request.scope || "all").trim() || "all";
+  var note = String(request.note || "").trim();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    ensureInventoryAuditSheets_();
+
+    var activeAudit = findActiveInventoryAudit_();
+    if (activeAudit) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada Stock Opname yang belum selesai: " + activeAudit.audit_id,
+        active_audit: activeAudit,
+      };
+    }
+
+    var inventoryItems = getInventoryItems_().items.filter(function (item) {
+      return isInventoryItemActive_(item.status);
+    });
+
+    if (!inventoryItems.length) {
+      return {
+        ok: false,
+        success: false,
+        error: "Tidak ada item inventory aktif untuk diaudit.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var auditId = generateInventoryAuditId_();
+    var audit = buildInventoryAuditRow_(auditId, now, auditType, scope, actor, note, inventoryItems.length);
+    appendObjectRow_(ensureInventoryAuditsSheet_(), audit);
+
+    var lineSheet = ensureInventoryAuditLinesSheet_();
+    inventoryItems.forEach(function (item, index) {
+      appendObjectRow_(lineSheet, {
+        audit_line_id: auditId + "-LINE-" + String(index + 1).padStart(3, "0"),
+        audit_id: auditId,
+        stock_item_id: item.stock_item_id,
+        stock_item_name: item.stock_item_name,
+        category: item.category,
+        unit: item.unit,
+        book_qty_snapshot: Number(item.stock_qty) || 0,
+        count_qty: "",
+        final_qty: "",
+        difference_qty: "",
+        reason_code: "",
+        note: "",
+        status: "pending",
+        movement_id: "",
+        updated_at: now,
+      });
+    });
+
+    return getInventoryAuditDetails_(auditId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function saveInventoryAuditCounts_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var lines = Array.isArray(request.lines) ? request.lines : [];
+  var actor = String(request.updated_by || request.cashier_name || "Operator").trim() || "Operator";
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang menyimpan audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (["draft", "counting"].indexOf(context.audit.status) === -1) {
+      return {
+        ok: false,
+        success: false,
+        error: "Audit yang sudah disubmit atau diposting tidak bisa diedit.",
+      };
+    }
+
+    updateInventoryAuditLineCounts_(auditId, lines);
+    refreshInventoryAuditSummary_(auditId, {
+      status: "counting",
+      note: context.audit.note,
+      submitted_at: "",
+      submitted_by: "",
+    });
+
+    var result = getInventoryAuditDetails_(auditId);
+    result.message = "Hitungan fisik berhasil disimpan oleh " + actor + ".";
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function submitInventoryAudit_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var actor = String(request.submitted_by || request.cashier_name || "Operator").trim() || "Operator";
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang submit audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (["draft", "counting"].indexOf(context.audit.status) === -1) {
+      return {
+        ok: false,
+        success: false,
+        error: "Status audit tidak bisa disubmit.",
+      };
+    }
+
+    var lines = getInventoryAuditLinesByAuditId_(auditId);
+    var countedItems = lines.filter(function (line) {
+      return line.status !== "pending";
+    }).length;
+
+    if (countedItems !== lines.length) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada item yang belum dihitung. Isi 0 jika stok fisik memang kosong.",
+      };
+    }
+
+    refreshInventoryAuditSummary_(auditId, {
+      status: "submitted",
+      submitted_at: toJakartaIsoString_(new Date()),
+      submitted_by: actor,
+    });
+
+    return getInventoryAuditDetails_(auditId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function approveInventoryAudit_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var approverName = String(request.approved_by || request.cashier_name || "Owner").trim() || "Owner";
+  var pinResult = validateAdminPinPayload_(
+    request.admin_pin,
+    "manager",
+    "approve_inventory_audit",
+    approverName,
+    true
+  );
+
+  if (!pinResult.success) {
+    return pinResult;
+  }
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return createLockBusyResponse_("Sistem sedang posting audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (context.audit.status !== "submitted") {
+      return {
+        ok: false,
+        success: false,
+        error: "Audit harus berstatus submitted sebelum approval.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    postInventoryAuditDifferences_(auditId, approverName, now);
+    refreshInventoryAuditSummary_(auditId, {
+      status: "posted",
+      approved_at: now,
+      approved_by: pinResult.employee.employee_name || approverName,
+      posted_at: now,
+      posted_by: pinResult.employee.employee_name || approverName,
+    });
+
+    var result = getInventoryAuditDetails_(auditId);
+    result.message = "Stock Opname berhasil di-approve dan diposting.";
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normalizeInventoryAudit_(audit) {
+  return {
+    audit_id: audit.audit_id || "",
+    operational_date: audit.operational_date || "",
+    audit_type: audit.audit_type || "full",
+    scope: audit.scope || "all",
+    status: String(audit.status || "draft").trim().toLowerCase(),
+    started_at: normalizeFnbOrderDateTime_(audit.started_at),
+    started_by: audit.started_by || "",
+    submitted_at: normalizeFnbOrderDateTime_(audit.submitted_at),
+    submitted_by: audit.submitted_by || "",
+    approved_at: normalizeFnbOrderDateTime_(audit.approved_at),
+    approved_by: audit.approved_by || "",
+    posted_at: normalizeFnbOrderDateTime_(audit.posted_at),
+    posted_by: audit.posted_by || "",
+    note: audit.note || "",
+    total_items: Number(audit.total_items) || 0,
+    counted_items: Number(audit.counted_items) || 0,
+    matched_items: Number(audit.matched_items) || 0,
+    variance_items: Number(audit.variance_items) || 0,
+    shortage_items: Number(audit.shortage_items) || 0,
+    overage_items: Number(audit.overage_items) || 0,
+    absolute_variance_qty: Number(audit.absolute_variance_qty) || 0,
+    net_variance_qty: Number(audit.net_variance_qty) || 0,
+  };
+}
+
+function normalizeInventoryAuditLine_(line) {
+  var bookQty = Number(line.book_qty_snapshot) || 0;
+  var countQty = line.count_qty === "" || line.count_qty === null ? "" : Number(line.count_qty);
+  var finalQty = line.final_qty === "" || line.final_qty === null ? "" : Number(line.final_qty);
+
+  return {
+    audit_line_id: line.audit_line_id || "",
+    audit_id: line.audit_id || "",
+    stock_item_id: line.stock_item_id || "",
+    stock_item_name: line.stock_item_name || "",
+    category: line.category || "",
+    unit: line.unit || "",
+    book_qty_snapshot: bookQty,
+    count_qty: countQty,
+    final_qty: finalQty,
+    difference_qty: line.difference_qty === "" || line.difference_qty === null ? "" : Number(line.difference_qty),
+    reason_code: line.reason_code || "",
+    note: line.note || "",
+    status: String(line.status || "pending").trim().toLowerCase() || "pending",
+    movement_id: line.movement_id || "",
+    updated_at: normalizeFnbOrderDateTime_(line.updated_at),
+  };
+}
+
+function normalizeInventoryAuditType_(value) {
+  var normalizedValue = String(value || "full").trim().toLowerCase();
+  return ["full", "partial"].indexOf(normalizedValue) === -1 ? "full" : normalizedValue;
+}
+
+function buildInventoryAuditRow_(auditId, now, auditType, scope, actor, note, totalItems) {
+  return {
+    audit_id: auditId,
+    operational_date: getOperationalDateString_(now),
+    audit_type: auditType,
+    scope: scope,
+    status: "draft",
+    started_at: now,
+    started_by: actor,
+    submitted_at: "",
+    submitted_by: "",
+    approved_at: "",
+    approved_by: "",
+    posted_at: "",
+    posted_by: "",
+    note: note,
+    total_items: totalItems,
+    counted_items: 0,
+    matched_items: 0,
+    variance_items: 0,
+    shortage_items: 0,
+    overage_items: 0,
+    absolute_variance_qty: 0,
+    net_variance_qty: 0,
+  };
+}
+
+function buildInventoryAuditListSummary_(audits) {
+  return audits.reduce(function (summary, audit) {
+    summary.total_audits += 1;
+    summary[audit.status + "_count"] = (summary[audit.status + "_count"] || 0) + 1;
+    summary.total_variance_items += Number(audit.variance_items) || 0;
+    summary.total_absolute_variance_qty += Number(audit.absolute_variance_qty) || 0;
+    return summary;
+  }, {
+    total_audits: 0,
+    draft_count: 0,
+    counting_count: 0,
+    submitted_count: 0,
+    posted_count: 0,
+    total_variance_items: 0,
+    total_absolute_variance_qty: 0,
+  });
+}
+
+function findActiveInventoryAudit_() {
+  return readSheetAsObjectsOrEmpty_("InventoryAudits")
+    .map(normalizeInventoryAudit_)
+    .find(function (audit) {
+      return audit.audit_id && ["draft", "counting", "submitted"].indexOf(audit.status) !== -1;
+    }) || null;
+}
+
+function getInventoryAuditContext_(auditId) {
+  ensureInventoryAuditSheets_();
+
+  var auditSheet = ensureInventoryAuditsSheet_();
+  var auditHeaderMap = getHeaderMap_(auditSheet);
+  var auditRow = findRowByValue_(auditSheet, auditHeaderMap, "audit_id", auditId);
+
+  if (!auditRow) {
+    return {
+      ok: false,
+      success: false,
+      error: "Audit inventory tidak ditemukan.",
+    };
+  }
+
+  return {
+    ok: true,
+    success: true,
+    sheet: auditSheet,
+    headerMap: auditHeaderMap,
+    rowNumber: auditRow,
+    audit: normalizeInventoryAudit_(getRowObject_(auditSheet, auditHeaderMap, auditRow)),
+  };
+}
+
+function getInventoryAuditLinesByAuditId_(auditId) {
+  return readSheetAsObjectsOrEmpty_("InventoryAuditLines")
+    .map(normalizeInventoryAuditLine_)
+    .filter(function (line) {
+      return String(line.audit_id || "").trim() === String(auditId || "").trim();
+    })
+    .sort(function (first, second) {
+      return String(first.stock_item_name || "").localeCompare(String(second.stock_item_name || ""), "id");
+    });
+}
+
+function updateInventoryAuditLineCounts_(auditId, lines) {
+  var lineSheet = ensureInventoryAuditLinesSheet_();
+  var lineHeaderMap = getHeaderMap_(lineSheet);
+  var lineByItemId = {};
+
+  lines.forEach(function (line) {
+    var stockItemId = String(line.stock_item_id || "").trim();
+    if (stockItemId) {
+      lineByItemId[stockItemId] = line;
+    }
+  });
+
+  if (lineSheet.getLastRow() < 2) {
+    return;
+  }
+
+  var now = toJakartaIsoString_(new Date());
+  for (var rowNumber = 2; rowNumber <= lineSheet.getLastRow(); rowNumber++) {
+    var currentLine = getRowObject_(lineSheet, lineHeaderMap, rowNumber);
+    if (String(currentLine.audit_id || "").trim() !== auditId) {
+      continue;
+    }
+
+    var incoming = lineByItemId[String(currentLine.stock_item_id || "").trim()];
+    if (!incoming || incoming.count_qty === "" || incoming.count_qty === null || incoming.count_qty === undefined) {
+      continue;
+    }
+
+    var countQty = toNonNegativeStockQuantity_(incoming.count_qty);
+    if (countQty === null) {
+      throw new Error("Qty fisik " + currentLine.stock_item_name + " harus 0 atau lebih.");
+    }
+
+    var bookQty = Number(currentLine.book_qty_snapshot) || 0;
+    var finalQty = countQty;
+    setRowValues_(lineSheet, lineHeaderMap, rowNumber, {
+      count_qty: countQty,
+      final_qty: finalQty,
+      difference_qty: finalQty - bookQty,
+      reason_code: String(incoming.reason_code || "").trim(),
+      note: String(incoming.note || "").trim(),
+      status: "counted",
+      updated_at: now,
+    });
+  }
+}
+
+function refreshInventoryAuditSummary_(auditId, overrides) {
+  var context = getInventoryAuditContext_(auditId);
+  if (!context.ok) {
+    return context;
+  }
+
+  var lines = getInventoryAuditLinesByAuditId_(auditId);
+  var summary = lines.reduce(function (result, line) {
+    var status = String(line.status || "").trim().toLowerCase();
+    var difference = Number(line.difference_qty) || 0;
+
+    if (status !== "pending") {
+      result.counted_items += 1;
+      if (difference === 0) {
+        result.matched_items += 1;
+      } else {
+        result.variance_items += 1;
+        result.absolute_variance_qty += Math.abs(difference);
+        result.net_variance_qty += difference;
+        if (difference < 0) {
+          result.shortage_items += 1;
+        } else {
+          result.overage_items += 1;
+        }
+      }
+    }
+
+    return result;
+  }, {
+    total_items: lines.length,
+    counted_items: 0,
+    matched_items: 0,
+    variance_items: 0,
+    shortage_items: 0,
+    overage_items: 0,
+    absolute_variance_qty: 0,
+    net_variance_qty: 0,
+  });
+
+  setRowValues_(context.sheet, context.headerMap, context.rowNumber, Object.assign(summary, overrides || {}));
+  return getInventoryAuditDetails_(auditId);
+}
+
+function postInventoryAuditDifferences_(auditId, actor, now) {
+  var inventorySheet = ensureInventorySheetColumns_();
+  var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+  var lineSheet = ensureInventoryAuditLinesSheet_();
+  var lineHeaderMap = getHeaderMap_(lineSheet);
+  var lines = getInventoryAuditLinesByAuditId_(auditId);
+
+  lines.forEach(function (line) {
+    var difference = Number(line.difference_qty) || 0;
+    var rowNumber = findInventoryRowByStockItemId_(line.stock_item_id, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      throw new Error("Item stok audit tidak ditemukan: " + line.stock_item_id);
+    }
+
+    var currentItem = buildInventoryItemFromRow_(inventorySheet, inventoryHeaderMap, rowNumber);
+    if (!isInventoryItemActive_(currentItem.status)) {
+      throw new Error("Item stok tidak aktif: " + currentItem.stock_item_name);
+    }
+
+    var stockBefore = Number(currentItem.stock_qty) || 0;
+    var stockAfter = Number(line.final_qty);
+    if (!isFinite(stockAfter) || stockAfter < 0) {
+      throw new Error("Final qty tidak valid untuk " + line.stock_item_name);
+    }
+
+    var movementId = "";
+    if (stockAfter !== stockBefore) {
+      movementId = generateStockMovementId_();
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).setValue(stockAfter);
+      if (inventoryHeaderMap.updated_at) {
+        inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+      }
+      appendStockMovement_({
+        movement_id: movementId,
+        created_at: now,
+        stock_item_id: currentItem.stock_item_id,
+        stock_item_name: currentItem.stock_item_name,
+        movement_type: "adjustment",
+        reference_type: "stock_audit",
+        reference_id: auditId,
+        qty_change: stockAfter - stockBefore,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        note: buildInventoryAuditMovementNote_(line),
+        cashier_name: actor,
+      });
+    }
+
+    var lineRow = findRowByValue_(lineSheet, lineHeaderMap, "audit_line_id", line.audit_line_id);
+    if (lineRow) {
+      setRowValues_(lineSheet, lineHeaderMap, lineRow, {
+        status: "posted",
+        movement_id: movementId,
+        updated_at: now,
+      });
+    }
+  });
+}
+
+function buildInventoryAuditMovementNote_(line) {
+  var reason = String(line.reason_code || "").trim();
+  var note = String(line.note || "").trim();
+  var parts = ["Stock Opname"];
+
+  if (reason) {
+    parts.push("Reason: " + reason);
+  }
+
+  if (note) {
+    parts.push(note);
+  }
+
+  return parts.join(" - ");
+}
+
 function getAllowedPaymentMethods_() {
   return {
     cash: true,
@@ -12223,7 +12903,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
     };
   }
 
-  if (normalizedReferenceType && ["transaction", "manual_adjustment"].indexOf(normalizedReferenceType) === -1) {
+  if (normalizedReferenceType && ["transaction", "manual_adjustment", "stock_audit"].indexOf(normalizedReferenceType) === -1) {
     return {
       ok: false,
       error: "Jenis referensi mutasi stok tidak dikenal.",
@@ -13092,6 +13772,10 @@ function generateFnbOrderId_() {
 
 function generateStockMovementId_() {
   return "MOV-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function generateInventoryAuditId_() {
+  return "SO-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
 function runFnbV23BInventoryIdentityDryRun() {
@@ -14645,6 +15329,19 @@ function ensureStockMovementsSheet_() {
   });
 
   return sheet;
+}
+
+function ensureInventoryAuditsSheet_() {
+  return ensureSheetColumns_("InventoryAudits", INVENTORY_AUDIT_HEADERS);
+}
+
+function ensureInventoryAuditLinesSheet_() {
+  return ensureSheetColumns_("InventoryAuditLines", INVENTORY_AUDIT_LINE_HEADERS);
+}
+
+function ensureInventoryAuditSheets_() {
+  ensureInventoryAuditsSheet_();
+  ensureInventoryAuditLinesSheet_();
 }
 
 function ensureRoomsBookingColumns_() {

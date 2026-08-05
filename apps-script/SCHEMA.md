@@ -1713,6 +1713,31 @@ Menghubungkan menu dengan item inventory yang dipakai.
 | `qty_used` | Jumlah item yang dipakai untuk satu menu. |
 | `unit` | Satuan pemakaian. |
 
+## InventoryAudits
+
+Menyimpan header Stock Opname per batch audit outlet.
+
+Status audit:
+
+- `draft` - audit baru dibuat dan snapshot stok sistem sudah diambil.
+- `counting` - qty fisik mulai diinput.
+- `submitted` - hitungan dikunci untuk pemeriksa.
+- `posted` - sudah di-approve dan selisih sudah diposting ke `Inventory` serta `StockMovements`.
+
+## InventoryAuditLines
+
+Menyimpan detail item per Stock Opname.
+
+Kolom penting:
+
+- `book_qty_snapshot` adalah stok sistem saat audit dibuat.
+- `count_qty` adalah qty fisik yang dihitung di outlet. Isi `0` jika memang kosong.
+- `difference_qty = final_qty - book_qty_snapshot`.
+- `reason_code` menjelaskan penyebab selisih, contoh `damaged`, `expired`, `internal_use`, `unrecorded_receipt`, `unrecorded_sale`, `unit_error`, `missing`, `miscount`, atau `other`.
+- `movement_id` terisi setelah audit diposting dan item tersebut membuat mutasi stok.
+
+POST `createInventoryAudit` membuat batch Stock Opname full untuk semua item inventory aktif. POST `saveInventoryAuditCounts` menyimpan draft hitungan. POST `submitInventoryAudit` mengunci hasil hitungan untuk approval. POST `approveInventoryAudit` membutuhkan PIN owner/manager, lalu menyetel stok aktual dan menulis mutasi `reference_type = stock_audit`.
+
 ## Employees
 
 Menyimpan data karyawan awal.
