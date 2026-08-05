@@ -1032,6 +1032,10 @@ function doPost(e) {
       return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
     }
 
+    if (action === "updateTransactionDetails") {
+      return jsonResponse(updateTransactionDetails_(payload));
+    }
+
     if (action === "deleteTransaction") {
       return jsonResponse(deleteTransaction_(payload));
     }
@@ -9248,20 +9252,6 @@ function startSession_(roomId, durationMinutes, options) {
     };
   }
 
-  if (normalizedPeriod === "last_month") {
-    var dateParts = activeOperationalDate.split("-");
-    var firstOfThisMonth = new Date(Date.UTC(Number(dateParts[0]), Number(dateParts[1]) - 1, 1, 5, 0, 0));
-    var lastOfPreviousMonth = new Date(firstOfThisMonth.getTime() - 86400000);
-    var previousYear = Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "yyyy");
-    var previousMonth = Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "MM");
-
-    return {
-      ok: true,
-      period: normalizedPeriod,
-      startDate: previousYear + "-" + previousMonth + "-01",
-      endDate: Utilities.formatDate(lastOfPreviousMonth, "Asia/Jakarta", "yyyy-MM-dd"),
-    };
-  }
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) {
@@ -10743,12 +10733,16 @@ function closeSession_(roomId, cashierName, requestPayload) {
           return String(log.session_id || "").trim() === String(sessionForLc.session_id || "").trim();
         });
         
-        var totalLcCost = 0;
+        var uniqueLcLogsMap = {};
         workLogRowsForLc.forEach(function(log) {
           var selId = String(log.lc_id || "").trim();
           if (selId === "PENDING" || !selId) return;
-          
-          totalLcCost += Number(log.rate) || 0;
+          uniqueLcLogsMap[selId] = log;
+        });
+
+        var totalLcCost = 0;
+        Object.keys(uniqueLcLogsMap).forEach(function(selId) {
+          totalLcCost += Number(uniqueLcLogsMap[selId].rate) || 0;
         });
         
         var includedLcCredit = postpaidPackageContext
@@ -11084,21 +11078,44 @@ function assignSessionLcs_(payload) {
           lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
         }
       } else {
-        // Lebih banyak LC baru dari slot PENDING → tambah baris baru
-        // Calculate the rate based on remaining booked duration
+        // Check if an active work log already exists for this session and LC ID
+        var existingLogIndex = -1;
+        for (var wIdx = 0; wIdx < workLogRows.length; wIdx++) {
+          var wLog = workLogRows[wIdx];
+          if (
+            String(wLog.session_id || "").trim() === String(session.session_id || "").trim() &&
+            String(wLog.lc_id || "").trim() === newId &&
+            wLog.status === "active"
+          ) {
+            existingLogIndex = wIdx;
+            break;
+          }
+        }
+
         var rateForRemaining = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
-        appendLcWorkLog_({
-          log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + newId + "-" + Math.floor(Math.random() * 100),
-          session_id: session.session_id,
-          lc_id: newId,
-          lc_name: foundLc ? foundLc.lc_name : newId,
-          rate: rateForRemaining,
-          duration_minutes: requestedDurationMinutes,
-          rate_per_hour: hourlyRate,
-          status: "active",
-          created_at: now,
-          closed_at: "",
-        });
+
+        if (existingLogIndex >= 0) {
+          var activeRowNum = existingLogIndex + 2;
+          lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.rate).setValue(rateForRemaining);
+          if (lcWorkLogsHeaders.duration_minutes) {
+            lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.duration_minutes).setValue(requestedDurationMinutes);
+          }
+          if (lcWorkLogsHeaders.rate_per_hour) {
+            lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
+          }
+        } else {
+          appendLcWorkLog_({
+            log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + newId + "-" + Math.floor(Math.random() * 100),
+            session_id: session.session_id,
+            lc_id: newId,
+            lc_name: foundLc ? foundLc.lc_name : newId,
+            rate: rateForRemaining,
+            duration_minutes: requestedDurationMinutes,
+            rate_per_hour: hourlyRate,
+            status: "active",
+            created_at: now,
+          });
+        }
       }
     });
 
@@ -11245,6 +11262,32 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function updateTransactionDetails_(payload) {
+  var transactionId = String(payload.transaction_id || "").trim();
+  if (!transactionId) return { ok: false, error: "transaction_id wajib diisi." };
+
+  var sheet = getSheet_("Transactions");
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "transaction_id", transactionId);
+
+  if (!rowNumber) return { ok: false, error: "Transaksi tidak ditemukan." };
+
+  if (payload.room_total !== undefined && headerMap.room_total) sheet.getRange(rowNumber, headerMap.room_total).setValue(payload.room_total);
+  if (payload.fnb_total !== undefined && headerMap.fnb_total) sheet.getRange(rowNumber, headerMap.fnb_total).setValue(payload.fnb_total);
+  if (payload.lc_total !== undefined && headerMap.lc_total) sheet.getRange(rowNumber, headerMap.lc_total).setValue(payload.lc_total);
+  if (payload.promo_code !== undefined && headerMap.promo_code) sheet.getRange(rowNumber, headerMap.promo_code).setValue(payload.promo_code);
+  if (payload.promo_discount !== undefined && headerMap.promo_discount) sheet.getRange(rowNumber, headerMap.promo_discount).setValue(payload.promo_discount);
+  if (payload.grand_total !== undefined && headerMap.grand_total) sheet.getRange(rowNumber, headerMap.grand_total).setValue(payload.grand_total);
+  if (payload.fnb_order_ids !== undefined && headerMap.fnb_order_ids) sheet.getRange(rowNumber, headerMap.fnb_order_ids).setValue(payload.fnb_order_ids);
+  if (payload.payment_status !== undefined && headerMap.payment_status) sheet.getRange(rowNumber, headerMap.payment_status).setValue(payload.payment_status);
+
+  return {
+    ok: true,
+    message: "Transaksi berhasil diperbarui.",
+    transaction: getRowObject_(sheet, headerMap, rowNumber),
+  };
 }
 
 function ensureDeletedTransactionsSheet_(transactionHeaders) {
@@ -13447,10 +13490,12 @@ function getOpenFnbOrdersForSession_(roomId, roomStartTime) {
 
   return readFnbOrdersOrEmpty_()
     .filter(function (order) {
+      var status = String(order.order_status || "").trim().toLowerCase();
+      var isUnbilled = status === "open" || (status === "billed" && !String(order.billed_transaction_id || "").trim());
       return (
         String(order.room_id || "").trim() === String(roomId || "").trim() &&
         normalizeFnbOrderDateTime_(order.room_start_time) === normalizedStartTime &&
-        String(order.order_status || "").trim() === "open"
+        isUnbilled
       );
     })
     .map(function (order) {
