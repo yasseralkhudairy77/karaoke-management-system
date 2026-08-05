@@ -4790,6 +4790,41 @@ body::after {
   grid-column: 1 / -1;
 }
 
+.inventory-audit-search-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(212, 160, 49, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.inventory-audit-search-field {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  max-width: 520px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.inventory-audit-search-result {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.inventory-audit-search-empty {
+  padding: 28px 16px !important;
+  color: var(--muted);
+  text-align: center;
+}
+
 .inventory-audit-table-wrap {
   border: 1px solid rgba(212, 160, 49, 0.18);
   border-radius: 8px;
@@ -4875,6 +4910,19 @@ body::after {
 
   .inventory-audit-header-card {
     grid-template-columns: 1fr;
+  }
+
+  .inventory-audit-search-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inventory-audit-search-field {
+    max-width: none;
+  }
+
+  .inventory-audit-search-result {
+    margin: 0;
   }
 }
 

@@ -848,6 +848,7 @@ let inventoryAudits = [];
 let inventoryAuditSummary = null;
 let selectedInventoryAudit = null;
 let selectedInventoryAuditLines = [];
+let inventoryAuditSearchQuery = "";
 let inventoryAuditCountDraft = {};
 let inventoryAuditSealedBottleDraft = {};
 let inventoryAuditOpenPercentageDraft = {};
@@ -2602,9 +2603,13 @@ async function selectInventoryAudit(auditId, { renderAfter = true } = {}) {
   }
 
   try {
+    const isDifferentAudit = selectedInventoryAudit?.audit_id !== auditId;
     const data = await fetchInventoryAuditDetailsFromApi(auditId);
     selectedInventoryAudit = data.audit || null;
     selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : [];
+    if (isDifferentAudit) {
+      inventoryAuditSearchQuery = "";
+    }
     hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
   } catch (error) {
     console.warn("Gagal memuat detail Stock Opname.", error);
@@ -2790,6 +2795,35 @@ function formatInventoryAuditQty(value) {
   return Number.isFinite(qty)
     ? qty.toLocaleString("id-ID", { maximumFractionDigits: 4 })
     : "-";
+}
+
+function getFilteredInventoryAuditLines() {
+  const query = inventoryAuditSearchQuery.trim().toLowerCase();
+  if (!query) {
+    return selectedInventoryAuditLines;
+  }
+
+  return selectedInventoryAuditLines.filter((line) => [
+    line.stock_item_name,
+    line.stock_item_id,
+    line.category,
+    line.unit,
+  ].some((value) => String(value || "").toLowerCase().includes(query)));
+}
+
+function setInventoryAuditSearchQuery(value) {
+  inventoryAuditSearchQuery = value;
+  renderRooms();
+
+  const searchInput = queryDashboard(".inventory-audit-search-input");
+  if (searchInput) {
+    searchInput.focus();
+    try {
+      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    } catch (error) {
+      // Menjaga pencarian tetap nyaman pada browser yang mendukung selection range.
+    }
+  }
 }
 
 function refreshInventoryAuditBottleRow(field) {
@@ -13914,11 +13948,39 @@ function createInventoryAuditDetailElement() {
 
   detail.append(
     createInventoryAuditHeaderCardElement(),
+    createInventoryAuditSearchElement(),
     createInventoryAuditLinesTableElement(),
     createInventoryAuditActionsElement()
   );
 
   return detail;
+}
+
+function createInventoryAuditSearchElement() {
+  const toolbar = document.createElement("div");
+  toolbar.className = "inventory-audit-search-toolbar";
+
+  const label = document.createElement("label");
+  label.className = "inventory-audit-search-field";
+
+  const labelText = document.createElement("span");
+  labelText.textContent = "Cari barang";
+
+  const input = document.createElement("input");
+  input.type = "search";
+  input.className = "stock-movements-item-filter inventory-audit-search-input";
+  input.placeholder = "Cari nama, ID, kategori, atau satuan";
+  input.value = inventoryAuditSearchQuery;
+  input.dataset.action = "filter-inventory-audit-items";
+
+  label.append(labelText, input);
+
+  const result = document.createElement("p");
+  result.className = "inventory-audit-search-result";
+  result.textContent = `${getFilteredInventoryAuditLines().length} dari ${selectedInventoryAuditLines.length} barang`;
+
+  toolbar.append(label, result);
+  return toolbar;
 }
 
 function createInventoryAuditHeaderCardElement() {
@@ -13967,9 +14029,20 @@ function createInventoryAuditLinesTableElement() {
   const tbody = document.createElement("tbody");
   const isEditable = ["draft", "counting"].includes(selectedInventoryAudit.status);
 
-  selectedInventoryAuditLines.forEach((line) => {
+  const filteredLines = getFilteredInventoryAuditLines();
+  filteredLines.forEach((line) => {
     tbody.appendChild(createInventoryAuditLineRowElement(line, isEditable));
   });
+
+  if (filteredLines.length === 0) {
+    const emptyRow = document.createElement("tr");
+    const emptyCell = document.createElement("td");
+    emptyCell.colSpan = 6;
+    emptyCell.className = "inventory-audit-search-empty";
+    emptyCell.textContent = `Barang dengan pencarian “${inventoryAuditSearchQuery}” tidak ditemukan.`;
+    emptyRow.appendChild(emptyCell);
+    tbody.appendChild(emptyRow);
+  }
 
   table.appendChild(tbody);
   wrap.appendChild(table);
@@ -22212,6 +22285,11 @@ function handleDashboardInput(event) {
     settingsInventorySearchQuery = field.value;
     resetPaginationPage("settingsInventory");
     renderRooms();
+    return;
+  }
+
+  if (action === "filter-inventory-audit-items") {
+    setInventoryAuditSearchQuery(field.value);
     return;
   }
 
