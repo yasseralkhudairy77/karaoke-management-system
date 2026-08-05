@@ -4810,6 +4810,32 @@ body::after {
   min-width: 96px;
 }
 
+.inventory-audit-bottle-count {
+  min-width: 250px;
+}
+
+.inventory-audit-bottle-count label {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.inventory-audit-bottle-count input {
+  width: 100%;
+}
+
+.inventory-audit-bottle-total {
+  margin-top: 8px;
+  color: var(--available);
+}
+
+.inventory-audit-bottle-total.invalid {
+  color: var(--occupied);
+}
+
 .inventory-audit-diff {
   font-weight: 900;
 }

@@ -1732,11 +1732,15 @@ Kolom penting:
 
 - `book_qty_snapshot` adalah stok sistem saat audit dibuat.
 - `count_qty` adalah qty fisik yang dihitung di outlet. Isi `0` jika memang kosong.
+- Item dengan satuan `botol`, `bottle`, atau `btl` memakai `count_method = bottle_percent`. Operator mengisi jumlah botol penuh pada `sealed_container_qty` dan daftar persentase isi setiap botol terbuka pada `open_container_percentages_json`.
+- Untuk metode botol, `count_qty = sealed_container_qty + jumlah(persentase / 100)`. Contoh 2 botol penuh dan satu botol terbuka 40% menghasilkan `count_qty = 2.4`. Rincian persentase mentah dipertahankan untuk analisis operasional di masa depan.
 - `difference_qty = final_qty - book_qty_snapshot`.
 - `reason_code` menjelaskan penyebab selisih, contoh `damaged`, `expired`, `internal_use`, `unrecorded_receipt`, `unrecorded_sale`, `unit_error`, `missing`, `miscount`, atau `other`.
 - `movement_id` terisi setelah audit diposting dan item tersebut membuat mutasi stok.
 
 POST `createInventoryAudit` membuat batch Stock Opname full untuk semua item inventory aktif. POST `saveInventoryAuditCounts` menyimpan draft hitungan. POST `submitInventoryAudit` mengunci hasil hitungan untuk approval. POST `approveInventoryAudit` membutuhkan PIN owner/manager, lalu menyetel stok aktual dan menulis mutasi `reference_type = stock_audit`.
+
+Fase ini belum menerapkan Recipe/BOM untuk konsumsi cocktail. Karena itu persentase botol terbuka dipakai sebagai observasi stok fisik dan dasar pembelajaran pemakaian aktual, bukan sebagai tuduhan kehilangan atau selisih bartender.
 
 ## Employees
 

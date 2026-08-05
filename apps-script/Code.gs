@@ -55,6 +55,7 @@ var NUMERIC_FIELDS = {
   absolute_variance_qty: true,
   net_variance_qty: true,
   book_qty_snapshot: true,
+  sealed_container_qty: true,
   count_qty: true,
   final_qty: true,
   difference_qty: true,
@@ -391,6 +392,9 @@ var INVENTORY_AUDIT_LINE_HEADERS = [
   "category",
   "unit",
   "book_qty_snapshot",
+  "count_method",
+  "sealed_container_qty",
+  "open_container_percentages_json",
   "count_qty",
   "final_qty",
   "difference_qty",
@@ -11656,6 +11660,9 @@ function createInventoryAudit_(payload) {
         category: item.category,
         unit: item.unit,
         book_qty_snapshot: Number(item.stock_qty) || 0,
+        count_method: "",
+        sealed_container_qty: "",
+        open_container_percentages_json: "",
         count_qty: "",
         final_qty: "",
         difference_qty: "",
@@ -11880,6 +11887,11 @@ function normalizeInventoryAuditLine_(line) {
     category: line.category || "",
     unit: line.unit || "",
     book_qty_snapshot: bookQty,
+    count_method: line.count_method || "direct",
+    sealed_container_qty: line.sealed_container_qty === "" || line.sealed_container_qty === null
+      ? ""
+      : Number(line.sealed_container_qty),
+    open_container_percentages: parseInventoryAuditOpenPercentages_(line.open_container_percentages_json),
     count_qty: countQty,
     final_qty: finalQty,
     difference_qty: line.difference_qty === "" || line.difference_qty === null ? "" : Number(line.difference_qty),
@@ -11888,6 +11900,64 @@ function normalizeInventoryAuditLine_(line) {
     status: String(line.status || "pending").trim().toLowerCase() || "pending",
     movement_id: line.movement_id || "",
     updated_at: normalizeFnbOrderDateTime_(line.updated_at),
+  };
+}
+
+function parseInventoryAuditOpenPercentages_(value) {
+  if (Array.isArray(value)) {
+    return value.map(Number).filter(function (percentage) {
+      return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+    });
+  }
+
+  var normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return [];
+  }
+
+  try {
+    var parsed = JSON.parse(normalizedValue);
+    if (Array.isArray(parsed)) {
+      return parsed.map(Number).filter(function (percentage) {
+        return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+      });
+    }
+  } catch (error) {
+    // Mendukung data lama yang ditulis sebagai daftar dipisahkan koma.
+  }
+
+  return normalizedValue.split(",").map(function (percentage) {
+    return Number(String(percentage).trim());
+  }).filter(function (percentage) {
+    return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+  });
+}
+
+function normalizeInventoryAuditBottleCount_(incoming, itemName) {
+  var sealedQty = toNonNegativeStockQuantity_(incoming.sealed_container_qty);
+  if (sealedQty === null || Math.floor(sealedQty) !== sealedQty) {
+    throw new Error("Jumlah botol penuh " + itemName + " harus bilangan bulat 0 atau lebih.");
+  }
+
+  var percentages = Array.isArray(incoming.open_container_percentages)
+    ? incoming.open_container_percentages
+    : parseInventoryAuditOpenPercentages_(incoming.open_container_percentages_json);
+  var normalizedPercentages = percentages.map(Number);
+
+  if (normalizedPercentages.some(function (percentage) {
+    return !Number.isFinite(percentage) || percentage < 0 || percentage > 100;
+  })) {
+    throw new Error("Persentase botol terbuka " + itemName + " harus antara 0 sampai 100.");
+  }
+
+  var openEquivalentQty = normalizedPercentages.reduce(function (total, percentage) {
+    return total + percentage / 100;
+  }, 0);
+
+  return {
+    count_qty: Number((sealedQty + openEquivalentQty).toFixed(4)),
+    sealed_container_qty: sealedQty,
+    open_container_percentages_json: JSON.stringify(normalizedPercentages),
   };
 }
 
@@ -12013,7 +12083,13 @@ function updateInventoryAuditLineCounts_(auditId, lines) {
       continue;
     }
 
-    var countQty = toNonNegativeStockQuantity_(incoming.count_qty);
+    var countMethod = String(incoming.count_method || "direct").trim().toLowerCase();
+    var bottleCount = countMethod === "bottle_percent"
+      ? normalizeInventoryAuditBottleCount_(incoming, currentLine.stock_item_name)
+      : null;
+    var countQty = bottleCount
+      ? bottleCount.count_qty
+      : toNonNegativeStockQuantity_(incoming.count_qty);
     if (countQty === null) {
       throw new Error("Qty fisik " + currentLine.stock_item_name + " harus 0 atau lebih.");
     }
@@ -12021,6 +12097,9 @@ function updateInventoryAuditLineCounts_(auditId, lines) {
     var bookQty = Number(currentLine.book_qty_snapshot) || 0;
     var finalQty = countQty;
     setRowValues_(lineSheet, lineHeaderMap, rowNumber, {
+      count_method: bottleCount ? "bottle_percent" : "direct",
+      sealed_container_qty: bottleCount ? bottleCount.sealed_container_qty : "",
+      open_container_percentages_json: bottleCount ? bottleCount.open_container_percentages_json : "",
       count_qty: countQty,
       final_qty: finalQty,
       difference_qty: finalQty - bookQty,

@@ -849,6 +849,8 @@ let inventoryAuditSummary = null;
 let selectedInventoryAudit = null;
 let selectedInventoryAuditLines = [];
 let inventoryAuditCountDraft = {};
+let inventoryAuditSealedBottleDraft = {};
+let inventoryAuditOpenPercentageDraft = {};
 let inventoryAuditReasonDraft = {};
 let inventoryAuditNoteDraft = {};
 let isLoadingInventoryAudits = false;
@@ -2635,6 +2637,8 @@ async function fetchInventoryAuditDetailsFromApi(auditId) {
 
 function hydrateInventoryAuditDraftsFromLines(lines) {
   inventoryAuditCountDraft = {};
+  inventoryAuditSealedBottleDraft = {};
+  inventoryAuditOpenPercentageDraft = {};
   inventoryAuditReasonDraft = {};
   inventoryAuditNoteDraft = {};
 
@@ -2643,6 +2647,24 @@ function hydrateInventoryAuditDraftsFromLines(lines) {
     inventoryAuditCountDraft[stockItemId] = line.count_qty === "" || line.count_qty === null || line.count_qty === undefined
       ? ""
       : String(Number(line.count_qty) || 0);
+    const storedPercentages = Array.isArray(line.open_container_percentages)
+      ? line.open_container_percentages
+      : [];
+    if (line.count_method === "bottle_percent") {
+      inventoryAuditSealedBottleDraft[stockItemId] = line.sealed_container_qty === "" || line.sealed_container_qty === null
+        ? ""
+        : String(Number(line.sealed_container_qty) || 0);
+      inventoryAuditOpenPercentageDraft[stockItemId] = storedPercentages.join(", ");
+    } else if (isBottleInventoryAuditLine(line) && inventoryAuditCountDraft[stockItemId] !== "") {
+      const existingQty = Number(inventoryAuditCountDraft[stockItemId]) || 0;
+      inventoryAuditSealedBottleDraft[stockItemId] = String(Math.floor(existingQty));
+      inventoryAuditOpenPercentageDraft[stockItemId] = existingQty % 1
+        ? String(Number(((existingQty % 1) * 100).toFixed(2)))
+        : "";
+    } else {
+      inventoryAuditSealedBottleDraft[stockItemId] = "";
+      inventoryAuditOpenPercentageDraft[stockItemId] = "";
+    }
     inventoryAuditReasonDraft[stockItemId] = line.reason_code || "";
     inventoryAuditNoteDraft[stockItemId] = line.note || "";
   });
@@ -2689,6 +2711,10 @@ function updateInventoryAuditDraft(stockItemId, field, value) {
 
   if (field === "count") {
     inventoryAuditCountDraft = { ...inventoryAuditCountDraft, [stockItemId]: value };
+  } else if (field === "sealed_bottles") {
+    inventoryAuditSealedBottleDraft = { ...inventoryAuditSealedBottleDraft, [stockItemId]: value };
+  } else if (field === "open_percentages") {
+    inventoryAuditOpenPercentageDraft = { ...inventoryAuditOpenPercentageDraft, [stockItemId]: value };
   } else if (field === "reason") {
     inventoryAuditReasonDraft = { ...inventoryAuditReasonDraft, [stockItemId]: value };
   } else if (field === "note") {
@@ -2697,12 +2723,112 @@ function updateInventoryAuditDraft(stockItemId, field, value) {
 }
 
 function buildInventoryAuditLinesPayload() {
-  return selectedInventoryAuditLines.map((line) => ({
-    stock_item_id: line.stock_item_id,
-    count_qty: inventoryAuditCountDraft[line.stock_item_id],
-    reason_code: inventoryAuditReasonDraft[line.stock_item_id] || "",
-    note: inventoryAuditNoteDraft[line.stock_item_id] || "",
-  }));
+  return selectedInventoryAuditLines.map((line) => {
+    const stockItemId = line.stock_item_id;
+    const bottleCount = isBottleInventoryAuditLine(line)
+      ? calculateInventoryAuditBottleCount(stockItemId)
+      : null;
+
+    if (bottleCount && !bottleCount.valid) {
+      throw new Error(`Periksa jumlah botol atau persentase isi ${line.stock_item_name || stockItemId}.`);
+    }
+
+    return {
+      stock_item_id: stockItemId,
+      count_method: bottleCount ? "bottle_percent" : "direct",
+      sealed_container_qty: bottleCount ? inventoryAuditSealedBottleDraft[stockItemId] : "",
+      open_container_percentages: bottleCount?.percentages || [],
+      count_qty: bottleCount ? bottleCount.countQty : inventoryAuditCountDraft[stockItemId],
+      reason_code: inventoryAuditReasonDraft[stockItemId] || "",
+      note: inventoryAuditNoteDraft[stockItemId] || "",
+    };
+  });
+}
+
+function isBottleInventoryAuditLine(line) {
+  const unit = String(line?.unit || "").trim().toLowerCase();
+  return ["botol", "bottle", "btl"].includes(unit);
+}
+
+function parseInventoryAuditOpenPercentages(value) {
+  const normalizedValue = String(value ?? "").trim();
+  if (!normalizedValue) {
+    return [];
+  }
+
+  const tokens = normalizedValue.split(/[,;+\s]+/).filter(Boolean);
+  const percentages = tokens.map(Number);
+  return percentages.every((percentage) => Number.isFinite(percentage) && percentage >= 0 && percentage <= 100)
+    ? percentages
+    : null;
+}
+
+function calculateInventoryAuditBottleCount(stockItemId) {
+  const sealedRaw = inventoryAuditSealedBottleDraft[stockItemId] ?? "";
+  const percentagesRaw = inventoryAuditOpenPercentageDraft[stockItemId] ?? "";
+  if (sealedRaw === "" && String(percentagesRaw).trim() === "") {
+    return { countQty: "", percentages: [], valid: true };
+  }
+
+  const sealedQty = Number(sealedRaw);
+  const percentages = parseInventoryAuditOpenPercentages(percentagesRaw);
+  const valid = Number.isInteger(sealedQty) && sealedQty >= 0 && percentages !== null;
+  if (!valid) {
+    return { countQty: "", percentages: percentages || [], valid: false };
+  }
+
+  const openEquivalent = percentages.reduce((total, percentage) => total + percentage / 100, 0);
+  return {
+    countQty: Number((sealedQty + openEquivalent).toFixed(4)),
+    percentages,
+    valid: true,
+  };
+}
+
+function formatInventoryAuditQty(value) {
+  const qty = Number(value);
+  return Number.isFinite(qty)
+    ? qty.toLocaleString("id-ID", { maximumFractionDigits: 4 })
+    : "-";
+}
+
+function refreshInventoryAuditBottleRow(field) {
+  const stockItemId = field.dataset.stockItemId || "";
+  const row = field.closest("tr");
+  const line = selectedInventoryAuditLines.find((item) => item.stock_item_id === stockItemId);
+  const bottleCount = calculateInventoryAuditBottleCount(stockItemId);
+  const totalElement = row?.querySelector(".inventory-audit-bottle-total");
+  const diffCell = row?.querySelector(".inventory-audit-diff");
+
+  inventoryAuditCountDraft = {
+    ...inventoryAuditCountDraft,
+    [stockItemId]: bottleCount.valid ? bottleCount.countQty : "",
+  };
+
+  if (totalElement) {
+    totalElement.classList.toggle("invalid", !bottleCount.valid);
+    totalElement.textContent = !bottleCount.valid
+      ? "Periksa angka persentase"
+      : `Total: ${bottleCount.countQty === "" ? "-" : formatInventoryAuditQty(bottleCount.countQty)} botol`;
+  }
+
+  if (!diffCell) {
+    return;
+  }
+
+  if (!bottleCount.valid || bottleCount.countQty === "") {
+    diffCell.textContent = "-";
+    diffCell.className = "inventory-audit-diff neutral";
+    return;
+  }
+
+  const diff = Number(bottleCount.countQty) - (Number(line?.book_qty_snapshot) || 0);
+  diffCell.textContent = `${diff > 0 ? "+" : ""}${formatInventoryAuditQty(diff)}`;
+  diffCell.className = diff === 0
+    ? "inventory-audit-diff neutral"
+    : diff < 0
+      ? "inventory-audit-diff shortage"
+      : "inventory-audit-diff overage";
 }
 
 async function saveInventoryAuditCounts() {
@@ -13652,7 +13778,7 @@ function createInventoryAuditPanelElement() {
 
   const subtitle = document.createElement("p");
   subtitle.className = "stock-movements-subtitle";
-  subtitle.textContent = "Hitung qty fisik outlet, analisa selisih, lalu posting stok setelah approval pemeriksa.";
+  subtitle.textContent = "Hitung stok fisik outlet. Untuk item botol, catat botol penuh dan persentase isi botol terbuka; hasilnya menjadi data pemakaian aktual, belum penilaian kehilangan.";
 
   titleGroup.append(title, subtitle);
 
@@ -13698,8 +13824,8 @@ function createInventoryAuditSummaryElement() {
   [
     ["Total Item", Number(summary.total_items) || 0],
     ["Sudah Dihitung", Number(summary.counted_items) || 0],
-    ["Item Selisih", Number(summary.variance_items) || 0],
-    ["Total Selisih Absolut", Number(summary.absolute_variance_qty) || 0],
+    ["Item Berbeda", Number(summary.variance_items) || 0],
+    ["Total Beda Absolut", Number(summary.absolute_variance_qty) || 0],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "stock-movements-summary-card";
@@ -13831,7 +13957,7 @@ function createInventoryAuditLinesTableElement() {
         <th>Item</th>
         <th>Kategori</th>
         <th>Qty Fisik</th>
-        <th>Selisih</th>
+        <th>Beda vs Catatan</th>
         <th>Alasan</th>
         <th>Catatan</th>
       </tr>
@@ -13854,7 +13980,9 @@ function createInventoryAuditLinesTableElement() {
 function createInventoryAuditLineRowElement(line, isEditable) {
   const tr = document.createElement("tr");
   const stockItemId = line.stock_item_id || "";
-  const physicalValue = inventoryAuditCountDraft[stockItemId];
+  const isBottleCount = isBottleInventoryAuditLine(line);
+  const bottleCount = isBottleCount ? calculateInventoryAuditBottleCount(stockItemId) : null;
+  const physicalValue = bottleCount ? bottleCount.countQty : inventoryAuditCountDraft[stockItemId];
   const bookQty = Number(line.book_qty_snapshot) || 0;
   const parsedPhysical = physicalValue === "" || physicalValue === undefined ? null : Number(physicalValue);
   const diff = Number.isFinite(parsedPhysical) ? parsedPhysical - bookQty : Number(line.difference_qty) || 0;
@@ -13866,22 +13994,66 @@ function createInventoryAuditLineRowElement(line, isEditable) {
   categoryTd.textContent = `${line.category || "-"} / ${line.unit || "unit"}`;
 
   const qtyTd = document.createElement("td");
-  const qtyInput = document.createElement("input");
-  qtyInput.className = "stock-adjustment-input inventory-audit-count-input";
-  qtyInput.type = "number";
-  qtyInput.min = "0";
-  qtyInput.step = "1";
-  qtyInput.dataset.action = "update-inventory-audit-count";
-  qtyInput.dataset.stockItemId = stockItemId;
-  qtyInput.value = physicalValue ?? "";
-  qtyInput.disabled = !isEditable || isSavingInventoryAudit;
-  qtyTd.appendChild(qtyInput);
+  if (isBottleCount) {
+    qtyTd.className = "inventory-audit-bottle-count";
+
+    const sealedLabel = document.createElement("label");
+    sealedLabel.textContent = "Botol penuh";
+    const sealedInput = document.createElement("input");
+    sealedInput.className = "stock-adjustment-input inventory-audit-count-input";
+    sealedInput.type = "number";
+    sealedInput.min = "0";
+    sealedInput.step = "1";
+    sealedInput.placeholder = "0";
+    sealedInput.dataset.action = "update-inventory-audit-sealed-bottles";
+    sealedInput.dataset.stockItemId = stockItemId;
+    sealedInput.value = inventoryAuditSealedBottleDraft[stockItemId] ?? "";
+    sealedInput.disabled = !isEditable || isSavingInventoryAudit;
+    sealedLabel.appendChild(sealedInput);
+
+    const openLabel = document.createElement("label");
+    openLabel.textContent = "Isi botol terbuka (%)";
+    const openInput = document.createElement("input");
+    openInput.className = "stock-adjustment-input inventory-audit-open-percent-input";
+    openInput.type = "text";
+    openInput.inputMode = "numeric";
+    openInput.placeholder = "Contoh: 40 atau 60, 20";
+    openInput.dataset.action = "update-inventory-audit-open-percentages";
+    openInput.dataset.stockItemId = stockItemId;
+    openInput.value = inventoryAuditOpenPercentageDraft[stockItemId] ?? "";
+    openInput.disabled = !isEditable || isSavingInventoryAudit;
+    openLabel.appendChild(openInput);
+
+    const hint = document.createElement("small");
+    hint.textContent = "Pisahkan dengan koma jika ada lebih dari satu botol terbuka.";
+
+    const total = document.createElement("strong");
+    total.className = bottleCount?.valid === false
+      ? "inventory-audit-bottle-total invalid"
+      : "inventory-audit-bottle-total";
+    total.textContent = bottleCount?.valid === false
+      ? "Periksa angka persentase"
+      : `Total: ${physicalValue === "" ? "-" : formatInventoryAuditQty(physicalValue)} botol`;
+
+    qtyTd.append(sealedLabel, openLabel, hint, total);
+  } else {
+    const qtyInput = document.createElement("input");
+    qtyInput.className = "stock-adjustment-input inventory-audit-count-input";
+    qtyInput.type = "number";
+    qtyInput.min = "0";
+    qtyInput.step = "0.01";
+    qtyInput.dataset.action = "update-inventory-audit-count";
+    qtyInput.dataset.stockItemId = stockItemId;
+    qtyInput.value = physicalValue ?? "";
+    qtyInput.disabled = !isEditable || isSavingInventoryAudit;
+    qtyTd.appendChild(qtyInput);
+  }
 
   const diffTd = document.createElement("td");
   diffTd.className = diff === 0 ? "inventory-audit-diff neutral" : diff < 0 ? "inventory-audit-diff shortage" : "inventory-audit-diff overage";
   diffTd.textContent = physicalValue === "" || physicalValue === undefined
     ? "-"
-    : `${diff > 0 ? "+" : ""}${diff}`;
+    : `${diff > 0 ? "+" : ""}${formatInventoryAuditQty(diff)}`;
 
   const reasonTd = document.createElement("td");
   const reasonSelect = document.createElement("select");
@@ -22092,6 +22264,18 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-inventory-audit-sealed-bottles") {
+    updateInventoryAuditDraft(field.dataset.stockItemId || "", "sealed_bottles", field.value);
+    refreshInventoryAuditBottleRow(field);
+    return;
+  }
+
+  if (action === "update-inventory-audit-open-percentages") {
+    updateInventoryAuditDraft(field.dataset.stockItemId || "", "open_percentages", field.value);
+    refreshInventoryAuditBottleRow(field);
+    return;
+  }
+
   if (action === "update-inventory-audit-count") {
     updateInventoryAuditDraft(field.dataset.stockItemId || "", "count", field.value);
     const row = field.closest("tr");
@@ -22105,7 +22289,7 @@ function handleDashboardInput(event) {
         diffCell.className = "inventory-audit-diff neutral";
       } else {
         const diff = physicalQty - bookQty;
-        diffCell.textContent = `${diff > 0 ? "+" : ""}${diff}`;
+        diffCell.textContent = `${diff > 0 ? "+" : ""}${formatInventoryAuditQty(diff)}`;
         diffCell.className = diff === 0 ? "inventory-audit-diff neutral" : diff < 0 ? "inventory-audit-diff shortage" : "inventory-audit-diff overage";
       }
     }
