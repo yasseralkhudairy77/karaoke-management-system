@@ -7499,9 +7499,11 @@ function resolveLcClosedAtByDuration_(startTime, durationMinutes, fallbackEndTim
 function getLcWorkReports_(period, startDate, endDate) {
   ensureLcWorkLogsSheet_();
   ensureLcMasterSheet_();
+  ensureLcSalesBonusLogsSheet_();
   
   var logs = readSheetAsObjects_("LcWorkLogs");
   var lcs = readSheetAsObjects_("LcMaster");
+  var salesBonusLogs = readSheetAsObjects_("LcSalesBonusLogs");
   
   var range = getOperationalDateRangeForPeriod_(period, startDate, endDate);
 
@@ -7516,6 +7518,16 @@ function getLcWorkReports_(period, startDate, endDate) {
     return matchesOperationalPeriod_(logOperationalDate, range);
   });
 
+  var filteredSalesBonusLogs = salesBonusLogs.filter(function (bonusLog) {
+    var status = String(bonusLog.source_status || "").trim().toLowerCase();
+    var operationalDate = resolveLcFinanceOperationalDate_(bonusLog);
+    return !isLcFinanceRowVoided_(bonusLog) &&
+      status !== "cancelled" &&
+      status !== "voided" &&
+      operationalDate &&
+      matchesOperationalPeriod_(operationalDate, range);
+  });
+
   var reports = lcs.map(function(lc) {
     var lcLogs = filteredLogs.filter(function(log) {
       return String(log.lc_id || "").trim() === String(lc.lc_id || "").trim();
@@ -7527,6 +7539,14 @@ function getLcWorkReports_(period, startDate, endDate) {
       }
       return sum;
     }, 0);
+
+    var lcSalesBonusLogs = filteredSalesBonusLogs.filter(function (bonusLog) {
+      return String(bonusLog.lc_id || "").trim() === String(lc.lc_id || "").trim();
+    });
+    var salesBonusTotal = lcSalesBonusLogs.reduce(function (sum, bonusLog) {
+      return sum + (Number(bonusLog.bonus_total) || 0);
+    }, 0);
+    var grossEarningTotal = totalEarnings + salesBonusTotal;
 
     var mappedLogs = lcLogs.map(function(log) {
       return {
@@ -7543,14 +7563,39 @@ function getLcWorkReports_(period, startDate, endDate) {
       };
     });
 
+    var mappedSalesBonusLogs = lcSalesBonusLogs.map(function (bonusLog) {
+      return {
+        bonus_log_id: bonusLog.bonus_log_id || "",
+        transaction_id: bonusLog.transaction_id || "",
+        order_id: bonusLog.order_id || "",
+        menu_id: bonusLog.menu_id || "",
+        menu_name: bonusLog.menu_name || "",
+        category: bonusLog.category || "",
+        quantity: Number(bonusLog.quantity) || 0,
+        bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
+        bonus_total: Number(bonusLog.bonus_total) || 0,
+        source_status: bonusLog.source_status || "",
+        operational_date: resolveLcFinanceOperationalDate_(bonusLog),
+        created_at: bonusLog.created_at || "",
+      };
+    }).sort(function (first, second) {
+      return String(second.created_at || "").localeCompare(String(first.created_at || ""));
+    });
+
     return {
       lc_id: lc.lc_id,
       lc_name: lc.lc_name,
       rate_per_room: Number(lc.rate_per_room) || 0,
       total_sessions: lcLogs.filter(function(l) { return l.status === "done"; }).length,
-      total_earnings: totalEarnings,
+      room_earning_total: totalEarnings,
+      sales_bonus_total: salesBonusTotal,
+      gross_earning_total: grossEarningTotal,
+      total_earnings: grossEarningTotal,
       logs: mappedLogs,
+      sales_bonus_logs: mappedSalesBonusLogs,
     };
+  }).filter(function (report) {
+    return report.total_sessions > 0 || report.sales_bonus_total > 0;
   });
 
   return {

@@ -1559,6 +1559,8 @@ Rules:
 - `payroll_id` kosong sebelum masuk payroll.
 - Kombinasi `transaction_id + order_id + menu_id + lc_id` tidak boleh dobel untuk bonus aktif.
 
+GET `getLcWorkReports` menggabungkan `LcWorkLogs` dan bonus valid `LcSalesBonusLogs` berdasarkan `lc_id` serta periode operasional yang sama. Respons per LC memisahkan `room_earning_total`, `sales_bonus_total`, dan `gross_earning_total`; `total_earnings` dipertahankan sebagai alias gross untuk kompatibilitas frontend. Bonus yang void/cancelled tidak dihitung. Ranking laporan memakai gross earning dan tidak mengurangi kasbon karena kasbon hanya memengaruhi net payout payroll.
+
 ### LcCashAdvances
 
 Purpose: mencatat kasbon LC yang menjadi potongan payroll dan sekaligus referensi cash out petty cash.

@@ -17718,7 +17718,33 @@ async function executeProcessLcPayroll() {
 let lcReportPeriod = "today";
 let lcReportStartDate = "";
 let lcReportEndDate = "";
+let lcReportSort = "gross_desc";
 let selectedLcDetailForLogs = null;
+
+function getSortedLcWorkReports() {
+  const reports = lcWorkReports.slice();
+  const byName = (first, second) => String(first.lc_name || "").localeCompare(String(second.lc_name || ""), "id");
+
+  reports.sort((first, second) => {
+    if (lcReportSort === "gross_asc") {
+      return (Number(first.gross_earning_total ?? first.total_earnings) || 0)
+        - (Number(second.gross_earning_total ?? second.total_earnings) || 0) || byName(first, second);
+    }
+    if (lcReportSort === "bonus_desc") {
+      return (Number(second.sales_bonus_total) || 0) - (Number(first.sales_bonus_total) || 0) || byName(first, second);
+    }
+    if (lcReportSort === "sessions_desc") {
+      return (Number(second.total_sessions) || 0) - (Number(first.total_sessions) || 0) || byName(first, second);
+    }
+    if (lcReportSort === "name_asc") {
+      return byName(first, second);
+    }
+    return (Number(second.gross_earning_total ?? second.total_earnings) || 0)
+      - (Number(first.gross_earning_total ?? first.total_earnings) || 0) || byName(first, second);
+  });
+
+  return reports;
+}
 
 function createLcPanelElement() {
   const panel = document.createElement("section");
@@ -18041,6 +18067,42 @@ function createLcReportsSubTabElement() {
   periodSelectGroup.append(periodLabel, periodSelect);
   toolbar.appendChild(periodSelectGroup);
 
+  const sortSelectGroup = document.createElement("div");
+  sortSelectGroup.style.display = "flex";
+  sortSelectGroup.style.flexDirection = "column";
+  sortSelectGroup.style.gap = "4px";
+
+  const sortLabel = document.createElement("label");
+  sortLabel.style.fontSize = "12px";
+  sortLabel.style.color = "var(--muted)";
+  sortLabel.textContent = "Urutkan:";
+
+  const sortSelect = document.createElement("select");
+  sortSelect.className = "duration-payment-select";
+  sortSelect.style.padding = "6px";
+  sortSelect.style.borderRadius = "var(--radius-sm)";
+  [
+    ["gross_desc", "Pendapatan Terbesar"],
+    ["gross_asc", "Pendapatan Terkecil"],
+    ["bonus_desc", "Bonus Penjualan Terbesar"],
+    ["sessions_desc", "Sesi Terbanyak"],
+    ["name_asc", "Nama A–Z"],
+  ].forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = lcReportSort === value;
+    sortSelect.appendChild(option);
+  });
+  sortSelect.onchange = (event) => {
+    lcReportSort = event.target.value;
+    lcReportsPage = 1;
+    renderRooms();
+  };
+
+  sortSelectGroup.append(sortLabel, sortSelect);
+  toolbar.appendChild(sortSelectGroup);
+
   const customGroup = document.createElement("div");
   customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
   customGroup.style.gap = "8px";
@@ -18123,22 +18185,25 @@ function createLcReportsSubTabElement() {
       <th>Nama Panggilan</th>
       <th>Tarif per Jam</th>
       <th style="text-align: center;">Total Sesi / Job</th>
-      <th>Total Pendapatan (Gaji)</th>
+      <th>Gaji Room</th>
+      <th>Bonus Penjualan</th>
+      <th>Total Pendapatan</th>
       <th style="text-align: center;">Aksi</th>
     </tr>
   `;
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
+  const sortedReports = getSortedLcWorkReports();
   
   const itemsPerPage = 10;
-  const totalPages = Math.ceil(lcWorkReports.length / itemsPerPage);
+  const totalPages = Math.ceil(sortedReports.length / itemsPerPage);
   if (lcReportsPage > totalPages && totalPages > 0) {
     lcReportsPage = totalPages;
   }
   const startIndex = (lcReportsPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedReports = lcWorkReports.slice(startIndex, endIndex);
+  const paginatedReports = sortedReports.slice(startIndex, endIndex);
 
   paginatedReports.forEach(rep => {
     const tr = document.createElement("tr");
@@ -18147,7 +18212,9 @@ function createLcReportsSubTabElement() {
       <td>${escapeHtml(rep.lc_name)}</td>
       <td>${formatCurrency(rep.rate_per_room)}</td>
       <td style="text-align: center;">${rep.total_sessions}</td>
-      <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+      <td>${formatCurrency(rep.room_earning_total ?? rep.total_earnings)}</td>
+      <td>${formatCurrency(rep.sales_bonus_total || 0)}</td>
+      <td><strong>${formatCurrency(rep.gross_earning_total ?? rep.total_earnings)}</strong></td>
       <td style="text-align: center;">
         <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
       </td>
@@ -19418,8 +19485,10 @@ function createLcDetailLogsOverlay() {
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card";
-  formEl.style.width = "650px";
+  formEl.style.width = "920px";
   formEl.style.maxWidth = "90%";
+  formEl.style.maxHeight = "90vh";
+  formEl.style.overflowY = "auto";
   formEl.style.padding = "24px";
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
@@ -19428,13 +19497,17 @@ function createLcDetailLogsOverlay() {
   const title = document.createElement("h3");
   title.className = "font-title";
   title.style.margin = "0";
-  title.textContent = `Riwayat Sesi Kerja LC - ${selectedLcDetailForLogs.lc_name}`;
+  title.textContent = `Rincian Pendapatan LC - ${selectedLcDetailForLogs.lc_name}`;
 
   const infoText = document.createElement("p");
   infoText.style.margin = "0";
   infoText.style.fontSize = "14px";
   infoText.style.color = "var(--muted)";
-  infoText.textContent = `Menampilkan log kerja untuk ${selectedLcDetailForLogs.lc_id}. Total Sesi: ${selectedLcDetailForLogs.total_sessions}, Total Gaji: ${formatCurrency(selectedLcDetailForLogs.total_earnings)}`;
+  infoText.textContent = `${selectedLcDetailForLogs.lc_id} · ${selectedLcDetailForLogs.total_sessions} sesi · Gaji Room ${formatCurrency(selectedLcDetailForLogs.room_earning_total ?? selectedLcDetailForLogs.total_earnings)} + Bonus ${formatCurrency(selectedLcDetailForLogs.sales_bonus_total || 0)} = Total ${formatCurrency(selectedLcDetailForLogs.gross_earning_total ?? selectedLcDetailForLogs.total_earnings)}`;
+
+  const workTitle = document.createElement("h4");
+  workTitle.style.margin = "4px 0 0";
+  workTitle.textContent = "Riwayat Sesi & Gaji Room";
 
   const tableWrapper = document.createElement("div");
   tableWrapper.className = "table-responsive";
@@ -19484,6 +19557,55 @@ function createLcDetailLogsOverlay() {
   table.appendChild(tbody);
   tableWrapper.appendChild(table);
 
+  const bonusTitle = document.createElement("h4");
+  bonusTitle.style.margin = "4px 0 0";
+  bonusTitle.textContent = "Bonus Penjualan Minuman / F&B";
+
+  const bonusTableWrapper = document.createElement("div");
+  bonusTableWrapper.className = "table-responsive";
+  bonusTableWrapper.style.maxHeight = "260px";
+  bonusTableWrapper.style.overflowY = "auto";
+
+  const bonusTable = document.createElement("table");
+  bonusTable.className = "erp-table";
+  bonusTable.style.width = "100%";
+  bonusTable.style.borderCollapse = "collapse";
+  bonusTable.innerHTML = `
+    <thead>
+      <tr>
+        <th>Waktu</th>
+        <th>Menu</th>
+        <th>Order</th>
+        <th style="text-align:center;">Qty Bagian LC</th>
+        <th>Bonus / Item</th>
+        <th>Total Bonus</th>
+      </tr>
+    </thead>
+  `;
+
+  const bonusTbody = document.createElement("tbody");
+  const bonusLogs = selectedLcDetailForLogs.sales_bonus_logs || [];
+  if (bonusLogs.length === 0) {
+    const emptyBonusRow = document.createElement("tr");
+    emptyBonusRow.innerHTML = `<td colspan="6" style="text-align:center; color:var(--muted);">Tidak ada bonus penjualan pada periode ini.</td>`;
+    bonusTbody.appendChild(emptyBonusRow);
+  } else {
+    bonusLogs.forEach((bonusLog) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><small>${formatDateTimeLabel(bonusLog.created_at)}</small></td>
+        <td><strong>${escapeHtml(bonusLog.menu_name || bonusLog.menu_id || "-")}</strong></td>
+        <td><small>${escapeHtml(bonusLog.order_id || bonusLog.transaction_id || "-")}</small></td>
+        <td style="text-align:center;">${Number(bonusLog.quantity || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
+        <td>${formatCurrency(bonusLog.bonus_per_item || 0)}</td>
+        <td><strong>${formatCurrency(bonusLog.bonus_total || 0)}</strong></td>
+      `;
+      bonusTbody.appendChild(row);
+    });
+  }
+  bonusTable.appendChild(bonusTbody);
+  bonusTableWrapper.appendChild(bonusTable);
+
   const actions = document.createElement("div");
   actions.style.display = "flex";
   actions.style.justifyContent = "flex-end";
@@ -19498,7 +19620,7 @@ function createLcDetailLogsOverlay() {
   };
   actions.appendChild(closeBtn);
 
-  formEl.append(title, infoText, tableWrapper, actions);
+  formEl.append(title, infoText, workTitle, tableWrapper, bonusTitle, bonusTableWrapper, actions);
   overlay.appendChild(formEl);
   return overlay;
 }
