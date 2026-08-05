@@ -746,6 +746,15 @@ function doGet(e) {
       });
     }
 
+    if (action === "correctActiveRoomDuration") {
+      return jsonResponse(correctActiveRoomDuration_(
+        e.parameter.room_id,
+        e.parameter.target_duration_minutes,
+        e.parameter.cashier_name,
+        e.parameter.note
+      ));
+    }
+
     if (action === "getTvDevices") {
       return jsonResponse(getTvDevices_());
     }
@@ -1021,6 +1030,15 @@ function doPost(e) {
         payload.note,
         payload.payment_method,
         payload.payment_status
+      ));
+    }
+
+    if (action === "correctActiveRoomDuration") {
+      return jsonResponse(correctActiveRoomDuration_(
+        payload.room_id,
+        payload.target_duration_minutes,
+        payload.cashier_name,
+        payload.note
       ));
     }
 
@@ -16839,3 +16857,98 @@ function normalizeCompareDate_(val) {
   }
   return clean;
 }
+
+function correctActiveRoomDuration_(roomId, targetDurationMinutes, cashierName, note) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return createLockBusyResponse_("Sistem sedang memproses transaksi lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var normalizedRoomId = String(roomId || "").trim();
+    var duration = Number(targetDurationMinutes);
+
+    if (!normalizedRoomId) {
+      return { ok: false, success: false, error: "room_id wajib diisi." };
+    }
+
+    if (isNaN(duration) || duration <= 0) {
+      return { ok: false, success: false, error: "target_duration_minutes wajib berupa angka bulat positif." };
+    }
+
+    var roomsSheet = ensureRoomsMasterColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var roomRowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+    if (!roomRowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan: " + normalizedRoomId };
+    }
+
+    var roomObj = getRowObject_(roomsSheet, roomsHeaderMap, roomRowNumber);
+    var startTime = roomObj.start_time;
+
+    if (!startTime) {
+      return { ok: false, success: false, error: "Ruangan tidak memiliki sesi aktif." };
+    }
+
+    var newScheduledEndTime = addMinutesToJakartaIsoString_(startTime, duration);
+    var nowIso = toJakartaIsoString_(new Date());
+
+    // Update Rooms sheet
+    setRowValues_(roomsSheet, roomsHeaderMap, roomRowNumber, {
+      booked_duration_minutes: duration,
+      scheduled_end_time: newScheduledEndTime,
+      updated_at: nowIso,
+    });
+
+    // Update RoomSessions sheet if available
+    if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+      var latestSession = findLatestRoomSessionForRoom_(normalizedRoomId, ["starting", "active", "closing"]);
+      if (latestSession && latestSession.session && latestSession.rowNumber) {
+        var updatePayload = {
+          booked_duration_minutes: duration,
+          scheduled_end_time: newScheduledEndTime,
+          updated_at: nowIso,
+        };
+        if (latestSession.session.booking_mode === FNB_V25A_BOOKING_MODE_REGULAR) {
+          updatePayload.billable_room_minutes = duration;
+        }
+        setRowValues_(latestSession.sheet, latestSession.headerMap, latestSession.rowNumber, updatePayload);
+      }
+    }
+
+    // Append RoomTimeLog
+    try {
+      appendRoomTimeLog_({
+        log_id: generateRoomTimeLogId_(),
+        room_id: normalizedRoomId,
+        room_name: roomObj.room_name || normalizedRoomId,
+        action_type: "duration_correction",
+        previous_duration: roomObj.booked_duration_minutes || "",
+        new_duration: duration,
+        cashier_name: cashierName || "Kasir",
+        note: note || "Koreksi durasi room oleh operator",
+        created_at: nowIso,
+      });
+    } catch (logErr) {
+      // Safe fallback
+    }
+
+    return {
+      ok: true,
+      success: true,
+      code: "DURATION_CORRECTED",
+      message: "Durasi " + (roomObj.room_name || normalizedRoomId) + " berhasil dikoreksi menjadi " + duration + " menit (" + (duration / 60) + " jam).",
+      room: {
+        room_id: normalizedRoomId,
+        room_name: roomObj.room_name,
+        booked_duration_minutes: duration,
+        scheduled_end_time: newScheduledEndTime,
+        updated_at: nowIso,
+      },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
