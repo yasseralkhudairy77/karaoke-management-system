@@ -1147,6 +1147,10 @@ function doPost(e) {
       return jsonResponse(recoverExpiredRoomSession_(payload));
     }
 
+    if (action === "recoverManualOutageTransaction20260806") {
+      return jsonResponse(recoverManualOutageTransaction20260806_(payload));
+    }
+
     if (action === "getCustomerDisplayState") {
       return jsonResponse(getCustomerDisplayState_(payload.room_id, payload.token));
     }
@@ -7397,6 +7401,338 @@ function deleteLcMaster_(payload) {
 function appendLcWorkLog_(log) {
   var sheet = ensureLcWorkLogsSheet_();
   appendObjectRow_(sheet, log);
+}
+
+function recoverManualOutageTransaction20260806_(payload) {
+  var request = payload || {};
+  var shouldExecute = request.execute === true || String(request.execute || "").trim().toLowerCase() === "true";
+  var confirmation = String(request.confirmation || "").trim().toUpperCase();
+  var transactionId = "TRX-MANUAL-20260806-0610-ROOM009";
+  var sessionId = "ROOM-009-SESSION-MANUAL-20260806-0610";
+  var orderId = "FNB-MANUAL-20260806-0610-ROOM009";
+  var startTime = "2026-08-06T06:10:00+07:00";
+  var endTime = "2026-08-06T08:10:00+07:00";
+  var operationalDate = "2026-08-05";
+  var cashierName = "Alfin";
+  var roomId = "ROOM-009";
+  var roomName = "Ruangan 9 - EXECUTIVE";
+  var durationMinutes = 120;
+  var ratePerHour = 185000;
+  var grossRoomTotal = 370000;
+  var promoDiscount = 185000;
+  var netRoomTotal = grossRoomTotal - promoDiscount;
+  var menuQuantities = {
+    "MENU-035": 4,
+    "MENU-023": 1,
+    "MENU-011": 5,
+    "MENU-046": 2,
+  };
+  var lcSnapshots = [
+    { lc_id: "LC-015", lc_name: "Leni", rate_per_hour: 125000 },
+    { lc_id: "LC-016", lc_name: "Novi", rate_per_hour: 125000 },
+    { lc_id: "LC-028", lc_name: "Alfin", rate_per_hour: 125000 },
+  ];
+
+  var existingTransaction = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    return String(transaction.transaction_id || "").trim() === transactionId;
+  })[0] || null;
+
+  if (existingTransaction) {
+    return {
+      ok: true,
+      success: true,
+      already_recovered: true,
+      message: "Transaksi manual mati listrik sudah pernah dipulihkan.",
+      transaction: existingTransaction,
+    };
+  }
+
+  var room = readSheetAsObjects_("Rooms").filter(function (roomRow) {
+    return String(roomRow.room_id || "").trim() === roomId;
+  })[0] || null;
+
+  if (!room) {
+    return { ok: false, success: false, error: "Master Executive Room tidak ditemukan." };
+  }
+
+  var menuMap = getMenuItemsMap_();
+  var orderItems = [];
+  var validationErrors = [];
+
+  Object.keys(menuQuantities).forEach(function (menuId) {
+    var menuItem = menuMap[menuId];
+    if (!menuItem || String(menuItem.status || "").trim().toLowerCase() === "inactive") {
+      validationErrors.push("Menu aktif tidak ditemukan: " + menuId);
+      return;
+    }
+    var quantity = menuQuantities[menuId];
+    var price = Number(menuItem.price) || 0;
+    orderItems.push({
+      order_id: orderId,
+      menu_id: menuId,
+      menu_name: menuItem.menu_name,
+      category: menuItem.category,
+      price: price,
+      quantity: quantity,
+      subtotal: price * quantity,
+      bonus_sales_lc: Number(menuItem.bonus_sales_lc) || 0,
+      created_at: endTime,
+    });
+  });
+
+  var lcMasterMap = readSheetAsObjects_("LcMaster").reduce(function (map, lc) {
+    map[String(lc.lc_id || "").trim()] = lc;
+    return map;
+  }, {});
+
+  lcSnapshots.forEach(function (lc) {
+    var masterLc = lcMasterMap[lc.lc_id];
+    if (!masterLc || String(masterLc.lc_name || "").trim() !== lc.lc_name) {
+      validationErrors.push("Master LC tidak cocok: " + lc.lc_id + " / " + lc.lc_name);
+      return;
+    }
+    if (Number(masterLc.rate_per_room) !== lc.rate_per_hour) {
+      validationErrors.push("Tarif LC berubah untuk " + lc.lc_name + ".");
+    }
+  });
+
+  if (validationErrors.length > 0) {
+    return {
+      ok: false,
+      success: false,
+      error: "Validasi recovery gagal.",
+      validation_errors: validationErrors,
+    };
+  }
+
+  var fnbTotal = orderItems.reduce(function (sum, item) {
+    return sum + item.subtotal;
+  }, 0);
+  var lcTotal = lcSnapshots.reduce(function (sum, lc) {
+    return sum + (2 * lc.rate_per_hour);
+  }, 0);
+  var grandTotal = netRoomTotal + fnbTotal + lcTotal;
+  var preview = {
+    transaction_id: transactionId,
+    operational_date: operationalDate,
+    room_id: roomId,
+    room_name: roomName,
+    start_time: startTime,
+    end_time: endTime,
+    duration_minutes: durationMinutes,
+    gross_room_total: grossRoomTotal,
+    promo_discount: promoDiscount,
+    room_total: netRoomTotal,
+    fnb_total: fnbTotal,
+    lc_total: lcTotal,
+    grand_total: grandTotal,
+    payment_method: "transfer",
+    cashier_name: cashierName,
+    items: orderItems,
+    lcs: lcSnapshots,
+  };
+
+  if (!shouldExecute) {
+    return {
+      ok: true,
+      success: true,
+      dry_run: true,
+      message: "Dry run recovery siap dieksekusi.",
+      preview: preview,
+    };
+  }
+
+  if (confirmation !== "RECOVER-20260806-0610") {
+    return {
+      ok: false,
+      success: false,
+      error: "Konfirmasi recovery tidak valid.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses transaksi lain. Coba lagi.",
+    };
+  }
+
+  try {
+    existingTransaction = readSheetAsObjects_("Transactions").filter(function (transaction) {
+      return String(transaction.transaction_id || "").trim() === transactionId;
+    })[0] || null;
+    if (existingTransaction) {
+      return {
+        ok: true,
+        success: true,
+        already_recovered: true,
+        transaction: existingTransaction,
+      };
+    }
+
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: roomId,
+      room_name: roomName,
+      start_time: startTime,
+      end_time: endTime,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      room_total: netRoomTotal,
+      fnb_total: fnbTotal,
+      lc_total: lcTotal,
+      promo_code: "MANUAL50",
+      promo_discount: promoDiscount,
+      grand_total: grandTotal,
+      fnb_order_ids: orderId,
+      payment_method: "transfer",
+      payment_status: "paid",
+      cashier_name: cashierName,
+      created_at: endTime,
+      transaction_type: "session_checkout",
+      customer_name: "",
+      general_bill_id: "",
+    };
+    var order = {
+      order_id: orderId,
+      room_id: roomId,
+      room_name: roomName,
+      room_start_time: startTime,
+      order_status: "paid",
+      order_total: fnbTotal,
+      cashier_name: cashierName,
+      note: "Recovery transaksi manual karena mati listrik pada 6 Agustus 2026 pukul 06.10.",
+      customer_name: "",
+      general_bill_id: "",
+      billed_transaction_id: transactionId,
+      created_at: endTime,
+      updated_at: endTime,
+    };
+    var lcAssignments = lcSnapshots.map(function (lc) {
+      return {
+        lc_id: lc.lc_id,
+        duration_minutes: durationMinutes,
+      };
+    });
+    var session = {
+      session_id: sessionId,
+      room_id: roomId,
+      room_name: roomName,
+      booking_mode: "regular",
+      status: "closed",
+      start_time: startTime,
+      scheduled_end_time: endTime,
+      end_time: endTime,
+      booked_duration_minutes: durationMinutes,
+      package_included_minutes: 0,
+      promotion_free_minutes: 60,
+      billable_room_minutes: 60,
+      rate_per_hour: ratePerHour,
+      cashier_name: cashierName,
+      created_at: startTime,
+      updated_at: endTime,
+      closed_transaction_id: transactionId,
+      idempotency_key: "manual-outage-20260806-0610",
+      legacy_room_start_time: startTime,
+      note: "Recovery transaksi manual karena mati listrik; diskon room 50%.",
+      customer_name: "",
+      package_id: "",
+      prepayment_transaction_id: "",
+      lc_ids: lcSnapshots.map(function (lc) { return lc.lc_id; }).join(","),
+      lc_assignments: serializeLcAssignments_(lcAssignments),
+    };
+
+    appendRoomSession_(session);
+    appendFnbOrder_(order);
+    appendFnbOrderItems_(orderItems);
+
+    lcSnapshots.forEach(function (lc) {
+      appendLcWorkLog_({
+        log_id: "LWL-MANUAL-20260806-0610-" + lc.lc_id,
+        session_id: sessionId,
+        lc_id: lc.lc_id,
+        lc_name: lc.lc_name,
+        rate: 2 * lc.rate_per_hour,
+        duration_minutes: durationMinutes,
+        rate_per_hour: lc.rate_per_hour,
+        status: "done",
+        created_at: startTime,
+        closed_at: endTime,
+        payroll_id: "",
+      });
+    });
+
+    var salesBonusRows = [];
+    orderItems.forEach(function (item) {
+      var totalBonus = (Number(item.bonus_sales_lc) || 0) * (Number(item.quantity) || 0);
+      if (totalBonus <= 0) {
+        return;
+      }
+      var baseShare = Math.floor(totalBonus / lcSnapshots.length);
+      var remainder = totalBonus - (baseShare * lcSnapshots.length);
+      lcSnapshots.forEach(function (lc, index) {
+        var bonusTotal = baseShare + (index < remainder ? 1 : 0);
+        var bonusRow = {
+          bonus_log_id: "LCBONUS-MANUAL-20260806-0610-" + item.menu_id + "-" + lc.lc_id,
+          operational_date: operationalDate,
+          transaction_id: transactionId,
+          order_id: orderId,
+          menu_id: item.menu_id,
+          menu_name: item.menu_name,
+          category: item.category,
+          lc_id: lc.lc_id,
+          lc_name: lc.lc_name,
+          quantity: Number(item.quantity) / lcSnapshots.length,
+          bonus_per_item: Number(item.bonus_sales_lc) || 0,
+          bonus_total: bonusTotal,
+          source_status: "earned",
+          payroll_id: "",
+          created_at: endTime,
+          created_by: cashierName,
+          voided_at: "",
+          void_reason: "",
+        };
+        appendObjectRow_(ensureLcSalesBonusLogsSheet_(), bonusRow);
+        salesBonusRows.push(bonusRow);
+      });
+    });
+
+    appendTransaction_(transaction);
+    var stockResult = deductStockForFnbOrders_(
+      [Object.assign({}, order, { items: orderItems })],
+      transactionId,
+      cashierName,
+      endTime
+    );
+
+    try {
+      CacheService.getScriptCache().removeAll([
+        "lc-work-reports-v2:yesterday:2026-08-05:2026-08-05",
+        "lc-work-reports-v2:this_week:2026-08-03:2026-08-06",
+        "lc-work-reports-v2:all:all:all",
+      ]);
+    } catch (cacheError) {
+      Logger.log("Gagal membersihkan cache laporan LC setelah recovery: " + cacheError.message);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi manual mati listrik berhasil dipulihkan.",
+      transaction: transaction,
+      session: session,
+      order: order,
+      items: orderItems,
+      lc_work_logs: lcSnapshots.length,
+      lc_sales_bonus_logs: salesBonusRows,
+      stock_movements: stockResult.movements,
+      stock_warnings: stockResult.warnings,
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function normalizeLcDurationMinutes_(value, defaultDurationMinutes) {
