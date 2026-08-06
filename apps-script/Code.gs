@@ -130,6 +130,7 @@ var FNB_ORDERS_HEADERS = [
   "customer_name",
   "general_bill_id",
   "billed_transaction_id",
+  "idempotency_key",
 ];
 var FNB_ORDER_ITEMS_HEADERS = [
   "order_id",
@@ -1079,7 +1080,8 @@ function doPost(e) {
         payload.payment_method,
         payload.payment_status,
         payload.customer_name,
-        payload.general_bill_id
+        payload.general_bill_id,
+        payload.idempotency_key
       ));
     }
 
@@ -12520,11 +12522,12 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, customerName, generalBillId) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, customerName, generalBillId, idempotencyKey) {
   var normalizedRoomId = String(roomId || "").trim();
   var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
   var normalizedCustomerName = String(customerName || "").trim();
   var normalizedGeneralBillId = String(generalBillId || "").trim();
+  var normalizedIdempotencyKey = String(idempotencyKey || "").trim();
 
   if (!normalizedRoomId) {
     return {
@@ -12547,12 +12550,44 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
     };
   }
 
+  if (normalizedIdempotencyKey.length > 160) {
+    return {
+      ok: false,
+      error: "idempotency_key terlalu panjang.",
+    };
+  }
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) {
-    return { ok: false, error: "Sistem sedang memproses pembatalan order lain. Coba lagi sebentar." };
+    return { ok: false, error: "Sistem sedang memproses order F&B lain. Coba lagi sebentar." };
   }
 
   try {
+    var fnbOrdersSheet = ensureFnbOrdersSheetColumns_();
+    if (normalizedIdempotencyKey) {
+      var fnbOrdersHeaderMap = getHeaderMap_(fnbOrdersSheet);
+      var existingOrderRow = findRowByValue_(
+        fnbOrdersSheet,
+        fnbOrdersHeaderMap,
+        "idempotency_key",
+        normalizedIdempotencyKey
+      );
+
+      if (existingOrderRow) {
+        var existingOrder = getFnbOrderObjectFromRow_(fnbOrdersSheet, existingOrderRow);
+        var existingOrdersWithItems = getFnbOrdersWithItemsByIds_([existingOrder.order_id]);
+        return {
+          ok: true,
+          success: true,
+          message: "Order F&B sudah pernah disimpan.",
+          order: existingOrder,
+          items: existingOrdersWithItems.length > 0 ? existingOrdersWithItems[0].items : [],
+          lc_sales_bonus_logs: [],
+          idempotent_replay: true,
+        };
+      }
+    }
+
     var room = null;
     if (isGeneralOrder) {
       room = {
@@ -12635,6 +12670,7 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       customer_name: isGeneralOrder ? normalizedCustomerName : "",
       general_bill_id: isGeneralOrder && !isPaid ? normalizedGeneralBillId : "",
       billed_transaction_id: "",
+      idempotency_key: normalizedIdempotencyKey,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -12652,7 +12688,6 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
       };
     });
 
-    ensureFnbOrdersSheet_();
     ensureFnbOrderItemsSheet_();
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
@@ -13916,6 +13951,7 @@ function getFnbOrderObjectFromRow_(sheet, rowNumber) {
     customer_name: order.customer_name || "",
     general_bill_id: order.general_bill_id || "",
     billed_transaction_id: order.billed_transaction_id || "",
+    idempotency_key: order.idempotency_key || "",
     created_at: normalizeFnbOrderDateTime_(order.created_at),
     updated_at: normalizeFnbOrderDateTime_(order.updated_at),
     cancel_reason: order.cancel_reason || "",

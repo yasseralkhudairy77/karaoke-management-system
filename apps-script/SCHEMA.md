@@ -833,6 +833,7 @@ Menyimpan header order F&B untuk ruangan.
 | `cancel_reason` | Alasan pembatalan order F&B, kosong jika belum dibatalkan. |
 | `cancelled_by` | Nama kasir/user yang membatalkan order, kosong jika belum dibatalkan. |
 | `cancelled_at` | Timestamp pembatalan order, kosong jika belum dibatalkan. |
+| `idempotency_key` | Kunci unik dari satu aksi submit. Replay dengan kunci yang sama mengembalikan order lama tanpa membuat duplikat. |
 
 ## FnbOrderItems
 

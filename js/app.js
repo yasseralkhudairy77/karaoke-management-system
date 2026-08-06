@@ -869,6 +869,7 @@ let fnbOrderMode = "room";
 let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
+let fnbOrderIdempotencyKey = "";
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
 let fnbOrderPaymentMethod = "room_bill";
@@ -3797,6 +3798,7 @@ function syncSelectedFbRoomWithRooms() {
 
   if (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom)) {
     selectedFbRoomId = "";
+    resetFnbOrderIdempotencyKey();
   }
 }
 
@@ -3942,6 +3944,10 @@ function getAvailableSpiritSubcategories() {
 }
 
 function setSelectedFbRoom(roomId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   const nextRoomId = roomId || "";
   const room = rooms.find((item) => item.room_id === nextRoomId);
 
@@ -3951,11 +3957,16 @@ function setSelectedFbRoom(roomId) {
     selectedFbRoomId = nextRoomId;
   }
 
+  resetFnbOrderIdempotencyKey();
   resetPaginationPage("openFnbOrders");
   renderRooms();
 }
 
 function setFnbOrderMode(mode) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   const nextMode = mode === "general" ? "general" : "room";
   fnbOrderMode = nextMode;
 
@@ -3966,6 +3977,7 @@ function setFnbOrderMode(mode) {
     fnbOrderPaymentMethod = "room_bill";
   }
 
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
@@ -4018,6 +4030,10 @@ function getAvailableMenuPortions(menuItem) {
 }
 
 function addMenuItemToCart(menuId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   const menuItem = findMenuItemById(menuId);
 
   if (!menuItem || String(menuItem.status || "").trim().toLowerCase() !== "active") {
@@ -4050,10 +4066,15 @@ function addMenuItemToCart(menuId) {
     });
   }
 
+  resetFnbOrderIdempotencyKey();
   showInlineNotice("Menu ditambahkan ke keranjang.");
 }
 
 function increaseCartItemQuantity(menuId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   const cartItem = fbCartItems.find((item) => item.menu_id === menuId);
 
   if (!cartItem) {
@@ -4070,10 +4091,15 @@ function increaseCartItemQuantity(menuId) {
 
   cartItem.quantity += 1;
   cartItem.subtotal = cartItem.price * cartItem.quantity;
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
 function decreaseCartItemQuantity(menuId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   const cartItem = fbCartItems.find((item) => item.menu_id === menuId);
 
   if (!cartItem) {
@@ -4087,16 +4113,27 @@ function decreaseCartItemQuantity(menuId) {
 
   cartItem.quantity -= 1;
   cartItem.subtotal = cartItem.price * cartItem.quantity;
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
 function removeCartItem(menuId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   fbCartItems = fbCartItems.filter((item) => item.menu_id !== menuId);
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
 function clearFbCart() {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   fbCartItems = [];
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
@@ -4251,11 +4288,21 @@ function calculateTodayFnbOrderSummary(orders) {
 }
 
 function updateFnbOrderNote(value) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   fnbOrderNote = value;
+  resetFnbOrderIdempotencyKey();
 }
 
 function updateGeneralFnbCustomerName(value) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   generalFnbCustomerName = value;
+  resetFnbOrderIdempotencyKey();
 }
 
 function getOpenGeneralFnbBills() {
@@ -4284,13 +4331,33 @@ function getOpenGeneralFnbBills() {
 }
 
 function selectGeneralFnbBill(generalBillId) {
+  if (isSavingFnbOrder) {
+    return;
+  }
+
   selectedGeneralFnbBillId = generalBillId || "";
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === selectedGeneralFnbBillId);
   generalFnbCustomerName = bill?.customer_name || "";
+  resetFnbOrderIdempotencyKey();
   renderRooms();
 }
 
-function buildFnbOrderPayload() {
+function createFnbOrderIdempotencyKey() {
+  if (!fnbOrderIdempotencyKey) {
+    const randomPart = globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    fnbOrderIdempotencyKey = `fnb-${randomPart}`;
+  }
+
+  return fnbOrderIdempotencyKey;
+}
+
+function resetFnbOrderIdempotencyKey() {
+  fnbOrderIdempotencyKey = "";
+}
+
+function buildFnbOrderPayload(idempotencyKey) {
   const isOpenBill = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "general_bill";
   return {
     action: "saveFnbOrder",
@@ -4305,6 +4372,7 @@ function buildFnbOrderPayload() {
     payment_status: isOpenBill ? "unpaid" : "paid",
     customer_name: fnbOrderMode === "general" ? generalFnbCustomerName.trim() : "",
     general_bill_id: fnbOrderMode === "general" ? selectedGeneralFnbBillId : "",
+    idempotency_key: idempotencyKey,
   };
 }
 
@@ -4345,7 +4413,8 @@ async function saveFnbOrder() {
   renderRooms();
 
   try {
-    const data = await postApiAction(buildFnbOrderPayload());
+    const idempotencyKey = createFnbOrderIdempotencyKey();
+    const data = await postApiAction(buildFnbOrderPayload(idempotencyKey));
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menyimpan order F&B.");
@@ -4357,6 +4426,7 @@ async function saveFnbOrder() {
     };
     fbCartItems = [];
     fnbOrderNote = "";
+    resetFnbOrderIdempotencyKey();
     const originalPaymentMethod = fnbOrderPaymentMethod;
     if (isGeneralOrder && data.order?.order_status === "open") {
       selectedGeneralFnbBillId = data.order.general_bill_id || selectedGeneralFnbBillId;
@@ -9187,7 +9257,7 @@ function createMenuCardElement(menuItem) {
   card.appendChild(status);
 
   const addButton = document.createElement("button");
-  const canAdd = !isInactive && !isOutOfStock;
+  const canAdd = !isInactive && !isOutOfStock && !isSavingFnbOrder;
   addButton.className = canAdd ? "menu-add-button" : "menu-add-button disabled";
   addButton.type = "button";
   addButton.dataset.action = "add-menu-to-cart";
@@ -9278,6 +9348,7 @@ function createFbRoomControlElement() {
     button.type = "button";
     button.dataset.action = "set-fnb-order-mode";
     button.dataset.mode = mode;
+    button.disabled = isSavingFnbOrder;
     button.textContent = labelText;
     modeButtons.appendChild(button);
   });
@@ -9300,6 +9371,7 @@ function createFbRoomControlElement() {
   const select = document.createElement("select");
   select.className = "fb-room-select";
   select.id = "fbRoomSelect";
+  select.disabled = isSavingFnbOrder;
 
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -9349,6 +9421,7 @@ function createGeneralFnbBillControlElement() {
   billSelect.className = "fb-room-select";
   billSelect.id = "generalFnbBillSelect";
   billSelect.dataset.action = "select-general-fnb-bill";
+  billSelect.disabled = isSavingFnbOrder;
 
   const newOption = document.createElement("option");
   newOption.value = "";
@@ -9375,7 +9448,7 @@ function createGeneralFnbBillControlElement() {
   customerInput.placeholder = "Nama pelanggan / pemesan";
   customerInput.dataset.action = "update-general-fnb-customer-name";
   customerInput.value = generalFnbCustomerName;
-  customerInput.disabled = Boolean(selectedGeneralFnbBillId);
+  customerInput.disabled = Boolean(selectedGeneralFnbBillId) || isSavingFnbOrder;
 
   control.append(billLabel, billSelect, customerLabel, customerInput);
   return control;
@@ -9470,11 +9543,13 @@ function createFbCartRowElement(item) {
   quantity.className = "fb-cart-quantity";
 
   const decreaseButton = createFbCartButton("-", "decrease-cart-item", item.menu_id);
+  decreaseButton.disabled = isSavingFnbOrder;
 
   const qtyValue = document.createElement("span");
   qtyValue.textContent = String(item.quantity);
 
   const increaseButton = createFbCartButton("+", "increase-cart-item", item.menu_id);
+  increaseButton.disabled = isSavingFnbOrder;
 
   quantity.append(decreaseButton, qtyValue, increaseButton);
 
@@ -9487,6 +9562,7 @@ function createFbCartRowElement(item) {
   removeButton.type = "button";
   removeButton.dataset.action = "remove-cart-item";
   removeButton.dataset.menuId = item.menu_id;
+  removeButton.disabled = isSavingFnbOrder;
   removeButton.textContent = "Hapus";
 
   row.append(info, price, quantity, subtotal, removeButton);
@@ -9539,6 +9615,7 @@ function createFbPaymentMethodElement() {
   select.className = "fb-room-select";
   select.id = "fbPaymentMethodSelect";
   select.dataset.action = "update-fb-payment-method";
+  select.disabled = isSavingFnbOrder;
 
   if (!isGeneralOrder) {
     const roomBillOpt = document.createElement("option");
@@ -9584,6 +9661,7 @@ function createFnbOrderNoteElement() {
   const note = document.createElement("textarea");
   note.className = "fb-order-note";
   note.id = "fbOrderNote";
+  note.disabled = isSavingFnbOrder;
   note.dataset.action = "update-fnb-order-note";
   note.placeholder = "Contoh: pedas sedikit, antar ke ruangan, tanpa es.";
   note.value = fnbOrderNote;
@@ -22514,7 +22592,12 @@ function handleDashboardInput(event) {
   }
 
   if (action === "update-fb-payment-method") {
+    if (isSavingFnbOrder) {
+      return;
+    }
+
     fnbOrderPaymentMethod = field.value;
+    resetFnbOrderIdempotencyKey();
     return;
   }
 
