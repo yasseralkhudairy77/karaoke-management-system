@@ -877,6 +877,7 @@ let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
 let fnbOrderIdempotencyKey = "";
+let activeFnbOrderSavePromise = null;
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
 let fnbOrderPaymentMethod = "room_bill";
@@ -4421,6 +4422,10 @@ function buildFnbOrderPayload(idempotencyKey) {
 }
 
 async function saveFnbOrder() {
+  if (activeFnbOrderSavePromise) {
+    return activeFnbOrderSavePromise;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -4453,6 +4458,16 @@ async function saveFnbOrder() {
     return;
   }
 
+  activeFnbOrderSavePromise = performFnbOrderSave(isGeneralOrder);
+
+  try {
+    return await activeFnbOrderSavePromise;
+  } finally {
+    activeFnbOrderSavePromise = null;
+  }
+}
+
+async function performFnbOrderSave(isGeneralOrder) {
   isSavingFnbOrder = true;
   renderRooms();
 

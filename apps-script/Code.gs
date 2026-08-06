@@ -143,6 +143,7 @@ var FNB_ORDER_ITEMS_HEADERS = [
   "bonus_sales_lc",
   "created_at",
 ];
+var FNB_DUPLICATE_REPLAY_WINDOW_MS = 2 * 60 * 1000;
 var CASHIER_CLOSING_TRANSACTIONS_HEADERS = [
   "closing_transaction_id",
   "closing_id",
@@ -13278,6 +13279,29 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
     var roomStartTime = room.start_time instanceof Date
       ? toJakartaIsoString_(room.start_time)
       : room.start_time;
+    var duplicateOrder = findRecentDuplicateFnbOrder_(
+      fnbOrdersSheet,
+      fnbOrdersHeaderMap || getHeaderMap_(fnbOrdersSheet),
+      {
+        room_id: room.room_id || "",
+        room_start_time: roomStartTime || "",
+        order_status: isPaid ? "paid" : "open",
+        order_total: orderTotal,
+        cashier_name: cashierName || "Kasir",
+        note: isGeneralOrder
+          ? ((note ? String(note).trim() + " | " : "") + "Order F&B umum")
+          : (note || ""),
+        customer_name: isGeneralOrder ? normalizedCustomerName : "",
+        general_bill_id: isGeneralOrder && !isPaid ? normalizedGeneralBillId : "",
+      },
+      normalizedItems,
+      now
+    );
+
+    if (duplicateOrder) {
+      return duplicateOrder;
+    }
+
     var order = {
       order_id: generateFnbOrderId_(),
       room_id: room.room_id || "",
@@ -13354,6 +13378,85 @@ function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentS
   } finally {
     lock.releaseLock();
   }
+}
+
+function findRecentDuplicateFnbOrder_(ordersSheet, ordersHeaderMap, expectedOrder, normalizedItems, now) {
+  var lastRow = ordersSheet.getLastRow();
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+  var lastColumn = ordersSheet.getLastColumn();
+  var recentRowCount = Math.min(lastRow - 1, 80);
+  var startRow = lastRow - recentRowCount + 1;
+  var rows = ordersSheet.getRange(startRow, 1, recentRowCount, lastColumn).getValues();
+  var expectedFingerprint = buildFnbOrderDuplicateFingerprint_(expectedOrder, normalizedItems);
+  var itemsByOrderId = null;
+
+  for (var index = rows.length - 1; index >= 0; index--) {
+    var rowNumber = startRow + index;
+    var order = getRowObject_(ordersSheet, ordersHeaderMap, rowNumber);
+    var createdAt = order.created_at instanceof Date
+      ? order.created_at
+      : new Date(order.created_at || 0);
+
+    if (isNaN(createdAt.getTime()) || now.getTime() - createdAt.getTime() > FNB_DUPLICATE_REPLAY_WINDOW_MS) {
+      continue;
+    }
+
+    if (!itemsByOrderId) {
+      itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+    }
+
+    var existingItems = (itemsByOrderId[order.order_id] || []).map(function (item) {
+      return {
+        menu_id: item.menu_id,
+        price: Number(item.price) || 0,
+        quantity: Number(item.quantity) || 0,
+        subtotal: Number(item.subtotal) || 0,
+      };
+    });
+    var existingFingerprint = buildFnbOrderDuplicateFingerprint_(order, existingItems);
+
+    if (existingFingerprint === expectedFingerprint) {
+      return {
+        ok: true,
+        success: true,
+        message: "Order F&B sudah tersimpan dari request sebelumnya.",
+        order: order,
+        items: itemsByOrderId[order.order_id] || [],
+        lc_sales_bonus_logs: [],
+        idempotent_replay: true,
+        duplicate_replay: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildFnbOrderDuplicateFingerprint_(order, items) {
+  var normalizedItems = (items || []).map(function (item) {
+    return [
+      String(item.menu_id || "").trim(),
+      String(Number(item.price) || 0),
+      String(Number(item.quantity) || 0),
+      String(Number(item.subtotal) || 0),
+    ].join(":");
+  }).sort().join("|");
+
+  return [
+    String(order.room_id || "").trim(),
+    normalizeFnbOrderDateTime_(order.room_start_time),
+    String(order.order_status || "").trim().toLowerCase(),
+    String(Number(order.order_total) || 0),
+    String(order.cashier_name || "").trim().toLowerCase(),
+    String(order.note || "").trim().toLowerCase(),
+    String(order.customer_name || "").trim().toLowerCase(),
+    String(order.general_bill_id || "").trim(),
+    normalizedItems,
+  ].join("||");
 }
 
 function generateGeneralFnbBillId_() {
