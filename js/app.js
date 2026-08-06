@@ -159,8 +159,7 @@ function getMinimumSessionMessage() {
 }
 
 function getDefaultLcDurationMinutes(room) {
-  const roomDuration = Number(room?.booked_duration_minutes) || 0;
-  return Math.max(getMinimumSessionMinutes(), roomDuration || 60);
+  return 60;
 }
 
 function parseLcAssignmentsFromRoom(room) {
@@ -201,7 +200,7 @@ function normalizeLcDurationMinutesForRoom(room, value) {
 
 function getLcDurationHourOptions(room) {
   const bookedMinutes = Number(room?.booked_duration_minutes) || 0;
-  const maxMinutes = Math.max(60, Math.ceil(bookedMinutes / 30) * 30);
+  const maxMinutes = Math.max(720, Math.ceil(bookedMinutes / 30) * 30);
   const options = [];
 
   for (let minutes = 30; minutes <= maxMinutes; minutes += 30) {

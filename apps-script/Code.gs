@@ -10453,57 +10453,11 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
           updated_at: now
         });
         
-        // Update active LC work logs rate for the extended time (Upfront Booked calculation)
+        // LC durations remain fixed based on cashier selection and do not auto-extend with room extension
         try {
-          var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
-          var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
-          var workLogRows = readSheetAsObjects_("LcWorkLogs");
-          var lcMasterRows = readSheetAsObjects_("LcMaster");
-          
-          var activeLcRates = [];
-          for (var m = 0; m < lcMasterRows.length; m++) {
-            var lcRow = lcMasterRows[m];
-            if (String(lcRow.status || "").trim().toLowerCase() === "active") {
-              var r = Number(lcRow.rate_per_room);
-              if (r > 0) activeLcRates.push(r);
-            }
-          }
-          var avgLcRate = activeLcRates.length > 0
-            ? activeLcRates.reduce(function(a, b) { return a + b; }, 0) / activeLcRates.length
-            : 0;
-            
-          for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
-            var log = workLogRows[rIdx];
-            if (
-              String(log.session_id || "").trim() === String(sessionObj.session_id || "").trim() &&
-              log.status === "active"
-            ) {
-              var logRowNum = rIdx + 2;
-              var selId = String(log.lc_id || "").trim();
-              
-              var hourlyRate = avgLcRate;
-              if (selId !== "PENDING" && selId) {
-                var foundLc = null;
-                for (var idx = 0; idx < lcMasterRows.length; idx++) {
-                  if (String(lcMasterRows[idx].lc_id || "").trim() === selId) {
-                    foundLc = lcMasterRows[idx];
-                    break;
-                  }
-                }
-                if (foundLc) {
-                  hourlyRate = Number(foundLc.rate_per_room) || avgLcRate;
-                }
-              }
-              
-              var currentRate = Number(log.rate) || 0;
-              var extensionCost = Math.ceil(addedMinutes / 60) * hourlyRate;
-              var newRate = currentRate + extensionCost;
-              
-              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(newRate);
-            }
-          }
+          Logger.log("Room session extended. LC work log rates remain fixed based on selected LC duration.");
         } catch (lcExtErr) {
-          Logger.log("Error updating LC work logs during extension: " + lcExtErr.message);
+          Logger.log("Error during LC extension handling: " + lcExtErr.message);
         }
       }
     } catch (logError) {
@@ -10755,7 +10709,10 @@ function closeSession_(roomId, cashierName, requestPayload) {
         workLogRowsForLc.forEach(function(log) {
           var selId = String(log.lc_id || "").trim();
           if (selId === "PENDING" || !selId) return;
-          uniqueLcLogsMap[selId] = log;
+          var status = String(log.status || "").trim().toLowerCase();
+          if (status === "active" || (!uniqueLcLogsMap[selId] && status !== "cancelled")) {
+            uniqueLcLogsMap[selId] = log;
+          }
         });
 
         var totalLcCost = 0;
