@@ -159,7 +159,8 @@ function getMinimumSessionMessage() {
 }
 
 function getDefaultLcDurationMinutes(room) {
-  return 60;
+  const bookedDuration = Math.round(Number(room?.booked_duration_minutes) || 0);
+  return bookedDuration > 0 ? bookedDuration : 60;
 }
 
 function parseLcAssignmentsFromRoom(room) {
@@ -892,6 +893,9 @@ let isLoadingTransactionFnbDetails = false;
 let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
 let receiptPrintAuditByTransactionId = {};
+let lcDurationEditor = null;
+let isLoadingLcDurationEditor = false;
+let isSavingLcDurationEditor = false;
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
 let durationPaymentMethod = "cash";
@@ -990,7 +994,8 @@ function isUserBusy() {
     deleteMasterConfirmation ||
     transactionDeleteConfirmation ||
     deleteLcConfirmation ||
-    roomRecoveryConfirmation
+    roomRecoveryConfirmation ||
+    lcDurationEditor
   ) {
     return true;
   }
@@ -1008,7 +1013,9 @@ function isUserBusy() {
     isSavingLc ||
     isDeletingLc ||
     isDeletingMasterData ||
-    isDeletingTransaction
+    isDeletingTransaction ||
+    isLoadingLcDurationEditor ||
+    isSavingLcDurationEditor
   ) {
     return true;
   }
@@ -6351,6 +6358,424 @@ function createLatestTransactionShortcutElement(transaction) {
   return shortcut;
 }
 
+function canOpenLcDurationEditor(transaction) {
+  return Boolean(
+    API_BASE_URL.trim()
+    && transaction?.transaction_id
+    && String(transaction.transaction_type || "").trim().toLowerCase() === "session_checkout"
+    && getCurrentOperatorRole() !== "receptionist"
+  );
+}
+
+async function openLcDurationEditor(transactionId) {
+  const normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId || isLoadingLcDurationEditor || isSavingLcDurationEditor) {
+    return;
+  }
+
+  lcDurationEditor = {
+    transaction_id: normalizedTransactionId,
+    loading: true,
+    error: "",
+    details: null,
+    durations: {},
+    reason: "",
+    admin_pin: "",
+  };
+  isLoadingLcDurationEditor = true;
+  renderRooms();
+
+  try {
+    const url = `${API_BASE_URL}?action=getTransactionLcEditDetails`
+      + `&transaction_id=${encodeURIComponent(normalizedTransactionId)}`
+      + `&cb=${Date.now()}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Permintaan gagal dengan status ${response.status}.`);
+    }
+
+    const data = await response.json();
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Detail durasi LC tidak dapat dimuat.");
+    }
+
+    lcDurationEditor = {
+      ...lcDurationEditor,
+      loading: false,
+      details: data,
+      durations: (data.lc_logs || []).reduce((result, log) => {
+        result[log.lc_id] = Number(log.duration_minutes) || 60;
+        return result;
+      }, {}),
+    };
+  } catch (error) {
+    lcDurationEditor = {
+      ...lcDurationEditor,
+      loading: false,
+      error: error.message || "Detail durasi LC tidak dapat dimuat.",
+    };
+  } finally {
+    isLoadingLcDurationEditor = false;
+    renderRooms();
+  }
+}
+
+function closeLcDurationEditor() {
+  if (isSavingLcDurationEditor) {
+    return;
+  }
+
+  lcDurationEditor = null;
+  renderRooms();
+}
+
+function getLcDurationEditorPreview() {
+  const details = lcDurationEditor?.details;
+  if (!details) {
+    return {
+      oldLcTotal: 0,
+      newLcTotal: 0,
+      oldGrandTotal: 0,
+      newGrandTotal: 0,
+      changed: false,
+    };
+  }
+
+  const newWorkLogTotal = (details.lc_logs || []).reduce((total, log) => {
+    const duration = Number(lcDurationEditor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60;
+    return total + calculateLcCharge(duration, log.rate_per_hour);
+  }, 0);
+  const oldLcTotal = Number(details.current_lc_total) || 0;
+  const newLcTotal = Math.max(0, newWorkLogTotal + (Number(details.billing_adjustment) || 0));
+  const oldGrandTotal = Number(details.current_grand_total) || 0;
+  const newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
+  const changed = (details.lc_logs || []).some((log) => (
+    Number(lcDurationEditor.durations?.[log.lc_id]) !== Number(log.duration_minutes)
+  )) || newLcTotal !== oldLcTotal;
+
+  return {
+    oldLcTotal,
+    newLcTotal,
+    oldGrandTotal,
+    newGrandTotal,
+    changed,
+  };
+}
+
+function setLcDurationEditorDuration(lcId, value) {
+  if (!lcDurationEditor || isSavingLcDurationEditor) {
+    return;
+  }
+
+  lcDurationEditor.durations = {
+    ...lcDurationEditor.durations,
+    [lcId]: Math.round(Number(value)) || 60,
+  };
+  renderRooms();
+}
+
+function updateLcDurationEditorField(field, value) {
+  if (!lcDurationEditor || isSavingLcDurationEditor) {
+    return;
+  }
+
+  lcDurationEditor[field] = value;
+  const saveButton = queryDashboard("[data-action='save-lc-duration-editor']");
+  if (saveButton) {
+    const preview = getLcDurationEditorPreview();
+    saveButton.disabled = !lcDurationEditor.details?.can_edit
+      || !preview.changed
+      || String(lcDurationEditor.reason || "").trim().length < 3
+      || (
+        lcDurationEditor.details?.requires_admin_pin
+        && !String(lcDurationEditor.admin_pin || "").trim()
+      );
+  }
+}
+
+function mergeUpdatedTransactionIntoState(updatedTransaction) {
+  if (!updatedTransaction?.transaction_id) {
+    return;
+  }
+
+  const transactionId = updatedTransaction.transaction_id;
+  const mergeTransaction = (existing) => existing?.transaction_id === transactionId
+    ? { ...existing, ...updatedTransaction }
+    : existing;
+
+  todayTransactions = todayTransactions.map(mergeTransaction);
+  if (lastTransaction?.transaction_id === transactionId) {
+    lastTransaction = { ...lastTransaction, ...updatedTransaction };
+  }
+  if (selectedReceiptTransaction?.transaction_id === transactionId) {
+    selectedReceiptTransaction = { ...selectedReceiptTransaction, ...updatedTransaction };
+  }
+}
+
+async function saveLcDurationEditor() {
+  const editor = lcDurationEditor;
+  const details = editor?.details;
+  const preview = getLcDurationEditorPreview();
+
+  if (!editor || !details || isSavingLcDurationEditor) {
+    return;
+  }
+  if (!details.can_edit) {
+    editor.error = details.blocked_reason || "Durasi LC tidak dapat diedit.";
+    renderRooms();
+    return;
+  }
+  if (!preview.changed) {
+    editor.error = "Belum ada durasi yang diubah.";
+    renderRooms();
+    return;
+  }
+  if (String(editor.reason || "").trim().length < 3) {
+    editor.error = "Alasan perubahan minimal 3 karakter.";
+    renderRooms();
+    return;
+  }
+  if (details.requires_admin_pin && !String(editor.admin_pin || "").trim()) {
+    editor.error = "PIN owner/manager wajib diisi untuk transaksi yang sudah dibayar.";
+    renderRooms();
+    return;
+  }
+
+  isSavingLcDurationEditor = true;
+  editor.error = "";
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "updateTransactionLcDurations",
+      transaction_id: editor.transaction_id,
+      assignments: (details.lc_logs || []).map((log) => ({
+        lc_id: log.lc_id,
+        duration_minutes: Number(editor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60,
+      })),
+      reason: String(editor.reason || "").trim(),
+      changed_by: getLoggedInOperatorName(),
+      operator_pin: getLoggedInOperatorPin(),
+      admin_pin: String(editor.admin_pin || "").trim(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memperbarui durasi LC.");
+    }
+
+    mergeUpdatedTransactionIntoState(data.transaction);
+    lcDurationEditor = null;
+    showInlineNotice(data.message || "Durasi LC berhasil diperbarui.", "success");
+  } catch (error) {
+    lcDurationEditor = {
+      ...editor,
+      admin_pin: "",
+      error: error.message || "Gagal memperbarui durasi LC.",
+    };
+  } finally {
+    isSavingLcDurationEditor = false;
+    renderRooms();
+  }
+}
+
+function createLcDurationEditorElement() {
+  if (!lcDurationEditor) {
+    return document.createDocumentFragment();
+  }
+
+  const editor = lcDurationEditor;
+  const details = editor.details;
+  const overlay = document.createElement("section");
+  overlay.className = "lc-duration-editor-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "lc-duration-editor-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "lc-duration-editor-dialog";
+
+  const header = document.createElement("div");
+  header.className = "lc-duration-editor-header";
+
+  const heading = document.createElement("div");
+  const title = document.createElement("h2");
+  title.className = "lc-duration-editor-title";
+  title.id = "lc-duration-editor-title";
+  title.textContent = "Edit Durasi LC";
+  const subtitle = document.createElement("p");
+  subtitle.className = "lc-duration-editor-subtitle";
+  subtitle.textContent = details
+    ? `${details.room_name || details.room_id} · ${details.transaction_id}`
+    : editor.transaction_id;
+  heading.append(title, subtitle);
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "lc-duration-editor-close";
+  closeButton.type = "button";
+  closeButton.dataset.action = "close-lc-duration-editor";
+  closeButton.disabled = isSavingLcDurationEditor;
+  closeButton.setAttribute("aria-label", "Tutup editor durasi LC");
+  closeButton.title = "Tutup";
+  closeButton.textContent = "×";
+  header.append(heading, closeButton);
+  dialog.appendChild(header);
+
+  if (editor.loading) {
+    dialog.appendChild(createStateMessage("Memuat rincian LC..."));
+    overlay.appendChild(dialog);
+    return overlay;
+  }
+
+  if (editor.error) {
+    dialog.appendChild(createStateMessage(editor.error, "error"));
+  }
+
+  if (!details) {
+    const actions = document.createElement("div");
+    actions.className = "lc-duration-editor-actions";
+    const close = document.createElement("button");
+    close.className = "billing-summary-close";
+    close.type = "button";
+    close.dataset.action = "close-lc-duration-editor";
+    close.textContent = "Tutup";
+    actions.appendChild(close);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    return overlay;
+  }
+
+  if (details.blocked_reason) {
+    dialog.appendChild(createStateMessage(details.blocked_reason, "error"));
+  }
+
+  const list = document.createElement("div");
+  list.className = "lc-duration-editor-list";
+  (details.lc_logs || []).forEach((log) => {
+    const row = document.createElement("div");
+    row.className = "lc-duration-editor-row";
+
+    const identity = document.createElement("div");
+    identity.className = "lc-duration-editor-identity";
+    const name = document.createElement("strong");
+    name.textContent = log.lc_name || log.lc_id;
+    const rate = document.createElement("span");
+    rate.textContent = `${formatCurrency(log.rate_per_hour)} / jam`;
+    identity.append(name, rate);
+
+    const durationField = document.createElement("label");
+    durationField.className = "lc-duration-editor-field";
+    const durationLabel = document.createElement("span");
+    durationLabel.textContent = "Durasi";
+    const select = document.createElement("select");
+    select.className = "lc-duration-editor-select";
+    select.disabled = !details.can_edit || isSavingLcDurationEditor;
+    const currentDuration = Number(editor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60;
+    for (let minutes = 30; minutes <= 720; minutes += 30) {
+      const option = document.createElement("option");
+      option.value = String(minutes);
+      option.textContent = formatLcDurationOptionLabel(minutes);
+      option.selected = minutes === currentDuration;
+      select.appendChild(option);
+    }
+    select.addEventListener("change", (event) => {
+      setLcDurationEditorDuration(log.lc_id, event.target.value);
+    });
+    durationField.append(durationLabel, select);
+
+    const amount = document.createElement("div");
+    amount.className = "lc-duration-editor-amount";
+    const amountLabel = document.createElement("span");
+    amountLabel.textContent = "Biaya";
+    const amountValue = document.createElement("strong");
+    amountValue.textContent = formatCurrency(calculateLcCharge(currentDuration, log.rate_per_hour));
+    amount.append(amountLabel, amountValue);
+
+    row.append(identity, durationField, amount);
+    list.appendChild(row);
+  });
+  dialog.appendChild(list);
+
+  const preview = getLcDurationEditorPreview();
+  const totals = document.createElement("div");
+  totals.className = "lc-duration-editor-totals";
+  [
+    ["Total LC Lama", formatCurrency(preview.oldLcTotal)],
+    ["Total LC Baru", formatCurrency(preview.newLcTotal)],
+    ["Grand Total Baru", formatCurrency(preview.newGrandTotal), "total"],
+  ].forEach(([labelText, valueText, modifier]) => {
+    const row = document.createElement("div");
+    row.className = modifier
+      ? "lc-duration-editor-total-row total"
+      : "lc-duration-editor-total-row";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const value = document.createElement("strong");
+    value.textContent = valueText;
+    row.append(label, value);
+    totals.appendChild(row);
+  });
+  dialog.appendChild(totals);
+
+  const reasonField = document.createElement("label");
+  reasonField.className = "lc-duration-editor-reason";
+  const reasonLabel = document.createElement("span");
+  reasonLabel.textContent = "Alasan Perubahan";
+  const reasonInput = document.createElement("textarea");
+  reasonInput.className = "lc-duration-editor-textarea";
+  reasonInput.placeholder = "Contoh: LC bekerja mengikuti durasi room 2 jam";
+  reasonInput.value = editor.reason || "";
+  reasonInput.disabled = !details.can_edit || isSavingLcDurationEditor;
+  reasonInput.addEventListener("input", (event) => {
+    updateLcDurationEditorField("reason", event.target.value);
+  });
+  reasonField.append(reasonLabel, reasonInput);
+  dialog.appendChild(reasonField);
+
+  if (details.requires_admin_pin) {
+    const pinField = document.createElement("label");
+    pinField.className = "lc-duration-editor-reason";
+    const pinLabel = document.createElement("span");
+    pinLabel.textContent = "PIN Owner/Manager";
+    const pinInput = document.createElement("input");
+    pinInput.className = "lc-duration-editor-input";
+    pinInput.type = "password";
+    pinInput.inputMode = "numeric";
+    pinInput.autocomplete = "off";
+    pinInput.value = editor.admin_pin || "";
+    pinInput.disabled = isSavingLcDurationEditor;
+    pinInput.addEventListener("input", (event) => {
+      updateLcDurationEditorField("admin_pin", event.target.value);
+    });
+    pinField.append(pinLabel, pinInput);
+    dialog.appendChild(pinField);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "lc-duration-editor-actions";
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "billing-summary-close";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-lc-duration-editor";
+  cancelButton.disabled = isSavingLcDurationEditor;
+  cancelButton.textContent = "Batal";
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "lc-duration-editor-save";
+  saveButton.type = "button";
+  saveButton.dataset.action = "save-lc-duration-editor";
+  saveButton.disabled = !details.can_edit
+    || !preview.changed
+    || String(editor.reason || "").trim().length < 3
+    || (details.requires_admin_pin && !String(editor.admin_pin || "").trim())
+    || isSavingLcDurationEditor;
+  saveButton.textContent = isSavingLcDurationEditor ? "Menyimpan..." : "Simpan Perubahan";
+  actions.append(cancelButton, saveButton);
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
 function createBillingSummaryElement(transaction) {
   const summary = document.createElement("section");
   summary.className = "billing-summary";
@@ -6380,6 +6805,16 @@ function createBillingSummaryElement(transaction) {
   printButton.dataset.action = "show-receipt-print";
   printButton.dataset.transactionId = transaction?.transaction_id || "";
   printButton.textContent = "Cetak Struk";
+
+  if (canOpenLcDurationEditor(transaction)) {
+    const editLcButton = document.createElement("button");
+    editLcButton.className = "billing-summary-close";
+    editLcButton.type = "button";
+    editLcButton.dataset.action = "open-lc-duration-editor";
+    editLcButton.dataset.transactionId = transaction.transaction_id;
+    editLcButton.textContent = "Edit Durasi LC";
+    actions.appendChild(editLcButton);
+  }
 
   actions.append(printButton, closeButton);
   header.append(title, actions);
@@ -19839,6 +20274,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createRoomRecoveryConfirmationElement());
   }
 
+  if (lcDurationEditor) {
+    fragment.appendChild(createLcDurationEditorElement());
+  }
+
   dashboardGlobal.replaceChildren(fragment);
 }
 
@@ -22094,6 +22533,21 @@ async function handleRoomAction(event) {
 
   if (action === "close-billing-summary") {
     clearBillingSummary();
+    return;
+  }
+
+  if (action === "open-lc-duration-editor") {
+    await openLcDurationEditor(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "close-lc-duration-editor") {
+    closeLcDurationEditor();
+    return;
+  }
+
+  if (action === "save-lc-duration-editor") {
+    await saveLcDurationEditor();
     return;
   }
 

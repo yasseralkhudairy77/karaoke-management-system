@@ -812,6 +812,10 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getTransactionLcEditDetails") {
+      return jsonResponse(getTransactionLcEditDetails_(e.parameter.transaction_id));
+    }
+
     if (action === "getTodayCashierClosings") {
       return jsonResponse(getCashierClosingsByPeriod_(
         e.parameter.period,
@@ -1057,6 +1061,10 @@ function doPost(e) {
 
     if (action === "updateTransactionDetails") {
       return jsonResponse(updateTransactionDetails_(payload));
+    }
+
+    if (action === "updateTransactionLcDurations") {
+      return jsonResponse(updateTransactionLcDurations_(payload));
     }
 
     if (action === "deleteTransaction") {
@@ -6044,6 +6052,9 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     changed_by: changedBy || "Manager",
   };
   var normalizedPin = String(pin || "").trim();
+  var pinLabel = roleMeetsRequired_("cashier", payload.required_role)
+    ? "PIN operator"
+    : "PIN owner/manager";
 
   if (!normalizedPin) {
     if (shouldAudit !== false) {
@@ -6053,7 +6064,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN owner/manager wajib diisi.",
+      message: pinLabel + " wajib diisi.",
       block_reason: "EMPTY_PIN",
     };
   }
@@ -6072,7 +6083,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN owner/manager tidak valid.",
+      message: pinLabel + " tidak valid.",
       block_reason: "INVALID_PIN",
     };
   }
@@ -6098,7 +6109,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
   return {
     ok: true,
     success: true,
-    message: "PIN owner/manager valid.",
+    message: pinLabel + " valid.",
     employee: sanitizeEmployeeForAccess_(employee),
   };
 }
@@ -11326,6 +11337,557 @@ function updateTransactionDetails_(payload) {
     message: "Transaksi berhasil diperbarui.",
     transaction: getRowObject_(sheet, headerMap, rowNumber),
   };
+}
+
+function getTransactionLcEditContext_(transactionId) {
+  var normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+
+  var transactionsSheet = getSheet_("Transactions");
+  var transactionHeaders = getHeaderMap_(transactionsSheet);
+  var transactionRow = findRowByValue_(
+    transactionsSheet,
+    transactionHeaders,
+    "transaction_id",
+    normalizedTransactionId
+  );
+
+  if (!transactionRow) {
+    return { ok: false, success: false, error: "Transaksi tidak ditemukan." };
+  }
+
+  var transaction = getRowObject_(transactionsSheet, transactionHeaders, transactionRow);
+  if (String(transaction.transaction_type || "").trim().toLowerCase() !== "session_checkout") {
+    return {
+      ok: false,
+      success: false,
+      error: "Edit durasi LC hanya tersedia untuk transaksi sesi room.",
+    };
+  }
+
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return { ok: false, success: false, error: "Riwayat sesi room tidak ditemukan." };
+  }
+
+  var sessionsSheet = getSheet_(ROOM_SESSIONS_SHEET);
+  var sessionHeaders = getHeaderMap_(sessionsSheet);
+  var session = null;
+  var sessionRow = sessionHeaders.closed_transaction_id
+    ? findRowByValue_(
+      sessionsSheet,
+      sessionHeaders,
+      "closed_transaction_id",
+      normalizedTransactionId
+    )
+    : 0;
+
+  if (sessionRow) {
+    session = getRowObject_(sessionsSheet, sessionHeaders, sessionRow);
+  } else {
+    var sessionRows = readSheetAsObjects_(ROOM_SESSIONS_SHEET);
+    for (var sessionIndex = sessionRows.length - 1; sessionIndex >= 0; sessionIndex--) {
+      var candidate = sessionRows[sessionIndex];
+      if (
+        String(candidate.room_id || "").trim() === String(transaction.room_id || "").trim()
+        && normalizeFnbOrderDateTime_(candidate.start_time)
+          === normalizeFnbOrderDateTime_(transaction.start_time)
+      ) {
+        session = candidate;
+        sessionRow = sessionIndex + 2;
+        break;
+      }
+    }
+  }
+
+  if (!session || !sessionRow) {
+    return { ok: false, success: false, error: "Sesi room untuk transaksi tidak ditemukan." };
+  }
+
+  if (!sheetExists_("LcWorkLogs")) {
+    return { ok: false, success: false, error: "Work log LC tidak ditemukan." };
+  }
+
+  var workLogsSheet = ensureLcWorkLogsSheet_();
+  var workLogHeaders = getHeaderMap_(workLogsSheet);
+  var workLogRows = readSheetAsObjects_("LcWorkLogs");
+  var canonicalLogsByLcId = {};
+  var canonicalOrder = [];
+
+  workLogRows.forEach(function (log, index) {
+    if (String(log.session_id || "").trim() !== String(session.session_id || "").trim()) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var status = String(log.status || "").trim().toLowerCase();
+    if (!lcId || lcId === "PENDING" || status === "cancelled") {
+      return;
+    }
+
+    if (!canonicalLogsByLcId[lcId]) {
+      canonicalOrder.push(lcId);
+      canonicalLogsByLcId[lcId] = {
+        row_number: index + 2,
+        log: log,
+      };
+      return;
+    }
+
+    if (
+      status === "active"
+      && String(canonicalLogsByLcId[lcId].log.status || "").trim().toLowerCase() !== "active"
+    ) {
+      canonicalLogsByLcId[lcId] = {
+        row_number: index + 2,
+        log: log,
+      };
+    }
+  });
+
+  var lcLogs = canonicalOrder.map(function (lcId) {
+    return canonicalLogsByLcId[lcId];
+  });
+
+  if (lcLogs.length === 0) {
+    return {
+      ok: false,
+      success: false,
+      error: "Transaksi tidak memiliki work log LC yang dapat diedit.",
+    };
+  }
+
+  var closingReference = findTransactionClosingReference_(normalizedTransactionId);
+  var payrollReferences = lcLogs.filter(function (entry) {
+    return !!String(entry.log.payroll_id || "").trim();
+  }).map(function (entry) {
+    return String(entry.log.payroll_id || "").trim();
+  });
+  var paymentStatus = String(transaction.payment_status || "").trim().toLowerCase();
+  var blockedReason = "";
+
+  if (closingReference) {
+    blockedReason = "Transaksi sudah masuk closing kasir dan tidak dapat diedit.";
+  } else if (payrollReferences.length > 0) {
+    blockedReason = "Pendapatan LC sudah masuk payroll dan tidak dapat diedit.";
+  } else if (paymentStatus !== "unpaid" && paymentStatus !== "paid") {
+    blockedReason = "Status pembayaran transaksi tidak mendukung edit durasi LC.";
+  }
+
+  return {
+    ok: true,
+    success: true,
+    transaction: transaction,
+    transaction_sheet: transactionsSheet,
+    transaction_headers: transactionHeaders,
+    transaction_row: transactionRow,
+    session: session,
+    session_sheet: sessionsSheet,
+    session_headers: sessionHeaders,
+    session_row: sessionRow,
+    work_logs_sheet: workLogsSheet,
+    work_log_headers: workLogHeaders,
+    lc_logs: lcLogs,
+    closing_reference: closingReference,
+    payroll_references: payrollReferences,
+    blocked_reason: blockedReason,
+    can_edit: !blockedReason,
+    requires_admin_pin: paymentStatus === "paid" && !blockedReason,
+  };
+}
+
+function serializeTransactionLcEditContext_(context) {
+  var currentLogTotal = context.lc_logs.reduce(function (total, entry) {
+    return total + (Number(entry.log.rate) || 0);
+  }, 0);
+
+  return {
+    ok: true,
+    success: true,
+    transaction_id: context.transaction.transaction_id || "",
+    session_id: context.session.session_id || "",
+    room_id: context.transaction.room_id || "",
+    room_name: context.transaction.room_name || "",
+    payment_status: String(context.transaction.payment_status || "").trim().toLowerCase(),
+    current_lc_total: Number(context.transaction.lc_total) || 0,
+    current_grand_total: Number(context.transaction.grand_total) || 0,
+    current_work_log_total: currentLogTotal,
+    billing_adjustment: (Number(context.transaction.lc_total) || 0) - currentLogTotal,
+    can_edit: context.can_edit,
+    requires_admin_pin: context.requires_admin_pin,
+    blocked_reason: context.blocked_reason || "",
+    lc_logs: context.lc_logs.map(function (entry) {
+      return {
+        log_id: entry.log.log_id || "",
+        lc_id: entry.log.lc_id || "",
+        lc_name: entry.log.lc_name || entry.log.lc_id || "",
+        duration_minutes: inferLcWorkLogDurationMinutes_(entry.log) || 60,
+        rate_per_hour: resolveLcWorkLogHourlyRate_(entry.log),
+        rate: Number(entry.log.rate) || 0,
+        status: String(entry.log.status || "").trim().toLowerCase(),
+        payroll_id: String(entry.log.payroll_id || "").trim(),
+      };
+    }),
+  };
+}
+
+function resolveLcWorkLogHourlyRate_(log) {
+  var explicitRate = Number(log && log.rate_per_hour) || 0;
+  if (explicitRate > 0) {
+    return explicitRate;
+  }
+
+  var durationMinutes = inferLcWorkLogDurationMinutes_(log || {}) || 60;
+  var billedHours = Math.max(1, Math.ceil(durationMinutes / 60));
+  var totalRate = Number(log && log.rate) || 0;
+  return totalRate > 0 ? totalRate / billedHours : 0;
+}
+
+function getTransactionLcEditDetails_(transactionId) {
+  var context = getTransactionLcEditContext_(transactionId);
+  if (!context.ok) {
+    return context;
+  }
+
+  return serializeTransactionLcEditContext_(context);
+}
+
+function normalizeTransactionLcDurationAssignments_(assignments, context) {
+  if (!Array.isArray(assignments)) {
+    return { ok: false, error: "Daftar durasi LC wajib diisi." };
+  }
+
+  var expectedByLcId = {};
+  context.lc_logs.forEach(function (entry) {
+    expectedByLcId[String(entry.log.lc_id || "").trim()] = entry;
+  });
+
+  var normalized = [];
+  var seen = {};
+
+  for (var index = 0; index < assignments.length; index++) {
+    var assignment = assignments[index] || {};
+    var lcId = String(assignment.lc_id || "").trim();
+    var durationMinutes = Math.round(Number(assignment.duration_minutes));
+
+    if (!lcId || !expectedByLcId[lcId]) {
+      return { ok: false, error: "LC pada permintaan tidak cocok dengan transaksi." };
+    }
+    if (seen[lcId]) {
+      return { ok: false, error: "LC yang sama tidak boleh dikirim lebih dari sekali." };
+    }
+    if (
+      !isFinite(durationMinutes)
+      || durationMinutes < 30
+      || durationMinutes > 720
+      || durationMinutes % 30 !== 0
+    ) {
+      return {
+        ok: false,
+        error: "Durasi LC wajib antara 30 menit dan 12 jam dengan kelipatan 30 menit.",
+      };
+    }
+
+    seen[lcId] = true;
+    normalized.push({
+      lc_id: lcId,
+      duration_minutes: durationMinutes,
+      context_entry: expectedByLcId[lcId],
+    });
+  }
+
+  if (normalized.length !== context.lc_logs.length) {
+    return { ok: false, error: "Semua LC pada transaksi wajib memiliki durasi." };
+  }
+
+  return { ok: true, assignments: normalized };
+}
+
+function clearLcWorkReportCacheForTransaction_(transaction) {
+  try {
+    var operationalDate = resolveTransactionOperationalDateString_(transaction);
+    var cache = CacheService.getScriptCache();
+    var keys = ["lc-work-reports-v2:all:all:all"];
+
+    if (operationalDate) {
+      keys.push(
+        "lc-work-reports-v2:today:" + operationalDate + ":" + operationalDate,
+        "lc-work-reports-v2:yesterday:" + operationalDate + ":" + operationalDate,
+        "lc-work-reports-v2:custom:" + operationalDate + ":" + operationalDate
+      );
+    }
+
+    cache.removeAll(keys);
+  } catch (error) {
+    Logger.log("Gagal membersihkan cache laporan LC: " + error.message);
+  }
+}
+
+function updateTransactionLcDurations_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  var changedBy = String(request.changed_by || "Kasir").trim() || "Kasir";
+  var reason = String(request.reason || "").trim();
+
+  if (!transactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+  if (reason.length < 3) {
+    return { ok: false, success: false, error: "Alasan perubahan minimal 3 karakter." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses perubahan transaksi lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var context = getTransactionLcEditContext_(transactionId);
+    if (!context.ok) {
+      return context;
+    }
+    if (!context.can_edit) {
+      return {
+        ok: false,
+        success: false,
+        error: context.blocked_reason,
+        block_reason: context.blocked_reason,
+      };
+    }
+
+    var requiredRole = context.requires_admin_pin ? "manager" : "cashier";
+    var authorizationPin = context.requires_admin_pin
+      ? request.admin_pin
+      : request.operator_pin;
+    var requestedAction = context.requires_admin_pin
+      ? "edit_paid_transaction_lc_duration"
+      : "edit_unpaid_transaction_lc_duration";
+    var auth = validateAdminPinPayload_(
+      authorizationPin,
+      requiredRole,
+      requestedAction,
+      changedBy,
+      true
+    );
+    if (!auth.success) {
+      return {
+        ok: false,
+        success: false,
+        error: auth.message,
+        block_reason: auth.block_reason,
+      };
+    }
+    if (auth.employee && auth.employee.employee_name) {
+      changedBy = auth.employee.employee_name;
+    }
+
+    var normalizedResult = normalizeTransactionLcDurationAssignments_(
+      request.assignments,
+      context
+    );
+    if (!normalizedResult.ok) {
+      return { ok: false, success: false, error: normalizedResult.error };
+    }
+
+    var oldLogTotal = 0;
+    var newLogTotal = 0;
+    var changes = [];
+
+    normalizedResult.assignments.forEach(function (assignment) {
+      var log = assignment.context_entry.log;
+      var hourlyRate = resolveLcWorkLogHourlyRate_(log);
+      if (hourlyRate <= 0) {
+        throw new Error("Tarif per jam LC tidak valid: " + (log.lc_name || assignment.lc_id));
+      }
+
+      var oldDuration = inferLcWorkLogDurationMinutes_(log) || 60;
+      var oldRate = Number(log.rate) || 0;
+      var newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
+
+      oldLogTotal += oldRate;
+      newLogTotal += newRate;
+      changes.push({
+        lc_id: assignment.lc_id,
+        lc_name: log.lc_name || assignment.lc_id,
+        row_number: assignment.context_entry.row_number,
+        old_duration_minutes: oldDuration,
+        new_duration_minutes: assignment.duration_minutes,
+        rate_per_hour: hourlyRate,
+        old_rate: oldRate,
+        new_rate: newRate,
+      });
+    });
+
+    var oldLcTotal = Number(context.transaction.lc_total) || 0;
+    var oldGrandTotal = Number(context.transaction.grand_total) || 0;
+    var billingAdjustment = oldLcTotal - oldLogTotal;
+    var newLcTotal = Math.max(0, newLogTotal + billingAdjustment);
+    var newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
+    var hasChanges = changes.some(function (change) {
+      return change.old_duration_minutes !== change.new_duration_minutes
+        || change.old_rate !== change.new_rate;
+    }) || oldLcTotal !== newLcTotal || oldGrandTotal !== newGrandTotal;
+
+    if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
+      return {
+        ok: true,
+        success: true,
+        dry_run: true,
+        message: "Preview perubahan durasi LC berhasil dihitung.",
+        changes: changes,
+        old_lc_total: oldLcTotal,
+        new_lc_total: newLcTotal,
+        old_grand_total: oldGrandTotal,
+        new_grand_total: newGrandTotal,
+      };
+    }
+
+    if (!hasChanges) {
+      return {
+        ok: true,
+        success: true,
+        idempotent_replay: true,
+        message: "Durasi LC sudah sesuai dan tidak ada perubahan.",
+        details: serializeTransactionLcEditContext_(context),
+      };
+    }
+
+    var oldSessionValues = {
+      lc_ids: context.session.lc_ids || "",
+      lc_assignments: context.session.lc_assignments || "",
+      updated_at: context.session.updated_at || "",
+    };
+    var updatedTransaction = null;
+
+    try {
+      changes.forEach(function (change) {
+        context.work_logs_sheet
+          .getRange(change.row_number, context.work_log_headers.duration_minutes)
+          .setValue(change.new_duration_minutes);
+        context.work_logs_sheet
+          .getRange(change.row_number, context.work_log_headers.rate)
+          .setValue(change.new_rate);
+      });
+
+      setRowValues_(
+        context.session_sheet,
+        context.session_headers,
+        context.session_row,
+        {
+          lc_ids: changes.map(function (change) { return change.lc_id; }).join(","),
+          lc_assignments: serializeLcAssignments_(changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.new_duration_minutes,
+            };
+          })),
+          updated_at: toJakartaIsoString_(new Date()),
+        }
+      );
+
+      context.transaction_sheet
+        .getRange(context.transaction_row, context.transaction_headers.lc_total)
+        .setValue(newLcTotal);
+      context.transaction_sheet
+        .getRange(context.transaction_row, context.transaction_headers.grand_total)
+        .setValue(newGrandTotal);
+
+      updatedTransaction = getRowObject_(
+        context.transaction_sheet,
+        context.transaction_headers,
+        context.transaction_row
+      );
+    } catch (writeError) {
+      try {
+        changes.forEach(function (change) {
+          context.work_logs_sheet
+            .getRange(change.row_number, context.work_log_headers.duration_minutes)
+            .setValue(change.old_duration_minutes);
+          context.work_logs_sheet
+            .getRange(change.row_number, context.work_log_headers.rate)
+            .setValue(change.old_rate);
+        });
+        setRowValues_(
+          context.session_sheet,
+          context.session_headers,
+          context.session_row,
+          oldSessionValues
+        );
+        context.transaction_sheet
+          .getRange(context.transaction_row, context.transaction_headers.lc_total)
+          .setValue(oldLcTotal);
+        context.transaction_sheet
+          .getRange(context.transaction_row, context.transaction_headers.grand_total)
+          .setValue(oldGrandTotal);
+      } catch (rollbackError) {
+        Logger.log("Rollback edit durasi LC gagal: " + rollbackError.message);
+      }
+      throw writeError;
+    }
+
+    try {
+      appendMasterDataAuditLog_({
+        entity_type: "transaction",
+        entity_id: transactionId,
+        entity_name: context.transaction.room_name || "",
+        action_type: "edit_lc_duration",
+        old_value: {
+          lc_total: oldLcTotal,
+          grand_total: oldGrandTotal,
+          lc_logs: changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.old_duration_minutes,
+              rate: change.old_rate,
+            };
+          }),
+        },
+        new_value: {
+          lc_total: newLcTotal,
+          grand_total: newGrandTotal,
+          lc_logs: changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.new_duration_minutes,
+              rate: change.new_rate,
+            };
+          }),
+        },
+        changed_by: changedBy,
+        note: reason,
+        result: "success",
+      });
+    } catch (auditError) {
+      Logger.log("Audit edit durasi LC gagal: " + auditError.message);
+    }
+
+    clearLcWorkReportCacheForTransaction_(updatedTransaction);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Durasi LC dan total transaksi berhasil diperbarui.",
+      transaction: updatedTransaction,
+      changes: changes,
+      old_lc_total: oldLcTotal,
+      new_lc_total: newLcTotal,
+      old_grand_total: oldGrandTotal,
+      new_grand_total: newGrandTotal,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      success: false,
+      error: error.message || "Gagal memperbarui durasi LC.",
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function ensureDeletedTransactionsSheet_(transactionHeaders) {

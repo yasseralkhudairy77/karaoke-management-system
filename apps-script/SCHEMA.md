@@ -405,7 +405,7 @@ Menyimpan riwayat transaksi room.
 | `rate_per_hour` | Tarif per jam yang dipakai transaksi. |
 | `room_total` | Total biaya room saja. |
 | `fnb_total` | Total F&B dari order open yang masuk tagihan. |
-| `grand_total` | Total akhir tagihan, yaitu `room_total + fnb_total`. |
+| `grand_total` | Total akhir tagihan setelah komponen room, F&B, LC, dan diskon terkait dihitung. |
 | `fnb_order_ids` | Daftar `order_id` F&B yang digabung, dipisahkan koma. |
 | `payment_method` | Metode pembayaran. |
 | `payment_status` | Status pembayaran. |
@@ -1519,6 +1519,12 @@ Rules:
 - `rate_per_hour` adalah snapshot tarif LC saat log dibuat.
 - `rate` tetap menjadi total earning jasa room LC untuk payroll, dihitung `ceil(duration_minutes / 60) * rate_per_hour`.
 - Untuk log lama tanpa `duration_minutes`, sistem melakukan fallback dari `rate_per_hour`, `rate`, atau selisih `created_at` sampai `closed_at`.
+- `getTransactionLcEditDetails` memuat rincian LC hanya saat editor transaksi dibuka.
+- `updateTransactionLcDurations` menerima semua LC pada sesi, durasi 30–720 menit dalam kelipatan 30 menit, dan alasan perubahan.
+- Perubahan durasi memperbarui `LcWorkLogs`, `RoomSessions.lc_assignments`, `Transactions.lc_total`, dan `Transactions.grand_total` dalam satu script lock.
+- Transaksi `unpaid` dapat dikoreksi dengan PIN operator login minimal role kasir. Transaksi `paid` memerlukan PIN manager/owner.
+- Transaksi yang sudah masuk closing kasir atau work log yang sudah masuk payroll tidak dapat dikoreksi.
+- Setiap perubahan berhasil dicatat sebagai audit `edit_lc_duration`.
 
 ### LcSalesBonusLogs
 
