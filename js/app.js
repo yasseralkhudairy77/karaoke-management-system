@@ -13667,7 +13667,7 @@ function createTransactionRowElement(transaction) {
       : "transaction-status-unpaid";
 
   [
-    ["ID Transaksi", transaction?.transaction_id || "-"],
+    ["ID Transaksi", transaction?.transaction_id || "-", "transaction-id-cell"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
     ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
@@ -13694,6 +13694,9 @@ function createTransactionRowElement(transaction) {
         ? withStatusBadge("transaction-value", getPaymentStatusTone(transaction?.payment_status))
         : "transaction-value";
       value.textContent = valueText;
+      if (modifierClass === "transaction-id-cell") {
+        value.title = valueText;
+      }
       item.append(label, value);
 
       if (modifierClass === "transaction-has-fnb") {
@@ -13719,7 +13722,7 @@ function createTransactionActionsElement(transaction) {
   summaryButton.type = "button";
   summaryButton.dataset.action = "show-transaction-summary";
   summaryButton.dataset.transactionId = transaction?.transaction_id || "";
-  summaryButton.textContent = "Lihat Ringkasan";
+  summaryButton.textContent = "Lihat";
   actions.appendChild(summaryButton);
 
   const printButton = document.createElement("button");
@@ -13727,7 +13730,7 @@ function createTransactionActionsElement(transaction) {
   printButton.type = "button";
   printButton.dataset.action = "show-receipt-print";
   printButton.dataset.transactionId = transaction?.transaction_id || "";
-  printButton.textContent = transaction?.payment_status === "paid" ? "Cetak Ulang" : "Cetak Struk";
+  printButton.textContent = transaction?.payment_status === "paid" ? "Cetak" : "Struk";
   actions.appendChild(printButton);
 
   if (getCurrentOperatorRole() === "owner") {
@@ -13736,7 +13739,7 @@ function createTransactionActionsElement(transaction) {
     deleteButton.type = "button";
     deleteButton.dataset.action = "open-delete-transaction";
     deleteButton.dataset.transactionId = transaction?.transaction_id || "";
-    deleteButton.textContent = "Hapus Transaksi";
+    deleteButton.textContent = "Hapus";
     actions.appendChild(deleteButton);
   }
 

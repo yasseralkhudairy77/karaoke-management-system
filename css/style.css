@@ -5571,14 +5571,24 @@ body::after {
 
 .transaction-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .transaction-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
-  padding: 14px;
+  grid-template-columns:
+    minmax(132px, 1.05fr)
+    minmax(128px, 1fr)
+    minmax(74px, 0.6fr)
+    minmax(96px, 0.78fr)
+    minmax(96px, 0.78fr)
+    minmax(112px, 0.9fr)
+    minmax(82px, 0.62fr)
+    minmax(100px, 0.78fr)
+    minmax(148px, 1fr);
+  gap: 8px 10px;
+  align-items: start;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
@@ -5586,6 +5596,16 @@ body::after {
 
 .transaction-cell {
   min-width: 0;
+}
+
+.transaction-id-cell .transaction-value {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 0.9rem;
+  line-height: 1.22;
 }
 
 .transaction-label {
@@ -5601,7 +5621,7 @@ body::after {
   margin: 0;
   color: var(--text);
   overflow-wrap: anywhere;
-  font-size: 0.96rem;
+  font-size: 0.94rem;
   font-weight: 800;
   line-height: 1.25;
 }
@@ -5609,13 +5629,13 @@ body::after {
 .transaction-fnb-badge {
   display: inline-flex;
   width: fit-content;
-  margin-top: 7px;
-  padding: 5px 8px;
+  margin-top: 5px;
+  padding: 4px 7px;
   border: 1px solid rgba(255, 193, 102, 0.48);
   border-radius: 8px;
   background: rgba(255, 193, 102, 0.12);
   color: var(--billing-amber);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   font-weight: 900;
 }
 
@@ -6688,20 +6708,24 @@ body::after {
 }
 
 .transaction-actions {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .transaction-action-button,
 .transaction-pay-button {
-  min-height: 40px;
-  width: 100%;
+  min-height: 34px;
+  width: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
   font: inherit;
-  font-size: 0.88rem;
+  font-size: 0.78rem;
   font-weight: 900;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .transaction-action-button {
@@ -6718,21 +6742,24 @@ body::after {
 }
 
 .transaction-pay-control {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex: 1 1 100%;
+  gap: 6px;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .transaction-pay-select {
-  min-height: 40px;
-  width: 100%;
+  min-height: 34px;
+  width: min(100%, 96px);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   font-weight: 700;
-  padding: 0 10px;
+  padding: 0 8px;
 }
 
 .transaction-pay-select:focus-visible {
@@ -7371,7 +7398,13 @@ body::after {
   }
 
   .transaction-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns:
+      minmax(128px, 1fr)
+      minmax(130px, 1fr)
+      minmax(82px, 0.65fr)
+      minmax(102px, 0.8fr)
+      minmax(102px, 0.8fr)
+      minmax(118px, 0.95fr);
   }
 
   .transaction-actions-cell {
@@ -7779,13 +7812,14 @@ body::after {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  justify-content: flex-end;
 }
 
 .transaction-actions .transaction-action-button,
 .transaction-actions .transaction-pay-button {
   width: auto;
-  min-width: 132px;
-  flex: 1 1 132px;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .transaction-actions .transaction-delete-button {
@@ -7800,7 +7834,7 @@ body::after {
 }
 
 .transaction-pay-control {
-  flex: 1 1 180px;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
