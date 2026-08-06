@@ -818,6 +818,9 @@ let isLoadingLcs = false;
 let lcLoadError = "";
 let lcWorkReports = [];
 let isLoadingLcWorkReports = false;
+let lcWorkReportsError = "";
+let lcWorkReportsRequestSequence = 0;
+let lcWorkReportsAbortController = null;
 let activeLcSubTab = "master";
 let lcMasterPage = 1;
 let lcReportsPage = 1;
@@ -16810,34 +16813,41 @@ function refreshActiveTabData() {
       loadRoomRecoveryCandidates();
       break;
     case "fnb":
-      refreshFnbTabData();
+      if (activeFnbSubTab === "open") {
+        loadOpenFnbOrders();
+      } else if (activeFnbSubTab === "history") {
+        loadTodayFnbOrders();
+      } else {
+        loadInventoryItems();
+      }
       break;
     case "stock":
-      loadInventoryItems();
-      loadTodayStockMovements();
-      loadInventoryAudits();
+      if (activeStockSubTab === "opname") {
+        loadInventoryAudits();
+      } else if (activeStockSubTab === "movements") {
+        loadTodayStockMovements();
+      } else {
+        loadInventoryItems();
+      }
       break;
     case "reports":
-      if (isValidReportSubTab("owner")) {
+      if (activeReportSubTab === "owner" && isValidReportSubTab("owner")) {
         loadOwnerPeriodReport();
         loadOwnerDashboardSummary();
-      }
-
-      if (isValidReportSubTab("fnb")) {
+      } else if (activeReportSubTab === "fnb" && isValidReportSubTab("fnb")) {
         loadTodayFnbSalesReport();
-      }
-
-      if (isValidReportSubTab("cashier")) {
+      } else if (activeReportSubTab === "cashier" && isValidReportSubTab("cashier")) {
         loadTodayCashierClosings();
-      }
-
-      if (isValidReportSubTab("room")) {
+      } else if (activeReportSubTab === "room" && isValidReportSubTab("room")) {
         loadRoomUsageReport();
       }
       break;
     case "transactions":
-      loadTodayTransactions();
-      loadTodayCashierClosings();
+      if (activeTransactionsSubTab === "closing") {
+        loadTodayCashierClosings();
+      } else {
+        loadTodayTransactions();
+      }
       break;
     case "audit":
       loadTodayRoomTimeLogs();
@@ -17352,6 +17362,26 @@ async function loadLcs(force = false) {
 }
 
 async function loadLcWorkReports(period = "today", startDate = "", endDate = "") {
+  const requestSequence = ++lcWorkReportsRequestSequence;
+  const requestedPeriod = period || "today";
+  const requestedStartDate = startDate || "";
+  const requestedEndDate = endDate || "";
+
+  if (lcWorkReportsAbortController) {
+    lcWorkReportsAbortController.abort();
+  }
+
+  const abortController = new AbortController();
+  lcWorkReportsAbortController = abortController;
+  let didTimeout = false;
+  const timeoutId = window.setTimeout(() => {
+    didTimeout = true;
+    abortController.abort();
+  }, 30000);
+
+  isLoadingLcWorkReports = true;
+  lcWorkReportsError = "";
+
   if (!API_BASE_URL.trim()) {
     lcWorkReports = [
       { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 5, total_earnings: 875000, logs: [
@@ -17359,25 +17389,71 @@ async function loadLcWorkReports(period = "today", startDate = "", endDate = "")
       ] },
       { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 3, total_earnings: 525000, logs: [] },
     ];
+    window.clearTimeout(timeoutId);
+    lcWorkReportsAbortController = null;
+    isLoadingLcWorkReports = false;
+    lcReportsPage = 1;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
     return;
   }
 
-  isLoadingLcWorkReports = true;
   if (activeDashboardTab === "lc") {
     renderRooms();
   }
+
   try {
-    const response = await fetch(`${API_BASE_URL}?action=getLcWorkReports&period=${period}&start_date=${startDate}&end_date=${endDate}`);
-    const data = await response.json();
-    if (data && data.success) {
-      lcWorkReports = data.reports || [];
+    const params = new URLSearchParams({
+      action: "getLcWorkReports",
+      period: requestedPeriod,
+      start_date: requestedStartDate,
+      end_date: requestedEndDate,
+      _: String(Date.now()),
+    });
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`, {
+      cache: "no-store",
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server laporan LC merespons status ${response.status}.`);
     }
+
+    const data = await response.json();
+
+    if (requestSequence !== lcWorkReportsRequestSequence) {
+      return;
+    }
+
+    if (!data || data.success !== true || !Array.isArray(data.reports)) {
+      throw new Error(data?.error || data?.message || "Respons laporan LC tidak valid.");
+    }
+
+    lcWorkReports = data.reports;
+    lcReportsPage = 1;
   } catch (error) {
+    if (requestSequence !== lcWorkReportsRequestSequence) {
+      return;
+    }
+
+    if (error?.name === "AbortError" && !didTimeout) {
+      return;
+    }
+
     console.error("Error loading LC work reports:", error);
+    lcWorkReportsError = didTimeout
+      ? "Server laporan LC terlalu lama merespons. Silakan terapkan filter kembali."
+      : error.message || "Laporan kerja LC gagal dimuat.";
   } finally {
-    isLoadingLcWorkReports = false;
-    if (activeDashboardTab === "lc") {
-      renderRooms();
+    window.clearTimeout(timeoutId);
+
+    if (requestSequence === lcWorkReportsRequestSequence) {
+      lcWorkReportsAbortController = null;
+      isLoadingLcWorkReports = false;
+      if (activeDashboardTab === "lc") {
+        renderRooms();
+      }
     }
   }
 }
@@ -18152,19 +18228,32 @@ function createLcReportsSubTabElement() {
   applyBtn.style.padding = "8px 16px";
   applyBtn.style.alignSelf = "flex-end";
   applyBtn.style.fontWeight = "bold";
-  applyBtn.textContent = "Terapkan Filter";
+  applyBtn.textContent = isLoadingLcWorkReports ? "Memuat..." : "Terapkan Filter";
   applyBtn.onclick = async () => {
     lcReportStartDate = startInput.value;
     lcReportEndDate = endInput.value;
     await loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
-    renderRooms();
   };
   toolbar.appendChild(applyBtn);
   container.appendChild(toolbar);
 
   if (isLoadingLcWorkReports) {
-    container.appendChild(createStateMessage("Memuat laporan kerja & gaji LC..."));
-    return container;
+    const loadingMessage = lcWorkReports.length > 0
+      ? "Memuat periode terbaru. Data sebelumnya tetap ditampilkan sementara."
+      : "Memuat laporan kerja & gaji LC...";
+    container.appendChild(createStateMessage(loadingMessage));
+
+    if (lcWorkReports.length === 0) {
+      return container;
+    }
+  }
+
+  if (lcWorkReportsError) {
+    container.appendChild(createStateMessage(lcWorkReportsError, "error"));
+
+    if (lcWorkReports.length === 0) {
+      return container;
+    }
   }
 
   if (lcWorkReports.length === 0) {
@@ -21840,6 +21929,7 @@ async function handleRoomAction(event) {
     if (subtab && ["order", "open", "history"].includes(subtab)) {
       activeFnbSubTab = subtab;
       renderDashboardTabPanels();
+      refreshActiveTabData();
     }
     return;
   }
@@ -21849,6 +21939,7 @@ async function handleRoomAction(event) {
     if (subtab && ["history", "closing"].includes(subtab)) {
       activeTransactionsSubTab = subtab;
       renderDashboardTabPanels();
+      refreshActiveTabData();
     }
     return;
   }
@@ -21904,6 +21995,7 @@ async function handleRoomAction(event) {
     if (subtab && REPORT_SUB_TABS.some((t) => t.key === subtab)) {
       activeReportSubTab = subtab;
       renderDashboardTabPanels();
+      refreshActiveTabData();
     }
     return;
   }
@@ -22808,42 +22900,52 @@ async function initializeDashboard() {
 
   const initialLoads = [];
 
-  if (canAccessDashboardTab("fnb") || canAccessDashboardTab("stock") || canAccessDashboardTab("rooms")) {
+  if (["fnb", "stock", "rooms"].includes(activeDashboardTab)) {
     initialLoads.push(loadInventoryItems());
   }
 
-  if (canAccessDashboardTab("fnb")) {
-    initialLoads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
+  if (activeDashboardTab === "fnb" && canAccessDashboardTab("fnb")) {
+    if (activeFnbSubTab === "open") {
+      initialLoads.push(loadOpenFnbOrders());
+    } else if (activeFnbSubTab === "history") {
+      initialLoads.push(loadTodayFnbOrders());
+    }
   }
 
-  if (canAccessDashboardTab("stock")) {
-    initialLoads.push(loadTodayStockMovements(), loadInventoryAudits());
+  if (activeDashboardTab === "stock" && canAccessDashboardTab("stock")) {
+    if (activeStockSubTab === "opname") {
+      initialLoads.push(loadInventoryAudits());
+    } else if (activeStockSubTab === "movements") {
+      initialLoads.push(loadTodayStockMovements());
+    }
   }
 
-  if (canAccessDashboardTab("reports")) {
-    if (isValidReportSubTab("owner")) {
+  if (activeDashboardTab === "reports" && canAccessDashboardTab("reports")) {
+    if (activeReportSubTab === "owner" && isValidReportSubTab("owner")) {
       initialLoads.push(loadOwnerDashboardSummary(), loadOwnerPeriodReport());
-    }
-
-    if (isValidReportSubTab("fnb")) {
+    } else if (activeReportSubTab === "fnb" && isValidReportSubTab("fnb")) {
       initialLoads.push(loadTodayFnbSalesReport());
-    }
-
-    if (isValidReportSubTab("room")) {
+    } else if (activeReportSubTab === "room" && isValidReportSubTab("room")) {
       initialLoads.push(loadRoomUsageReport());
-    }
-
-    if (isValidReportSubTab("cashier")) {
+    } else if (activeReportSubTab === "cashier" && isValidReportSubTab("cashier")) {
       initialLoads.push(loadTodayCashierClosings());
     }
   }
 
-  if (canAccessDashboardTab("audit")) {
+  if (activeDashboardTab === "audit" && canAccessDashboardTab("audit")) {
     initialLoads.push(loadTodayRoomTimeLogs());
   }
 
-  if (canAccessDashboardTab("transactions")) {
-    initialLoads.push(loadTodayTransactions(), loadTodayCashierClosings());
+  if (activeDashboardTab === "transactions" && canAccessDashboardTab("transactions")) {
+    if (activeTransactionsSubTab === "closing") {
+      initialLoads.push(loadTodayCashierClosings());
+    } else {
+      initialLoads.push(loadTodayTransactions());
+    }
+  }
+
+  if (activeDashboardTab === "lc" && activeLcSubTab === "reports" && canAccessDashboardTab("lc")) {
+    initialLoads.push(loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate));
   }
 
   if (activeDashboardTab === "settings" && canAccessDashboardTab("settings")) {

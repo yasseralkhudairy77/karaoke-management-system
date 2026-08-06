@@ -7527,113 +7527,166 @@ function resolveLcClosedAtByDuration_(startTime, durationMinutes, fallbackEndTim
 }
 
 function getLcWorkReports_(period, startDate, endDate) {
-  ensureLcWorkLogsSheet_();
-  ensureLcMasterSheet_();
-  ensureLcSalesBonusLogsSheet_();
-  
-  var logs = readSheetAsObjects_("LcWorkLogs");
-  var lcs = readSheetAsObjects_("LcMaster");
-  var salesBonusLogs = readSheetAsObjects_("LcSalesBonusLogs");
-  
   var range = getOperationalDateRangeForPeriod_(period, startDate, endDate);
 
   if (!range.ok) {
     return range;
   }
-  
-  var filteredLogs = logs.filter(function(log) {
-    var createdTime = log.created_at || log.closed_at || "";
-    if (!createdTime) return false;
-    var logOperationalDate = getOperationalDateString_(createdTime);
-    return matchesOperationalPeriod_(logOperationalDate, range);
-  });
 
-  var filteredSalesBonusLogs = salesBonusLogs.filter(function (bonusLog) {
-    var status = String(bonusLog.source_status || "").trim().toLowerCase();
-    var operationalDate = resolveLcFinanceOperationalDate_(bonusLog);
-    return !isLcFinanceRowVoided_(bonusLog) &&
-      status !== "cancelled" &&
-      status !== "voided" &&
-      operationalDate &&
-      matchesOperationalPeriod_(operationalDate, range);
-  });
+  var cache = CacheService.getScriptCache();
+  var cacheKey = [
+    "lc-work-reports-v2",
+    range.period,
+    range.startDate || "all",
+    range.endDate || "all",
+  ].join(":");
+  var cachedResponse = cache.get(cacheKey);
 
-  var reports = lcs.map(function(lc) {
-    var lcLogs = filteredLogs.filter(function(log) {
-      return String(log.lc_id || "").trim() === String(lc.lc_id || "").trim();
-    });
-    
-    var totalEarnings = lcLogs.reduce(function(sum, log) {
-      if (log.status === "done") {
-        return sum + (Number(log.rate) || 0);
-      }
-      return sum;
-    }, 0);
+  if (cachedResponse) {
+    try {
+      return JSON.parse(cachedResponse);
+    } catch (cacheError) {
+      Logger.log("Cache laporan LC tidak valid: " + cacheError.message);
+    }
+  }
 
-    var lcSalesBonusLogs = filteredSalesBonusLogs.filter(function (bonusLog) {
-      return String(bonusLog.lc_id || "").trim() === String(lc.lc_id || "").trim();
-    });
-    var salesBonusTotal = lcSalesBonusLogs.reduce(function (sum, bonusLog) {
-      return sum + (Number(bonusLog.bonus_total) || 0);
-    }, 0);
-    var grossEarningTotal = totalEarnings + salesBonusTotal;
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  var lcs = readSheetAsObjects_("LcMaster");
+  var salesBonusLogs = readSheetAsObjects_("LcSalesBonusLogs");
+  var reportsByLcId = {};
 
-    var mappedLogs = lcLogs.map(function(log) {
-      return {
-        log_id: log.log_id,
-        session_id: log.session_id,
-        lc_id: log.lc_id,
-        lc_name: log.lc_name,
-        rate: Number(log.rate) || 0,
-        duration_minutes: inferLcWorkLogDurationMinutes_(log),
-        rate_per_hour: Number(log.rate_per_hour) || 0,
-        status: log.status,
-        created_at: log.created_at,
-        closed_at: log.closed_at,
-      };
-    });
+  lcs.forEach(function (lc) {
+    var lcId = String(lc.lc_id || "").trim();
 
-    var mappedSalesBonusLogs = lcSalesBonusLogs.map(function (bonusLog) {
-      return {
-        bonus_log_id: bonusLog.bonus_log_id || "",
-        transaction_id: bonusLog.transaction_id || "",
-        order_id: bonusLog.order_id || "",
-        menu_id: bonusLog.menu_id || "",
-        menu_name: bonusLog.menu_name || "",
-        category: bonusLog.category || "",
-        quantity: Number(bonusLog.quantity) || 0,
-        bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
-        bonus_total: Number(bonusLog.bonus_total) || 0,
-        source_status: bonusLog.source_status || "",
-        operational_date: resolveLcFinanceOperationalDate_(bonusLog),
-        created_at: bonusLog.created_at || "",
-      };
-    }).sort(function (first, second) {
-      return String(second.created_at || "").localeCompare(String(first.created_at || ""));
-    });
+    if (!lcId) {
+      return;
+    }
 
-    return {
+    reportsByLcId[lcId] = {
       lc_id: lc.lc_id,
       lc_name: lc.lc_name,
       rate_per_room: Number(lc.rate_per_room) || 0,
-      total_sessions: lcLogs.filter(function(l) { return l.status === "done"; }).length,
-      room_earning_total: totalEarnings,
-      sales_bonus_total: salesBonusTotal,
-      gross_earning_total: grossEarningTotal,
-      total_earnings: grossEarningTotal,
-      logs: mappedLogs,
-      sales_bonus_logs: mappedSalesBonusLogs,
+      total_sessions: 0,
+      room_earning_total: 0,
+      sales_bonus_total: 0,
+      gross_earning_total: 0,
+      total_earnings: 0,
+      logs: [],
+      sales_bonus_logs: [],
     };
-  }).filter(function (report) {
-    return report.total_sessions > 0 || report.sales_bonus_total > 0;
   });
 
-  return {
+  logs.forEach(function (log) {
+    var createdTime = log.created_at || log.closed_at || "";
+
+    if (!createdTime) {
+      return;
+    }
+
+    var logOperationalDate = getOperationalDateString_(createdTime);
+
+    if (!matchesOperationalPeriod_(logOperationalDate, range)) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var report = reportsByLcId[lcId];
+
+    if (!report) {
+      return;
+    }
+
+    var rate = Number(log.rate) || 0;
+    report.logs.push({
+      log_id: log.log_id,
+      session_id: log.session_id,
+      lc_id: log.lc_id,
+      lc_name: log.lc_name,
+      rate: rate,
+      duration_minutes: inferLcWorkLogDurationMinutes_(log),
+      rate_per_hour: Number(log.rate_per_hour) || 0,
+      status: log.status,
+      created_at: log.created_at,
+      closed_at: log.closed_at,
+    });
+
+    if (log.status === "done") {
+      report.total_sessions += 1;
+      report.room_earning_total += rate;
+    }
+  });
+
+  salesBonusLogs.forEach(function (bonusLog) {
+    var status = String(bonusLog.source_status || "").trim().toLowerCase();
+    var operationalDate = resolveLcFinanceOperationalDate_(bonusLog);
+
+    if (
+      isLcFinanceRowVoided_(bonusLog) ||
+      status === "cancelled" ||
+      status === "voided" ||
+      !operationalDate ||
+      !matchesOperationalPeriod_(operationalDate, range)
+    ) {
+      return;
+    }
+
+    var lcId = String(bonusLog.lc_id || "").trim();
+    var report = reportsByLcId[lcId];
+
+    if (!report) {
+      return;
+    }
+
+    var bonusTotal = Number(bonusLog.bonus_total) || 0;
+    report.sales_bonus_total += bonusTotal;
+    report.sales_bonus_logs.push({
+      bonus_log_id: bonusLog.bonus_log_id || "",
+      transaction_id: bonusLog.transaction_id || "",
+      order_id: bonusLog.order_id || "",
+      menu_id: bonusLog.menu_id || "",
+      menu_name: bonusLog.menu_name || "",
+      category: bonusLog.category || "",
+      quantity: Number(bonusLog.quantity) || 0,
+      bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
+      bonus_total: bonusTotal,
+      source_status: bonusLog.source_status || "",
+      operational_date: operationalDate,
+      created_at: bonusLog.created_at || "",
+    });
+  });
+
+  var reports = lcs.map(function (lc) {
+    var report = reportsByLcId[String(lc.lc_id || "").trim()];
+
+    if (!report) {
+      return null;
+    }
+
+    report.sales_bonus_logs.sort(function (first, second) {
+      return String(second.created_at || "").localeCompare(String(first.created_at || ""));
+    });
+    report.gross_earning_total = report.room_earning_total + report.sales_bonus_total;
+    report.total_earnings = report.gross_earning_total;
+
+    return report;
+  }).filter(function (report) {
+    return report && (report.total_sessions > 0 || report.sales_bonus_total > 0);
+  });
+
+  var response = {
     ok: true,
     success: true,
     reports: reports,
     range: range,
   };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(response), 15);
+  } catch (cacheWriteError) {
+    Logger.log("Gagal menyimpan cache laporan LC: " + cacheWriteError.message);
+  }
+
+  return response;
 }
 
 function getLcPayrollHistory_() {
