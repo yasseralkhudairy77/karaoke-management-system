@@ -816,6 +816,10 @@ function doGet(e) {
       return jsonResponse(getTransactionLcEditDetails_(e.parameter.transaction_id));
     }
 
+    if (action === "getTransactionLcReceiptDetails") {
+      return jsonResponse(getTransactionLcReceiptDetails_(e.parameter.transaction_id));
+    }
+
     if (action === "getTodayCashierClosings") {
       return jsonResponse(getCashierClosingsByPeriod_(
         e.parameter.period,
@@ -11553,6 +11557,59 @@ function getTransactionLcEditDetails_(transactionId) {
   return serializeTransactionLcEditContext_(context);
 }
 
+function getTransactionLcReceiptDetails_(transactionId) {
+  var normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+
+  var cache = CacheService.getScriptCache();
+  var cacheKey = "transaction-lc-receipt-v1:" + normalizedTransactionId;
+  var cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (error) {
+      cache.remove(cacheKey);
+    }
+  }
+
+  var context = getTransactionLcEditContext_(normalizedTransactionId);
+  if (!context.ok) {
+    return {
+      ok: true,
+      success: true,
+      transaction_id: normalizedTransactionId,
+      detail_available: false,
+      lc_logs: [],
+      message: context.error || "Detail LC historis tidak tersedia.",
+    };
+  }
+
+  var serialized = serializeTransactionLcEditContext_(context);
+  var response = {
+    ok: true,
+    success: true,
+    transaction_id: serialized.transaction_id,
+    detail_available: serialized.lc_logs.length > 0,
+    lc_total: serialized.current_lc_total,
+    work_log_total: serialized.current_work_log_total,
+    billing_adjustment: serialized.billing_adjustment,
+    lc_logs: serialized.lc_logs.map(function (log) {
+      return {
+        lc_id: log.lc_id,
+        lc_name: log.lc_name,
+        duration_minutes: log.duration_minutes,
+        rate_per_hour: log.rate_per_hour,
+        rate: log.rate,
+      };
+    }),
+  };
+
+  cache.put(cacheKey, JSON.stringify(response), 21600);
+  return response;
+}
+
 function normalizeTransactionLcDurationAssignments_(assignments, context) {
   if (!Array.isArray(assignments)) {
     return { ok: false, error: "Daftar durasi LC wajib diisi." };
@@ -11618,6 +11675,9 @@ function clearLcWorkReportCacheForTransaction_(transaction) {
       );
     }
 
+    keys.push(
+      "transaction-lc-receipt-v1:" + String(transaction.transaction_id || "").trim()
+    );
     cache.removeAll(keys);
   } catch (error) {
     Logger.log("Gagal membersihkan cache laporan LC: " + error.message);

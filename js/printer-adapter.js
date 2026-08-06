@@ -1,4 +1,4 @@
-import { formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
+import { formatReceipt58mm } from "./receipt.js?v=lc-receipt-breakdown-v1";
 
 const THERMAL_PAGE_WIDTH_MM = 58;
 const THERMAL_HORIZONTAL_PADDING_MM = 2;

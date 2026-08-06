@@ -15,11 +15,13 @@ export function buildReceiptData(transaction, options = {}) {
   const fnbOrders = Array.isArray(options.fnbOrders) ? options.fnbOrders : safeTransaction.fnb_orders;
   const orderIds = getReceiptFnbOrderIds(safeTransaction);
   const normalizedFnbOrders = normalizeFnbOrders(fnbOrders);
+  const totals = normalizeTotals(safeTransaction);
 
   return {
     business: normalizeBusiness(options.business),
     transaction: normalizeTransaction(safeTransaction),
     room: normalizeRoom(safeTransaction),
+    lc: normalizeLcDetails(options.lcDetails ?? safeTransaction.lc_details, totals.lcTotal),
     fnb: {
       hasFnb: getNumber(safeTransaction.fnb_total) > 0 || normalizedFnbOrders.length > 0 || orderIds.length > 0,
       orderIds,
@@ -27,7 +29,7 @@ export function buildReceiptData(transaction, options = {}) {
       detailLoaded: normalizedFnbOrders.length > 0 || orderIds.length === 0,
     },
     payment: normalizePayment(safeTransaction),
-    totals: normalizeTotals(safeTransaction),
+    totals,
     paper: normalizePaper(options.paper),
     print: normalizeReceiptPrint(options.print || safeTransaction.receipt_print),
   };
@@ -41,6 +43,7 @@ export function formatReceipt58mm(receiptData, options = {}) {
   const business = receiptData?.business || DEFAULT_BUSINESS;
   const transaction = receiptData?.transaction || {};
   const room = receiptData?.room || {};
+  const lc = receiptData?.lc || {};
   const fnb = receiptData?.fnb || {};
   const payment = receiptData?.payment || {};
   const totals = receiptData?.totals || {};
@@ -73,19 +76,56 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Room", room.name || room.id || "-", width);
   pushReceiptField(lines, "Mulai", formatReceiptDateTime(room.startTime), width);
   pushReceiptField(lines, "Selesai", formatReceiptDateTime(room.endTime), width);
-  pushReceiptField(lines, "Durasi", `${getNumber(room.durationMinutes)} menit`, width);
+  pushReceiptField(lines, "Durasi", formatReceiptDuration(room.durationMinutes), width);
+
   lines.push(separator);
-  pushReceiptField(lines, "Room", formatReceiptCurrency(totals.roomTotal), width);
+  lines.push(centerReceiptText("BIAYA ROOM", width));
+  lines.push(formatReceiptLine(
+    room.ratePerHour > 0
+      ? `${formatReceiptDuration(room.durationMinutes)} x ${formatReceiptCurrency(room.ratePerHour)}`
+      : "Biaya Room",
+    formatReceiptCurrency(totals.roomTotal),
+    width
+  ));
+
   if (totals.promoDiscount > 0) {
     pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
   }
-  if (totals.lcTotal > 0) {
-    pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
+
+  if (lc.hasLc) {
+    lines.push(separator);
+    lines.push(centerReceiptText("DETAIL LC", width));
+
+    if (lc.detailAvailable && lc.items.length > 0) {
+      lc.items.forEach((item, index) => {
+        if (index > 0) {
+          lines.push("");
+        }
+        wrapReceiptText(item.name || "-", width).forEach((line) => {
+          lines.push(line);
+        });
+        pushReceiptField(lines, "  Durasi", formatReceiptDuration(item.durationMinutes), width);
+        pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+        pushReceiptField(lines, "  Tagihan", formatReceiptCurrency(item.amount), width);
+      });
+
+      if (lc.billingAdjustment !== 0) {
+        pushReceiptField(
+          lines,
+          "Penyesuaian",
+          formatReceiptCurrency(lc.billingAdjustment),
+          width
+        );
+      }
+    } else {
+      wrapReceiptText("Detail LC historis tidak tersedia.", width).forEach((line) => {
+        lines.push(centerReceiptText(line, width));
+      });
+    }
+
+    lines.push(separator);
+    lines.push(formatReceiptLine("SUBTOTAL LC", formatReceiptCurrency(lc.total), width));
   }
-  pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
-  lines.push(strongSeparator);
-  lines.push(formatReceiptLine("TOTAL", formatReceiptCurrency(totals.grandTotal), width));
-  lines.push(strongSeparator);
 
   if (fnb.hasFnb) {
     lines.push(separator);
@@ -93,10 +133,6 @@ export function formatReceipt58mm(receiptData, options = {}) {
 
     if (Array.isArray(fnb.orders) && fnb.orders.length > 0) {
       fnb.orders.forEach((order) => {
-        if (order.id) {
-          lines.push(formatReceiptLine(order.id, formatReceiptCurrency(order.total), width));
-        }
-
         if (order.note) {
           wrapReceiptText(`Note: ${order.note}`, width).forEach((line) => {
             lines.push(line);
@@ -120,6 +156,19 @@ export function formatReceipt58mm(receiptData, options = {}) {
   }
 
   lines.push(separator);
+  lines.push(centerReceiptText("RINGKASAN", width));
+  pushReceiptField(lines, "Room", formatReceiptCurrency(totals.roomTotal), width);
+  if (totals.promoDiscount > 0) {
+    pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
+  }
+  if (totals.lcTotal > 0) {
+    pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
+  }
+  pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
+  lines.push(strongSeparator);
+  lines.push(formatReceiptLine("TOTAL", formatReceiptCurrency(totals.grandTotal), width));
+  lines.push(strongSeparator);
+
   lines.push(centerReceiptText("PEMBAYARAN", width));
   pushReceiptField(lines, "Metode", formatPaymentMethod(payment.method), width);
   lines.push(centerReceiptText(formatPaymentStatusBlock(payment.status), width));
@@ -408,11 +457,63 @@ function normalizeFnbItems(items) {
   }));
 }
 
+function normalizeLcDetails(details, lcTotal) {
+  const safeDetails = details && typeof details === "object" ? details : null;
+  const rawItems = Array.isArray(safeDetails?.lc_logs)
+    ? safeDetails.lc_logs
+    : Array.isArray(safeDetails?.items)
+      ? safeDetails.items
+      : [];
+  const items = rawItems.map((item) => ({
+    lcId: getText(item?.lc_id || item?.lcId),
+    name: getText(item?.lc_name || item?.name || item?.lc_id || item?.lcId),
+    durationMinutes: getNumber(item?.duration_minutes || item?.durationMinutes),
+    ratePerHour: getNumber(item?.rate_per_hour || item?.ratePerHour),
+    amount: getNumber(item?.rate || item?.amount),
+  }));
+  const itemTotal = items.reduce((total, item) => total + item.amount, 0);
+  const rawAdjustment = safeDetails?.billing_adjustment;
+  const explicitAdjustment = Number(rawAdjustment);
+  const hasExplicitAdjustment = rawAdjustment !== undefined
+    && rawAdjustment !== null
+    && rawAdjustment !== "";
+  const billingAdjustment = hasExplicitAdjustment && Number.isFinite(explicitAdjustment)
+    ? explicitAdjustment
+    : getNumber(lcTotal) - itemTotal;
+
+  return {
+    hasLc: getNumber(lcTotal) > 0,
+    detailLoaded: safeDetails !== null,
+    detailAvailable: safeDetails?.detail_available !== false && items.length > 0,
+    items,
+    itemTotal,
+    billingAdjustment,
+    total: getNumber(lcTotal),
+    message: getText(safeDetails?.message),
+  };
+}
+
 function normalizePayment(transaction) {
   return {
     status: getText(transaction.payment_status),
     method: getText(transaction.payment_method),
   };
+}
+
+function formatReceiptDuration(value) {
+  const totalMinutes = Math.max(0, Math.round(getNumber(value)));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours} jam ${minutes} menit`;
+  }
+
+  if (hours > 0) {
+    return `${hours} jam`;
+  }
+
+  return `${minutes} menit`;
 }
 
 function normalizeTotals(transaction) {

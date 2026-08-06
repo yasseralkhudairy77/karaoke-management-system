@@ -14,8 +14,8 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=receipt-reprint-v2";
-import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=lc-receipt-breakdown-v1";
+import { printThermalReceipt } from "./printer-adapter.js?v=lc-receipt-breakdown-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -323,8 +323,14 @@ function calculateLcCharge(durationMinutes, ratePerHour) {
 
 function formatLcDurationShort(minutes) {
   const duration = Math.max(1, Math.round(Number(minutes) || 0));
-  if (duration % 60 === 0) {
-    return `${duration / 60} jam`;
+  const hours = Math.floor(duration / 60);
+  const remainingMinutes = duration % 60;
+
+  if (hours > 0 && remainingMinutes > 0) {
+    return `${hours} jam ${remainingMinutes} menit`;
+  }
+  if (hours > 0) {
+    return `${hours} jam`;
   }
   return `${duration} menit`;
 }
@@ -890,6 +896,8 @@ let todayFnbOrderRoomFilter = "all";
 let isLoadingTodayFnbOrders = false;
 let transactionFnbDetails = {};
 let isLoadingTransactionFnbDetails = false;
+let transactionLcReceiptDetails = {};
+let isLoadingTransactionLcReceiptDetails = false;
 let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
 let receiptPrintAuditByTransactionId = {};
@@ -3129,6 +3137,30 @@ async function fetchFnbOrdersByIds(orderIds) {
   return data.orders;
 }
 
+async function fetchTransactionLcReceiptDetails(transactionId) {
+  if (!API_BASE_URL.trim() || !transactionId) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    action: "getTransactionLcReceiptDetails",
+    transaction_id: transactionId,
+  });
+  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "Detail LC pada struk tidak dapat dimuat.");
+  }
+
+  return data;
+}
+
 function setDataSourceBadge(label, type = "default") {
   if (!dataSourceBadge) {
     return;
@@ -3153,7 +3185,7 @@ function showBillingSummary(transaction) {
   lastTransaction = transaction;
   renderRooms();
   if (transaction) {
-    loadFnbDetailsForTransaction(transaction);
+    loadReceiptDetailsForTransaction(transaction);
   }
 }
 
@@ -3174,7 +3206,7 @@ function showReceiptPrint(transaction) {
   receiptPrintVisible = true;
   renderRooms();
   window.scrollTo({ top: 0, behavior: "smooth" });
-  loadFnbDetailsForTransaction(transaction);
+  loadReceiptDetailsForTransaction(transaction);
 }
 
 function hideReceiptPrint() {
@@ -3197,12 +3229,15 @@ async function prepareReceiptTransaction(transaction) {
     return null;
   }
 
-  if (!transactionHasFnbForReceipt(transaction) || transactionHasLoadedFnbDetails(transaction)) {
-    return transaction;
-  }
+  const needsFnb = transactionHasFnbForReceipt(transaction)
+    && !transactionHasLoadedFnbDetails(transaction);
+  const needsLc = transactionHasLcForReceipt(transaction)
+    && !transactionHasLoadedLcReceiptDetails(transaction);
 
-  showInlineNotice("Memuat detail F&B untuk struk...");
-  await loadFnbDetailsForTransaction(transaction);
+  if (needsFnb || needsLc) {
+    showInlineNotice("Memuat rincian struk...");
+    await loadReceiptDetailsForTransaction(transaction);
+  }
 
   return transaction;
 }
@@ -3302,6 +3337,7 @@ async function showThermalReceiptPreview(transaction) {
 
   const receiptData = buildReceiptData(preparedTransaction, {
     fnbOrders: getReceiptFnbOrders(preparedTransaction),
+    lcDetails: getReceiptLcDetails(preparedTransaction),
     print: getReceiptPrintAudit(preparedTransaction),
   });
   const previewText = formatReceipt58mm(receiptData);
@@ -3339,6 +3375,7 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
     const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
     const receiptData = buildReceiptData(preparedTransaction, {
       fnbOrders: getReceiptFnbOrders(preparedTransaction),
+      lcDetails: getReceiptLcDetails(preparedTransaction),
       print: audit,
     });
     const printStarted = printThermalReceipt(receiptData);
@@ -3525,7 +3562,7 @@ function showTransactionFromHistory(transactionId) {
 
   lastTransaction = transaction;
   showInlineNotice("Ringkasan transaksi ditampilkan.");
-  loadFnbDetailsForTransaction(transaction);
+  loadReceiptDetailsForTransaction(transaction);
 }
 
 function getEmptyTransactionMessage() {
@@ -5116,6 +5153,34 @@ function getReceiptFnbOrders(transaction) {
   return [];
 }
 
+function transactionHasLcForReceipt(transaction) {
+  return Number(transaction?.lc_total) > 0;
+}
+
+function getReceiptLcDetails(transaction) {
+  const transactionId = transaction?.transaction_id || "";
+
+  if (
+    transactionId
+    && Object.prototype.hasOwnProperty.call(transactionLcReceiptDetails, transactionId)
+  ) {
+    return transactionLcReceiptDetails[transactionId];
+  }
+
+  return transaction?.lc_details || null;
+}
+
+function transactionHasLoadedLcReceiptDetails(transaction) {
+  const transactionId = transaction?.transaction_id || "";
+
+  return !transactionHasLcForReceipt(transaction)
+    || (
+      transactionId
+      && Object.prototype.hasOwnProperty.call(transactionLcReceiptDetails, transactionId)
+    )
+    || Boolean(transaction?.lc_details);
+}
+
 async function loadFnbDetailsForTransaction(transaction) {
   const transactionId = transaction?.transaction_id || "";
   const orderIds = getTransactionFnbOrderIds(transaction);
@@ -6420,6 +6485,41 @@ async function openLcDurationEditor(transactionId) {
   }
 }
 
+async function loadLcReceiptDetailsForTransaction(transaction) {
+  const transactionId = transaction?.transaction_id || "";
+
+  if (!transactionId || !transactionHasLcForReceipt(transaction)) {
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(transactionLcReceiptDetails, transactionId)) {
+    return;
+  }
+
+  isLoadingTransactionLcReceiptDetails = true;
+  renderRooms();
+
+  try {
+    transactionLcReceiptDetails[transactionId] = await fetchTransactionLcReceiptDetails(transactionId);
+  } catch (error) {
+    console.warn("Gagal memuat detail LC untuk struk.", error);
+    transactionLcReceiptDetails[transactionId] = {
+      detail_available: false,
+      lc_logs: [],
+      message: error.message || "Detail LC historis tidak tersedia.",
+    };
+  } finally {
+    isLoadingTransactionLcReceiptDetails = false;
+    renderRooms();
+  }
+}
+
+async function loadReceiptDetailsForTransaction(transaction) {
+  await Promise.all([
+    loadFnbDetailsForTransaction(transaction),
+    loadLcReceiptDetailsForTransaction(transaction),
+  ]);
+}
+
 function closeLcDurationEditor() {
   if (isSavingLcDurationEditor) {
     return;
@@ -6499,6 +6599,7 @@ function mergeUpdatedTransactionIntoState(updatedTransaction) {
   }
 
   const transactionId = updatedTransaction.transaction_id;
+  delete transactionLcReceiptDetails[transactionId];
   const mergeTransaction = (existing) => existing?.transaction_id === transactionId
     ? { ...existing, ...updatedTransaction }
     : existing;
@@ -7027,6 +7128,7 @@ function createReceiptPrintElement(transaction) {
   const printAudit = getReceiptPrintAudit(transaction);
   const receiptData = buildReceiptData(transaction, {
     fnbOrders: getReceiptFnbOrders(transaction),
+    lcDetails: getReceiptLcDetails(transaction),
     print: printAudit,
   });
   const receipt = document.createElement("section");
@@ -7057,7 +7159,7 @@ function createReceiptPrintElement(transaction) {
     ["Nama Ruangan", receiptData.room.name || receiptData.room.id || "-"],
     ["Waktu Mulai", formatTransactionDateTime(receiptData.room.startTime)],
     ["Waktu Selesai", formatTransactionDateTime(receiptData.room.endTime)],
-    ["Durasi", `${receiptData.room.durationMinutes} menit`],
+    ["Durasi", formatLcDurationShort(receiptData.room.durationMinutes)],
     ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
   ];
   const basisLabel = getBillingBasisLabel(receiptData.room.billingBasis);
@@ -7080,7 +7182,7 @@ function createReceiptPrintElement(transaction) {
   billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal)]);
   billingRows.push(["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"]);
 
-  const billingSection = createReceiptSection("Rincian Tagihan", billingRows);
+  const billingSection = createReceiptSection("Ringkasan Tagihan", billingRows);
 
   const paymentSection = createReceiptSection("Status Pembayaran", [
     ["Status", getPaymentStatusLabel(receiptData.payment.status)],
@@ -7130,14 +7232,99 @@ function createReceiptPrintElement(transaction) {
     header,
     reprintNotice,
     roomSection,
-    billingSection,
+    createReceiptLcDetailElement(receiptData),
     createReceiptFnbDetailElement(receiptData),
+    billingSection,
     paymentSection,
     footer,
     actions
   );
 
   return receipt;
+}
+
+function createReceiptLcDetailElement(receiptData) {
+  if (!receiptData.lc.hasLc) {
+    return document.createDocumentFragment();
+  }
+
+  const section = document.createElement("section");
+  section.className = "receipt-print-section receipt-print-lc";
+
+  const title = document.createElement("h3");
+  title.className = "receipt-print-section-title";
+  title.textContent = "Detail LC";
+  section.appendChild(title);
+
+  if (isLoadingTransactionLcReceiptDetails && !receiptData.lc.detailLoaded) {
+    const loading = document.createElement("p");
+    loading.className = "receipt-print-note";
+    loading.textContent = "Memuat detail LC...";
+    section.appendChild(loading);
+    return section;
+  }
+
+  if (!receiptData.lc.detailAvailable || receiptData.lc.items.length === 0) {
+    const unavailable = document.createElement("p");
+    unavailable.className = "receipt-print-note";
+    unavailable.textContent = "Detail LC historis tidak tersedia.";
+    section.appendChild(unavailable);
+  } else {
+    receiptData.lc.items.forEach((item) => {
+      const itemElement = document.createElement("article");
+      itemElement.className = "receipt-print-lc-item";
+
+      const heading = document.createElement("div");
+      heading.className = "receipt-print-lc-heading";
+
+      const name = document.createElement("p");
+      name.className = "receipt-print-lc-name";
+      name.textContent = item.name || item.lcId || "-";
+
+      const amount = document.createElement("p");
+      amount.className = "receipt-print-lc-amount";
+      amount.textContent = formatCurrency(item.amount);
+      heading.append(name, amount);
+
+      const meta = document.createElement("p");
+      meta.className = "receipt-print-note";
+      meta.textContent = `Durasi: ${formatLcDurationShort(item.durationMinutes)} | Tarif: ${formatCurrency(item.ratePerHour)}/jam`;
+
+      itemElement.append(heading, meta);
+      section.appendChild(itemElement);
+    });
+
+    if (receiptData.lc.billingAdjustment !== 0) {
+      const adjustment = document.createElement("div");
+      adjustment.className = "receipt-print-row";
+
+      const label = document.createElement("p");
+      label.className = "receipt-print-label";
+      label.textContent = "Penyesuaian LC";
+
+      const value = document.createElement("p");
+      value.className = "receipt-print-value";
+      value.textContent = formatCurrency(receiptData.lc.billingAdjustment);
+
+      adjustment.append(label, value);
+      section.appendChild(adjustment);
+    }
+  }
+
+  const subtotal = document.createElement("div");
+  subtotal.className = "receipt-print-row receipt-print-lc-subtotal";
+
+  const subtotalLabel = document.createElement("p");
+  subtotalLabel.className = "receipt-print-label";
+  subtotalLabel.textContent = "Subtotal LC";
+
+  const subtotalValue = document.createElement("p");
+  subtotalValue.className = "receipt-print-value";
+  subtotalValue.textContent = formatCurrency(receiptData.lc.total);
+
+  subtotal.append(subtotalLabel, subtotalValue);
+  section.appendChild(subtotal);
+  return section;
 }
 
 function createReceiptReprintNoticeElement(printAudit) {

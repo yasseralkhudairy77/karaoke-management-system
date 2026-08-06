@@ -1520,6 +1520,10 @@ Rules:
 - `rate` tetap menjadi total earning jasa room LC untuk payroll, dihitung `ceil(duration_minutes / 60) * rate_per_hour`.
 - Untuk log lama tanpa `duration_minutes`, sistem melakukan fallback dari `rate_per_hour`, `rate`, atau selisih `created_at` sampai `closed_at`.
 - `getTransactionLcEditDetails` memuat rincian LC hanya saat editor transaksi dibuka.
+- `getTransactionLcReceiptDetails` memuat nama, durasi, tarif per jam, dan tagihan setiap LC hanya saat struk dibuka atau dicetak.
+- Response struk menyertakan `work_log_total` dan `billing_adjustment` agar subtotal LC selalu dapat direkonsiliasi dengan `Transactions.lc_total`.
+- Jika relasi sesi atau work log historis tidak tersedia, endpoint struk mengembalikan `detail_available = false` tanpa membuat rincian perkiraan.
+- Detail LC struk disimpan sementara di Script Cache per transaksi dan cache dibersihkan otomatis setelah koreksi durasi LC.
 - `updateTransactionLcDurations` menerima semua LC pada sesi, durasi 30–720 menit dalam kelipatan 30 menit, dan alasan perubahan.
 - Perubahan durasi memperbarui `LcWorkLogs`, `RoomSessions.lc_assignments`, `Transactions.lc_total`, dan `Transactions.grand_total` dalam satu script lock.
 - Transaksi `unpaid` dapat dikoreksi dengan PIN operator login minimal role kasir. Transaksi `paid` memerlukan PIN manager/owner.
