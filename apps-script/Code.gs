@@ -852,6 +852,10 @@ function doGet(e) {
       ));
     }
 
+    if (action === "initializeStockFromJul31") {
+      return jsonResponse(initializeStockFromJul31_(e.parameter));
+    }
+
     if (action === "getInventoryAudits") {
       return jsonResponse(getInventoryAudits_(e.parameter.status, e.parameter.limit));
     }
@@ -1155,6 +1159,10 @@ function doPost(e) {
         payload.note,
         payload.cashier_name
       ));
+    }
+
+    if (action === "initializeStockFromJul31") {
+      return jsonResponse(initializeStockFromJul31_(payload));
     }
 
     if (action === "createInventoryAudit") {
@@ -16903,6 +16911,104 @@ function correctActiveRoomDuration_(roomId, targetDurationMinutes, cashierName, 
         scheduled_end_time: newScheduledEndTime,
         updated_at: nowIso,
       },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function initializeStockFromJul31_(payload) {
+  var user = String(payload && payload.cashier_name || "Owner").trim() || "Owner";
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return createLockBusyResponse_("Sistem sedang memproses data lain. Coba lagi.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var stockMovementsSheet = ensureStockMovementsSheet_();
+    var stockMovementsHeaderMap = getHeaderMap_(stockMovementsSheet);
+
+    var inventoryRows = readSheetAsObjects_("Inventory");
+    var existingMovements = readSheetAsObjects_("StockMovements");
+
+    // Group sales out movements by stock_item_id
+    var salesOutByItemId = {};
+    existingMovements.forEach(function (m) {
+      var refType = String(m.reference_type || "").trim();
+      var movType = String(m.movement_type || "").trim().toLowerCase();
+      if (refType === "transaction" || movType === "out") {
+        var sId = String(m.stock_item_id || "").trim();
+        if (sId) {
+          salesOutByItemId[sId] = (salesOutByItemId[sId] || 0) + Math.abs(Number(m.qty_change) || 0);
+        }
+      }
+    });
+
+    var jul31Timestamp = "2026-07-31T00:00:00+07:00";
+    var createdCount = 0;
+    var updatedCount = 0;
+
+    inventoryRows.forEach(function (item) {
+      var sId = String(item.stock_item_id || item.item_id || "").trim();
+      var sName = String(item.stock_item_name || item.item_name || sId).trim();
+      if (!sId) return;
+
+      var initialStockQty = Number(item.stock_qty) || 0;
+      var totalOutQty = salesOutByItemId[sId] || 0;
+      var currentNetStock = initialStockQty - totalOutQty;
+
+      // Check if an initial_stock movement already exists for this item on 31 Jul
+      var existingInitMove = existingMovements.find(function (m) {
+        return String(m.stock_item_id || "").trim() === sId && String(m.reference_type || "").trim() === "initial_stock";
+      });
+
+      if (!existingInitMove) {
+        var movementId = "MOV-20260731-000000-" + sId;
+        var initMovement = {
+          movement_id: movementId,
+          created_at: jul31Timestamp,
+          stock_item_id: sId,
+          stock_item_name: sName,
+          movement_type: "in",
+          reference_type: "initial_stock",
+          reference_id: "INIT-20260731",
+          qty_change: initialStockQty,
+          stock_before: 0,
+          stock_after: initialStockQty,
+          note: "Stok Awal Saldo per 31 Juli 2026",
+          cashier_name: user,
+        };
+        appendStockMovement_(initMovement);
+        createdCount++;
+      } else {
+        var rowNum = findRowByValue_(stockMovementsSheet, stockMovementsHeaderMap, "movement_id", existingInitMove.movement_id);
+        if (rowNum) {
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.qty_change).setValue(initialStockQty);
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.stock_after).setValue(initialStockQty);
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.created_at).setValue(jul31Timestamp);
+        }
+        updatedCount++;
+      }
+
+      // Update Inventory.stock_qty to currentNetStock (initial stock - total sales out)
+      var invRowNum = findInventoryRowByStockItemId_(sId, inventorySheet, inventoryHeaderMap);
+      if (invRowNum) {
+        inventorySheet.getRange(invRowNum, inventoryHeaderMap.stock_qty).setValue(currentNetStock);
+        if (inventoryHeaderMap.updated_at) {
+          inventorySheet.getRange(invRowNum, inventoryHeaderMap.updated_at).setValue(toJakartaIsoString_(new Date()));
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Stok Awal per 31 Juli 2026 berhasil disinkronkan dan saldo stok diperbarui.",
+      created_initial_movements: createdCount,
+      updated_initial_movements: updatedCount,
+      total_items_processed: inventoryRows.length,
     };
   } finally {
     lock.releaseLock();
