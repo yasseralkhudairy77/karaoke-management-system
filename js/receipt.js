@@ -29,6 +29,7 @@ export function buildReceiptData(transaction, options = {}) {
     payment: normalizePayment(safeTransaction),
     totals: normalizeTotals(safeTransaction),
     paper: normalizePaper(options.paper),
+    print: normalizeReceiptPrint(options.print || safeTransaction.receipt_print),
   };
 }
 
@@ -43,8 +44,28 @@ export function formatReceipt58mm(receiptData, options = {}) {
   const fnb = receiptData?.fnb || {};
   const payment = receiptData?.payment || {};
   const totals = receiptData?.totals || {};
+  const print = receiptData?.print || {};
 
   pushReceiptHeader(lines, business, width);
+
+  if (isReceiptTestTransaction(transaction.raw)) {
+    lines.push(centerReceiptText("*** TEST ***", width));
+    lines.push(centerReceiptText("BUKAN TRANSAKSI", width));
+    if (transaction.raw?.test_run_id) {
+      pushReceiptField(lines, "TEST ID", transaction.raw.test_run_id, width);
+    }
+  }
+
+  if (print.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+    lines.push(centerReceiptText(`Cetak ulang ke-${getNumber(print.reprintNumber)}`, width));
+    if (print.printedAt) {
+      pushReceiptField(lines, "Waktu reprint", formatReceiptDateTime(print.printedAt), width);
+    }
+    if (print.cashierName) {
+      pushReceiptField(lines, "Kasir reprint", print.cashierName, width);
+    }
+  }
 
   if (business.address) {
     lines.push(...wrapReceiptText(business.address, width).map((line) => centerReceiptText(line, width)));
@@ -63,6 +84,12 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Durasi", `${getNumber(room.durationMinutes)} menit`, width);
   lines.push(separator);
   pushReceiptField(lines, "Room", formatReceiptCurrency(totals.roomTotal), width);
+  if (totals.promoDiscount > 0) {
+    pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
+  }
+  if (totals.lcTotal > 0) {
+    pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
+  }
   pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
   lines.push(strongSeparator);
   lines.push(formatReceiptLine("TOTAL", formatReceiptCurrency(totals.grandTotal), width));
@@ -115,6 +142,10 @@ export function formatReceipt58mm(receiptData, options = {}) {
   return lines.join("\n");
 }
 
+function isReceiptTestTransaction(transaction) {
+  return transaction?.is_test === true || String(transaction?.is_test || "").trim().toLowerCase() === "true";
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
@@ -135,17 +166,18 @@ function pushReceiptField(lines, label, value, width = DEFAULT_PAPER.width) {
   const safeLabel = getText(label);
   const safeValue = getText(value) || "-";
   const labelWidth = Math.min(8, Math.max(5, safeLabel.length));
-  const valueWidth = Math.max(1, safeWidth - labelWidth - 1);
+  const actualLabelWidth = Math.max(labelWidth, safeLabel.length);
+  const valueWidth = Math.max(1, safeWidth - actualLabelWidth - 1);
 
   if (safeValue.length <= valueWidth) {
-    lines.push(`${safeLabel.padEnd(labelWidth, " ")} ${safeValue.padStart(valueWidth, " ")}`);
+    lines.push(`${safeLabel.padEnd(actualLabelWidth, " ")} ${safeValue.padStart(valueWidth, " ")}`);
     return;
   }
 
   const wrappedValue = wrapReceiptText(safeValue, valueWidth);
-  lines.push(`${safeLabel.padEnd(labelWidth, " ")} ${wrappedValue.shift() || "-"}`);
+  lines.push(`${safeLabel.padEnd(actualLabelWidth, " ")} ${wrappedValue.shift() || "-"}`);
   wrappedValue.forEach((line) => {
-    lines.push(`${" ".repeat(labelWidth + 1)}${line}`);
+    lines.push(`${" ".repeat(actualLabelWidth + 1)}${line}`);
   });
 }
 
@@ -398,12 +430,18 @@ function normalizePayment(transaction) {
 function normalizeTotals(transaction) {
   const roomTotal = getNumber(transaction.room_total);
   const fnbTotal = getNumber(transaction.fnb_total);
+  const lcTotal = getNumber(transaction.lc_total);
   const grandTotal = getNumber(transaction.grand_total);
+  const promoCode = getText(transaction.promo_code);
+  const promoDiscount = getNumber(transaction.promo_discount);
 
   return {
     roomTotal,
     fnbTotal,
-    grandTotal: grandTotal > 0 ? grandTotal : roomTotal + fnbTotal,
+    lcTotal,
+    grandTotal: grandTotal > 0 ? grandTotal : roomTotal + fnbTotal + lcTotal,
+    promoCode,
+    promoDiscount,
   };
 }
 
@@ -411,6 +449,21 @@ function normalizePaper(paper) {
   return {
     ...DEFAULT_PAPER,
     ...(paper || {}),
+  };
+}
+
+function normalizeReceiptPrint(print) {
+  const sequence = getNumber(print?.print_sequence || print?.printSequence);
+  const inferredReprintNumber = Math.max(0, sequence - 1);
+  const reprintNumber = getNumber(print?.reprint_number || print?.reprintNumber || inferredReprintNumber);
+
+  return {
+    printSequence: sequence,
+    isReprint: Boolean(print?.is_reprint || print?.isReprint || sequence > 1 || reprintNumber > 0),
+    reprintNumber,
+    printedAt: print?.printed_at || print?.printedAt || "",
+    cashierName: getText(print?.cashier_name || print?.cashierName || ""),
+    printType: getText(print?.print_type || print?.printType || ""),
   };
 }
 

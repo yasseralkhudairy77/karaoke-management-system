@@ -6,10 +6,16 @@
   agar action=getRooms menggantikan sumber data contoh di production.
 */
 
-import { API_BASE_URL } from "./config.js";
+import {
+  API_BASE_URL,
+  DEV_MIN_SESSION_MINUTES,
+  DEV_SHORT_SESSION_ENABLED,
+  LOCAL_TV_BRIDGE_ENABLED,
+  LOCAL_TV_BRIDGE_URL,
+} from "./config.js?v=room-fnb-card-v1";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=thermal-logo-canvas-5g";
-import { printThermalReceipt } from "./printer-adapter.js?v=thermal-logo-canvas-5g";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=room-fnb-card-v1";
+import { printThermalReceipt } from "./printer-adapter.js?v=receipt-reprint-v2";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -22,11 +28,87 @@ const DASHBOARD_TABS = [
   { key: "rooms", label: "Ruangan" },
   { key: "fnb", label: "F&B" },
   { key: "stock", label: "Stok" },
+  { key: "lc", label: "LC" },
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
   { key: "audit", label: "Audit" },
+  { key: "promosi", label: "Promosi" },
   { key: "settings", label: "Pengaturan" },
 ];
+const ROLE_ALIASES = {
+  admin: "manager",
+};
+const ROLE_LABELS = {
+  owner: "Owner",
+  manager: "Manager Operasional",
+  cashier: "Kasir",
+  receptionist: "Resepsionis",
+  staff: "Staff",
+};
+const ROLE_DASHBOARD_TABS = {
+  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  cashier: ["rooms", "fnb", "lc", "reports", "transactions"],
+  receptionist: ["rooms"],
+};
+const ROLE_REPORT_SUB_TABS = {
+  owner: ["owner", "cashier", "fnb", "room"],
+  manager: ["cashier", "fnb", "room"],
+  cashier: ["cashier"],
+  receptionist: [],
+};
+const FNB_PRIMARY_CATEGORY_ORDER = ["favorites", "Food", "Beverage", "Beer", "Spirit", "Anggur", "Cigarette"];
+const FNB_SPIRIT_SUBCATEGORY_ORDER = [
+  "Cognac",
+  "Vodka",
+  "Tequila",
+  "Gin",
+  "Rum",
+  "Blended",
+  "Single Malt",
+  "American Whisky",
+  "Lokal",
+];
+const FNB_SPIRIT_CATEGORY_ALIASES = new Map([
+  ["cognac", "Cognac"],
+  ["vodca", "Vodka"],
+  ["vodka", "Vodka"],
+  ["tequila", "Tequila"],
+  ["gin", "Gin"],
+  ["rum", "Rum"],
+  ["blended", "Blended"],
+  ["single malt", "Single Malt"],
+  ["american whisky", "American Whisky"],
+  ["lokal", "Lokal"],
+]);
+const FNB_CATEGORY_LABELS = {
+  all: "Semua",
+  favorites: "Favorit",
+  Food: "Food",
+  Beverage: "Beverage",
+  Beer: "Beer",
+  Spirit: "Spirit",
+  Anggur: "Anggur",
+  Cigarette: "Rokok",
+};
+const FNB_CATEGORY_ICONS = {
+  all: "📋",
+  favorites: "⭐",
+  Food: "🍔",
+  Beverage: "🍹",
+  Beer: "🍺",
+  Spirit: "🍾",
+  Anggur: "🍷",
+  Cigarette: "🚬",
+};
+const FNB_FAVORITE_ITEM_NAMES = new Set([
+  "es teh manis",
+  "mineral water 600ml",
+  "french fries",
+  "bintang",
+  "anggur merah",
+  "sampoerna mild red",
+]);
 const dataSourceBadge = document.querySelector("#dataSourceBadge");
 const currencyFormatter = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -36,20 +118,415 @@ const currencyFormatter = new Intl.NumberFormat("id-ID", {
 const ROOM_WARNING_SOUND_DURATION_MS = 180;
 const ROOM_WARNING_SOUND_FREQUENCY_HZ = 880;
 
+function buildApiUrl(action, params = null) {
+  const url = new URL(API_BASE_URL);
+  url.searchParams.set("action", action);
+  url.searchParams.set("_cb", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      url.searchParams.set(key, String(value));
+    });
+  }
+
+  return url.toString();
+}
+
+const API_GET_RETRYABLE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
+const API_GET_TIMEOUT_MS = 15000;
+const API_POST_TIMEOUT_MS = 20000;
+
+function createApiRequestError(response) {
+  const error = new Error(`API request failed with status ${response.status}`);
+  error.status = response.status;
+  return error;
+}
+
+function getApiRequestErrorMessage(error) {
+  if (error?.status === 404) {
+    return "API tidak ditemukan (404). Periksa URL Web App di js/config.js dan pastikan Apps Script sudah di-deploy sebagai Web App yang aktif.";
+  }
+
+  if (error?.code === "API_TIMEOUT" || error?.name === "AbortError") {
+    return "API terlalu lama merespons. Coba refresh tab transaksi; jika berulang, Apps Script sedang lambat atau perlu optimasi sheet.";
+  }
+
+  return error?.message || "API request failed.";
+}
+
+async function fetchApiGet(url, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts) || 2);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response = null;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS);
+
+      try {
+        response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeoutError = new Error("API request timed out.");
+        timeoutError.code = "API_TIMEOUT";
+        throw timeoutError;
+      }
+
+      lastError = error;
+      if (attempt === attempts) {
+        throw error;
+      }
+    }
+
+    if (response?.ok) {
+      return response;
+    }
+
+    if (response) {
+      lastError = createApiRequestError(response);
+      if (!API_GET_RETRYABLE_STATUSES.has(response.status) || attempt === attempts) {
+        throw lastError;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+  }
+
+  throw lastError || new Error("API request failed.");
+}
+
+function isLocalTvBridgeEnabled() {
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isGitHubPages = hostname === "github.io" || hostname.endsWith(".github.io");
+
+  return Boolean(!isGitHubPages && LOCAL_TV_BRIDGE_ENABLED && String(LOCAL_TV_BRIDGE_URL || "").trim());
+}
+
+function canUseDevShortSessions() {
+  return Boolean(DEV_SHORT_SESSION_ENABLED && roleMeetsRequired(getCurrentOperatorRole(), "manager"));
+}
+
+function canUseOwnerTestMode() {
+  return roleMeetsRequired(getCurrentOperatorRole(), "manager");
+}
+
+function buildOwnerTestModePayload() {
+  if (!canUseOwnerTestMode() || !ownerTestModeEnabled) {
+    return {};
+  }
+
+  return {
+    is_test: true,
+    admin_pin: ownerTestModePin.trim(),
+    test_note: ownerTestModeNote.trim(),
+  };
+}
+
+function validateOwnerTestModeBeforeSubmit() {
+  if (!ownerTestModeEnabled) {
+    return true;
+  }
+
+  if (!canUseOwnerTestMode()) {
+    showInlineNotice("Mode testing hanya tersedia untuk Manager Operasional.", "error");
+    return false;
+  }
+
+  if (!ownerTestModePin.trim()) {
+    showInlineNotice("PIN Manager Operasional wajib diisi untuk Mode Testing.", "error");
+    return false;
+  }
+
+  return true;
+}
+
+function getMinimumSessionMinutes() {
+  if (canUseDevShortSessions()) {
+    return Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1);
+  }
+
+  return 15;
+}
+
+function getMinimumSessionMessage() {
+  return `Durasi minimal ${getMinimumSessionMinutes()} menit.`;
+}
+
+function getDefaultLcDurationMinutes(room) {
+  const roomDuration = Number(room?.booked_duration_minutes) || 0;
+  return Math.max(getMinimumSessionMinutes(), roomDuration || 60);
+}
+
+function getRemainingSessionMinutes(room) {
+  if (room?.status !== "occupied" || !room?.scheduled_end_time) {
+    return getDefaultLcDurationMinutes(room);
+  }
+  const remainingMs = new Date(room.scheduled_end_time).getTime() - Date.now();
+  const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
+  return Math.max(15, remainingMinutes);
+}
+
+function parseLcAssignmentsFromRoom(room) {
+  const rawAssignments = String(room?.lc_assignments || "").trim();
+
+  if (!rawAssignments) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawAssignments);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((assignment) => ({
+        lc_id: String(assignment?.lc_id || assignment?.id || "").trim(),
+        duration_minutes: normalizeLcDurationMinutesForRoom(room, assignment?.duration_minutes),
+      }))
+      .filter((assignment) => assignment.lc_id);
+  } catch (error) {
+    console.warn("Gagal membaca durasi LC room.", error);
+    return [];
+  }
+}
+
+function normalizeLcDurationMinutesForRoom(room, value) {
+  const fallback = getDefaultLcDurationMinutes(room);
+  const duration = Math.round(Number(value));
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return fallback;
+  }
+
+  return Math.max(1, duration);
+}
+
+function getLcDurationHourOptions(room) {
+  const bookedMinutes = Number(room?.booked_duration_minutes) || 0;
+  const maxMinutes = Math.max(60, Math.ceil(bookedMinutes / 30) * 30);
+  const options = [];
+
+  for (let minutes = 30; minutes <= maxMinutes; minutes += 30) {
+    options.push(minutes);
+  }
+
+  return options;
+}
+
+function formatLcDurationOptionLabel(minutes) {
+  const duration = Number(minutes) || 0;
+  const hours = duration / 60;
+
+  if (Number.isInteger(hours)) {
+    return `${hours} jam`;
+  }
+
+  return `${hours.toLocaleString("id-ID", { maximumFractionDigits: 1 })} jam`;
+}
+
+function createLcDurationSelectElement(room, lcId, value) {
+  const select = document.createElement("select");
+  select.className = "lc-selection-duration-input";
+  select.title = "Durasi LC dalam jam";
+
+  const normalizedValue = normalizeLcDurationMinutesForRoom(room, value);
+  const options = getLcDurationHourOptions(room);
+
+  if (!options.includes(normalizedValue)) {
+    options.push(normalizedValue);
+    options.sort((first, second) => first - second);
+  }
+
+  options.forEach((minutes) => {
+    const option = document.createElement("option");
+    option.value = String(minutes);
+    option.textContent = formatLcDurationOptionLabel(minutes);
+    option.selected = minutes === normalizedValue;
+    select.appendChild(option);
+  });
+
+  select.onchange = (event) => {
+    pendingLcDurations[lcId] = normalizeLcDurationMinutesForRoom(room, event.target.value);
+    renderRooms();
+  };
+  select.onclick = (event) => event.stopPropagation();
+
+  return select;
+}
+
+function ensureLcSelectionStateForRoom(room) {
+  if (!room?.room_id) {
+    return;
+  }
+
+  if (!selectedLcIdsForRoom[room.room_id]) {
+    const lcIds = String(room.lc_ids || "").trim();
+    if (lcIds) {
+      selectedLcIdsForRoom[room.room_id] = lcIds.split(",").map(id => id.trim()).filter(Boolean);
+    }
+  }
+
+  if (!selectedLcDurationsForRoom[room.room_id]) {
+    selectedLcDurationsForRoom[room.room_id] = {};
+  }
+
+  const durationMap = selectedLcDurationsForRoom[room.room_id];
+  parseLcAssignmentsFromRoom(room).forEach((assignment) => {
+    durationMap[assignment.lc_id] = normalizeLcDurationMinutesForRoom(room, assignment.duration_minutes);
+  });
+
+  (selectedLcIdsForRoom[room.room_id] || []).forEach((lcId) => {
+    if (!durationMap[lcId] && Number(room.booked_duration_minutes) > 0) {
+      durationMap[lcId] = getDefaultLcDurationMinutes(room);
+    }
+  });
+}
+
+function setLcDurationForRoom(room, lcId, value) {
+  if (!room?.room_id || !lcId) {
+    return;
+  }
+
+  if (!selectedLcDurationsForRoom[room.room_id]) {
+    selectedLcDurationsForRoom[room.room_id] = {};
+  }
+
+  selectedLcDurationsForRoom[room.room_id][lcId] = normalizeLcDurationMinutesForRoom(room, value);
+}
+
+function getLcDurationForRoom(room, lcId) {
+  ensureLcSelectionStateForRoom(room);
+  return normalizeLcDurationMinutesForRoom(
+    room,
+    selectedLcDurationsForRoom[room.room_id]?.[lcId]
+  );
+}
+
+function buildLcAssignmentsForRoom(room) {
+  ensureLcSelectionStateForRoom(room);
+
+  return (selectedLcIdsForRoom[room.room_id] || [])
+    .map((lcId) => ({
+      lc_id: lcId,
+      duration_minutes: getLcDurationForRoom(room, lcId),
+    }))
+    .filter((assignment) => assignment.lc_id);
+}
+
+function buildLcAssignmentsPayloadForRoom(room) {
+  return JSON.stringify(buildLcAssignmentsForRoom(room));
+}
+
+function calculateLcCharge(durationMinutes, ratePerHour) {
+  const duration = Math.max(1, Math.round(Number(durationMinutes) || 0));
+  const rate = Number(ratePerHour) || 0;
+  return Math.ceil(duration / 60) * rate;
+}
+
+function formatLcDurationShort(minutes) {
+  const duration = Math.max(1, Math.round(Number(minutes) || 0));
+  if (duration % 60 === 0) {
+    return `${duration / 60} jam`;
+  }
+  return `${duration} menit`;
+}
+
+async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
+  if (!isLocalTvBridgeEnabled()) {
+    return {
+      skipped: true,
+      message: "Kontrol TV lokal belum aktif.",
+    };
+  }
+
+  const response = await fetch(LOCAL_TV_BRIDGE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+    body: JSON.stringify({
+      room_id: roomId,
+      tv_action: tvAction,
+      trigger_source: triggerSource,
+      requested_by: getLoggedInOperatorName(),
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error("Bridge TV lokal mengembalikan respons tidak valid.");
+  }
+
+  if (!response.ok || data?.success !== true) {
+    throw new Error(data?.message || data?.error || `Perintah TV gagal dengan status ${response.status}.`);
+  }
+
+  return data;
+}
+
+function sendTvOffForExpiredCountdown(roomId, scheduledEndTime) {
+  const key = `${roomId || ""}|${scheduledEndTime || ""}`;
+  if (!roomId || !scheduledEndTime || autoTvOffByCountdownKey.has(key)) {
+    return;
+  }
+
+  autoTvOffByCountdownKey.add(key);
+  sendLocalTvCommand(roomId, "power_off", "countdown_expired")
+    .then(() => {
+      showInlineNotice(`Waktu ${roomId} habis. TV dimatikan otomatis.`, "warning");
+    })
+    .catch((error) => {
+      console.warn("Gagal mematikan TV saat countdown habis.", error);
+      showInlineNotice(`Waktu ${roomId} habis, tetapi TV gagal dimatikan: ${error.message}`, "warning");
+    });
+}
+
 let rooms = [];
 let errorMessage = "";
 let noticeMessage = "";
 let noticeType = "info";
+let noticeTabKey = "";
 let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
+let todayTransactionsRequest = null;
+let transactionsTabDataCacheKey = "";
+let transactionsTabDataCacheTime = 0;
+let isLoadingTransactionsTabData = false;
+let todayCashierClosingsRequest = null;
 let transactionHistoryFilter = "all";
 let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
 let transactionPeriodNotice = "";
+let ownerReportPeriodFilter = "today";
+let ownerReportCustomStartDate = "";
+let ownerReportCustomEndDate = "";
+let ownerReportPeriodNotice = "";
+let ownerReportTransactionSummary = null;
+let ownerReportRoomUsageSummary = null;
+let ownerReportFnbSalesSummary = null;
+let ownerReportCashierClosings = [];
+let isLoadingOwnerReport = false;
+let ownerReportPrintVisible = false;
 let roomWarningStateInitialized = false;
 let previousWarningRoomIds = new Set();
+const autoTvOffByCountdownKey = new Set();
 let roomWarningAudioContext = null;
 let roomWarningAudioUnlocked = false;
 let pendingRoomWarningSound = false;
@@ -62,9 +539,131 @@ const TRANSACTION_PERIOD_OPTIONS = [
   ["all", "Semua"],
   ["custom", "Custom"],
 ];
+const REPORT_SUB_TABS = [
+  {
+    key: "owner",
+    label: "Owner",
+    description: "Ringkasan uang masuk, status kas, dan cetak laporan owner.",
+  },
+  {
+    key: "cashier",
+    label: "Tutup Shift",
+    description: "Pantau hasil closing kasir dan laporan tutup shift.",
+  },
+  {
+    key: "fnb",
+    label: "F&B",
+    description: "Lihat penjualan makanan/minuman, menu terlaris, dan stok rendah.",
+  },
+  {
+    key: "room",
+    label: "Room",
+    description: "Pantau okupansi, pemakaian room, durasi, dan room terlaris.",
+  },
+];
 
 const OPERATIONAL_SHIFT_NOTE =
   "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+const ROOM_STATUS_CONFIG = {
+  available: {
+    label: "Kosong",
+    className: "available",
+    tone: "success",
+    buttonLabel: "Buat Booking",
+  },
+  occupied: {
+    label: "Terisi",
+    className: "occupied",
+    tone: "danger",
+    buttonLabel: "Selesaikan Sesi",
+  },
+  maintenance: {
+    label: "Perbaikan",
+    className: "maintenance",
+    tone: "warning",
+    buttonLabel: "Tidak Tersedia",
+  },
+  paid_waiting_start: {
+    label: "Menunggu Mulai",
+    className: "paid-waiting-start",
+    tone: "info",
+    buttonLabel: "Mulai Countdown",
+  },
+  cleaning: {
+    label: "Cleaning",
+    className: "cleaning",
+    tone: "warning",
+    buttonLabel: "Selesai Bersihkan",
+  },
+  waiting_payment: {
+    label: "Menunggu Bayar",
+    className: "waiting-payment",
+    tone: "warning",
+    buttonLabel: "Detail Sesi",
+  },
+};
+const VALID_ROOM_STATUS_KEYS = new Set(Object.keys(ROOM_STATUS_CONFIG));
+
+function normalizeOperatorRole(role) {
+  const normalizedRole = String(role || "cashier").trim().toLowerCase() || "cashier";
+  return ROLE_ALIASES[normalizedRole] || normalizedRole;
+}
+
+function getOperatorRoleLabel(role) {
+  const normalizedRole = normalizeOperatorRole(role);
+  return ROLE_LABELS[normalizedRole] || normalizedRole || "Kasir";
+}
+
+function roleMeetsRequired(role, requiredRole) {
+  const normalizedRole = normalizeOperatorRole(role);
+  const normalizedRequiredRole = normalizeOperatorRole(requiredRole || "manager");
+  const rank = {
+    staff: 1,
+    receptionist: 1,
+    cashier: 2,
+    manager: 3,
+    owner: 4,
+  };
+
+  if (normalizedRole === "owner") {
+    return true;
+  }
+
+  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.manager);
+}
+
+function getCurrentOperatorRole() {
+  if (currentOperator?.role) {
+    return normalizeOperatorRole(currentOperator.role);
+  }
+
+  try {
+    return normalizeOperatorRole(
+      localStorage.getItem("karaoke_current_role")
+        || localStorage.getItem("karaoke_user_role")
+        || "cashier"
+    );
+  } catch (error) {
+    return "cashier";
+  }
+}
+
+function getAllowedDashboardTabsForCurrentRole() {
+  return ROLE_DASHBOARD_TABS[getCurrentOperatorRole()] || ROLE_DASHBOARD_TABS.cashier;
+}
+
+function getVisibleDashboardTabs() {
+  const allowedTabs = new Set(getAllowedDashboardTabsForCurrentRole());
+  return DASHBOARD_TABS.filter((tab) => allowedTabs.has(tab.key));
+}
+
+function getDefaultDashboardTabForCurrentRole() {
+  return getVisibleDashboardTabs()[0]?.key || "rooms";
+}
+
+function canAccessDashboardTab(tabKey) {
+  return getAllowedDashboardTabsForCurrentRole().includes(tabKey);
+}
 
 function loadOperatorSession() {
   try {
@@ -84,7 +683,7 @@ function loadOperatorSession() {
     return {
       employee_id: String(parsedOperator.employee_id),
       employee_name: String(parsedOperator.employee_name),
-      role: String(parsedOperator.role),
+      role: normalizeOperatorRole(parsedOperator.role),
     };
   } catch (error) {
     sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
@@ -92,19 +691,37 @@ function loadOperatorSession() {
   }
 }
 
-function saveOperatorSession(operator) {
+function getLoggedInOperatorPin() {
+  try {
+    return sessionStorage.getItem("karaoke_operator_pin") || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveOperatorSession(operator, pin = "") {
   const safeOperator = {
     employee_id: String(operator?.employee_id || ""),
     employee_name: String(operator?.employee_name || ""),
-    role: String(operator?.role || ""),
+    role: normalizeOperatorRole(operator?.role),
   };
 
   sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(safeOperator));
+  if (pin) {
+    try {
+      sessionStorage.setItem("karaoke_operator_pin", pin);
+    } catch (e) {
+      console.error("Gagal menyimpan operator PIN ke sessionStorage", e);
+    }
+  }
   currentOperator = safeOperator;
 }
 
 function clearOperatorSession() {
   sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+  try {
+    sessionStorage.removeItem("karaoke_operator_pin");
+  } catch (e) {}
   currentOperator = null;
   loginPin = "";
   loginErrorMessage = "";
@@ -154,19 +771,7 @@ function withStatusBadge(baseClass, tone = "neutral") {
 }
 
 function getRoomStatusTone(status) {
-  if (status === "available") {
-    return "success";
-  }
-
-  if (status === "occupied") {
-    return "danger";
-  }
-
-  if (status === "maintenance") {
-    return "warning";
-  }
-
-  return "neutral";
+  return ROOM_STATUS_CONFIG[status]?.tone || "neutral";
 }
 
 function getPaymentStatusTone(status) {
@@ -243,8 +848,23 @@ function getRoomTimeBadgeTone(status) {
 let cashierClosingPreviewVisible = false;
 let cashierClosingCashActual = "";
 let cashierClosingNote = "";
+let cashierClosingDenominations = {
+  d100k: 0,
+  d50k: 0,
+  d20k: 0,
+  d10k: 0,
+  d5k: 0,
+  d2k: 0,
+  d1k: 0,
+  d500: 0,
+  d200: 0,
+  d100: 0,
+};
+let cashierClosingConfirmationVisible = false;
 let lastCashierClosing = null;
 let isSavingCashierClosing = false;
+const markingTransactionPaidIds = new Set(); // track per-transactionId mark-paid in progress
+const deletingTransactionIds = new Set(); // track per-transactionId delete in progress
 let todayCashierClosings = [];
 let todayCashierClosingSummary = null;
 let selectedClosingForPrint = null;
@@ -252,23 +872,52 @@ let closingPrintPreviewVisible = false;
 let menuItems = [];
 let menuSearchQuery = "";
 let menuCategoryFilter = "all";
+let menuSpiritFilter = "all";
 let menuErrorMessage = "";
 let inventoryItems = [];
 let inventorySummary = null;
 let isLoadingInventory = false;
 let isLoadingSettingsData = false;
+let hasLoadedSettingsData = false;
 let isSavingMasterData = false;
 let masterDataForm = null;
 let masterAuditLogs = [];
 let isLoadingMasterAuditLogs = false;
+let hasLoadedMasterAuditLogs = false;
 let masterAuditEntityFilter = "all";
 let masterAuditActionFilter = "all";
+let settingsMenuSearchQuery = "";
+let settingsMenuAnalysisFilter = "all";
+let settingsRoomSearchQuery = "";
+let settingsInventorySearchQuery = "";
+let settingsAccessSearchQuery = "";
+let settingsPackageSearchQuery = "";
+let selectedSettingsPackageId = "";
+let packageDetailsByPackageId = {};
+let isLoadingPackageDetails = false;
+let activeSettingsSubTab = "rooms";
 let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
 let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
 let stockWarningMessages = [];
+let addInventoryItemForm = null;
+let isSavingAddInventoryItem = false;
+let lcs = [];
+let isLoadingLcs = false;
+let lcWorkReports = [];
+let isLoadingLcWorkReports = false;
+let activeLcSubTab = "master";
+let lcMasterPage = 1;
+let lcReportsPage = 1;
+let addLcForm = null;
+let editLcForm = null;
+let isSavingLc = false;
+let deleteLcConfirmation = null;
+let isDeletingLc = false;
+let selectedLcIdsForRoom = {};
+let selectedLcDurationsForRoom = {};
 let stockAdjustmentForm = {
   stock_item_id: "",
   adjustment_type: "restock",
@@ -290,11 +939,15 @@ let isLoadingFnbSalesReport = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
+let fnbOrderMode = "room";
 let fbCartItems = [];
 let lastFnbOrder = null;
 let isSavingFnbOrder = false;
 let isCancellingFnbOrder = false;
 let fnbOrderNote = "";
+let fnbOrderPaymentMethod = "room_bill";
+let activeFnbSubTab = "order";
+let activeTransactionsSubTab = "history";
 let openFnbOrders = [];
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
@@ -307,34 +960,55 @@ let transactionFnbDetails = {};
 let isLoadingTransactionFnbDetails = false;
 let receiptPrintVisible = false;
 let selectedReceiptTransaction = null;
+let receiptPrintAuditByTransactionId = {};
 let durationSelectionRoomId = "";
 let customDurationMinutes = "";
+let durationPaymentMethod = "cash";
+let paymentSelectionRoomId = "";
+let paymentMethodSelection = "cash";
+let bookingTypeSelection = "regular";
+let bookingPackageSelection = "";
+let customerNameInput = "";
+let bookingCartItems = [];
+let ownerTestModeEnabled = false;
+let ownerTestModePin = "";
+let ownerTestModeNote = "";
+let lastOwnerTestRunId = "";
+let cleanupTestRunIdInput = "";
+let cleanupTestOwnerPinInput = "";
+let isCleaningTestRun = false;
+let preparingRoomSessionKey = "";
+let prepayCartItems = [];
+let isLoadingPrepayFnb = false;
+let prepayFnbError = "";
+let packages = [];
+let isPreparingRoomSession = false;
+let isActivatingPreparedSession = false;
+let isCancellingBooking = false;
+let completingCleaningRoomId = "";
 let extendSelectionRoomId = "";
 let customExtendMinutes = "";
 let extendSessionNote = "";
+let lcSelectionRoomId = "";
+let isSavingSessionLcs = false;
+let extendPaymentMethod = "cash";
 let isExtendingSession = false;
-let isSendingTvCommand = false;
-let tvOffConfirmation = null;
+let pendingExtendSessionRequestKey = "";
 let roomRecoveryCandidates = [];
 let roomRecoverySummary = null;
 let isLoadingRoomRecovery = false;
 let isRecoveringRoom = false;
 let roomRecoveryConfirmation = null;
 let roomRecoveryLoadStarted = false;
-let tvDevicesList = [];
-let tvControlLogs = [];
-let isLoadingTvDevices = false;
-let isLoadingTvControlLogs = false;
-let tvDeviceForm = null;
-let isSavingTvDevice = false;
-let isTogglingTvDeviceStatus = false;
 let activeDashboardTab = loadActiveDashboardTab();
+let activeReportSubTab = "owner";
 let currentOperator = loadOperatorSession();
 let loginPin = "";
 let loginErrorMessage = "";
 let isLoggingIn = false;
 let dashboardDataInitialized = false;
-const PAGINATION_PAGE_SIZE = 15;
+const PAGINATION_PAGE_SIZE = 10;
+const TRANSACTIONS_TAB_CACHE_TTL_MS = 30000;
 const paginationState = {};
 const OPERATIONAL_OPEN_HOUR = 17;
 const OPERATIONAL_CLOSE_HOUR = 10;
@@ -362,6 +1036,109 @@ const ROOM_USAGE_PERIOD_OPTIONS = [
   ["custom", "Custom"],
 ];
 
+function isUserBusy() {
+  if (document.querySelector(".admin-pin-modal-overlay")) {
+    return true;
+  }
+  const activeEl = document.activeElement;
+  const isTyping = activeEl && (
+    activeEl.tagName === "INPUT" ||
+    activeEl.tagName === "TEXTAREA" ||
+    activeEl.tagName === "SELECT" ||
+    activeEl.isContentEditable
+  );
+  if (isTyping) {
+    return true;
+  }
+
+  if (
+    durationSelectionRoomId ||
+    paymentSelectionRoomId ||
+    extendSelectionRoomId ||
+    lcSelectionRoomId
+  ) {
+    return true;
+  }
+
+  if (
+    cashierClosingPreviewVisible ||
+    cashierClosingConfirmationVisible ||
+    closingPrintPreviewVisible ||
+    receiptPrintVisible ||
+    adminPinModal ||
+    deleteMasterConfirmation ||
+    deleteLcConfirmation ||
+    roomRecoveryConfirmation
+  ) {
+    return true;
+  }
+
+  if (
+    isPreparingRoomSession ||
+    isActivatingPreparedSession ||
+    isSavingSessionLcs ||
+    isExtendingSession ||
+    isSavingFnbOrder ||
+    isCancellingFnbOrder ||
+    isSavingStockAdjustment ||
+    isSavingAddInventoryItem ||
+    isSavingLc ||
+    isDeletingLc ||
+    isDeletingMasterData
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function silentReloadRooms() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  try {
+    const promises = [fetchRoomsFromApi()];
+    const isReceptionist = getCurrentOperatorRole() === "receptionist";
+    if (!isReceptionist) {
+      promises.push(
+        postApiAction({
+          action: "getExpiredRoomRecoveryList",
+          grace_minutes: 5,
+          include_invalid_end_time: true,
+        }).catch((err) => {
+          console.warn("Gagal memuat kandidat recovery di background", err);
+          return null;
+        })
+      );
+    }
+
+    const [roomsData, recoveryData] = await Promise.all(promises);
+
+    rooms = normalizeRooms(roomsData);
+    syncSelectedFbRoomWithRooms();
+
+    if (recoveryData && recoveryData.ok === true) {
+      roomRecoveryCandidates = Array.isArray(recoveryData.candidates) ? recoveryData.candidates : [];
+      roomRecoverySummary = {
+        expired_count: Number(recoveryData.expired_count) || 0,
+        invalid_count: Number(recoveryData.invalid_count) || 0,
+        total_rooms_checked: Number(recoveryData.total_rooms_checked) || 0,
+      };
+    }
+
+    if (isUserBusy() || activeDashboardTab !== "rooms") {
+      console.info("Silent refresh: Data diperbarui di memori, re-render DOM ditunda karena user sedang sibuk.");
+      return;
+    }
+
+    renderRooms();
+    console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
+  } catch (error) {
+    console.warn("Silent refresh gagal:", error);
+  }
+}
+
 async function loadRooms() {
   roomsLoading = true;
   renderRooms();
@@ -373,6 +1150,7 @@ async function loadRooms() {
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
+    await loadLcs();
     roomsLoading = false;
     setDataSourceBadge("Mode Data Contoh", "mock");
     console.info("Memakai data contoh karena API_BASE_URL masih kosong.");
@@ -381,13 +1159,24 @@ async function loadRooms() {
   }
 
   try {
-    rooms = normalizeRooms(await fetchRoomsFromApi());
+    const roomsData = await fetchRoomsFromApi();
+    rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
     roomsLoading = false;
     setDataSourceBadge("Terhubung ke Server", "live");
     console.info("Data ruangan berhasil dimuat dari Google Apps Script API.");
     renderRooms();
-    await loadRoomRecoveryCandidates();
+
+    Promise.allSettled([
+      loadLcs(),
+      loadRoomRecoveryCandidates(),
+    ]).then((results) => {
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.warn(`Gagal memuat data pendukung dashboard #${index + 1}.`, result.reason);
+        }
+      });
+    });
   } catch (error) {
     console.warn("Gagal memuat data ruangan dari API. Memakai data contoh sementara.", error);
     roomsLoading = false;
@@ -402,19 +1191,32 @@ async function loadRooms() {
 }
 
 async function fetchRoomsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getRooms`);
+  const attempts = 2;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetch(buildApiUrl("getRooms"), {
+        cache: "no-store",
+      });
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data || data.ok !== true || !Array.isArray(data.rooms)) {
+        throw new Error("API response is invalid.");
+      }
+
+      return data.rooms;
+    } catch (err) {
+      if (i === attempts - 1) {
+        throw err;
+      }
+      console.warn(`Gagal memuat data ruangan, mencoba ulang dalam 1 detik... (Percobaan ke-${i + 1})`, err);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
-
-  const data = await response.json();
-
-  if (!data || data.ok !== true || !Array.isArray(data.rooms)) {
-    throw new Error("API response is invalid.");
-  }
-
-  return data.rooms;
 }
 
 async function loadRoomRecoveryCandidates() {
@@ -461,7 +1263,6 @@ async function loadRoomRecoveryCandidates() {
     console.warn("Gagal memuat daftar room recovery.", error);
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
-    showInlineNotice(error.message || "Gagal memuat daftar room bermasalah.", "error");
   } finally {
     isLoadingRoomRecovery = false;
     renderRooms();
@@ -512,28 +1313,149 @@ async function loadTodayTransactions() {
     return;
   }
 
-  try {
-    const data = await fetchTodayTransactionsFromApi();
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
 
-    todayTransactions = data.transactions;
-    todayTransactionSummary = data.summary;
-    renderRooms();
-  } catch (error) {
-    console.warn("Gagal memuat riwayat transaksi.", error);
-    showInlineNotice(error.message || "Gagal memuat riwayat transaksi.", "error");
-    todayTransactions = [];
-    todayTransactionSummary = null;
-    renderRooms();
+  if (todayTransactionsRequest?.key === requestKey) {
+    return todayTransactionsRequest.promise;
   }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTodayTransactionsFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayTransactions = data.transactions;
+        todayTransactionSummary = data.summary;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat riwayat transaksi.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        showInlineNotice(
+          `Gagal memuat riwayat transaksi: ${error.message}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (todayTransactionsRequest === request) {
+        todayTransactionsRequest = null;
+      }
+    }
+  })();
+
+  todayTransactionsRequest = request;
+  return request.promise;
 }
 
-async function fetchTodayTransactionsFromApi() {
-  const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
+let transactionsTabLoadRequest = null;
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+function invalidateTransactionsTabDataCache() {
+  transactionsTabDataCacheKey = "";
+  transactionsTabDataCacheTime = 0;
+}
+
+function canUseCachedTransactionsTabData(requestKey) {
+  return Boolean(
+    requestKey
+    && transactionsTabDataCacheKey === requestKey
+    && Date.now() - transactionsTabDataCacheTime < TRANSACTIONS_TAB_CACHE_TTL_MS
+  );
+}
+
+async function loadTransactionsTabData(options = {}) {
+  if (!API_BASE_URL.trim()) {
+    return;
   }
+
+  if (!canFetchTransactionPeriodData()) {
+    renderRooms();
+    return;
+  }
+
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
+  const force = Boolean(options.force);
+
+  if (!force && canUseCachedTransactionsTabData(requestKey)) {
+    return;
+  }
+
+  if (transactionsTabLoadRequest?.key === requestKey) {
+    return transactionsTabLoadRequest.promise;
+  }
+
+  isLoadingTransactionsTabData = true;
+  if (activeDashboardTab === "transactions") {
+    renderDashboardTabPanels();
+  }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTransactionsTabDataFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayTransactions = data.transactions;
+        todayTransactionSummary = data.summary;
+        todayCashierClosings = data.closings;
+        todayCashierClosingSummary = data.closingsSummary;
+        lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
+        transactionsTabDataCacheKey = requestKey;
+        transactionsTabDataCacheTime = Date.now();
+        isLoadingTransactionsTabData = false;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat data transaksi & closing.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        isLoadingTransactionsTabData = false;
+        showInlineNotice(
+          `Gagal memuat data transaksi: ${getApiRequestErrorMessage(error)}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (transactionsTabLoadRequest === request) {
+        transactionsTabLoadRequest = null;
+      }
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        isLoadingTransactionsTabData = false;
+      }
+    }
+  })();
+
+  transactionsTabLoadRequest = request;
+  return request.promise;
+}
+
+async function fetchTransactionsTabDataFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTransactionsTabData", Object.fromEntries(params.entries()))
+  );
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "Gagal memuat data transaksi & closing.");
+  }
+
+  return {
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+    summary: data.summary || null,
+    closings: Array.isArray(data.closings) ? data.closings : [],
+    closingsSummary: data.closingsSummary || null,
+  };
+}
+
+async function fetchTodayTransactionsFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayTransactions", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -547,6 +1469,155 @@ async function fetchTodayTransactionsFromApi() {
   };
 }
 
+function buildOwnerReportPeriodQueryParams() {
+  const params = new URLSearchParams();
+
+  params.set("period", normalizeTransactionPeriodForApi(ownerReportPeriodFilter));
+
+  if (ownerReportPeriodFilter === "custom") {
+    if (ownerReportCustomStartDate) {
+      params.set("start_date", ownerReportCustomStartDate);
+    }
+
+    if (ownerReportCustomEndDate) {
+      params.set("end_date", ownerReportCustomEndDate);
+    }
+  }
+
+  return params;
+}
+
+function canFetchOwnerReportPeriodData() {
+  if (ownerReportPeriodFilter !== "custom") {
+    return true;
+  }
+
+  return Boolean(ownerReportCustomStartDate && ownerReportCustomEndDate);
+}
+
+function getOwnerReportPeriodTitleSuffix() {
+  const labels = {
+    today: "Shift Aktif",
+    yesterday: "Shift Kemarin",
+    last7days: "7 Shift",
+    thisMonth: "Bulan Ini",
+    all: "Semua",
+    custom: "Custom",
+  };
+
+  if (ownerReportPeriodFilter === "custom" && ownerReportCustomStartDate && ownerReportCustomEndDate) {
+    return `${ownerReportCustomStartDate} s/d ${ownerReportCustomEndDate}`;
+  }
+
+  return labels[ownerReportPeriodFilter] || "Shift Aktif";
+}
+
+function setOwnerReportPeriodFilter(period) {
+  if (!TRANSACTION_PERIOD_OPTIONS.some(([value]) => value === period)) {
+    return;
+  }
+
+  ownerReportPeriodFilter = period;
+
+  if (period !== "custom") {
+    ownerReportCustomStartDate = "";
+    ownerReportCustomEndDate = "";
+    ownerReportPeriodNotice = "";
+    loadOwnerPeriodReport();
+    return;
+  }
+
+  ownerReportPeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+  renderRooms();
+}
+
+function updateOwnerReportCustomStartDate(value) {
+  ownerReportCustomStartDate = value || "";
+}
+
+function updateOwnerReportCustomEndDate(value) {
+  ownerReportCustomEndDate = value || "";
+}
+
+async function applyOwnerReportCustomPeriod() {
+  if (!ownerReportCustomStartDate || !ownerReportCustomEndDate) {
+    ownerReportPeriodNotice = "Pilih tanggal operasional mulai dan akhir, lalu klik Terapkan.";
+    renderRooms();
+    return;
+  }
+
+  if (ownerReportCustomStartDate > ownerReportCustomEndDate) {
+    ownerReportPeriodNotice = "Tanggal mulai tidak boleh lebih besar dari tanggal akhir.";
+    renderRooms();
+    return;
+  }
+
+  ownerReportPeriodNotice = "";
+  await loadOwnerPeriodReport();
+}
+
+async function fetchOwnerReportEndpoint(action) {
+  const params = buildOwnerReportPeriodQueryParams();
+  const response = await fetchApiGet(
+    buildApiUrl(action, Object.fromEntries(params.entries()))
+  );
+
+  const data = await response.json();
+
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || "API response is invalid.");
+  }
+
+  return data;
+}
+
+async function loadOwnerPeriodReport() {
+  if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  if (!canFetchOwnerReportPeriodData()) {
+    renderRooms();
+    return;
+  }
+
+  isLoadingOwnerReport = true;
+  renderRooms();
+
+  try {
+    const [
+      transactionData,
+      roomUsageData,
+      fnbSalesData,
+      closingData,
+    ] = await Promise.all([
+      fetchOwnerReportEndpoint("getTodayTransactions"),
+      fetchOwnerReportEndpoint("getRoomUsageReport"),
+      fetchOwnerReportEndpoint("getTodayFnbSalesReport"),
+      fetchOwnerReportEndpoint("getTodayCashierClosings"),
+    ]);
+
+    ownerReportTransactionSummary = transactionData.summary || null;
+    ownerReportRoomUsageSummary = roomUsageData.summary || null;
+    ownerReportFnbSalesSummary = fnbSalesData.summary || null;
+    ownerReportCashierClosings = Array.isArray(closingData.closings) ? closingData.closings : [];
+  } catch (error) {
+    console.warn("Gagal memuat laporan owner periode.", error);
+    showInlineNotice(
+      `Gagal memuat laporan owner: ${error.message}`,
+      "error",
+      "reports"
+    );
+    ownerReportTransactionSummary = null;
+    ownerReportRoomUsageSummary = null;
+    ownerReportFnbSalesSummary = null;
+    ownerReportCashierClosings = [];
+  } finally {
+    isLoadingOwnerReport = false;
+    renderRooms();
+  }
+}
+
 async function loadTodayCashierClosings() {
   if (!API_BASE_URL.trim()) {
     return;
@@ -557,29 +1628,49 @@ async function loadTodayCashierClosings() {
     return;
   }
 
-  try {
-    const data = await fetchTodayCashierClosingsFromApi();
+  const params = buildTransactionPeriodQueryParams();
+  const requestKey = params.toString();
+  const sourceTabKey = activeDashboardTab;
 
-    todayCashierClosings = data.closings;
-    todayCashierClosingSummary = data.summary;
-    lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
-    renderRooms();
-  } catch (error) {
-    console.warn("Gagal memuat riwayat closing.", error);
-    showInlineNotice(error.message || "Gagal memuat riwayat closing.", "error");
-    todayCashierClosings = [];
-    todayCashierClosingSummary = null;
-    renderRooms();
+  if (todayCashierClosingsRequest?.key === requestKey) {
+    return todayCashierClosingsRequest.promise;
   }
+
+  const request = { key: requestKey, promise: null };
+  request.promise = (async () => {
+    try {
+      const data = await fetchTodayCashierClosingsFromApi(params);
+
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        todayCashierClosings = data.closings;
+        todayCashierClosingSummary = data.summary;
+        lastCashierClosing = todayCashierClosings[0] || lastCashierClosing;
+        renderRooms();
+      }
+    } catch (error) {
+      console.warn("Gagal memuat riwayat closing.", error);
+      if (buildTransactionPeriodQueryParams().toString() === requestKey) {
+        showInlineNotice(
+          `Gagal memuat riwayat closing kasir: ${error.message}`,
+          "error",
+          sourceTabKey
+        );
+      }
+    } finally {
+      if (todayCashierClosingsRequest === request) {
+        todayCashierClosingsRequest = null;
+      }
+    }
+  })();
+
+  todayCashierClosingsRequest = request;
+  return request.promise;
 }
 
-async function fetchTodayCashierClosingsFromApi() {
-  const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+async function fetchTodayCashierClosingsFromApi(params = buildTransactionPeriodQueryParams()) {
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayCashierClosings", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -622,7 +1713,7 @@ async function loadMenuItems() {
 }
 
 async function fetchMenuItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getMenuItems`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -642,8 +1733,13 @@ async function fetchMenuItemsFromApi() {
       menu_name: menuItem.menu_name || "",
       category: menuItem.category || "",
       price: Number(menuItem.price) || 0,
-      status: menuItem.status || "",
+      status: String(menuItem.status || "").trim().toLowerCase(),
       updated_at: menuItem.updated_at || "",
+      stock_tracking: menuItem.stock_tracking || "",
+      stock_item_id: menuItem.stock_item_id || "",
+      stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
+      stock_qty: menuItem.stock_qty !== null && menuItem.stock_qty !== undefined ? Number(menuItem.stock_qty) : null,
+      unit: menuItem.unit || "",
     })),
   };
 }
@@ -675,7 +1771,7 @@ async function loadInventoryItems() {
 }
 
 async function fetchInventoryItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems`);
+  const response = await fetchApiGet(buildApiUrl("getInventoryItems"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -694,7 +1790,7 @@ async function fetchInventoryItemsFromApi() {
 }
 
 async function fetchEmployeesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getEmployees`);
+  const response = await fetchApiGet(buildApiUrl("getEmployees"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -709,8 +1805,51 @@ async function fetchEmployeesFromApi() {
   return data.employees;
 }
 
-async function loadSettingsData() {
+async function fetchPackagesFromApi() {
+  const response = await fetchApiGet(buildApiUrl("getPackages"));
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || (data.ok !== true && data.success !== true) || !Array.isArray(data.packages)) {
+    throw new Error(data?.message || data?.error || "Gagal memuat data paket.");
+  }
+
+  return data.packages;
+}
+
+async function fetchPackageDetailsFromApi(packageId) {
+  const params = new URLSearchParams();
+  params.set("action", "getPackageDetails");
+  params.set("package_id", packageId);
+
+  const response = await fetchApiGet(
+    buildApiUrl("getPackageDetails", Object.fromEntries(params.entries()))
+  );
+
+  if (!response.ok) {
+    throw new Error(`API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data || (data.ok !== true && data.success !== true) || !Array.isArray(data.package_details)) {
+    throw new Error(data?.message || data?.error || "Gagal memuat detail paket.");
+  }
+
+  return data.package_details;
+}
+
+async function loadSettingsData(options = {}) {
   if (!API_BASE_URL.trim()) {
+    return;
+  }
+
+  const force = options.force === true;
+  if (hasLoadedSettingsData && !force) {
     return;
   }
 
@@ -718,11 +1857,12 @@ async function loadSettingsData() {
   renderRooms();
 
   try {
-    const [latestRooms, menuData, inventoryData, employeeData] = await Promise.all([
+    const [latestRooms, menuData, inventoryData, employeeData, latestPackages] = await Promise.all([
       fetchRoomsFromApi(),
       fetchMenuItemsFromApi(),
       fetchInventoryItemsFromApi(),
       fetchEmployeesFromApi(),
+      fetchPackagesFromApi(),
     ]);
 
     rooms = normalizeRooms(latestRooms);
@@ -730,6 +1870,12 @@ async function loadSettingsData() {
     inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
     inventorySummary = inventoryData.summary || null;
     employees = Array.isArray(employeeData) ? employeeData : [];
+    packages = Array.isArray(latestPackages) ? latestPackages : [];
+    packageDetailsByPackageId = force ? {} : packageDetailsByPackageId;
+    if (selectedSettingsPackageId && !packages.some((pkg) => pkg.package_id === selectedSettingsPackageId)) {
+      selectedSettingsPackageId = "";
+    }
+    hasLoadedSettingsData = true;
     syncSelectedFbRoomWithRooms();
   } catch (error) {
     console.warn("Gagal memuat data pengaturan.", error);
@@ -740,612 +1886,9 @@ async function loadSettingsData() {
   }
 }
 
-async function loadTvDevices() {
-  if (!API_BASE_URL.trim()) {
-    return;
-  }
-
-  isLoadingTvDevices = true;
-  renderRooms();
-
-  try {
-    const response = await fetch(`${API_BASE_URL}?action=getTvDevices`);
-
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "Gagal memuat daftar TV device.");
-    }
-
-    tvDevicesList = Array.isArray(data.tv_devices) ? data.tv_devices : [];
-  } catch (error) {
-    console.warn("Gagal memuat daftar TV device.", error);
-    tvDevicesList = [];
-    showInlineNotice(error.message || "Gagal memuat daftar TV device.", "error");
-  } finally {
-    isLoadingTvDevices = false;
-    renderRooms();
-  }
-}
-
-async function loadTvControlLogs() {
-  if (!API_BASE_URL.trim()) {
-    return;
-  }
-
-  isLoadingTvControlLogs = true;
-  renderRooms();
-
-  try {
-    const params = new URLSearchParams();
-    params.set("action", "getTvControlLogs");
-    params.set("limit", "100");
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
-
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "Gagal memuat TV control logs.");
-    }
-
-    tvControlLogs = Array.isArray(data.tv_control_logs)
-      ? data.tv_control_logs
-      : Array.isArray(data.logs)
-        ? data.logs
-        : [];
-    resetPaginationPage("tvControlLogs");
-  } catch (error) {
-    console.warn("Gagal memuat TV control logs.", error);
-    tvControlLogs = [];
-    showInlineNotice(error.message || "Gagal memuat TV control logs.", "error");
-  } finally {
-    isLoadingTvControlLogs = false;
-    renderRooms();
-  }
-}
-
 function getRoomNameById(roomId) {
   const room = rooms.find((item) => item.room_id === roomId);
   return room?.room_name || roomId || "-";
-}
-
-function buildLatestTvLogByDeviceMap() {
-  return tvControlLogs.reduce((map, log) => {
-    const tvDeviceId = String(log.tv_device_id || "").trim();
-
-    if (!tvDeviceId) {
-      return map;
-    }
-
-    const currentLog = map[tvDeviceId];
-
-    if (!currentLog || String(log.created_at || "").localeCompare(String(currentLog.created_at || "")) > 0) {
-      map[tvDeviceId] = log;
-    }
-
-    return map;
-  }, {});
-}
-
-function findTvDeviceItem(tvDeviceId) {
-  return tvDevicesList.find((device) => device.tv_device_id === tvDeviceId) || null;
-}
-
-function getTvDeviceFormTitle() {
-  if (!tvDeviceForm) {
-    return "";
-  }
-
-  return `${tvDeviceForm.mode === "edit" ? "Edit" : "Tambah"} Mapping TV`;
-}
-
-function getTvMiddlewareUrlHelper() {
-  const controlType = String(tvDeviceForm?.values?.control_type || "").trim().toLowerCase();
-
-  if (controlType === "middleware") {
-    return "Wajib untuk middleware. Gunakan URL publik (mis. ngrok/cloudflared) ke endpoint /tv-command. Apps Script production tidak bisa mengakses localhost.";
-  }
-
-  return "Opsional kecuali control_type middleware. Tidak ditampilkan di card room.";
-}
-
-function truncateTvLogRawResponse(value, maxLength = 120) {
-  const text = String(value || "").trim();
-
-  if (!text) {
-    return "-";
-  }
-
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength)}...`;
-}
-
-function openTvDeviceForm(mode, item = null) {
-  if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
-    return;
-  }
-
-  tvDeviceForm = {
-    mode,
-    values: {
-      tv_device_id: item?.tv_device_id || "",
-      room_id: item?.room_id || "",
-      device_name: item?.device_name || "",
-      control_type: item?.control_type || "mock",
-      status: item?.status || "active",
-      middleware_url: item?.middleware_url || "",
-      device_identifier: item?.device_identifier || "",
-    },
-  };
-  renderRooms();
-}
-
-function closeTvDeviceForm() {
-  tvDeviceForm = null;
-  renderRooms();
-}
-
-function updateTvDeviceForm(field, value) {
-  if (!tvDeviceForm) {
-    return;
-  }
-
-  tvDeviceForm = {
-    ...tvDeviceForm,
-    values: {
-      ...tvDeviceForm.values,
-      [field]: value,
-    },
-  };
-}
-
-function createTvDeviceField({ label, field, type = "text", options = null, disabled = false, helper = "" }) {
-  const wrapper = document.createElement("label");
-  wrapper.className = "master-form-field";
-
-  const labelElement = document.createElement("span");
-  labelElement.className = "master-form-label";
-  labelElement.textContent = label;
-
-  let input;
-
-  if (options) {
-    input = document.createElement("select");
-    options.forEach(([value, text]) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      input.appendChild(option);
-    });
-  } else {
-    input = document.createElement("input");
-    input.type = type;
-  }
-
-  input.className = "master-form-input";
-  input.dataset.action = "update-tv-device-form";
-  input.dataset.field = field;
-  input.disabled = disabled;
-  input.value = tvDeviceForm?.values?.[field] ?? "";
-
-  wrapper.append(labelElement, input);
-
-  if (helper) {
-    const helperElement = document.createElement("span");
-    helperElement.className = "master-form-helper";
-    helperElement.textContent = helper;
-    wrapper.appendChild(helperElement);
-  }
-
-  return wrapper;
-}
-
-function createTvDeviceFormModalElement() {
-  if (!tvDeviceForm) {
-    return null;
-  }
-
-  const overlay = document.createElement("section");
-  overlay.className = "master-delete-modal tv-device-modal";
-  overlay.setAttribute("aria-labelledby", "tv-device-form-title");
-
-  const dialog = document.createElement("div");
-  dialog.className = "master-delete-dialog tv-device-dialog";
-
-  const title = document.createElement("h3");
-  title.className = "master-delete-title";
-  title.id = "tv-device-form-title";
-  title.textContent = getTvDeviceFormTitle();
-
-  const grid = document.createElement("div");
-  grid.className = "master-form-grid";
-
-  const roomOptions = rooms.map((room) => [room.room_id, `${room.room_id} - ${room.room_name}`]);
-
-  grid.append(
-    createTvDeviceField({
-      label: "TV Device ID",
-      field: "tv_device_id",
-      disabled: tvDeviceForm.mode === "edit",
-      helper: tvDeviceForm.mode === "edit" ? "ID device tidak bisa diubah." : "",
-    }),
-    createTvDeviceField({
-      label: "Room",
-      field: "room_id",
-      options: [["", "Pilih room"], ...roomOptions],
-    }),
-    createTvDeviceField({ label: "Device Name", field: "device_name" }),
-    createTvDeviceField({
-      label: "Control Type",
-      field: "control_type",
-      options: [
-        ["mock", "Mock"],
-        ["middleware", "Middleware"],
-        ["home_assistant", "Home Assistant"],
-        ["manual", "Manual"],
-      ],
-    }),
-    createTvDeviceField({
-      label: "Status",
-      field: "status",
-      options: [
-        ["active", "Active"],
-        ["inactive", "Inactive"],
-      ],
-    }),
-    createTvDeviceField({
-      label: "Middleware URL",
-      field: "middleware_url",
-      helper: getTvMiddlewareUrlHelper(),
-    }),
-    createTvDeviceField({
-      label: "Device Identifier",
-      field: "device_identifier",
-      helper: "Identifier teknis perangkat, tidak ditampilkan di card room.",
-    })
-  );
-
-  const actions = document.createElement("div");
-  actions.className = "master-delete-actions";
-
-  const cancelButton = document.createElement("button");
-  cancelButton.className = "master-button secondary";
-  cancelButton.type = "button";
-  cancelButton.dataset.action = "close-tv-device-form";
-  cancelButton.textContent = "Batal";
-
-  const saveButton = document.createElement("button");
-  saveButton.className = "master-button primary";
-  saveButton.type = "button";
-  saveButton.dataset.action = "submit-tv-device-form";
-  saveButton.disabled = isSavingTvDevice;
-  saveButton.textContent = isSavingTvDevice ? "Menyimpan..." : "Simpan";
-
-  actions.append(cancelButton, saveButton);
-  dialog.append(title, grid, actions);
-  overlay.appendChild(dialog);
-
-  return overlay;
-}
-
-function createTvDeviceActionButtons(device) {
-  const actions = document.createElement("div");
-  actions.className = "master-row-actions";
-
-  if (!canManageTvMapping()) {
-    const note = document.createElement("span");
-    note.className = "settings-section-subtitle";
-    note.textContent = "Hanya owner/admin";
-    actions.appendChild(note);
-    return actions;
-  }
-
-  const editButton = document.createElement("button");
-  editButton.className = "master-button";
-  editButton.type = "button";
-  editButton.dataset.action = "edit-tv-device-mapping";
-  editButton.dataset.tvDeviceId = device.tv_device_id || "";
-  editButton.textContent = "Edit";
-
-  const testButton = document.createElement("button");
-  testButton.className = "master-button";
-  testButton.type = "button";
-  testButton.dataset.action = "send-tv-test-from-settings";
-  testButton.dataset.roomId = device.room_id || "";
-  testButton.dataset.tvDeviceId = device.tv_device_id || "";
-  testButton.disabled = isSendingTvCommand || device.status !== "active" || !API_BASE_URL.trim();
-  testButton.textContent = isSendingTvCommand ? "Kirim..." : "Test";
-
-  const toggleButton = document.createElement("button");
-  toggleButton.className = "master-button";
-  toggleButton.type = "button";
-  toggleButton.dataset.action = "toggle-tv-device-status";
-  toggleButton.dataset.tvDeviceId = device.tv_device_id || "";
-  toggleButton.disabled = isTogglingTvDeviceStatus || !API_BASE_URL.trim();
-  toggleButton.textContent = device.status === "active" ? "Nonaktifkan" : "Aktifkan";
-
-  actions.append(editButton, testButton, toggleButton);
-  return actions;
-}
-
-function createTvIntegrationSection() {
-  const section = document.createElement("section");
-  section.className = "settings-section tv-integration-section";
-
-  const header = document.createElement("div");
-  header.className = "settings-section-header";
-
-  const titleGroup = document.createElement("div");
-  const title = document.createElement("h3");
-  title.className = "settings-section-title";
-  title.textContent = "TV Integration";
-  const subtitle = document.createElement("p");
-  subtitle.className = "settings-section-subtitle";
-  subtitle.textContent = "Kelola mapping TV per room dari dashboard. Satu room hanya boleh punya satu device aktif.";
-  titleGroup.append(title, subtitle);
-
-  const actions = document.createElement("div");
-  actions.className = "tv-integration-header-actions";
-
-  const refreshButton = document.createElement("button");
-  refreshButton.className = "master-button";
-  refreshButton.type = "button";
-  refreshButton.dataset.action = "refresh-tv-integration";
-  refreshButton.disabled = isLoadingTvDevices || isLoadingTvControlLogs || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingTvDevices || isLoadingTvControlLogs ? "Memuat..." : "Refresh TV";
-
-  actions.appendChild(refreshButton);
-
-  if (canManageTvMapping()) {
-    const addButton = document.createElement("button");
-    addButton.className = "master-button primary";
-    addButton.type = "button";
-    addButton.dataset.action = "add-tv-device-mapping";
-    addButton.textContent = "Tambah Mapping TV";
-    actions.appendChild(addButton);
-  }
-
-  header.append(titleGroup, actions);
-
-  if (isLoadingTvDevices) {
-    section.append(header, createStateMessage("Memuat daftar TV device..."));
-    return section;
-  }
-
-  const latestLogByDevice = buildLatestTvLogByDeviceMap();
-  const deviceRows = tvDevicesList.map((device) => {
-    const latestLog = latestLogByDevice[device.tv_device_id] || null;
-
-    return [
-      getRoomNameById(device.room_id),
-      device.device_name || "-",
-      device.control_type || "-",
-      getMasterStatusBadge(device.status),
-      getTvActionLabel(latestLog?.tv_action),
-      latestLog?.result || "-",
-      device.updated_at || "-",
-      createTvDeviceActionButtons(device),
-    ];
-  });
-
-  const logsPanel = document.createElement("div");
-  logsPanel.className = "tv-control-logs-panel";
-
-  const logsTitle = document.createElement("h4");
-  logsTitle.className = "tv-control-logs-title";
-  logsTitle.textContent = "TV Control Logs";
-
-  const logsSubtitle = document.createElement("p");
-  logsSubtitle.className = "settings-section-subtitle";
-  logsSubtitle.textContent = "Riwayat command TV read-only. Data terbaru 100 log.";
-
-  if (isLoadingTvControlLogs) {
-    logsPanel.append(logsTitle, logsSubtitle, createStateMessage("Memuat TV control logs..."));
-  } else {
-    const paginatedLogs = getPaginatedSlice("tvControlLogs", tvControlLogs);
-    const logRows = paginatedLogs.items.map((log) => [
-      log.created_at || "-",
-      getRoomNameById(log.room_id),
-      log.tv_device_id || "-",
-      getTvActionLabel(log.tv_action),
-      log.control_type || "-",
-      log.trigger_source || "-",
-      log.result || "-",
-      log.success ? "true" : "false",
-      log.block_reason || "-",
-      log.message || "-",
-      truncateTvLogRawResponse(log.raw_response),
-    ]);
-
-    logsPanel.append(
-      logsTitle,
-      logsSubtitle,
-      createMasterTable(
-        ["Waktu", "Room", "Device", "Action", "Type", "Source", "Result", "Success", "Block Reason", "Message", "Raw Response"],
-        logRows,
-        "Belum ada TV control log."
-      ),
-      createPaginationControlsElement("tvControlLogs", paginatedLogs.totalItems)
-    );
-  }
-
-  section.append(
-    header,
-    createMasterTable(
-      ["Room", "Device Name", "Control Type", "Status", "Last Command", "Last Result", "Updated At", "Aksi"],
-      deviceRows,
-      "Belum ada mapping TV device."
-    ),
-    logsPanel
-  );
-
-  return section;
-}
-
-async function submitTvDeviceForm() {
-  if (!tvDeviceForm || isSavingTvDevice) {
-    return;
-  }
-
-  if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
-    return;
-  }
-
-  if (!API_BASE_URL.trim()) {
-    showInlineNotice("API belum dikonfigurasi.", "error");
-    return;
-  }
-
-  const values = tvDeviceForm.values || {};
-  const isEdit = tvDeviceForm.mode === "edit";
-  const controlType = String(values.control_type || "").trim().toLowerCase();
-  const middlewareUrl = String(values.middleware_url || "").trim();
-
-  if (controlType === "middleware" && !middlewareUrl) {
-    showInlineNotice("middleware_url wajib diisi untuk control_type middleware.", "error");
-    return;
-  }
-
-  isSavingTvDevice = true;
-  renderRooms();
-
-  try {
-    const data = await postApiAction({
-      action: isEdit ? "updateTvDevice" : "saveTvDevice",
-      tv_device_id: values.tv_device_id || "",
-      room_id: values.room_id || "",
-      device_name: values.device_name || "",
-      control_type: values.control_type || "mock",
-      status: values.status || "active",
-      middleware_url: values.middleware_url || "",
-      device_identifier: values.device_identifier || "",
-    });
-
-    if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "Gagal menyimpan mapping TV.");
-    }
-
-    showInlineNotice(data.message || "Mapping TV berhasil disimpan.");
-    tvDeviceForm = null;
-    await loadTvDevices();
-    await loadTvControlLogs();
-    await loadRooms();
-  } catch (error) {
-    showInlineNotice(error.message || "Gagal menyimpan mapping TV.", "error");
-  } finally {
-    isSavingTvDevice = false;
-    renderRooms();
-  }
-}
-
-async function toggleTvDeviceStatus(tvDeviceId) {
-  if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh mengelola mapping TV.", "error");
-    return;
-  }
-
-  const device = findTvDeviceItem(tvDeviceId);
-
-  if (!device) {
-    showInlineNotice("TV device tidak ditemukan.", "error");
-    return;
-  }
-
-  if (!API_BASE_URL.trim()) {
-    showInlineNotice("API belum dikonfigurasi.", "error");
-    return;
-  }
-
-  const nextStatus = device.status === "active" ? "inactive" : "active";
-
-  isTogglingTvDeviceStatus = true;
-  renderRooms();
-
-  try {
-    const data = await postApiAction({
-      action: "updateTvDevice",
-      tv_device_id: device.tv_device_id,
-      room_id: device.room_id,
-      device_name: device.device_name,
-      control_type: device.control_type,
-      status: nextStatus,
-      middleware_url: device.middleware_url || "",
-      device_identifier: device.device_identifier || "",
-    });
-
-    if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "Gagal mengubah status TV device.");
-    }
-
-    showInlineNotice(data.message || `TV device berhasil di${nextStatus === "active" ? "aktifkan" : "nonaktifkan"}.`);
-    await loadTvDevices();
-    await loadTvControlLogs();
-    await loadRooms();
-  } catch (error) {
-    showInlineNotice(error.message || "Gagal mengubah status TV device.", "error");
-  } finally {
-    isTogglingTvDeviceStatus = false;
-    renderRooms();
-  }
-}
-
-async function sendTvCommandFromSettings(roomId, tvDeviceId) {
-  if (!canManageTvMapping()) {
-    showInlineNotice("Hanya owner/admin yang boleh test TV dari Pengaturan.", "error");
-    return;
-  }
-
-  if (!API_BASE_URL.trim()) {
-    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
-    return;
-  }
-
-  if (!tvDeviceId) {
-    showInlineNotice("TV device tidak ditemukan.", "error");
-    return;
-  }
-
-  isSendingTvCommand = true;
-  renderRooms();
-
-  try {
-    const data = await postApiAction({
-      action: "sendTvCommand",
-      room_id: roomId,
-      tv_device_id: tvDeviceId,
-      tv_action: "test",
-      trigger_source: "settings_page",
-      cashier_name: getLoggedInOperatorName(),
-    });
-
-    if (!data || data.success !== true) {
-      throw new Error(data?.message || "Perintah TV gagal dikirim.");
-    }
-
-    showInlineNotice("Perintah TV berhasil dikirim.");
-    await loadTvControlLogs();
-    await loadRooms();
-  } catch (error) {
-    showInlineNotice(error.message || "Perintah TV gagal dikirim.", "error");
-    await loadTvControlLogs();
-    await loadRooms();
-  } finally {
-    isSendingTvCommand = false;
-    renderRooms();
-  }
 }
 
 function buildMasterAuditQueryParams() {
@@ -1364,9 +1907,14 @@ function buildMasterAuditQueryParams() {
   return params;
 }
 
-async function loadMasterDataAuditLogs() {
+async function loadMasterDataAuditLogs(options = {}) {
   if (!API_BASE_URL.trim()) {
     masterAuditLogs = [];
+    return;
+  }
+
+  const force = options.force === true;
+  if (hasLoadedMasterAuditLogs && !force) {
     return;
   }
 
@@ -1375,7 +1923,9 @@ async function loadMasterDataAuditLogs() {
 
   try {
     const params = buildMasterAuditQueryParams();
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchApiGet(
+      buildApiUrl("getMasterDataAuditLogs", Object.fromEntries(params.entries()))
+    );
 
     if (!response.ok) {
       throw new Error(`API request failed with status ${response.status}`);
@@ -1388,6 +1938,7 @@ async function loadMasterDataAuditLogs() {
     }
 
     masterAuditLogs = Array.isArray(data.data) ? data.data : Array.isArray(data.logs) ? data.logs : [];
+    hasLoadedMasterAuditLogs = true;
   } catch (error) {
     console.warn("Gagal memuat audit log master data.", error);
     masterAuditLogs = [];
@@ -1398,13 +1949,44 @@ async function loadMasterDataAuditLogs() {
   }
 }
 
-async function loadSettingsTabData() {
+async function loadSettingsTabData(options = {}) {
   await Promise.all([
-    loadSettingsData(),
-    loadMasterDataAuditLogs(),
-    loadTvDevices(),
-    loadTvControlLogs(),
+    loadSettingsData(options),
+    loadMasterDataAuditLogs(options),
   ]);
+}
+
+async function selectSettingsPackage(packageId) {
+  const normalizedPackageId = String(packageId || "").trim();
+
+  if (!normalizedPackageId) {
+    return;
+  }
+
+  selectedSettingsPackageId = normalizedPackageId;
+
+  if (packageDetailsByPackageId[normalizedPackageId]) {
+    resetPaginationPage("settingsPackageDetails");
+    renderRooms();
+    return;
+  }
+
+  isLoadingPackageDetails = true;
+  resetPaginationPage("settingsPackageDetails");
+  renderRooms();
+
+  try {
+    packageDetailsByPackageId = {
+      ...packageDetailsByPackageId,
+      [normalizedPackageId]: await fetchPackageDetailsFromApi(normalizedPackageId),
+    };
+  } catch (error) {
+    console.warn("Gagal memuat detail paket.", error);
+    showInlineNotice(error.message || "Gagal memuat detail paket.", "error");
+  } finally {
+    isLoadingPackageDetails = false;
+    renderRooms();
+  }
 }
 
 function updateStockAdjustmentForm(field, value) {
@@ -1527,6 +2109,7 @@ async function submitStockAdjustment() {
       note: "",
     };
     await loadInventoryItems();
+    await loadMenuItems();
     await loadTodayStockMovements();
     await loadTodayFnbSalesReport();
   } catch (error) {
@@ -1535,6 +2118,255 @@ async function submitStockAdjustment() {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+function openAddInventoryItemModal() {
+  addInventoryItemForm = {
+    name: "",
+    category: "Snack",
+    price: "",
+    unit: "pcs",
+    min_stock: "5",
+    initial_stock: "0"
+  };
+  renderRooms();
+}
+
+function closeAddInventoryItemModal() {
+  addInventoryItemForm = null;
+  renderRooms();
+}
+
+function updateAddInventoryItemForm(field, value) {
+  if (!addInventoryItemForm) {
+    return;
+  }
+  addInventoryItemForm = {
+    ...addInventoryItemForm,
+    [field]: value
+  };
+}
+
+function submitAddInventoryItem() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  const name = String(addInventoryItemForm?.name || "").trim();
+  const category = String(addInventoryItemForm?.category || "").trim();
+  const price = Number(addInventoryItemForm?.price);
+  const unit = String(addInventoryItemForm?.unit || "").trim();
+  const minStock = Number(addInventoryItemForm?.min_stock);
+  const initialStock = Number(addInventoryItemForm?.initial_stock || 0);
+
+  if (!name) {
+    showInlineNotice("Nama Item F&B wajib diisi.", "error");
+    return;
+  }
+  if (!category) {
+    showInlineNotice("Kategori wajib diisi.", "error");
+    return;
+  }
+  if (!Number.isFinite(price) || price < 0) {
+    showInlineNotice("Harga jual wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+  if (!unit) {
+    showInlineNotice("Satuan (Unit) wajib diisi.", "error");
+    return;
+  }
+  if (!Number.isFinite(minStock) || minStock < 0) {
+    showInlineNotice("Minimum stok wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+  if (!Number.isFinite(initialStock) || initialStock < 0) {
+    showInlineNotice("Stok awal wajib berupa angka 0 atau lebih.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Manager Tambah Item F&B",
+    message: "Masukkan PIN owner/manager untuk mendaftarkan item F&B baru.",
+    requestedAction: "add_inventory_item",
+    requiredRole: "manager",
+    onSuccess: async (authData, adminPin) => {
+      await executeAddInventoryItemSubmit(adminPin);
+    }
+  });
+}
+
+async function executeAddInventoryItemSubmit(adminPin) {
+  if (isSavingAddInventoryItem || !addInventoryItemForm) {
+    return;
+  }
+
+  isSavingAddInventoryItem = true;
+  renderRooms();
+
+  try {
+    const invResponse = await postApiAction({
+      action: "saveInventoryMaster",
+      stock_item_name: addInventoryItemForm.name.trim(),
+      category: addInventoryItemForm.category,
+      unit: addInventoryItemForm.unit.trim(),
+      min_stock: Number(addInventoryItemForm.min_stock) || 0,
+      status: "active",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!invResponse || invResponse.ok !== true) {
+      throw new Error(invResponse?.message || invResponse?.error || "Gagal mendaftarkan item stok.");
+    }
+
+    const savedInventory = invResponse.data || {};
+    const stockItemId = savedInventory.stock_item_id;
+
+    if (!stockItemId) {
+      throw new Error("Gagal memperoleh ID item stok baru dari backend.");
+    }
+
+    const menuResponse = await postApiAction({
+      action: "saveMenuMaster",
+      menu_name: addInventoryItemForm.name.trim(),
+      category: addInventoryItemForm.category,
+      price: Number(addInventoryItemForm.price) || 0,
+      stock_item_id: stockItemId,
+      qty_per_unit: 1,
+      status: "active",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!menuResponse || menuResponse.ok !== true) {
+      throw new Error(menuResponse?.message || menuResponse?.error || "Data stok terbuat, namun gagal membuat menu F&B.");
+    }
+
+    const initialStockVal = Number(addInventoryItemForm.initial_stock) || 0;
+    if (initialStockVal > 0) {
+      const adjustResponse = await postApiAction({
+        action: "adjustInventoryStock",
+        stock_item_id: stockItemId,
+        adjustment_type: "restock",
+        quantity: initialStockVal,
+        note: "Stok awal pendaftaran barang baru",
+        cashier_name: getLoggedInOperatorName()
+      });
+
+      if (!adjustResponse || adjustResponse.ok !== true) {
+        showInlineNotice(`Item "${addInventoryItemForm.name}" berhasil dibuat, namun inisialisasi stok fisik gagal: ${adjustResponse?.message || adjustResponse?.error || 'Unknown Error'}`, "warning");
+      }
+    }
+
+    showInlineNotice(`Item "${addInventoryItemForm.name}" berhasil didaftarkan ke stok dan menu penjualan.`);
+    addInventoryItemForm = null;
+
+    await Promise.all([
+      loadInventoryItems(),
+      loadMenuItems()
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Terjadi kesalahan saat menambahkan item baru.", "error");
+  } finally {
+    isSavingAddInventoryItem = false;
+    renderRooms();
+  }
+}
+
+function createAddInventoryItemModalElement() {
+  if (!addInventoryItemForm) {
+    return document.createDocumentFragment();
+  }
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal add-inventory-item-modal";
+  overlay.setAttribute("aria-labelledby", "add-inventory-item-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "add-inventory-item-title";
+  title.textContent = "Tambah Item Makanan / Minuman Baru";
+
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gridTemplateColumns = "repeat(auto-fit, minmax(200px, 1fr))";
+  grid.style.gap = "var(--space-3)";
+  grid.style.margin = "var(--space-3) 0";
+
+  const createField = (label, fieldName, type = "text", placeholder = "", options = null) => {
+    const fieldEl = document.createElement("label");
+    fieldEl.className = "master-form-field";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "master-form-label";
+    labelEl.textContent = label;
+
+    let input;
+    if (options) {
+      input = document.createElement("select");
+      input.className = "master-form-input";
+      options.forEach(([val, lbl]) => {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = lbl;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement("input");
+      input.className = "master-form-input";
+      input.type = type;
+      input.placeholder = placeholder;
+      if (type === "number") {
+        input.min = "0";
+      }
+    }
+
+    input.dataset.action = "update-add-inventory-item-form";
+    input.dataset.field = fieldName;
+    input.value = addInventoryItemForm[fieldName] || "";
+    input.disabled = isSavingAddInventoryItem;
+
+    fieldEl.append(labelEl, input);
+    return fieldEl;
+  };
+
+  grid.appendChild(createField("Nama Item F&B", "name", "text", "Contoh: Keripik Pisang"));
+  grid.appendChild(createField("Kategori", "category", "select", "", [
+    ["Snack", "Snack"],
+    ["Makanan", "Makanan"],
+    ["Minuman", "Minuman"]
+  ]));
+  grid.appendChild(createField("Harga Jual (Rp)", "price", "number", "Contoh: 15000"));
+  grid.appendChild(createField("Satuan (Unit)", "unit", "text", "Contoh: pcs, porsi, botol"));
+  grid.appendChild(createField("Minimum Stok", "min_stock", "number", "Contoh: 5"));
+  grid.appendChild(createField("Stok Awal Fisik", "initial_stock", "number", "Contoh: 20"));
+
+  const actions = document.createElement("div");
+  actions.className = "master-form-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-add-inventory-item-modal";
+  cancelButton.disabled = isSavingAddInventoryItem;
+  cancelButton.textContent = "Batal";
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "master-button primary";
+  saveButton.type = "button";
+  saveButton.dataset.action = "submit-add-inventory-item";
+  saveButton.disabled = isSavingAddInventoryItem;
+  saveButton.textContent = isSavingAddInventoryItem ? "Menyimpan..." : "Simpan";
+
+  actions.append(cancelButton, saveButton);
+  dialog.append(title, grid, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
 }
 
 function normalizeRoomUsagePeriodForApi(period) {
@@ -1678,11 +2510,9 @@ async function fetchRoomUsageReportFromApi() {
   }
 
   const params = buildRoomUsagePeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1707,11 +2537,9 @@ async function fetchActiveShiftRoomUsageReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getRoomUsageReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1807,11 +2635,9 @@ async function fetchTodayFnbSalesReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayFnbSalesReport", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1878,11 +2704,9 @@ async function fetchTodayStockMovementsFromApi() {
     params.set("reference_type", stockMovementReferenceFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
-  }
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayStockMovements", Object.fromEntries(params.entries()))
+  );
 
   const data = await response.json();
 
@@ -1935,10 +2759,35 @@ async function loadOpenFnbOrders() {
   renderRooms();
 
   try {
-    const data = await fetchOpenFnbOrdersFromApi();
+    const globalData = await fetchOpenFnbOrdersFromApi();
+    const testRooms = rooms.filter((room) => {
+      const isTestRoom = room.is_test === true || String(room.is_test || "").trim().toLowerCase() === "true";
+      return isTestRoom && room.status === "occupied" && room.room_id;
+    });
+    const testResults = await Promise.allSettled(
+      testRooms.map((room) => fetchOpenFnbOrdersFromApi(room.room_id, ""))
+    );
 
-    openFnbOrders = Array.isArray(data.orders) ? data.orders : [];
-    openFnbOrderSummary = data.summary || null;
+    const mergedOrdersById = new Map();
+    (Array.isArray(globalData.orders) ? globalData.orders : []).forEach((order) => {
+      if (order.order_id) {
+        mergedOrdersById.set(order.order_id, order);
+      }
+    });
+    testResults.forEach((result) => {
+      if (result.status !== "fulfilled") {
+        console.warn("Gagal memuat open order F&B testing.", result.reason);
+        return;
+      }
+      (Array.isArray(result.value.orders) ? result.value.orders : []).forEach((order) => {
+        if (order.order_id) {
+          mergedOrdersById.set(order.order_id, order);
+        }
+      });
+    });
+
+    openFnbOrders = Array.from(mergedOrdersById.values());
+    openFnbOrderSummary = calculateOpenFnbOrdersSummary(openFnbOrders);
   } catch (error) {
     console.warn("Gagal memuat open order F&B.", error);
     openFnbOrders = [];
@@ -1967,7 +2816,9 @@ async function fetchOpenFnbOrdersFromApi(roomId = "", roomStartTime = "") {
     params.set("room_start_time", roomStartTime);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getOpenFnbOrders", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2021,7 +2872,9 @@ async function fetchTodayFnbOrdersFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayFnbOrders", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2048,7 +2901,9 @@ async function fetchFnbOrdersByIds(orderIds) {
     action: "getFnbOrdersByIds",
     order_ids: orderIds.join(","),
   });
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getFnbOrdersByIds", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2077,15 +2932,19 @@ function showErrorState(message) {
   errorMessage = message;
 }
 
-function showInlineNotice(message, type = "info") {
+function showInlineNotice(message, type = "info", tabKey = activeDashboardTab) {
   noticeMessage = message;
   noticeType = type;
+  noticeTabKey = tabKey;
   renderRooms();
 }
 
 function showBillingSummary(transaction) {
   lastTransaction = transaction;
   renderRooms();
+  if (transaction) {
+    loadFnbDetailsForTransaction(transaction);
+  }
 }
 
 function clearBillingSummary() {
@@ -2104,6 +2963,8 @@ function showReceiptPrint(transaction) {
   selectedReceiptTransaction = transaction;
   receiptPrintVisible = true;
   renderRooms();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  loadFnbDetailsForTransaction(transaction);
 }
 
 function hideReceiptPrint() {
@@ -2136,6 +2997,62 @@ async function prepareReceiptTransaction(transaction) {
   return transaction;
 }
 
+function normalizeReceiptPrintAudit(audit) {
+  const sequence = Number(audit?.print_sequence || audit?.printSequence || 0) || 0;
+  const reprintNumber = Number(audit?.reprint_number || audit?.reprintNumber || Math.max(0, sequence - 1)) || 0;
+
+  return {
+    print_sequence: sequence,
+    is_reprint: Boolean(audit?.is_reprint || audit?.isReprint || sequence > 1 || reprintNumber > 0),
+    reprint_number: reprintNumber,
+    printed_at: audit?.printed_at || audit?.printedAt || "",
+    cashier_name: audit?.cashier_name || audit?.cashierName || "",
+    print_type: audit?.print_type || audit?.printType || "",
+  };
+}
+
+function getReceiptPrintAudit(transaction) {
+  const transactionId = transaction?.transaction_id || "";
+  return transactionId ? receiptPrintAuditByTransactionId[transactionId] || null : null;
+}
+
+async function waitForNextFrame() {
+  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function logReceiptPrintAttempt(transaction, printType) {
+  const transactionId = transaction?.transaction_id || "";
+
+  if (!transactionId) {
+    throw new Error("ID transaksi tidak ditemukan.");
+  }
+
+  if (!API_BASE_URL.trim()) {
+    throw new Error("API belum dikonfigurasi. Cetak struk perlu dicatat ke sistem.");
+  }
+
+  const data = await postApiAction({
+    action: "logReceiptPrint",
+    transaction_id: transactionId,
+    print_type: printType,
+    cashier_name: getLoggedInOperatorName(),
+  });
+
+  if (!data || data.ok !== true) {
+    const failedTransactionId = data?.transaction_id || transactionId;
+    const baseMessage = data?.error || "Gagal mencatat cetak struk.";
+    throw new Error(`${baseMessage} ID: ${failedTransactionId}`);
+  }
+
+  const audit = normalizeReceiptPrintAudit(data.log || data);
+  receiptPrintAuditByTransactionId = {
+    ...receiptPrintAuditByTransactionId,
+    [transactionId]: audit,
+  };
+
+  return audit;
+}
+
 async function printReceipt(transaction = selectedReceiptTransaction || lastTransaction) {
   const preparedTransaction = await prepareReceiptTransaction(transaction);
 
@@ -2148,7 +3065,15 @@ async function printReceipt(transaction = selectedReceiptTransaction || lastTran
     return;
   }
 
-  window.print();
+  try {
+    const audit = await logReceiptPrintAttempt(preparedTransaction, "browser");
+    showInlineNotice(audit.is_reprint ? `Cetak ulang struk ke-${audit.reprint_number}.` : "Cetak struk dicatat.");
+    renderRooms();
+    await waitForNextFrame();
+    window.print();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencetak struk.", "error");
+  }
 }
 
 async function showThermalReceiptPreview(transaction) {
@@ -2167,6 +3092,7 @@ async function showThermalReceiptPreview(transaction) {
 
   const receiptData = buildReceiptData(preparedTransaction, {
     fnbOrders: getReceiptFnbOrders(preparedTransaction),
+    print: getReceiptPrintAudit(preparedTransaction),
   });
   const previewText = formatReceipt58mm(receiptData);
   let preview = receipt.querySelector(".thermal-receipt-preview");
@@ -2199,13 +3125,22 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
     return;
   }
 
-  const receiptData = buildReceiptData(preparedTransaction, {
-    fnbOrders: getReceiptFnbOrders(preparedTransaction),
-  });
-  const printStarted = printThermalReceipt(receiptData);
+  try {
+    const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
+    const receiptData = buildReceiptData(preparedTransaction, {
+      fnbOrders: getReceiptFnbOrders(preparedTransaction),
+      print: audit,
+    });
+    const printStarted = printThermalReceipt(receiptData);
 
-  if (!printStarted) {
-    showInlineNotice("Fitur cetak thermal tidak tersedia di browser ini.", "error");
+    if (!printStarted) {
+      showInlineNotice("Fitur cetak thermal tidak tersedia di browser ini.", "error");
+      return;
+    }
+
+    showInlineNotice(audit.is_reprint ? `Cetak ulang thermal ke-${audit.reprint_number}.` : "Cetak thermal dicatat.");
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencetak struk thermal.", "error");
   }
 }
 
@@ -2216,7 +3151,7 @@ function setTransactionHistoryFilter(filter) {
 
   transactionHistoryFilter = filter;
   resetPaginationPage("transactions");
-  renderRooms();
+  renderDashboardTabPanels();
 }
 
 function getTransactionPeriodTitleSuffix() {
@@ -2253,8 +3188,7 @@ function setTransactionPeriodFilter(period) {
     transactionCustomStartDate = "";
     transactionCustomEndDate = "";
     transactionPeriodNotice = "";
-    loadTodayTransactions();
-    loadTodayCashierClosings();
+    loadTransactionsTabData();
     return;
   }
 
@@ -2286,8 +3220,7 @@ async function applyTransactionCustomPeriod() {
   transactionPeriodNotice = "";
   resetPaginationPage("transactions");
   resetPaginationPage("cashierClosings");
-  await loadTodayTransactions();
-  await loadTodayCashierClosings();
+  await loadTransactionsTabData();
 }
 
 function getFilteredTodayTransactions() {
@@ -2302,6 +3235,72 @@ function getFilteredTodayTransactions() {
 
 function findTodayTransactionById(transactionId) {
   return todayTransactions.find((transaction) => transaction.transaction_id === transactionId) || null;
+}
+
+function getTransactionTimeValue(transaction) {
+  const candidates = [
+    transaction?.created_at,
+    transaction?.createdAt,
+    transaction?.end_time,
+    transaction?.endTime,
+    transaction?.start_time,
+    transaction?.startTime,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    const localMatch = value.match(/^(\d{2})-(\d{2})-(\d{4}) - (\d{2}):(\d{2}):(\d{2})$/);
+    const timestamp = localMatch
+      ? new Date(
+          Number(localMatch[3]),
+          Number(localMatch[2]) - 1,
+          Number(localMatch[1]),
+          Number(localMatch[4]),
+          Number(localMatch[5]),
+          Number(localMatch[6])
+        ).getTime()
+      : Date.parse(value);
+
+    if (!Number.isNaN(timestamp)) {
+      return timestamp;
+    }
+  }
+
+  return 0;
+}
+
+function getLatestTodayTransaction() {
+  return todayTransactions.reduce((latest, transaction) => {
+    if (!latest) {
+      return transaction;
+    }
+
+    return getTransactionTimeValue(transaction) >= getTransactionTimeValue(latest)
+      ? transaction
+      : latest;
+  }, null);
+}
+
+async function findTransactionForAction(button) {
+  const transactionId = button?.dataset?.transactionId || "";
+
+  if (transactionId) {
+    let transaction = findTodayTransactionById(transactionId)
+      || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
+      || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
+
+    if (!transaction) {
+      showInlineNotice("Memuat ulang riwayat transaksi...");
+      await loadTransactionsTabData({ force: true });
+      transaction = findTodayTransactionById(transactionId)
+        || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null)
+        || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
+    }
+
+    return transaction;
+  }
+
+  return lastTransaction || selectedReceiptTransaction || getLatestTodayTransaction();
 }
 
 function showTransactionFromHistory(transactionId) {
@@ -2350,6 +3349,7 @@ function hideCashierClosingPreview() {
 
 function updateCashierClosingCashActual(value) {
   cashierClosingCashActual = value;
+  resetClosingDenominations();
   renderRooms();
 
   const cashInput = queryDashboard("#cashierClosingCashActual");
@@ -2369,6 +3369,111 @@ function updateCashierClosingNote(value) {
   cashierClosingNote = value;
 }
 
+function resetClosingDenominations() {
+  cashierClosingDenominations = {
+    d100k: 0,
+    d50k: 0,
+    d20k: 0,
+    d10k: 0,
+    d5k: 0,
+    d2k: 0,
+    d1k: 0,
+    d500: 0,
+    d200: 0,
+    d100: 0,
+  };
+}
+
+function compileClosingNote() {
+  const baseNote = cashierClosingNote.trim();
+  const breakdownLines = [];
+  const denoms = [
+    { key: "d100k", val: 100000, label: "Rp 100.000" },
+    { key: "d50k", val: 50000, label: "Rp 50.000" },
+    { key: "d20k", val: 20000, label: "Rp 20.000" },
+    { key: "d10k", val: 10000, label: "Rp 10.000" },
+    { key: "d5k", val: 5000, label: "Rp 5.000" },
+    { key: "d2k", val: 2000, label: "Rp 2.000" },
+    { key: "d1k", val: 1000, label: "Rp 1.000" },
+    { key: "d500", val: 500, label: "Rp 500" },
+    { key: "d200", val: 200, label: "Rp 200" },
+    { key: "d100", val: 100, label: "Rp 100" },
+  ];
+
+  denoms.forEach(d => {
+    const qty = cashierClosingDenominations[d.key] || 0;
+    if (qty > 0) {
+      breakdownLines.push(`${d.label}: ${qty}x`);
+    }
+  });
+
+  if (breakdownLines.length > 0) {
+    const denomString = `[Pecahan Fisik: ${breakdownLines.join(" | ")}]`;
+    return baseNote ? `${baseNote}\n\n${denomString}` : denomString;
+  }
+  return baseNote;
+}
+
+function parseClosingNoteAndDenoms(rawNote) {
+  if (!rawNote) return { note: "", denoms: [] };
+
+  const denomRegex = /\[Pecahan Fisik:\s*([^\]]+)\]/;
+  const match = rawNote.match(denomRegex);
+
+  if (match) {
+    const denomPart = match[1];
+    const cleanedNote = rawNote.replace(denomRegex, "").trim();
+    const denoms = denomPart.split(" | ").map(part => {
+      const subParts = part.split(":");
+      const label = subParts[0]?.trim() || "";
+      const qtyText = subParts[1]?.replace("x", "")?.trim() || "0";
+      const qty = parseInt(qtyText, 10) || 0;
+      
+      const valText = label.replace(/[^\d]/g, "");
+      const value = parseInt(valText, 10) || 0;
+
+      return { label, qty, total: qty * value };
+    });
+
+    return { note: cleanedNote, denoms };
+  }
+
+  return { note: rawNote, denoms: [] };
+}
+
+function recalculateFromDenoms(focusedId) {
+  const denoms = [
+    { key: "d100k", val: 100000 },
+    { key: "d50k", val: 50000 },
+    { key: "d20k", val: 20000 },
+    { key: "d10k", val: 10000 },
+    { key: "d5k", val: 5000 },
+    { key: "d2k", val: 2000 },
+    { key: "d1k", val: 1000 },
+    { key: "d500", val: 500 },
+    { key: "d200", val: 200 },
+    { key: "d100", val: 100 },
+  ];
+
+  let total = 0;
+  denoms.forEach((d) => {
+    total += (cashierClosingDenominations[d.key] || 0) * d.val;
+  });
+
+  cashierClosingCashActual = total.toString();
+  renderRooms();
+
+  if (focusedId) {
+    const input = queryDashboard(`#${focusedId}`);
+    if (input) {
+      input.focus();
+      try {
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch (error) {}
+    }
+  }
+}
+
 function hasTodayCashierClosing() {
   return todayCashierClosings.length > 0;
 }
@@ -2377,7 +3482,7 @@ function findTodayClosingById(closingId) {
   return todayCashierClosings.find((closing) => closing.closing_id === closingId) || null;
 }
 
-function showClosingPrintPreview(closingId) {
+async function showClosingPrintPreview(closingId) {
   const closing = findTodayClosingById(closingId);
 
   if (!closing) {
@@ -2385,8 +3490,36 @@ function showClosingPrintPreview(closingId) {
     return;
   }
 
-  selectedClosingForPrint = closing;
+  selectedClosingForPrint = { ...closing, closing_details_loading: true };
   closingPrintPreviewVisible = true;
+  renderRooms();
+
+  try {
+    const params = new URLSearchParams({
+      action: "getCashierClosingDetails",
+      closing_id: closingId,
+      _: Date.now().toString(),
+    });
+    const response = await fetchApiGet(
+      buildApiUrl("getCashierClosingDetails", Object.fromEntries(params.entries()))
+    );
+    const data = await response.json();
+    if (!response.ok || data?.ok !== true) {
+      throw new Error(data?.error || "Rincian closing tidak dapat dimuat.");
+    }
+    selectedClosingForPrint = {
+      ...closing,
+      closing_details_loading: false,
+      closing_details: data,
+    };
+  } catch (error) {
+    selectedClosingForPrint = {
+      ...closing,
+      closing_details_loading: false,
+      closing_details_error: error.message || "Rincian closing tidak dapat dimuat.",
+    };
+    showInlineNotice(error.message || "Rincian closing tidak dapat dimuat.", "error");
+  }
   renderRooms();
 }
 
@@ -2397,6 +3530,25 @@ function hideClosingPrintPreview() {
 }
 
 function printSelectedClosing() {
+  if (typeof window === "undefined" || typeof window.print !== "function") {
+    showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
+    return;
+  }
+
+  window.print();
+}
+
+function showOwnerReportPrintPreview() {
+  ownerReportPrintVisible = true;
+  renderRooms();
+}
+
+function hideOwnerReportPrintPreview() {
+  ownerReportPrintVisible = false;
+  renderRooms();
+}
+
+function printOwnerReport() {
   if (typeof window === "undefined" || typeof window.print !== "function") {
     showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
     return;
@@ -2458,53 +3610,69 @@ function normalizeRooms(rawRooms) {
       booked_duration_minutes: Number(room.booked_duration_minutes) || 0,
       scheduled_end_time: room.scheduled_end_time || null,
       rate_per_hour: Number.isNaN(ratePerHour) ? 0 : ratePerHour,
-      tv_device_id: room.tv_device_id || "",
-      tv_device: normalizeRoomTvDevice(room.tv_device),
       updated_at: room.updated_at || null,
+      customer_name: room.customer_name || "",
+      package_id: room.package_id || "",
+      lc_ids: String(room.lc_ids || "").trim(),
+      lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
+      is_test: room.is_test === true || String(room.is_test || "").trim().toLowerCase() === "true",
+      test_run_id: String(room.test_run_id || "").trim(),
+      test_created_by: String(room.test_created_by || "").trim(),
+      test_note: String(room.test_note || "").trim(),
+      _debug_lc_info: room._debug_lc_info || null,
     };
   });
-}
-
-function normalizeRoomTvDevice(tvDevice) {
-  if (!tvDevice || tvDevice.configured === false) {
-    return {
-      configured: false,
-      status: "not_configured",
-      status_label: "TV belum disetting",
-      last_command: "",
-      last_command_at: null,
-    };
-  }
-
-  return {
-    configured: true,
-    room_id: tvDevice.room_id || "",
-    tv_device_id: tvDevice.tv_device_id || "",
-    device_name: tvDevice.device_name || "",
-    control_type: tvDevice.control_type || "mock",
-    device_status: tvDevice.device_status || "active",
-    status: tvDevice.status || "unchecked",
-    status_label: tvDevice.status_label || getTvStatusLabel(tvDevice.status),
-    last_command: tvDevice.last_command || "",
-    last_command_result: tvDevice.last_command_result || "",
-    last_command_at: tvDevice.last_command_at || null,
-  };
 }
 
 function getFilteredMenuItems() {
   const normalizedSearch = menuSearchQuery.trim().toLowerCase();
 
   return menuItems.filter((menuItem) => {
-    const category = menuItem.category || "";
+    const classification = getFnbMenuClassification(menuItem);
     const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
-    const matchesCategory =
-      menuCategoryFilter === "all" || category === menuCategoryFilter;
+    const matchesCategory = menuCategoryFilter === "all" ||
+      (menuCategoryFilter === "favorites" && isFavoriteFnbMenuItem(menuItem)) ||
+      classification.primary === menuCategoryFilter;
+    const matchesSpirit = menuCategoryFilter !== "Spirit" ||
+      menuSpiritFilter === "all" ||
+      classification.subcategory === menuSpiritFilter;
     const matchesSearch =
       !normalizedSearch ||
-      `${menuItem.menu_name || ""} ${category}`.toLowerCase().includes(normalizedSearch);
+      `${menuItem.menu_name || ""} ${classification.primary} ${classification.subcategory} ${classification.rawCategory}`
+        .toLowerCase()
+        .includes(normalizedSearch);
 
-    return isActive && matchesCategory && matchesSearch;
+    return isActive && matchesCategory && matchesSpirit && matchesSearch;
   });
+}
+
+function getFnbMenuClassification(menuItem) {
+  const rawCategory = String(menuItem && menuItem.category || "").trim();
+  const normalizedRaw = rawCategory.toLowerCase();
+  const spiritSubcategory = FNB_SPIRIT_CATEGORY_ALIASES.get(normalizedRaw);
+
+  if (spiritSubcategory) {
+    return {
+      primary: "Spirit",
+      subcategory: spiritSubcategory,
+      rawCategory,
+    };
+  }
+
+  const primary = FNB_PRIMARY_CATEGORY_ORDER.includes(rawCategory) && rawCategory !== "favorites"
+    ? rawCategory
+    : rawCategory || "Lainnya";
+
+  return {
+    primary,
+    subcategory: "",
+    rawCategory,
+  };
+}
+
+function isFavoriteFnbMenuItem(menuItem) {
+  const normalizedName = String(menuItem && menuItem.menu_name || "").trim().toLowerCase();
+  return FNB_FAVORITE_ITEM_NAMES.has(normalizedName);
 }
 
 function setMenuSearchQuery(value) {
@@ -2526,14 +3694,53 @@ function setMenuSearchQuery(value) {
 
 function setMenuCategoryFilter(category) {
   menuCategoryFilter = category || "all";
+  if (menuCategoryFilter !== "Spirit") {
+    menuSpiritFilter = "all";
+  }
+  renderRooms();
+}
+
+function setMenuSpiritFilter(subcategory) {
+  menuSpiritFilter = subcategory || "all";
   renderRooms();
 }
 
 function getMenuCategories() {
-  return [...new Set(menuItems
+  const activeItems = menuItems.filter((menuItem) => {
+    return String(menuItem.status || "").trim().toLowerCase() === "active";
+  });
+  const available = new Set(activeItems.map((menuItem) => getFnbMenuClassification(menuItem).primary));
+  const ordered = FNB_PRIMARY_CATEGORY_ORDER.filter((category) => {
+    return category === "favorites"
+      ? activeItems.some(isFavoriteFnbMenuItem)
+      : available.has(category);
+  });
+  const extra = [...available].filter((category) => !FNB_PRIMARY_CATEGORY_ORDER.includes(category)).sort();
+
+  return ["all", ...ordered, ...extra];
+}
+
+function getFnbMenuCategoryCount(category) {
+  return menuItems.filter((menuItem) => {
+    const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
+    const classification = getFnbMenuClassification(menuItem);
+
+    return isActive && (
+      category === "all" ||
+      (category === "favorites" && isFavoriteFnbMenuItem(menuItem)) ||
+      classification.primary === category
+    );
+  }).length;
+}
+
+function getAvailableSpiritSubcategories() {
+  const available = new Set(menuItems
     .filter((menuItem) => String(menuItem.status || "").trim().toLowerCase() === "active")
-    .map((menuItem) => menuItem.category)
-    .filter(Boolean))].sort();
+    .map((menuItem) => getFnbMenuClassification(menuItem))
+    .filter((classification) => classification.primary === "Spirit" && classification.subcategory)
+    .map((classification) => classification.subcategory));
+
+  return FNB_SPIRIT_SUBCATEGORY_ORDER.filter((subcategory) => available.has(subcategory));
 }
 
 function setSelectedFbRoom(roomId) {
@@ -2550,15 +3757,81 @@ function setSelectedFbRoom(roomId) {
   renderRooms();
 }
 
+function setFnbOrderMode(mode) {
+  const nextMode = mode === "general" ? "general" : "room";
+  fnbOrderMode = nextMode;
+
+  if (nextMode === "general") {
+    selectedFbRoomId = "";
+  }
+
+  renderRooms();
+}
+
+function getDynamicMenuStockInfo(menuItem) {
+  if (!menuItem || menuItem.stock_tracking !== "yes" || !menuItem.stock_item_id) {
+    return { hasTracking: false, availablePortions: Infinity, unit: "", stockQty: null };
+  }
+
+  const normalizedTargetId = String(menuItem.stock_item_id).trim().toLowerCase();
+  let invItem = (inventoryItems || []).find(
+    (inv) => String(inv.stock_item_id || "").trim().toLowerCase() === normalizedTargetId
+  );
+
+  // Fallback tolerance for prefix mismatch (e.g. ITEM-034 vs MENU-034)
+  if (!invItem) {
+    const targetSuffix = normalizedTargetId.replace(/^\D+/, "");
+    if (targetSuffix) {
+      invItem = (inventoryItems || []).find(
+        (inv) => String(inv.stock_item_id || "").trim().toLowerCase().replace(/^\D+/, "") === targetSuffix
+      );
+    }
+  }
+
+  let rawStockQty = null;
+  let unit = menuItem.unit || "";
+
+  if (invItem && invItem.stock_qty !== null && invItem.stock_qty !== undefined) {
+    rawStockQty = Number(invItem.stock_qty);
+    if (invItem.unit) {
+      unit = invItem.unit;
+    }
+  } else if (menuItem.stock_qty !== null && menuItem.stock_qty !== undefined) {
+    rawStockQty = Number(menuItem.stock_qty);
+  }
+
+  if (rawStockQty === null || !Number.isFinite(rawStockQty)) {
+    return { hasTracking: true, availablePortions: Infinity, unit, stockQty: null };
+  }
+
+  const stockQty = rawStockQty;
+  const qtyPerUnit = Number(menuItem.stock_qty_per_unit) || 1;
+  const availablePortions = Math.floor(stockQty / qtyPerUnit);
+
+  return { hasTracking: true, availablePortions, unit, stockQty };
+}
+
+function getAvailableMenuPortions(menuItem) {
+  const stockInfo = getDynamicMenuStockInfo(menuItem);
+  return stockInfo.availablePortions;
+}
+
 function addMenuItemToCart(menuId) {
   const menuItem = findMenuItemById(menuId);
 
-  if (!menuItem || menuItem.status !== "active") {
+  if (!menuItem || String(menuItem.status || "").trim().toLowerCase() !== "active") {
     showInlineNotice("Menu tidak aktif dan tidak bisa ditambahkan.", "error");
     return;
   }
 
+  const availablePortions = getAvailableMenuPortions(menuItem);
   const existingItem = fbCartItems.find((item) => item.menu_id === menuItem.menu_id);
+  const currentQty = existingItem ? existingItem.quantity : 0;
+
+  if (currentQty + 1 > availablePortions) {
+    showInlineNotice(`Stok tidak mencukupi (Sisa stok: ${availablePortions}).`, "error");
+    return;
+  }
 
   if (existingItem) {
     existingItem.quantity += 1;
@@ -2583,6 +3856,14 @@ function increaseCartItemQuantity(menuId) {
   const cartItem = fbCartItems.find((item) => item.menu_id === menuId);
 
   if (!cartItem) {
+    return;
+  }
+
+  const menuItem = findMenuItemById(menuId);
+  const availablePortions = getAvailableMenuPortions(menuItem);
+
+  if (cartItem.quantity + 1 > availablePortions) {
+    showInlineNotice(`Stok tidak mencukupi (Sisa stok: ${availablePortions}).`, "error");
     return;
   }
 
@@ -2640,23 +3921,85 @@ function getSelectedFbRoomStartTime() {
   return formatJakartaIsoString(selectedRoom.start_time);
 }
 
+function getActiveGeneralFnbCustomers() {
+  const names = new Set();
+  if (Array.isArray(openFnbOrders)) {
+    openFnbOrders.forEach(order => {
+      if (order.room_id === "FNB-GENERAL" && order.order_status === "open" && order.note) {
+        const name = String(order.note).trim();
+        if (name) names.add(name);
+      }
+    });
+  }
+  return Array.from(names);
+}
+
 function getSelectedRoomOpenFnbOrders() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    return openFnbOrders;
+    // Group general F&B orders by customer name (order.note)
+    const roomOrders = openFnbOrders.filter(order => order.room_id !== "FNB-GENERAL");
+    const generalOrders = openFnbOrders.filter(order => order.room_id === "FNB-GENERAL" && order.order_status === "open");
+
+    const generalGroups = {};
+    generalOrders.forEach(order => {
+      const name = String(order.note || "").trim() || "Tanpa Nama";
+      if (!generalGroups[name]) {
+        generalGroups[name] = {
+          order_id: "",
+          order_ids: [],
+          room_id: "FNB-GENERAL",
+          room_name: `Konsumen: ${name}`,
+          room_start_time: "",
+          order_status: "open",
+          order_total: 0,
+          created_at: order.created_at,
+          note: "",
+          items: [],
+          is_grouped: true,
+        };
+      }
+      generalGroups[name].order_ids.push(order.order_id);
+      generalGroups[name].order_total += Number(order.order_total) || 0;
+      
+      // Keep the earliest created_at
+      if (new Date(order.created_at) < new Date(generalGroups[name].created_at)) {
+        generalGroups[name].created_at = order.created_at;
+      }
+      
+      // Merge items
+      if (Array.isArray(order.items)) {
+        order.items.forEach(item => {
+          const existing = generalGroups[name].items.find(x => x.menu_id === item.menu_id);
+          if (existing) {
+            existing.quantity = (Number(existing.quantity) || 0) + (Number(item.quantity) || 0);
+            existing.subtotal = (Number(existing.subtotal) || 0) + (Number(item.subtotal) || 0);
+          } else {
+            generalGroups[name].items.push(Object.assign({}, item));
+          }
+        });
+      }
+    });
+
+    // Convert groups back to array and set consolidated order_id
+    const consolidatedGeneralOrders = Object.keys(generalGroups).map(name => {
+      const group = generalGroups[name];
+      group.order_id = group.order_ids.join(",");
+      return group;
+    });
+
+    // Combine room orders and consolidated general orders
+    return roomOrders.concat(consolidatedGeneralOrders);
   }
 
   if (!isFbOrderRoomSelectable(selectedRoom)) {
     return [];
   }
 
-  const roomStartTime = getSelectedFbRoomStartTime();
-
   return openFnbOrders.filter((order) => {
     return (
       order.room_id === selectedRoom.room_id &&
-      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
       order.order_status === "open"
     );
   });
@@ -2773,15 +4116,19 @@ function updateFnbOrderNote(value) {
 }
 
 function buildFnbOrderPayload() {
+  const isGeneralOrder = fnbOrderMode === "general";
+  const isRoomBill = isGeneralOrder || fnbOrderPaymentMethod === "room_bill";
   return {
     action: "saveFnbOrder",
-    room_id: selectedFbRoomId,
+    room_id: isGeneralOrder ? "FNB-GENERAL" : selectedFbRoomId,
     items: fbCartItems.map((item) => ({
       menu_id: item.menu_id,
       quantity: item.quantity,
     })),
     cashier_name: getLoggedInOperatorName(),
     note: fnbOrderNote,
+    payment_method: isRoomBill ? "" : fnbOrderPaymentMethod,
+    payment_status: isRoomBill ? "unpaid" : "paid",
   };
 }
 
@@ -2792,14 +4139,20 @@ async function saveFnbOrder() {
   }
 
   const selectedRoom = getSelectedFbRoom();
+  const isGeneralOrder = fnbOrderMode === "general";
 
-  if (!selectedRoom) {
+  if (!isGeneralOrder && !selectedRoom) {
     showInlineNotice("Pilih ruangan terlebih dahulu.", "error");
     return;
   }
 
-  if (!isFbOrderRoomSelectable(selectedRoom)) {
+  if (!isGeneralOrder && !isFbOrderRoomSelectable(selectedRoom)) {
     showInlineNotice("Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.", "error");
+    return;
+  }
+
+  if (isGeneralOrder && !fnbOrderNote.trim()) {
+    showInlineNotice("Nama Konsumen wajib diisi untuk order Open Bill (Bayar Nanti).", "error");
     return;
   }
 
@@ -2816,7 +4169,13 @@ async function saveFnbOrder() {
   renderRooms();
 
   try {
-    const data = await postApiAction(buildFnbOrderPayload());
+    const payload = buildFnbOrderPayload();
+    let data = await postApiAction(payload);
+    if (data && data.ok !== true && isRetryableFnbSaveBusyError(data.error)) {
+      showInlineNotice("Server sedang menyelesaikan proses lain. Mencoba simpan ulang...", "warning");
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      data = await postApiAction(payload);
+    }
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menyimpan order F&B.");
@@ -2828,15 +4187,51 @@ async function saveFnbOrder() {
     };
     fbCartItems = [];
     fnbOrderNote = "";
+    const originalPaymentMethod = fnbOrderPaymentMethod;
+    fnbOrderPaymentMethod = "room_bill";
     showInlineNotice("Order F&B berhasil disimpan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
+    await loadInventoryItems();
+
+    if (data.order && data.order.order_status === "paid") {
+      const detailedOrder = Object.assign({}, data.order, {
+        items: lastFnbOrder.items
+      });
+      transactionFnbDetails[data.order.order_id] = [detailedOrder];
+
+      const tempTransaction = {
+        transaction_id: data.order.order_id,
+        room_id: data.order.room_id,
+        room_name: data.order.room_name,
+        start_time: "",
+        end_time: data.order.created_at,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: data.order.order_total,
+        grand_total: data.order.order_total,
+        fnb_order_ids: data.order.order_id,
+        payment_method: originalPaymentMethod || "cash",
+        payment_status: "paid",
+        cashier_name: data.order.cashier_name,
+        created_at: data.order.created_at,
+        transaction_type: "fnb_addon"
+      };
+      
+      showReceiptPrint(tempTransaction);
+    }
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan order F&B.", "error");
   } finally {
     isSavingFnbOrder = false;
     renderRooms();
   }
+}
+
+function isRetryableFnbSaveBusyError(message) {
+  const text = String(message || "").toLowerCase();
+  return text.includes("sedang memproses") || text.includes("lock") || text.includes("coba lagi sebentar");
 }
 
 function findFnbOrderById(orderId) {
@@ -2920,6 +4315,7 @@ async function cancelFnbOrder(orderId, reason) {
     showInlineNotice("Order F&B berhasil dibatalkan.");
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
+    await loadInventoryItems();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan order F&B.", "error");
   } finally {
@@ -3244,6 +4640,65 @@ function getRoomTimeLabel(value) {
   }).format(date);
 }
 
+function formatDateTimeLabel(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).trim();
+  }
+
+  const pad = (num) => String(num).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function formatTransactionDateTime(value) {
+  if (!value) return "-";
+  if (/^\d{2}-\d{2}-\d{4} - \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value)
+      .replace("T", " ")
+      .replace(/\.\d{3}/, "")
+      .replace(/\+\d{2}:?\d{2}$/, "")
+      .replace(/Z$/, "");
+  }
+  const pad = (num) => String(num).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  return `${day}-${month}-${year} - ${hours}:${minutes}:${seconds}`;
+}
+
+function formatSimpleDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    // Fallback: hapus T dan bagian jam jika bukan date object valid
+    return String(value).split("T")[0].split(" ")[0];
+  }
+  const pad = (num) => String(num).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
 function getElapsedSeconds(startTime) {
   if (!startTime) {
     return 0;
@@ -3253,147 +4708,15 @@ function getElapsedSeconds(startTime) {
 }
 
 function getStatusLabel(status) {
-  if (status === "available") {
-    return "Kosong";
-  }
-
-  if (status === "occupied") {
-    return "Terisi";
-  }
-
-  if (status === "maintenance") {
-    return "Perbaikan";
-  }
-
-  return "Tidak Dikenal";
+  return ROOM_STATUS_CONFIG[status]?.label || "Tidak Dikenal";
 }
 
 function getStatusClass(status) {
-  return ["available", "occupied", "maintenance"].includes(status) ? status : "unknown";
+  return ROOM_STATUS_CONFIG[status]?.className || "unknown";
 }
 
 function getSessionButtonLabel(status) {
-  if (status === "available") {
-    return "Mulai Sesi";
-  }
-
-  if (status === "occupied") {
-    return "Selesaikan Sesi";
-  }
-
-  if (status === "maintenance") {
-    return "Tidak Tersedia";
-  }
-
-  return "Cek Status";
-}
-
-function getCurrentOperatorRole() {
-  try {
-    return String(
-      localStorage.getItem("karaoke_current_role")
-        || localStorage.getItem("karaoke_user_role")
-        || "cashier"
-    ).trim().toLowerCase();
-  } catch (error) {
-    return "cashier";
-  }
-}
-
-function canControlTv() {
-  return ["owner", "admin", "cashier"].includes(getCurrentOperatorRole());
-}
-
-function canManageTvMapping() {
-  return ["owner", "admin"].includes(getCurrentOperatorRole());
-}
-
-function getTvStatusLabel(status) {
-  if (status === "active") {
-    return "TV: Aktif";
-  }
-
-  if (status === "failed") {
-    return "TV: Gagal";
-  }
-
-  if (status === "timeout") {
-    return "TV: Timeout";
-  }
-
-  if (status === "not_configured") {
-    return "TV belum disetting";
-  }
-
-  return "TV: Belum dicek";
-}
-
-function getTvStatusBadgeText(tvDevice) {
-  if (!tvDevice || tvDevice.configured === false || tvDevice.status === "not_configured") {
-    return "⚫ TV belum disetting";
-  }
-
-  if (tvDevice.status === "active") {
-    return "🟢 TV: Aktif";
-  }
-
-  if (tvDevice.status === "failed") {
-    return "🔴 TV: Gagal";
-  }
-
-  if (tvDevice.status === "timeout") {
-    return "🟡 TV: Timeout";
-  }
-
-  return "⚪ TV: Belum dicek";
-}
-
-function getTvStatusTone(tvDevice) {
-  if (!tvDevice || tvDevice.configured === false || tvDevice.status === "not_configured") {
-    return "neutral";
-  }
-
-  if (tvDevice.status === "active") {
-    return "success";
-  }
-
-  if (tvDevice.status === "failed") {
-    return "danger";
-  }
-
-  if (tvDevice.status === "timeout") {
-    return "warning";
-  }
-
-  return "neutral";
-}
-
-function getTvActionLabel(tvAction) {
-  if (tvAction === "power_on") {
-    return "TV ON";
-  }
-
-  if (tvAction === "power_off") {
-    return "TV OFF";
-  }
-
-  if (tvAction === "test") {
-    return "TEST";
-  }
-
-  return tvAction || "-";
-}
-
-function getTvCommandSuccessMessage(tvAction) {
-  if (tvAction === "power_on") {
-    return "Perintah TV ON berhasil dikirim.";
-  }
-
-  if (tvAction === "power_off") {
-    return "Perintah TV OFF berhasil dikirim.";
-  }
-
-  return "Perintah TEST TV berhasil dikirim.";
+  return ROOM_STATUS_CONFIG[status]?.buttonLabel || "Cek Status";
 }
 
 function getPaymentStatusLabel(status) {
@@ -3449,13 +4772,19 @@ function formatPaymentMethodLabel(method) {
 }
 
 function getTransactionFinalTotal(transaction) {
-  const grandTotal = Number(transaction?.grand_total) || 0;
-
-  if (grandTotal > 0) {
-    return grandTotal;
+  const rawGrandTotal = transaction?.grand_total;
+  if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
+    const grandTotal = Number(rawGrandTotal);
+    if (Number.isFinite(grandTotal)) return grandTotal;
   }
 
-  return Number(transaction?.room_total) || 0;
+  return (Number(transaction?.room_total) || 0)
+    + (Number(transaction?.fnb_total) || 0)
+    + (Number(transaction?.lc_total) || 0);
+}
+
+function isTestTransaction(transaction) {
+  return transaction?.is_test === true || String(transaction?.is_test || "").trim().toLowerCase() === "true";
 }
 
 function getTransactionRoomTotal(transaction) {
@@ -3670,6 +4999,140 @@ function calculateCashierClosingPreview(transactions) {
   return preview;
 }
 
+function createCashierClosingCard(labelText, valueText, detailText = "", modifierClass = "") {
+  const card = document.createElement("div");
+  card.className = modifierClass
+    ? `cashier-closing-card ${modifierClass}`
+    : "cashier-closing-card";
+
+  const label = document.createElement("p");
+  label.className = "cashier-closing-label";
+  label.textContent = labelText;
+
+  const value = document.createElement("p");
+  value.className = "cashier-closing-value";
+  value.textContent = valueText;
+
+  card.append(label, value);
+
+  if (detailText) {
+    const detail = document.createElement("p");
+    detail.className = "cashier-closing-card-detail";
+    detail.textContent = detailText;
+    card.appendChild(detail);
+  }
+
+  return card;
+}
+
+function createCashierClosingSectionTitle(titleText, helperText = "") {
+  const wrapper = document.createElement("div");
+
+  const title = document.createElement("h4");
+  title.className = "cashier-closing-section-title";
+  title.textContent = titleText;
+
+  wrapper.appendChild(title);
+
+  if (helperText) {
+    const helper = document.createElement("p");
+    helper.className = "cashier-closing-helper";
+    helper.textContent = helperText;
+    wrapper.appendChild(helper);
+  }
+
+  return wrapper;
+}
+
+function openCashierClosingConfirmation() {
+  if (hasTodayCashierClosing()) {
+    showInlineNotice("Closing kasir hari ini sudah tersimpan.", "error");
+    return;
+  }
+
+  cashierClosingConfirmationVisible = true;
+  renderRooms();
+}
+
+function closeCashierClosingConfirmation() {
+  cashierClosingConfirmationVisible = false;
+  renderRooms();
+}
+
+function createCashierClosingConfirmationElement() {
+  const preview = calculateCashierClosingPreview(todayTransactions);
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal cashier-closing-confirm-modal";
+  overlay.setAttribute("aria-labelledby", "cashier-closing-confirm-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog cashier-closing-confirm-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title cashier-closing-confirm-title";
+  title.id = "cashier-closing-confirm-title";
+  title.textContent = "Konfirmasi Simpan Closing";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning cashier-closing-confirm-warning";
+  warning.textContent = "Periksa angka terakhir ini sebelum closing disimpan. Setelah tersimpan, closing shift aktif akan terkunci.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details cashier-closing-confirm-details";
+
+  [
+    ["Cash Sistem", formatCurrency(preview.cashExpected)],
+    ["Cash Aktual", formatCurrency(preview.cashActual)],
+    ["Selisih Cash", `${formatCurrency(preview.cashDifference)} - ${getCashDifferenceLabel(preview.cashDifference)}`],
+    ["Transfer Sistem", formatCurrency(preview.transferRevenue)],
+    ["Belum Dibayar", formatCurrency(preview.unpaidRevenue)],
+    ["Total Tagihan", formatCurrency(preview.totalRevenue)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    item.className = "cashier-closing-confirm-item";
+
+    const label = document.createElement("p");
+    label.className = "cashier-closing-saved-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "cashier-closing-saved-value";
+    value.textContent = valueText;
+
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const transferNote = document.createElement("p");
+  transferNote.className = "cashier-closing-confirm-note";
+  transferNote.textContent = preview.transferTransactions > 0
+    ? "Transfer dianggap sudah dicek manual dengan mutasi/QRIS/bukti transfer."
+    : "Tidak ada transaksi transfer pada shift aktif.";
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-cashier-closing-confirmation";
+  cancelButton.disabled = isSavingCashierClosing;
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "confirm-save-cashier-closing";
+  submitButton.disabled = isSavingCashierClosing;
+  submitButton.textContent = isSavingCashierClosing ? "Menyimpan..." : "Ya, Simpan Closing";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, transferNote, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
 function createCashierClosingPreviewElement(preview) {
   const closing = document.createElement("section");
   closing.className = "cashier-closing";
@@ -3692,41 +5155,87 @@ function createCashierClosingPreviewElement(preview) {
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
 
-  const grid = document.createElement("div");
-  grid.className = "cashier-closing-grid";
-
-  [
-    ["Total Transaksi", `${preview.totalTransactions} transaksi`],
-    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`],
-    ["Belum Dibayar", `${preview.unpaidTransactions} transaksi`],
-    ["Omzet Lunas", formatCurrency(preview.paidRevenue)],
-    ["Cash Sistem", formatCurrency(preview.cashExpected)],
-    ["Transfer", formatCurrency(preview.transferRevenue)],
-    ["Sisa Belum Dibayar", formatCurrency(preview.unpaidRevenue)],
-    ["Total Semua Tagihan", formatCurrency(preview.totalRevenue)],
-  ].forEach(([labelText, valueText]) => {
-    const card = document.createElement("div");
-    card.className = "cashier-closing-card";
-
-    const label = document.createElement("p");
-    label.className = "cashier-closing-label";
-    label.textContent = labelText;
-
-    const value = document.createElement("p");
-    value.className = "cashier-closing-value";
-    value.textContent = valueText;
-
-    card.append(label, value);
-    grid.appendChild(card);
+  // 1. Rekap Transaksi & Keuangan Table
+  const mainTable = document.createElement("table");
+  mainTable.className = "cashier-closing-table";
+  
+  const mainTableHeader = document.createElement("thead");
+  const mainHeaderRow = document.createElement("tr");
+  ["Kategori / Deskripsi", "Detail Transaksi", "Nominal Sistem"].forEach(text => {
+    const th = document.createElement("th");
+    if (text === "Nominal Sistem") th.className = "text-right";
+    th.textContent = text;
+    mainHeaderRow.appendChild(th);
   });
+  mainTableHeader.appendChild(mainHeaderRow);
+  mainTable.appendChild(mainTableHeader);
+
+  const mainTableBody = document.createElement("tbody");
+
+  // Section Rekap Transaksi
+  const secTrans = document.createElement("tr");
+  secTrans.className = "table-section-header";
+  const secTransTd = document.createElement("td");
+  secTransTd.colSpan = 3;
+  secTransTd.textContent = "Rekap Volume Transaksi";
+  secTrans.appendChild(secTransTd);
+  mainTableBody.appendChild(secTrans);
+
+  const transRows = [
+    ["Total Transaksi", `${preview.totalTransactions} transaksi`, "-"],
+    ["Transaksi Lunas", `${preview.paidTransactions} transaksi`, "-"],
+    ["Transaksi Belum Dibayar", `${preview.unpaidTransactions} transaksi`, "-", preview.unpaidTransactions > 0 ? "text-warning font-bold" : ""],
+  ];
+  transRows.forEach(([desc, detail, amount, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    const td1 = document.createElement("td"); td1.textContent = desc;
+    const td2 = document.createElement("td"); td2.textContent = detail;
+    const td3 = document.createElement("td"); td3.className = "text-right"; td3.textContent = amount;
+    tr.append(td1, td2, td3);
+    mainTableBody.appendChild(tr);
+  });
+
+  // Section Rekap Keuangan
+  const secFinance = document.createElement("tr");
+  secFinance.className = "table-section-header";
+  const secFinanceTd = document.createElement("td");
+  secFinanceTd.colSpan = 3;
+  secFinanceTd.textContent = "Rekap Keuangan (Omzet)";
+  secFinance.appendChild(secFinanceTd);
+  mainTableBody.appendChild(secFinance);
+
+  const financeRows = [
+    ["Omzet Lunas (Sudah Dibayar)", "Total penerimaan kasir", formatCurrency(preview.paidRevenue), "highlight-row text-success"],
+    ["• Cash Sistem", `${preview.cashTransactions} transaksi cash`, formatCurrency(preview.cashExpected), "sub-row"],
+    ["• Transfer Sistem", `${preview.transferTransactions} transaksi transfer`, formatCurrency(preview.transferRevenue), "sub-row"],
+    ["Sisa Belum Dibayar", "Tagihan room/F&B yang masih open", formatCurrency(preview.unpaidRevenue), preview.unpaidRevenue > 0 ? "text-warning font-bold" : ""],
+    ["Total Semua Tagihan", "Akumulasi lunas + belum lunas", formatCurrency(preview.totalRevenue), "grand-total-row"],
+  ];
+  financeRows.forEach(([desc, detail, amount, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    const td1 = document.createElement("td"); td1.textContent = desc;
+    const td2 = document.createElement("td"); td2.textContent = detail;
+    const td3 = document.createElement("td"); td3.className = "text-right"; td3.textContent = amount;
+    tr.append(td1, td2, td3);
+    mainTableBody.appendChild(tr);
+  });
+
+  mainTable.appendChild(mainTableBody);
 
   const cashSection = document.createElement("div");
   cashSection.className = "cashier-closing-section";
 
+  cashSection.appendChild(createCashierClosingSectionTitle(
+    "Pemeriksaan Cash",
+    "Hitung uang fisik di laci kasir, lalu masukkan nominalnya di bawah ini."
+  ));
+
   const cashLabel = document.createElement("label");
   cashLabel.className = "cashier-closing-label";
   cashLabel.htmlFor = "cashierClosingCashActual";
-  cashLabel.textContent = "Uang Cash Aktual";
+  cashLabel.textContent = "Cash Aktual di Laci";
 
   const cashInput = document.createElement("input");
   cashInput.className = "cashier-closing-input";
@@ -3738,39 +5247,192 @@ function createCashierClosingPreviewElement(preview) {
   cashInput.dataset.action = "update-cash-actual";
   cashInput.value = cashierClosingCashActual;
 
-  const cashCheck = document.createElement("div");
-  cashCheck.className = "cashier-closing-grid";
+  // Kalkulator Pecahan Uang
+  const calcTitle = document.createElement("p");
+  calcTitle.className = "cashier-closing-label";
+  calcTitle.style.marginTop = "16px";
+  calcTitle.textContent = "Kalkulator Pecahan Uang Laci (Opsional)";
 
-  [
-    ["Cash Sistem", formatCurrency(preview.cashExpected)],
-    ["Cash Aktual", formatCurrency(preview.cashActual)],
-    ["Selisih Cash", formatCurrency(preview.cashDifference), getCashDifferenceClass(preview.cashDifference)],
-  ].forEach(([labelText, valueText, modifierClass]) => {
-    const card = document.createElement("div");
-    card.className = modifierClass
-      ? `cashier-closing-card ${modifierClass}`
-      : "cashier-closing-card";
-
-    const label = document.createElement("p");
-    label.className = "cashier-closing-label";
-    label.textContent = labelText;
-
-    const value = document.createElement("p");
-    value.className = "cashier-closing-value";
-    value.textContent = valueText;
-
-    card.append(label, value);
-    cashCheck.appendChild(card);
+  const denomTable = document.createElement("table");
+  denomTable.className = "cashier-closing-table";
+  
+  const denomTableHeader = document.createElement("thead");
+  const denomHeaderRow = document.createElement("tr");
+  ["Pecahan Uang", "Jumlah Lembar / Koin", "Subtotal"].forEach(text => {
+    const th = document.createElement("th");
+    if (text === "Jumlah Lembar / Koin") th.className = "text-center";
+    if (text === "Subtotal") th.className = "text-right";
+    th.textContent = text;
+    denomHeaderRow.appendChild(th);
   });
+  denomTableHeader.appendChild(denomHeaderRow);
+  denomTable.appendChild(denomTableHeader);
+
+  const denomTableBody = document.createElement("tbody");
+
+  const denoms = [
+    { key: "d100k", val: 100000, label: "Rp 100.000" },
+    { key: "d50k", val: 50000, label: "Rp 50.000" },
+    { key: "d20k", val: 20000, label: "Rp 20.000" },
+    { key: "d10k", val: 10000, label: "Rp 10.000" },
+    { key: "d5k", val: 5000, label: "Rp 5.000" },
+    { key: "d2k", val: 2000, label: "Rp 2.000" },
+    { key: "d1k", val: 1000, label: "Rp 1.000" },
+    { key: "d500", val: 500, label: "Rp 500" },
+    { key: "d200", val: 200, label: "Rp 200" },
+    { key: "d100", val: 100, label: "Rp 100" },
+  ];
+
+  denoms.forEach((denom) => {
+    const tr = document.createElement("tr");
+
+    const labelTd = document.createElement("td");
+    labelTd.textContent = denom.label;
+
+    const countTd = document.createElement("td");
+    countTd.className = "text-center";
+
+    const rowWrapper = document.createElement("div");
+    rowWrapper.className = "denom-row-table";
+
+    const decBtn = document.createElement("button");
+    decBtn.type = "button";
+    decBtn.className = "denom-btn-table dec-btn";
+    decBtn.textContent = "-";
+    decBtn.onclick = () => {
+      const currentVal = cashierClosingDenominations[denom.key] || 0;
+      if (currentVal > 0) {
+        cashierClosingDenominations[denom.key] = currentVal - 1;
+        recalculateFromDenoms(`denom_input_${denom.key}`);
+      }
+    };
+
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = "0";
+    countInput.id = `denom_input_${denom.key}`;
+    countInput.value = cashierClosingDenominations[denom.key] || 0;
+    countInput.className = "denom-input-table";
+    countInput.oninput = (e) => {
+      const val = parseInt(e.target.value, 10) || 0;
+      cashierClosingDenominations[denom.key] = val >= 0 ? val : 0;
+      recalculateFromDenoms(`denom_input_${denom.key}`);
+    };
+
+    const incBtn = document.createElement("button");
+    incBtn.type = "button";
+    incBtn.className = "denom-btn-table inc-btn";
+    incBtn.textContent = "+";
+    incBtn.onclick = () => {
+      const currentVal = cashierClosingDenominations[denom.key] || 0;
+      cashierClosingDenominations[denom.key] = currentVal + 1;
+      recalculateFromDenoms(`denom_input_${denom.key}`);
+    };
+
+    rowWrapper.append(decBtn, countInput, incBtn);
+    countTd.appendChild(rowWrapper);
+
+    const subtotalTd = document.createElement("td");
+    subtotalTd.className = "text-right text-gold";
+    const totalVal = (cashierClosingDenominations[denom.key] || 0) * denom.val;
+    subtotalTd.textContent = totalVal > 0 ? formatCurrency(totalVal) : "Rp 0";
+
+    tr.append(labelTd, countTd, subtotalTd);
+    denomTableBody.appendChild(tr);
+  });
+  denomTable.appendChild(denomTableBody);
+
+  // 3. Cash Comparison Table
+  const cashCompTable = document.createElement("table");
+  cashCompTable.className = "cashier-closing-table";
+
+  const cashCompBody = document.createElement("tbody");
+
+  const compRows = [
+    ["Cash Sistem (Seharusnya Ada)", formatCurrency(preview.cashExpected), ""],
+    ["Cash Aktual Fisik (Dihitung)", formatCurrency(preview.cashActual), "text-gold"],
+    ["Selisih Cash", formatCurrency(preview.cashDifference), `highlight-row text-gold ${getCashDifferenceClass(preview.cashDifference)}`],
+  ];
+
+  compRows.forEach(([label, value, cls]) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    
+    const td1 = document.createElement("td");
+    td1.textContent = label;
+
+    const td2 = document.createElement("td");
+    td2.className = "text-right";
+    td2.textContent = value;
+
+    tr.append(td1, td2);
+    cashCompBody.appendChild(tr);
+  });
+  cashCompTable.appendChild(cashCompBody);
 
   const difference = document.createElement("p");
   difference.className = `cashier-closing-difference ${getCashDifferenceClass(preview.cashDifference)}`;
   difference.textContent = getCashDifferenceLabel(preview.cashDifference);
 
-  cashSection.append(cashLabel, cashInput, cashCheck, difference);
+  cashSection.append(cashLabel, cashInput, calcTitle, denomTable, cashCompTable, difference);
+
+  const transferSection = document.createElement("div");
+  transferSection.className = "cashier-closing-section cashier-closing-section--transfer";
+  transferSection.appendChild(createCashierClosingSectionTitle(
+    "Pemeriksaan Transfer",
+    "Cocokkan transaksi transfer dengan mutasi rekening, QRIS, atau bukti transfer sebelum closing disimpan."
+  ));
+
+  // 4. Transfer Comparison Table
+  const transferCompTable = document.createElement("table");
+  transferCompTable.className = "cashier-closing-table";
+
+  const transferCompBody = document.createElement("tbody");
+
+  const transCompRows = [
+    ["Transfer Sistem", `${preview.transferTransactions} transaksi transfer lunas`, formatCurrency(preview.transferRevenue)],
+    ["Yang Harus Dicek Kasir", "Mutasi bank, QRIS, atau bukti transfer manual", "-"],
+  ];
+
+  transCompRows.forEach(([label, detail, value]) => {
+    const tr = document.createElement("tr");
+    
+    const td1 = document.createElement("td");
+    td1.textContent = label;
+
+    const td2 = document.createElement("td");
+    td2.textContent = detail;
+
+    const td3 = document.createElement("td");
+    td3.className = "text-right";
+    td3.textContent = value;
+
+    tr.append(td1, td2, td3);
+    transferCompBody.appendChild(tr);
+  });
+  transferCompTable.appendChild(transferCompBody);
+
+  const transferChecklist = document.createElement("ul");
+  transferChecklist.className = "cashier-closing-checklist";
+
+  [
+    "Cocokkan total transfer sistem dengan bukti/mutasi.",
+    "Pastikan tidak ada transfer pending yang belum masuk.",
+    "Tulis masalah transfer di Catatan Kasir jika ada.",
+  ].forEach((itemText) => {
+    const item = document.createElement("li");
+    item.textContent = itemText;
+    transferChecklist.appendChild(item);
+  });
+
+  transferSection.append(transferCompTable, transferChecklist);
 
   const noteSection = document.createElement("div");
   noteSection.className = "cashier-closing-section";
+  noteSection.appendChild(createCashierClosingSectionTitle(
+    "Catatan Closing",
+    "Isi hanya jika ada informasi penting untuk owner atau shift berikutnya."
+  ));
 
   const noteLabel = document.createElement("label");
   noteLabel.className = "cashier-closing-label";
@@ -3780,7 +5442,7 @@ function createCashierClosingPreviewElement(preview) {
   const noteInput = document.createElement("textarea");
   noteInput.className = "cashier-closing-textarea";
   noteInput.id = "cashierClosingNote";
-  noteInput.placeholder = "Contoh: ada pelanggan transfer manual, pending pembayaran, atau catatan operasional.";
+  noteInput.placeholder = "Contoh: transfer BCA pelanggan belum masuk, ada tagihan pending, atau cash lebih karena pelanggan memberi uang lebih.";
   noteInput.rows = 3;
   noteInput.dataset.action = "update-closing-note";
   noteInput.value = preview.note;
@@ -3808,7 +5470,7 @@ function createCashierClosingPreviewElement(preview) {
 
   actions.append(closeButton, saveButton);
 
-  closing.append(header, grid, cashSection, noteSection);
+  closing.append(header, mainTable, cashSection, transferSection, noteSection);
 
   if (lastCashierClosing) {
     closing.appendChild(createLastClosingSavedElement(lastCashierClosing));
@@ -3876,9 +5538,11 @@ function createLastClosingSavedElement(closing) {
 
   [
     ["ID Closing", closing?.closing_id || "-"],
-    ["Waktu", closing?.created_at || "-"],
+    ["Waktu", formatDateTimeLabel(closing?.created_at)],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
+    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
     [
       "Selisih Cash",
       `${formatCurrency(closing?.cash_difference)} - ${getClosingDifferenceLabel(Number(closing?.cash_difference) || 0)}`,
@@ -3951,7 +5615,369 @@ function createPaymentControlElement(transaction) {
   button.textContent = "Tandai Lunas";
 
   control.append(select, button);
-  payment.append(label, control);
+
+  // Set layout container payment to vertical
+  payment.style.flexDirection = "column";
+  payment.style.alignItems = "stretch";
+  payment.style.gap = "12px";
+
+  const headerRow = document.createElement("div");
+  headerRow.style.display = "flex";
+  headerRow.style.justifyContent = "space-between";
+  headerRow.style.alignItems = "center";
+  headerRow.style.gap = "14px";
+  headerRow.style.flexWrap = "wrap";
+
+  headerRow.append(label, control);
+
+  // Formatting helpers for cash input
+  function formatIndonesianNumber(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  }
+  function parseIndonesianNumber(str) {
+    return Number(str.replace(/\./g, "")) || 0;
+  }
+
+  // Cash Calculator Container (Opsi A)
+  const calculatorContainer = document.createElement("div");
+  calculatorContainer.className = "billing-payment-calculator";
+  calculatorContainer.style.display = select.value === "cash" ? "flex" : "none";
+  calculatorContainer.style.flexDirection = "column";
+  calculatorContainer.style.gap = "10px";
+  calculatorContainer.style.padding = "10px 12px";
+  calculatorContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  calculatorContainer.style.border = "1px solid var(--border)";
+  calculatorContainer.style.borderRadius = "8px";
+
+  const calcHeader = document.createElement("div");
+  calcHeader.style.display = "flex";
+  calcHeader.style.justifyContent = "space-between";
+  calcHeader.style.alignItems = "center";
+  
+  const calcTitle = document.createElement("span");
+  calcTitle.style.fontSize = "11px";
+  calcTitle.style.fontWeight = "800";
+  calcTitle.style.color = "var(--muted)";
+  calcTitle.style.textTransform = "uppercase";
+  calcTitle.style.letterSpacing = "0.5px";
+  calcTitle.textContent = "Kalkulator Kasir (Tunai)";
+  calcHeader.appendChild(calcTitle);
+
+  const inputInfoRow = document.createElement("div");
+  inputInfoRow.style.display = "flex";
+  inputInfoRow.style.gap = "14px";
+  inputInfoRow.style.alignItems = "center";
+  inputInfoRow.style.flexWrap = "wrap";
+
+  const inputGroup = document.createElement("div");
+  inputGroup.style.display = "flex";
+  inputGroup.style.flexDirection = "column";
+  inputGroup.style.gap = "4px";
+  inputGroup.style.flex = "1 1 180px";
+
+  const inputLabel = document.createElement("span");
+  inputLabel.style.fontSize = "11px";
+  inputLabel.style.color = "var(--muted)";
+  inputLabel.textContent = "Uang Diterima (Rp):";
+
+  const cashInput = document.createElement("input");
+  cashInput.type = "text";
+  cashInput.placeholder = "Masukkan jumlah...";
+  cashInput.style.padding = "8px 10px";
+  cashInput.style.fontSize = "13px";
+  cashInput.style.fontWeight = "700";
+  cashInput.style.backgroundColor = "var(--surface)";
+  cashInput.style.color = "var(--text)";
+  cashInput.style.border = "1px solid var(--border)";
+  cashInput.style.borderRadius = "6px";
+
+  inputGroup.append(inputLabel, cashInput);
+
+  const resultGroup = document.createElement("div");
+  resultGroup.style.display = "flex";
+  resultGroup.style.flexDirection = "column";
+  resultGroup.style.gap = "4px";
+  resultGroup.style.flex = "1 1 180px";
+
+  const resultLabel = document.createElement("span");
+  resultLabel.style.fontSize = "11px";
+  resultLabel.style.color = "var(--muted)";
+  resultLabel.textContent = "Kembalian:";
+
+  const changeDisplay = document.createElement("span");
+  changeDisplay.style.fontSize = "16px";
+  changeDisplay.style.fontWeight = "900";
+  changeDisplay.style.color = "var(--muted)";
+  changeDisplay.textContent = "-";
+
+  resultGroup.append(resultLabel, changeDisplay);
+  inputInfoRow.append(inputGroup, resultGroup);
+
+  const shortcutsRow = document.createElement("div");
+  shortcutsRow.style.display = "flex";
+  shortcutsRow.style.flexWrap = "wrap";
+  shortcutsRow.style.gap = "6px";
+  shortcutsRow.style.marginTop = "2px";
+
+  calculatorContainer.append(calcHeader, inputInfoRow, shortcutsRow);
+
+  // Dynamic Banknote Shortcuts generator
+  function getShortcutValues(total) {
+    if (total <= 0) return [];
+    const shortcuts = new Set();
+    shortcuts.add(total); // Uang Pas
+
+    // Next round values of 50k, 100k, 500k
+    const denoms = [50000, 100000, 500000];
+    denoms.forEach(d => {
+      const val = Math.ceil(total / d) * d;
+      if (val > total) {
+        shortcuts.add(val);
+      }
+    });
+
+    // Add common large bills above total
+    const commonBills = [100000, 200000, 500000, 1000000, 1500000, 2000000];
+    commonBills.forEach(b => {
+      if (b > total && b < total * 3) {
+        shortcuts.add(b);
+      }
+    });
+
+    return Array.from(shortcuts).sort((a, b) => a - b).slice(0, 5);
+  }
+
+  function renderShortcuts(total) {
+    shortcutsRow.replaceChildren();
+    const values = getShortcutValues(total);
+    values.forEach(val => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "erp-btn erp-btn-secondary";
+      btn.style.padding = "4px 8px";
+      btn.style.fontSize = "11px";
+      btn.style.fontWeight = "700";
+      
+      if (val === total) {
+        btn.textContent = "Uang Pas";
+        btn.style.borderColor = "var(--success)";
+        btn.style.color = "var(--success)";
+      } else {
+        btn.textContent = formatCurrency(val);
+      }
+
+      btn.onclick = () => {
+        cashInput.value = formatIndonesianNumber(val);
+        recalculateChange(total);
+      };
+      shortcutsRow.appendChild(btn);
+    });
+  }
+
+  function recalculateChange(total) {
+    const cashText = cashInput.value;
+    if (!cashText) {
+      changeDisplay.textContent = "-";
+      changeDisplay.style.color = "var(--muted)";
+      button.disabled = false; // let them mark paid directly if they don't want to use calc
+      return;
+    }
+
+    const cash = parseIndonesianNumber(cashText);
+    const change = cash - total;
+
+    if (change >= 0) {
+      changeDisplay.textContent = formatCurrency(change);
+      changeDisplay.style.color = "var(--success)";
+      button.disabled = false;
+    } else {
+      changeDisplay.textContent = `Kurang ${formatCurrency(Math.abs(change))}`;
+      changeDisplay.style.color = "var(--error)";
+      button.disabled = true;
+    }
+  }
+
+  // Promo / Voucher Input Group
+  const promoContainer = document.createElement("div");
+  promoContainer.style.display = "flex";
+  promoContainer.style.flexDirection = "column";
+  promoContainer.style.gap = "6px";
+  promoContainer.style.marginTop = "4px";
+  promoContainer.style.padding = "8px";
+  promoContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  promoContainer.style.border = "1px solid var(--border)";
+  promoContainer.style.borderRadius = "6px";
+
+  const promoLabel = document.createElement("span");
+  promoLabel.style.fontSize = "12px";
+  promoLabel.style.color = "var(--muted)";
+  promoLabel.textContent = "Kode Promo / Voucher (Opsional):";
+
+  const promoInputRow = document.createElement("div");
+  promoInputRow.style.display = "flex";
+  promoInputRow.style.gap = "8px";
+
+  const promoInput = document.createElement("input");
+  promoInput.type = "text";
+  promoInput.className = "billing-payment-promo-input";
+  promoInput.placeholder = "Masukkan kode...";
+  promoInput.style.flex = "1";
+  promoInput.style.padding = "6px";
+  promoInput.style.fontSize = "12px";
+  promoInput.style.backgroundColor = "var(--surface)";
+  promoInput.style.color = "var(--text)";
+  promoInput.style.border = "1px solid var(--border)";
+  promoInput.style.borderRadius = "4px";
+  promoInput.oninput = (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+  };
+
+  const promoBtn = document.createElement("button");
+  promoBtn.type = "button";
+  promoBtn.className = "erp-btn erp-btn-secondary";
+  promoBtn.style.padding = "6px 12px";
+  promoBtn.style.fontSize = "12px";
+  promoBtn.textContent = "Terapkan";
+
+  const promoNotice = document.createElement("div");
+  promoNotice.style.fontSize = "11px";
+  promoNotice.style.marginTop = "4px";
+  promoNotice.style.display = "none";
+
+  let appliedPromoCode = "";
+  let appliedDiscountVal = 0;
+
+  const roomTotal = Number(transaction?.room_total || 0);
+  const fnbTotal = Number(transaction?.fnb_total || 0);
+  const lcTotal = Number(transaction?.lc_total || 0);
+
+  let activeGrandTotal = roomTotal + fnbTotal + lcTotal;
+
+  cashInput.oninput = (e) => {
+    let cleanVal = e.target.value.replace(/\D/g, "");
+    if (cleanVal) {
+      e.target.value = formatIndonesianNumber(cleanVal);
+    } else {
+      e.target.value = "";
+    }
+    recalculateChange(activeGrandTotal);
+  };
+
+  select.onchange = () => {
+    if (select.value === "cash") {
+      calculatorContainer.style.display = "flex";
+      cashInput.focus();
+      recalculateChange(activeGrandTotal);
+    } else {
+      calculatorContainer.style.display = "none";
+      button.disabled = false;
+    }
+  };
+
+  promoBtn.onclick = async () => {
+    const code = promoInput.value.trim().toUpperCase();
+    if (!code) {
+      appliedPromoCode = "";
+      appliedDiscountVal = 0;
+      promoInput.removeAttribute("data-applied-promo-code");
+      promoNotice.style.color = "var(--muted)";
+      promoNotice.textContent = "Kode dikosongkan.";
+      promoNotice.style.display = "block";
+      updateCheckoutTotals();
+      return;
+    }
+
+    promoBtn.disabled = true;
+    promoBtn.textContent = "⌛ Check...";
+
+    try {
+      if (!API_BASE_URL.trim()) {
+        if (code === "MERDEKA50") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.ceil(0.5 * roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+        } else if (code === "VCH100K") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.min(100000, roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
+        } else {
+          appliedPromoCode = "";
+          appliedDiscountVal = 0;
+          promoNotice.style.color = "var(--error)";
+          promoNotice.textContent = `❌ Kode promo "${code}" tidak valid.`;
+        }
+        
+        if (appliedPromoCode) {
+          promoInput.setAttribute("data-applied-promo-code", appliedPromoCode);
+        } else {
+          promoInput.removeAttribute("data-applied-promo-code");
+        }
+        
+        promoNotice.style.display = "block";
+        updateCheckoutTotals();
+        return;
+      }
+
+      const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomTotal}`;
+      const res = await fetchApiGet(url);
+      const data = await res.json();
+      if (data && data.success) {
+        appliedPromoCode = data.code;
+        appliedDiscountVal = data.discount;
+        promoInput.setAttribute("data-applied-promo-code", appliedPromoCode);
+        promoNotice.style.color = "var(--success)";
+        promoNotice.innerHTML = `✅ Terpasang: Potongan sewa room <strong>${formatCurrency(data.discount)}</strong>`;
+        promoNotice.style.display = "block";
+      } else {
+        appliedPromoCode = "";
+        appliedDiscountVal = 0;
+        promoInput.removeAttribute("data-applied-promo-code");
+        promoNotice.style.color = "var(--error)";
+        promoNotice.textContent = `❌ ${data.error || "Kode tidak valid"}`;
+        promoNotice.style.display = "block";
+      }
+    } catch (error) {
+      console.error(error);
+      promoNotice.style.color = "var(--error)";
+      promoNotice.textContent = "❌ Gagal memvalidasi kode.";
+      promoNotice.style.display = "block";
+    } finally {
+      promoBtn.disabled = false;
+      promoBtn.textContent = "Terapkan";
+      updateCheckoutTotals();
+    }
+  };
+
+  function updateCheckoutTotals() {
+    const discountedRoomTotal = Math.max(0, roomTotal - appliedDiscountVal);
+    const newGrandTotal = discountedRoomTotal + fnbTotal + lcTotal;
+    activeGrandTotal = newGrandTotal;
+
+    const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
+    if (breakdownEl) {
+      const rows = breakdownEl.children;
+      if (rows && rows[0]) {
+        rows[0].querySelector("p:last-child").textContent = formatCurrency(discountedRoomTotal);
+      }
+      if (rows && rows[rows.length - 1]) {
+        rows[rows.length - 1].querySelector("p:last-child").textContent = formatCurrency(newGrandTotal);
+      }
+    }
+
+    renderShortcuts(activeGrandTotal);
+    recalculateChange(activeGrandTotal);
+  }
+
+  // Initialize shortcuts and change for initial grand total
+  renderShortcuts(activeGrandTotal);
+  recalculateChange(activeGrandTotal);
+
+  promoInputRow.append(promoInput, promoBtn);
+  promoContainer.append(promoLabel, promoInputRow, promoNotice);
+
+  payment.append(headerRow, calculatorContainer, promoContainer);
 
   return payment;
 }
@@ -3982,6 +6008,171 @@ function createBillingBasisNoteElement(transaction) {
   return note;
 }
 
+function createUnpaidTransactionsTrayElement(unpaidTransactions) {
+  const tray = document.createElement("section");
+  tray.className = "unpaid-transactions-tray";
+  tray.style.backgroundColor = "rgba(239, 68, 68, 0.08)";
+  tray.style.border = "1px solid rgba(239, 68, 68, 0.2)";
+  tray.style.borderRadius = "8px";
+  tray.style.padding = "12px 16px";
+  tray.style.marginBottom = "16px";
+  
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "10px";
+  
+  const title = document.createElement("h2");
+  title.style.margin = "0";
+  title.style.fontSize = "15px";
+  title.style.color = "#ef4444";
+  title.style.fontWeight = "bold";
+  title.style.display = "flex";
+  title.style.alignItems = "center";
+  title.style.gap = "6px";
+  title.innerHTML = `⚠️ Tagihan Gantung Belum Lunas (${unpaidTransactions.length})`;
+  
+  header.appendChild(title);
+  tray.appendChild(header);
+  
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "8px";
+  
+  unpaidTransactions.forEach(tx => {
+    const item = document.createElement("div");
+    item.style.display = "flex";
+    item.style.justifyContent = "space-between";
+    item.style.alignItems = "center";
+    item.style.padding = "8px 12px";
+    item.style.backgroundColor = "rgba(255, 255, 255, 0.8)";
+    item.style.border = "1px solid rgba(239, 68, 68, 0.1)";
+    item.style.borderRadius = "6px";
+    
+    const info = document.createElement("div");
+    const roomName = document.createElement("p");
+    roomName.style.margin = "0 0 2px 0";
+    roomName.style.fontWeight = "bold";
+    roomName.style.fontSize = "14px";
+    roomName.textContent = tx.room_name || tx.room_id || "-";
+    
+    const meta = document.createElement("span");
+    meta.style.fontSize = "12px";
+    meta.style.color = "#6b7280";
+    meta.textContent = `Total: ${formatCurrency(getTransactionFinalTotal(tx))} | Selesai: ${formatTransactionDateTime(tx.end_time || tx.created_at)}`;
+    
+    info.append(roomName, meta);
+    
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    
+    const payBtn = document.createElement("button");
+    payBtn.style.padding = "4px 10px";
+    payBtn.style.backgroundColor = "#ef4444";
+    payBtn.style.color = "#ffffff";
+    payBtn.style.border = "none";
+    payBtn.style.borderRadius = "4px";
+    payBtn.style.fontSize = "12px";
+    payBtn.style.fontWeight = "bold";
+    payBtn.style.cursor = "pointer";
+    payBtn.textContent = "Bayar / Lunas";
+    payBtn.onclick = function() {
+      showBillingSummary(tx);
+    };
+    
+    const printBtn = document.createElement("button");
+    printBtn.style.padding = "4px 10px";
+    printBtn.style.backgroundColor = "#9ca3af";
+    printBtn.style.color = "#ffffff";
+    printBtn.style.border = "none";
+    printBtn.style.borderRadius = "4px";
+    printBtn.style.fontSize = "12px";
+    printBtn.style.fontWeight = "bold";
+    printBtn.style.cursor = "pointer";
+    printBtn.textContent = "Struk";
+    printBtn.onclick = function() {
+      showReceiptPrint(tx);
+    };
+
+    const restoreBtn = document.createElement("button");
+    restoreBtn.style.padding = "4px 10px";
+    restoreBtn.style.backgroundColor = "#d97706";
+    restoreBtn.style.color = "#ffffff";
+    restoreBtn.style.border = "none";
+    restoreBtn.style.borderRadius = "4px";
+    restoreBtn.style.fontSize = "12px";
+    restoreBtn.style.fontWeight = "bold";
+    restoreBtn.style.cursor = "pointer";
+    restoreBtn.textContent = "Pulihkan Sesi";
+    restoreBtn.onclick = async function() {
+      if (confirm(`Apakah Anda yakin ingin membatalkan checkout dan memulihkan kembali sesi ${tx.room_name || tx.room_id}? (LC dan waktu room akan diaktifkan kembali)`)) {
+        await restoreSessionCheckout(tx.transaction_id);
+      }
+    };
+    
+    actions.append(printBtn, restoreBtn, payBtn);
+    item.append(info, actions);
+    list.appendChild(item);
+  });
+  
+  tray.appendChild(list);
+  return tray;
+}
+
+function createLatestTransactionShortcutElement(transaction) {
+  const shortcut = document.createElement("section");
+  shortcut.className = "latest-transaction-shortcut";
+  shortcut.dataset.transactionId = transaction?.transaction_id || "";
+  shortcut.setAttribute("aria-labelledby", "latest-transaction-shortcut-title");
+
+  const content = document.createElement("div");
+  content.className = "latest-transaction-shortcut-content";
+
+  const title = document.createElement("h2");
+  title.id = "latest-transaction-shortcut-title";
+  title.className = "latest-transaction-shortcut-title";
+  title.textContent = "Transaksi Terakhir";
+
+  const meta = document.createElement("p");
+  meta.className = "latest-transaction-shortcut-meta";
+  meta.textContent = [
+    transaction?.room_name || transaction?.room_id || "-",
+    formatCurrency(getTransactionFinalTotal(transaction)),
+    getPaymentStatusLabel(transaction?.payment_status),
+  ].join(" | ");
+
+  const detail = document.createElement("p");
+  detail.className = "latest-transaction-shortcut-detail";
+  detail.textContent = `ID: ${transaction?.transaction_id || "-"} | Selesai: ${formatTransactionDateTime(transaction?.end_time || transaction?.created_at)}`;
+
+  content.append(title, meta, detail);
+
+  const actions = document.createElement("div");
+  actions.className = "latest-transaction-shortcut-actions";
+
+  const summaryButton = document.createElement("button");
+  summaryButton.className = "latest-transaction-shortcut-button secondary";
+  summaryButton.type = "button";
+  summaryButton.dataset.action = "show-transaction-summary";
+  summaryButton.dataset.transactionId = transaction?.transaction_id || "";
+  summaryButton.textContent = "Lihat Ringkasan";
+
+  const printButton = document.createElement("button");
+  printButton.className = "latest-transaction-shortcut-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-receipt-print";
+  printButton.dataset.transactionId = transaction?.transaction_id || "";
+  printButton.textContent = "Cetak Struk";
+
+  actions.append(summaryButton, printButton);
+  shortcut.append(content, actions);
+
+  return shortcut;
+}
+
 function createBillingSummaryElement(transaction) {
   const summary = document.createElement("section");
   summary.className = "billing-summary";
@@ -3994,7 +6185,9 @@ function createBillingSummaryElement(transaction) {
   const title = document.createElement("h2");
   title.className = "billing-summary-title";
   title.id = "billing-summary-title";
-  title.textContent = "Ringkasan Tagihan";
+  title.textContent = isTestTransaction(transaction)
+    ? "Ringkasan Tagihan TEST"
+    : "Ringkasan Tagihan";
 
   const actions = document.createElement("div");
   actions.className = "billing-summary-actions";
@@ -4019,10 +6212,11 @@ function createBillingSummaryElement(transaction) {
   grid.className = "billing-summary-grid";
 
   const items = [
+    ...(isTestTransaction(transaction) ? [["Mode", `TEST - ${transaction?.test_run_id || "Tanpa ID"}`, "billing-status-unpaid"]] : []),
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
-    ["Waktu Mulai", transaction?.start_time || "-"],
-    ["Waktu Selesai", transaction?.end_time || "-"],
+    ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
+    ["Waktu Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
     ["Tarif per Jam", formatCurrency(transaction?.rate_per_hour)],
     [
@@ -4081,11 +6275,27 @@ function createBillingBreakdownElement(transaction) {
   const breakdown = document.createElement("div");
   breakdown.className = "billing-breakdown";
 
-  [
-    ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
-    ["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))],
-    ["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"],
-  ].forEach(([labelText, valueText, type]) => {
+  const roomTotal = Number(transaction?.room_total) || 0;
+  const promoDiscount = Number(transaction?.promo_discount) || 0;
+  const originalRoomTotal = roomTotal + promoDiscount;
+
+  const rows = [
+    ["Biaya Room", formatCurrency(originalRoomTotal)],
+  ];
+
+  if (promoDiscount > 0) {
+    rows.push([`Diskon (${transaction.promo_code})`, `-${formatCurrency(promoDiscount)}`]);
+  }
+
+  const lcTotal = Number(transaction?.lc_total || 0);
+  if (lcTotal > 0) {
+    rows.push(["Jasa LC", formatCurrency(lcTotal)]);
+  }
+
+  rows.push(["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))]);
+  rows.push(["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"]);
+
+  rows.forEach(([labelText, valueText, type]) => {
     const row = document.createElement("div");
     row.className = type === "total"
       ? "billing-breakdown-row billing-breakdown-total"
@@ -4113,6 +6323,17 @@ function createBillingBreakdownElement(transaction) {
       ? `${fnbOrders.length} order F&B masuk tagihan: ${fnbOrders.map((order) => order.order_id).join(", ")}`
       : `Order F&B masuk tagihan: ${orderIds}`;
     breakdown.appendChild(orders);
+  }
+
+  const lcSalesBonusLogs = Array.isArray(transaction?.lc_sales_bonus_logs) ? transaction.lc_sales_bonus_logs : [];
+  const lcSalesBonusTotal = lcSalesBonusLogs.reduce((sum, log) => {
+    return sum + (Number(log.bonus_total) || 0);
+  }, 0);
+  if (lcSalesBonusLogs.length > 0) {
+    const bonusInfo = document.createElement("p");
+    bonusInfo.className = "billing-fnb-orders";
+    bonusInfo.textContent = `Bonus Sales LC internal: ${lcSalesBonusLogs.length} log, total ${formatCurrency(lcSalesBonusTotal)}. Tidak menambah tagihan konsumen.`;
+    breakdown.appendChild(bonusInfo);
   }
 
   return breakdown;
@@ -4204,8 +6425,10 @@ function createBillingFnbOrderElement(order) {
 }
 
 function createReceiptPrintElement(transaction) {
+  const printAudit = getReceiptPrintAudit(transaction);
   const receiptData = buildReceiptData(transaction, {
     fnbOrders: getReceiptFnbOrders(transaction),
+    print: printAudit,
   });
   const receipt = document.createElement("section");
   receipt.className = "receipt-print";
@@ -4221,18 +6444,22 @@ function createReceiptPrintElement(transaction) {
   const title = document.createElement("h2");
   title.className = "receipt-print-title";
   title.id = "receipt-print-title";
-  title.textContent = "Struk Tagihan";
+  title.textContent = isTestTransaction(transaction)
+    ? "TEST - BUKAN TRANSAKSI"
+    : "Struk Tagihan";
 
   const meta = document.createElement("p");
   meta.className = "receipt-print-meta";
-  meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${receiptData.transaction.createdAt || "-"} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
+  meta.textContent = `ID Transaksi: ${receiptData.transaction.id || "-"} | Waktu: ${formatTransactionDateTime(receiptData.transaction.createdAt)} | Kasir: ${receiptData.transaction.cashierName || "-"}`;
 
   header.append(brand, title, meta);
 
+  const reprintNotice = createReceiptReprintNoticeElement(receiptData.print);
+
   const roomRows = [
     ["Nama Ruangan", receiptData.room.name || receiptData.room.id || "-"],
-    ["Waktu Mulai", receiptData.room.startTime || "-"],
-    ["Waktu Selesai", receiptData.room.endTime || "-"],
+    ["Waktu Mulai", formatTransactionDateTime(receiptData.room.startTime)],
+    ["Waktu Selesai", formatTransactionDateTime(receiptData.room.endTime)],
     ["Durasi", `${receiptData.room.durationMinutes} menit`],
     ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
   ];
@@ -4244,11 +6471,19 @@ function createReceiptPrintElement(transaction) {
 
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
-  const billingSection = createReceiptSection("Rincian Tagihan", [
+  const billingRows = [
     ["Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
-    ["Total F&B", formatCurrency(receiptData.totals.fnbTotal)],
-    ["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"],
-  ]);
+  ];
+
+  const lcTotal = Number(transaction?.lc_total || 0);
+  if (lcTotal > 0) {
+    billingRows.push(["Jasa LC", formatCurrency(lcTotal)]);
+  }
+
+  billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal)]);
+  billingRows.push(["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"]);
+
+  const billingSection = createReceiptSection("Rincian Tagihan", billingRows);
 
   const paymentSection = createReceiptSection("Status Pembayaran", [
     ["Status", getPaymentStatusLabel(receiptData.payment.status)],
@@ -4296,6 +6531,7 @@ function createReceiptPrintElement(transaction) {
   actions.append(printButton, thermalPreviewButton, thermalPrintButton, closeButton);
   receipt.append(
     header,
+    reprintNotice,
     roomSection,
     billingSection,
     createReceiptFnbDetailElement(receiptData),
@@ -4305,6 +6541,30 @@ function createReceiptPrintElement(transaction) {
   );
 
   return receipt;
+}
+
+function createReceiptReprintNoticeElement(printAudit) {
+  if (!printAudit?.isReprint) {
+    return document.createDocumentFragment();
+  }
+
+  const notice = document.createElement("section");
+  notice.className = "receipt-print-reprint-notice";
+
+  const title = document.createElement("p");
+  title.className = "receipt-print-reprint-title";
+  title.textContent = "*** CETAK ULANG ***";
+
+  const detail = document.createElement("p");
+  detail.className = "receipt-print-reprint-detail";
+  detail.textContent = [
+    `Cetak ulang ke-${Number(printAudit.reprintNumber) || 1}`,
+    printAudit.printedAt ? `Waktu: ${formatTransactionDateTime(printAudit.printedAt)}` : "",
+    printAudit.cashierName ? `Kasir: ${printAudit.cashierName}` : "",
+  ].filter(Boolean).join(" | ");
+
+  notice.append(title, detail);
+  return notice;
 }
 
 function createReceiptSection(titleText, rows) {
@@ -4372,7 +6632,7 @@ function createReceiptFnbDetailElement(receiptData) {
 
     const orderTitle = document.createElement("p");
     orderTitle.className = "receipt-print-fnb-order-title";
-    orderTitle.textContent = `${order?.order_id || "-"} - ${formatCurrency(order?.order_total)}`;
+    orderTitle.textContent = `${order?.id || "-"} - ${formatCurrency(order?.total)}`;
 
     orderElement.appendChild(orderTitle);
 
@@ -4389,7 +6649,7 @@ function createReceiptFnbDetailElement(receiptData) {
 
       const name = document.createElement("p");
       name.className = "receipt-print-value";
-      name.textContent = item?.menu_name || "-";
+      name.textContent = item?.name || "-";
 
       const meta = document.createElement("p");
       meta.className = "receipt-print-meta";
@@ -4554,6 +6814,129 @@ function createRoomRecoveryCandidateElement(candidate) {
   return item;
 }
 
+function getOpenFnbOrdersForRoom(room) {
+  if (room.status !== "occupied") {
+    return [];
+  }
+
+  return openFnbOrders.filter((order) => {
+    return (
+      order.room_id === room.room_id &&
+      order.order_status === "open"
+    );
+  });
+}
+
+function createRoomOpenFnbBreakdownElement(openOrders) {
+  const container = document.createElement("div");
+  container.className = "room-card-fnb-breakdown";
+  container.style.marginTop = "8px";
+  container.style.padding = "6px 8px";
+  container.style.backgroundColor = "rgba(0, 0, 0, 0.25)";
+  container.style.borderRadius = "6px";
+  container.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+  container.style.fontSize = "0.78rem";
+
+  const title = document.createElement("div");
+  title.style.fontWeight = "bold";
+  title.style.color = "rgba(255, 255, 255, 0.85)";
+  title.style.marginBottom = "4px";
+  title.style.display = "flex";
+  title.style.justifyContent = "space-between";
+  title.style.alignItems = "center";
+  title.innerHTML = `<span>🍽️ Rincian F&B:</span>`;
+
+  container.appendChild(title);
+
+  const itemsList = document.createElement("div");
+  itemsList.style.display = "flex";
+  itemsList.style.flexDirection = "column";
+  itemsList.style.gap = "2px";
+  itemsList.style.color = "rgba(255, 255, 255, 0.7)";
+
+  const aggregatedItems = {};
+  let totalFbAmount = 0;
+  const orderTotalAmount = openOrders.reduce((sum, order) => {
+    return sum + (Number(order.order_total) || 0);
+  }, 0);
+
+  openOrders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const name = item.menu_name || "-";
+      const qty = Number(item.quantity) || 0;
+      const price = Number(item.price) || 0;
+      const subtotal = Number(item.subtotal) || (qty * price);
+      if (!aggregatedItems[name]) {
+        aggregatedItems[name] = { quantity: 0, price: price };
+      }
+      aggregatedItems[name].quantity += qty;
+      totalFbAmount += subtotal;
+    });
+  });
+
+  const aggregatedEntries = Object.entries(aggregatedItems);
+
+  if (aggregatedEntries.length === 0) {
+    const summaryRow = document.createElement("div");
+    summaryRow.style.display = "flex";
+    summaryRow.style.justifyContent = "space-between";
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = `${openOrders.length} order F&B open`;
+
+    const amountSpan = document.createElement("span");
+    amountSpan.textContent = formatCurrency(orderTotalAmount);
+    amountSpan.style.color = "rgba(255, 255, 255, 0.5)";
+
+    summaryRow.append(labelSpan, amountSpan);
+    itemsList.appendChild(summaryRow);
+  }
+
+  aggregatedEntries.forEach(([name, data]) => {
+    const itemRow = document.createElement("div");
+    itemRow.style.display = "flex";
+    itemRow.style.justifyContent = "space-between";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = name;
+    nameSpan.style.whiteSpace = "nowrap";
+    nameSpan.style.overflow = "hidden";
+    nameSpan.style.textOverflow = "ellipsis";
+    nameSpan.style.maxWidth = "130px";
+
+    const detailsSpan = document.createElement("span");
+    detailsSpan.textContent = `${data.quantity}x ${formatCurrency(data.price)}`;
+    detailsSpan.style.color = "rgba(255, 255, 255, 0.5)";
+
+    itemRow.append(nameSpan, detailsSpan);
+    itemsList.appendChild(itemRow);
+  });
+
+  container.appendChild(itemsList);
+
+  const divider = document.createElement("div");
+  divider.style.height = "1px";
+  divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+  divider.style.margin = "4px 0";
+  container.appendChild(divider);
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "space-between";
+  footer.style.fontWeight = "bold";
+  footer.style.color = "#10b981";
+
+  const footerLabel = document.createElement("span");
+  footerLabel.textContent = "Total F&B:";
+  const footerVal = document.createElement("span");
+  footerVal.textContent = formatCurrency(orderTotalAmount || totalFbAmount);
+
+  footer.append(footerLabel, footerVal);
+  container.appendChild(footer);
+
+  return container;
+}
+
 function createRoomCard(room) {
   const card = document.createElement("article");
   card.className = `room-card ${getStatusClass(room.status)}`;
@@ -4564,7 +6947,18 @@ function createRoomCard(room) {
   }
 
   const statusLabel = getStatusLabel(room.status);
-  const sessionButtonLabel = getSessionButtonLabel(room.status);
+  const roomOpenFnbOrders = room.status === "occupied" ? getOpenFnbOrdersForRoom(room) : [];
+  const roomOpenFnbTotal = roomOpenFnbOrders.reduce((sum, order) => {
+    return sum + (Number(order.order_total) || 0);
+  }, 0);
+  let sessionButtonLabel = getSessionButtonLabel(room.status);
+  if (room.status === "waiting_payment") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      sessionButtonLabel = "Detail / Batal";
+    } else {
+      sessionButtonLabel = "Bayar & Mulai";
+    }
+  }
 
   const topLine = document.createElement("div");
   topLine.className = "room-topline";
@@ -4577,13 +6971,45 @@ function createRoomCard(room) {
   status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
   status.textContent = statusLabel;
 
-  topLine.append(name, status);
+  if (room.status === "occupied") {
+    const openBillBadge = document.createElement("span");
+    openBillBadge.className = "room-status-badge open-bill-badge";
+    openBillBadge.style.backgroundColor = "rgba(124, 58, 237, 0.15)";
+    openBillBadge.style.color = "#a78bfa";
+    openBillBadge.style.fontSize = "11px";
+    openBillBadge.style.padding = "2px 6px";
+    openBillBadge.style.borderRadius = "4px";
+    openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
+    openBillBadge.style.fontWeight = "bold";
+    openBillBadge.textContent = roomOpenFnbTotal > 0 ? `F&B ${formatCurrency(roomOpenFnbTotal)}` : "Open Bill";
+    topLine.append(name, status, openBillBadge);
+  } else {
+    topLine.append(name, status);
+  }
+
+  if (room.is_test === true || String(room.is_test || "").toLowerCase() === "true") {
+    const testBadge = document.createElement("span");
+    testBadge.className = "room-status-badge";
+    testBadge.style.backgroundColor = "rgba(245, 158, 11, 0.18)";
+    testBadge.style.color = "#fbbf24";
+    testBadge.style.border = "1px solid rgba(245, 158, 11, 0.45)";
+    testBadge.style.fontWeight = "900";
+    testBadge.textContent = "TEST";
+    topLine.appendChild(testBadge);
+  }
 
   const meta = document.createElement("div");
   meta.className = "room-meta";
 
   if (room.status === "occupied") {
     meta.appendChild(createRoomBookingInfoElement(room));
+    if (roomOpenFnbOrders.length > 0) {
+      meta.appendChild(createRoomOpenFnbBreakdownElement(roomOpenFnbOrders));
+    }
+  } else if (room.status === "waiting_payment" || room.status === "paid_waiting_start") {
+    meta.appendChild(createRoomWaitingPaymentInfoElement(room));
+  } else if (room.status === "cleaning") {
+    meta.appendChild(createRoomOperationalStatusInfoElement(room.status));
   } else {
     const durationLabel = document.createElement("p");
     durationLabel.className = "meta-label";
@@ -4598,10 +7024,18 @@ function createRoomCard(room) {
 
   const rate = document.createElement("p");
   rate.className = "rate";
-  rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    if (pkg) {
+      rate.textContent = `Paket: ${pkg.package_name} (${currencyFormatter.format(pkg.selling_price)} / ${pkg.duration_minutes / 60} jam)`;
+    } else {
+      rate.textContent = `Paket: ${room.package_id} (${currencyFormatter.format(room.rate_per_hour)} / jam)`;
+    }
+  } else {
+    rate.textContent = `${currencyFormatter.format(room.rate_per_hour)} / jam`;
+  }
 
   meta.appendChild(rate);
-  meta.appendChild(createRoomTvControlElement(room));
 
   const actions = document.createElement("div");
   actions.className = "room-actions";
@@ -4610,7 +7044,9 @@ function createRoomCard(room) {
   sessionButton.className = "room-button";
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
-  sessionButton.textContent = sessionButtonLabel;
+  const isCompletingThisRoom = completingCleaningRoomId === room.room_id;
+  sessionButton.textContent = isCompletingThisRoom ? "Memproses..." : sessionButtonLabel;
+  sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession || isCompletingThisRoom;
 
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
@@ -4621,22 +7057,98 @@ function createRoomCard(room) {
     extendButton.dataset.action = "show-extend-selection";
     extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
 
-    actions.append(sessionButton, extendButton);
+    const selectLcButton = document.createElement("button");
+    selectLcButton.className = "room-button room-button-lc";
+    selectLcButton.type = "button";
+    selectLcButton.dataset.action = "show-lc-selection";
+    selectLcButton.textContent = "Input LC Final";
+
+    actions.append(sessionButton, extendButton, selectLcButton);
   } else {
     actions.append(sessionButton);
   }
 
-  card.append(topLine, meta, actions);
+  const isDurationActive = durationSelectionRoomId === room.room_id && room.status === "available";
+  const isPaymentActive = paymentSelectionRoomId === room.room_id && room.status === "waiting_payment";
+  const isExtendActive = extendSelectionRoomId === room.room_id && room.status === "occupied";
+  const isLcActive = lcSelectionRoomId === room.room_id && room.status === "occupied";
 
-  if (durationSelectionRoomId === room.room_id && room.status === "available") {
+  if (isDurationActive) {
     card.appendChild(createDurationSelectionElement(room));
-  }
-
-  if (extendSelectionRoomId === room.room_id && room.status === "occupied") {
+  } else if (isPaymentActive) {
+    card.appendChild(createPaymentSelectionElement(room));
+  } else if (isExtendActive) {
     card.appendChild(createExtendSelectionElement(room));
+  } else if (isLcActive) {
+    card.appendChild(createSelectLcModalOverlay(room));
+  } else {
+    card.append(topLine, meta, actions);
   }
 
   return card;
+}
+
+function createRoomOperationalStatusInfoElement(status) {
+  const info = document.createElement("div");
+  info.className = "room-booking-info room-operational-info";
+
+  const title = document.createElement("p");
+  title.className = "room-booking-row";
+
+  const label = document.createElement("span");
+  label.className = "room-booking-label";
+  label.textContent = "Status:";
+
+  const value = document.createElement("span");
+  value.className = "room-booking-value";
+  value.textContent = getStatusLabel(status);
+
+  title.append(label, value);
+
+  const helper = document.createElement("p");
+  helper.className = "room-operational-helper";
+  helper.textContent = status === "paid_waiting_start"
+    ? "Sudah dibayar, menunggu room dan perangkat siap sebelum countdown dimulai."
+    : "Room sedang dibersihkan dan belum bisa dijual kembali.";
+
+  info.append(title, helper);
+  return info;
+}
+
+function createRoomWaitingPaymentInfoElement(room) {
+  const info = document.createElement("div");
+  info.className = "room-booking-info";
+
+  const items = [
+    ["Pelanggan", room.customer_name || "-"],
+  ];
+  if (room.is_test) {
+    items.unshift(["Mode", `TEST ${room.test_run_id || ""}`.trim()]);
+  }
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    items.push(["Paket", pkg ? pkg.package_name : room.package_id]);
+  } else {
+    items.push(["Durasi", `${room.booked_duration_minutes || "-"} menit (Regular)`]);
+  }
+
+  items.forEach(([labelText, valueText]) => {
+    const row = document.createElement("p");
+    row.className = "room-booking-row";
+
+    const label = document.createElement("span");
+    label.className = "room-booking-label";
+    label.textContent = `${labelText}:`;
+
+    const value = document.createElement("span");
+    value.className = "room-booking-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+    info.appendChild(row);
+  });
+
+  return info;
 }
 
 function createRoomBookingInfoElement(room) {
@@ -4644,11 +7156,45 @@ function createRoomBookingInfoElement(room) {
   info.className = "room-booking-info";
   const timeState = getRoomTimeState(room);
 
-  [
+  const rows = [
     ["Durasi", formatDurationMinutes(room.booked_duration_minutes)],
     ["Mulai", getRoomTimeLabel(room.start_time)],
     ["Selesai", getRoomTimeLabel(room.scheduled_end_time)],
-  ].forEach(([labelText, valueText]) => {
+  ];
+
+  if (room.is_test) {
+    rows.unshift(["Mode", `TEST ${room.test_run_id || ""}`.trim()]);
+  }
+
+  const lcIds = String(room.lc_ids || "").trim();
+  if (lcIds) {
+    const ids = lcIds.split(",").map(id => id.trim()).filter(Boolean);
+    const pendingCount = ids.filter(id => id === "PENDING").length;
+    const resolvedIds = ids.filter(id => id !== "PENDING");
+    
+    let displayStr = "";
+    if (pendingCount > 0) {
+      const resolvedNames = resolvedIds.map(id => {
+        const found = lcs.find(l => l.lc_id === id);
+        return found ? found.lc_name : id.replace("LC-", "");
+      });
+      const parts = [];
+      if (resolvedNames.length > 0) {
+        parts.push(resolvedNames.join(", "));
+      }
+      parts.push(`${pendingCount} Orang (Belum Dipilih)`);
+      displayStr = parts.join(" + ");
+    } else {
+      displayStr = resolvedIds.map(id => {
+        const found = lcs.find(l => l.lc_id === id);
+        return found ? found.lc_name : id.replace("LC-", "");
+      }).join(", ");
+    }
+    
+    rows.push(["LC Sesi", displayStr]);
+  }
+
+  rows.forEach(([labelText, valueText]) => {
     const row = document.createElement("p");
     row.className = "room-booking-row";
 
@@ -4701,54 +7247,1591 @@ function createDurationSelectionElement(room) {
 
   const title = document.createElement("p");
   title.className = "duration-selection-title";
-  title.textContent = `Pilih durasi untuk ${room.room_name}`;
+  title.textContent = `Pilih durasi/paket untuk ${room.room_name}`;
+  panel.appendChild(title);
 
-  const options = document.createElement("div");
-  options.className = "duration-options";
+  if (canUseOwnerTestMode()) {
+    const testBox = document.createElement("div");
+    testBox.style.border = "1px solid rgba(245, 158, 11, 0.55)";
+    testBox.style.background = "rgba(245, 158, 11, 0.12)";
+    testBox.style.padding = "10px";
+    testBox.style.borderRadius = "8px";
+    testBox.style.display = "grid";
+    testBox.style.gap = "8px";
 
+    const toggleLabel = document.createElement("label");
+    toggleLabel.style.display = "flex";
+    toggleLabel.style.alignItems = "center";
+    toggleLabel.style.gap = "8px";
+    toggleLabel.style.fontWeight = "800";
+    toggleLabel.style.color = "#fbbf24";
+
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.dataset.action = "toggle-owner-test-mode";
+    toggle.checked = ownerTestModeEnabled;
+
+    const toggleText = document.createElement("span");
+    toggleText.textContent = "Mode Testing Operasional";
+    toggleLabel.append(toggle, toggleText);
+    testBox.appendChild(toggleLabel);
+
+    if (ownerTestModeEnabled) {
+      const warning = document.createElement("p");
+      warning.className = "state-message";
+      warning.style.margin = "0";
+      warning.textContent = "Data akan diberi marker TEST, tidak masuk laporan/closing/stok production, dan bisa dibersihkan per Test Run.";
+      testBox.appendChild(warning);
+
+      const pinInput = document.createElement("input");
+      pinInput.className = "duration-custom-input";
+      pinInput.type = "password";
+      pinInput.inputMode = "numeric";
+      pinInput.placeholder = "PIN Manager untuk testing";
+      pinInput.dataset.action = "update-owner-test-mode-pin";
+      pinInput.value = ownerTestModePin;
+      testBox.appendChild(pinInput);
+
+      const noteInput = document.createElement("input");
+      noteInput.className = "duration-custom-input";
+      noteInput.type = "text";
+      noteInput.placeholder = "Catatan test run";
+      noteInput.dataset.action = "update-owner-test-mode-note";
+      noteInput.value = ownerTestModeNote;
+      testBox.appendChild(noteInput);
+    }
+
+    panel.appendChild(testBox);
+  }
+
+  // Customer Name input
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
+
+  const nameLabel = document.createElement("span");
+  nameLabel.className = "duration-payment-label";
+  nameLabel.textContent = "Nama Pelanggan:";
+
+  const nameInput = document.createElement("input");
+  nameInput.className = "duration-custom-input";
+  nameInput.type = "text";
+  nameInput.placeholder = "Nama Pelanggan (Opsional)";
+  nameInput.dataset.action = "update-customer-name";
+  nameInput.value = customerNameInput;
+
+  nameField.append(nameLabel, nameInput);
+  panel.appendChild(nameField);
+
+  // F&B Selection Section
+  const fnbField = document.createElement("div");
+  fnbField.style.display = "flex";
+  fnbField.style.flexDirection = "column";
+  fnbField.style.gap = "6px";
+  fnbField.style.marginTop = "8px";
+  fnbField.style.padding = "8px";
+  fnbField.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+  fnbField.style.borderRadius = "6px";
+  fnbField.style.border = "1px dashed rgba(255, 255, 255, 0.1)";
+
+  const fnbHeader = document.createElement("div");
+  fnbHeader.style.display = "flex";
+  fnbHeader.style.justifyContent = "space-between";
+  fnbHeader.style.alignItems = "center";
+
+  const fnbLabel = document.createElement("span");
+  fnbLabel.className = "duration-payment-label";
+  fnbLabel.style.fontWeight = "bold";
+  fnbLabel.textContent = "Pesanan F&B (Optional):";
+
+  const addFnbButton = document.createElement("button");
+  addFnbButton.className = "room-button";
+  addFnbButton.type = "button";
+  addFnbButton.style.padding = "4px 8px";
+  addFnbButton.style.fontSize = "0.75rem";
+  addFnbButton.style.backgroundColor = "var(--available)";
+  addFnbButton.style.color = "#fff";
+  addFnbButton.style.border = "none";
+  addFnbButton.style.borderRadius = "4px";
+  addFnbButton.textContent = bookingCartItems.length > 0 ? "✏️ Ubah F&B" : "➕ Tambah F&B";
+  addFnbButton.onclick = () => {
+    showBookingFnbSelectorModal(room, "booking");
+  };
+
+  fnbHeader.append(fnbLabel, addFnbButton);
+  fnbField.appendChild(fnbHeader);
+
+  if (bookingCartItems.length > 0) {
+    const fnbList = document.createElement("div");
+    fnbList.style.display = "flex";
+    fnbList.style.flexDirection = "column";
+    fnbList.style.gap = "4px";
+    fnbList.style.marginTop = "4px";
+    fnbList.style.fontSize = "0.8rem";
+    fnbList.style.color = "rgba(255, 255, 255, 0.7)";
+
+    let totalAmount = 0;
+    bookingCartItems.forEach((cartItem) => {
+      const itemRow = document.createElement("div");
+      itemRow.style.display = "flex";
+      itemRow.style.justifyContent = "space-between";
+      
+      const itemText = document.createElement("span");
+      itemText.textContent = `${cartItem.menu_name} x${cartItem.quantity}`;
+      
+      const itemPrice = document.createElement("span");
+      const itemSubtotal = cartItem.price * cartItem.quantity;
+      totalAmount += itemSubtotal;
+      itemPrice.textContent = formatCurrency(itemSubtotal);
+      
+      itemRow.append(itemText, itemPrice);
+      fnbList.appendChild(itemRow);
+    });
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "4px 0";
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Total F&B:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(totalAmount);
+
+    totalRow.append(totalLabel, totalVal);
+    
+    // Hapus button
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.style.background = "none";
+    clearButton.style.border = "none";
+    clearButton.style.color = "var(--occupied)";
+    clearButton.style.fontSize = "0.75rem";
+    clearButton.style.cursor = "pointer";
+    clearButton.style.alignSelf = "flex-end";
+    clearButton.style.padding = "0";
+    clearButton.style.marginTop = "2px";
+    clearButton.textContent = "🗑️ Bersihkan F&B";
+    clearButton.onclick = () => {
+      bookingCartItems = [];
+      renderRooms();
+    };
+
+    fnbList.append(divider, totalRow, clearButton);
+    fnbField.appendChild(fnbList);
+  } else {
+    const emptyNote = document.createElement("span");
+    emptyNote.style.fontSize = "0.75rem";
+    emptyNote.style.color = "rgba(255, 255, 255, 0.4)";
+    emptyNote.textContent = "Belum ada pesanan makanan/minuman.";
+    fnbField.appendChild(emptyNote);
+  }
+
+  panel.appendChild(fnbField);
+
+  // Booking Type select
+  const typeField = document.createElement("div");
+  typeField.style.display = "flex";
+  typeField.style.flexDirection = "column";
+  typeField.style.gap = "4px";
+
+  const typeLabel = document.createElement("span");
+  typeLabel.className = "duration-payment-label";
+  typeLabel.textContent = "Jenis Booking:";
+
+  const typeSelect = document.createElement("select");
+  typeSelect.className = "duration-payment-select";
+  typeSelect.style.width = "100%";
+  
   [
-    [60, "1 jam"],
-    [120, "2 jam"],
-    [180, "3 jam"],
-  ].forEach(([minutes, labelText]) => {
-    const button = document.createElement("button");
-    button.className = "duration-option-button";
-    button.type = "button";
-    button.dataset.action = "start-session-duration";
-    button.dataset.roomId = room.room_id;
-    button.dataset.durationMinutes = String(minutes);
-    button.textContent = labelText;
-    options.appendChild(button);
+    ["regular", "Regular (Jam/Menit)"],
+    ["package", "Paket F&B All-In"],
+  ].forEach(([val, label]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = label;
+    opt.selected = bookingTypeSelection === val;
+    typeSelect.appendChild(opt);
   });
 
-  const custom = document.createElement("div");
-  custom.className = "duration-custom";
+  typeSelect.onchange = (e) => {
+    bookingTypeSelection = e.target.value;
+    renderRooms();
+  };
 
-  const input = document.createElement("input");
-  input.className = "duration-custom-input";
-  input.type = "number";
-  input.min = "15";
-  input.step = "1";
-  input.placeholder = "Custom menit";
-  input.dataset.action = "update-custom-duration";
-  input.value = customDurationMinutes;
+  typeField.append(typeLabel, typeSelect);
+  panel.appendChild(typeField);
 
-  const customButton = document.createElement("button");
-  customButton.className = "duration-custom-button";
-  customButton.type = "button";
-  customButton.dataset.action = "start-session-custom-duration";
-  customButton.dataset.roomId = room.room_id;
-  customButton.textContent = "Mulai Custom";
+  if (bookingTypeSelection === "package") {
+    // Package selector
+    const pkgField = document.createElement("div");
+    pkgField.style.display = "flex";
+    pkgField.style.flexDirection = "column";
+    pkgField.style.gap = "4px";
 
-  custom.append(input, customButton);
+    const pkgLabel = document.createElement("span");
+    pkgLabel.className = "duration-payment-label";
+    pkgLabel.textContent = "Pilih Paket Karaoke:";
+
+    const pkgSelect = document.createElement("select");
+    pkgSelect.className = "duration-payment-select";
+    pkgSelect.style.width = "100%";
+
+    packages.forEach((pkg) => {
+      const opt = document.createElement("option");
+      opt.value = pkg.package_id;
+      opt.textContent = `${pkg.package_name} (${formatCurrency(pkg.selling_price)} - ${pkg.duration_minutes}m)`;
+      opt.selected = bookingPackageSelection === pkg.package_id;
+      pkgSelect.appendChild(opt);
+    });
+
+    if (packages.length > 0 && !bookingPackageSelection) {
+      bookingPackageSelection = packages[0].package_id;
+    }
+
+    pkgSelect.onchange = (e) => {
+      bookingPackageSelection = e.target.value;
+    };
+
+    pkgField.append(pkgLabel, pkgSelect);
+    panel.appendChild(pkgField);
+
+    const savePkgButton = document.createElement("button");
+    savePkgButton.className = "duration-custom-button";
+    savePkgButton.type = "button";
+    savePkgButton.style.backgroundColor = "var(--color-success)";
+    savePkgButton.style.color = "#fff";
+    savePkgButton.style.width = "100%";
+    savePkgButton.disabled = isPreparingRoomSession;
+    savePkgButton.textContent = isPreparingRoomSession ? "Menyimpan..." : "Simpan Booking Paket";
+    savePkgButton.onclick = async () => {
+      const selectedPkgId = pkgSelect.value || bookingPackageSelection;
+      const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
+      if (selectedPkg) {
+        await prepareRoomSession(
+          room.room_id,
+          selectedPkg.duration_minutes,
+          customerNameInput,
+          selectedPkgId,
+          "",
+          `${room.room_id}:package:${selectedPkgId}`
+        );
+        customerNameInput = "";
+        bookingTypeSelection = "regular";
+        delete selectedLcIdsForRoom[room.room_id];
+        delete selectedLcDurationsForRoom[room.room_id];
+      } else {
+        showInlineNotice("Pilih paket terlebih dahulu.", "error");
+      }
+    };
+
+    savePkgButton.style.backgroundColor = "var(--available)";
+    savePkgButton.style.color = "#ffffff";
+    savePkgButton.style.fontWeight = "800";
+    savePkgButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    panel.appendChild(savePkgButton);
+  } else {
+    // Regular durations selector
+    const options = document.createElement("div");
+    options.className = "duration-options";
+
+    const durationOptions = canUseDevShortSessions()
+      ? [
+          [1, "1 menit"],
+          [5, "5 menit"],
+          [10, "10 menit"],
+          [60, "1 jam"],
+          [120, "2 jam"],
+          [180, "3 jam"],
+        ]
+      : [
+          [60, "1 jam"],
+          [120, "2 jam"],
+          [180, "3 jam"],
+        ];
+
+    durationOptions.forEach(([minutes, labelText]) => {
+      const prepareKey = `${room.room_id}:${minutes}`;
+      const isThisDurationPreparing = preparingRoomSessionKey === prepareKey;
+      const button = document.createElement("button");
+      button.className = "duration-option-button";
+      button.type = "button";
+      button.dataset.action = "prepare-room-session-duration";
+      button.dataset.roomId = room.room_id;
+      button.dataset.durationMinutes = String(minutes);
+      button.disabled = isPreparingRoomSession;
+      button.textContent = isThisDurationPreparing ? "Menyiapkan..." : labelText;
+      options.appendChild(button);
+    });
+
+    const custom = document.createElement("div");
+    custom.className = "duration-custom";
+
+    const input = document.createElement("input");
+    input.className = "duration-custom-input";
+    input.type = "number";
+    input.min = String(getMinimumSessionMinutes());
+    input.step = "1";
+    input.placeholder = "Custom mnt";
+    input.dataset.action = "update-custom-duration";
+    input.value = customDurationMinutes;
+    input.disabled = isPreparingRoomSession;
+
+    const customButton = document.createElement("button");
+    customButton.className = "duration-custom-button";
+    customButton.type = "button";
+    customButton.dataset.action = "prepare-room-session-custom-duration";
+    customButton.dataset.roomId = room.room_id;
+    customButton.disabled = isPreparingRoomSession;
+    customButton.style.backgroundColor = "var(--available)";
+    customButton.style.color = "#ffffff";
+    customButton.style.fontWeight = "800";
+    customButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    customButton.textContent = preparingRoomSessionKey === `${room.room_id}:custom` ? "Menyiapkan..." : "Custom";
+
+    custom.append(input, customButton);
+    panel.append(options, custom);
+  }
 
   const cancelButton = document.createElement("button");
   cancelButton.className = "duration-cancel-button";
   cancelButton.type = "button";
   cancelButton.dataset.action = "cancel-duration-selection";
+  cancelButton.disabled = isPreparingRoomSession;
+  cancelButton.style.backgroundColor = "rgba(255,255,255,0.1)";
+  cancelButton.style.color = "#ffffff";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, cancelButton);
+  panel.appendChild(cancelButton);
+
+  return panel;
+}
+
+let currentBookingFnbModalSearchQuery = "";
+let currentBookingFnbModalMainTab = "all"; // "all", "favorites", "makanan", "minuman", "rokok"
+let currentBookingFnbModalSubTab = "all";  // "all" or specific category e.g. "Beverage", "Beer", "Spirit", "Anggur"
+let currentBookingFnbModalSpiritFilter = "all";
+
+function showBookingFnbSelectorModal(room, targetCartType) {
+  // Reset modal state variables on open
+  currentBookingFnbModalSearchQuery = "";
+  currentBookingFnbModalMainTab = "all";
+  currentBookingFnbModalSubTab = "all";
+  currentBookingFnbModalSpiritFilter = "all";
+
+  console.log("showBookingFnbSelectorModal: Open for room", room.room_id, "Target:", targetCartType, "menuItems count:", menuItems.length);
+
+  // targetCartType is either "booking" or "prepay"
+  const cart = targetCartType === "booking" ? bookingCartItems : prepayCartItems;
+
+  const modalOverlay = document.createElement("div");
+  modalOverlay.className = "admin-pin-modal-overlay"; // reuse overlay styling for modal
+  modalOverlay.style.position = "fixed";
+  modalOverlay.style.top = "0";
+  modalOverlay.style.left = "0";
+  modalOverlay.style.width = "100%";
+  modalOverlay.style.height = "100%";
+  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+  modalOverlay.style.zIndex = "1000";
+  modalOverlay.style.display = "flex";
+  modalOverlay.style.alignItems = "center";
+  modalOverlay.style.justifyContent = "center";
+
+  const modalContainer = document.createElement("div");
+  modalContainer.className = "admin-pin-modal";
+  modalContainer.style.width = "90vw";
+  modalContainer.style.maxWidth = "1000px";
+  modalContainer.style.height = "85vh";
+  modalContainer.style.display = "flex";
+  modalContainer.style.flexDirection = "column";
+  modalContainer.style.padding = "20px";
+  modalContainer.style.backgroundColor = "var(--color-bg-lounge, #1a1a2e)";
+  modalContainer.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+
+  // Header
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "15px";
+
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "1.5rem";
+  title.style.color = "#ffffff";
+  title.textContent = `POS F&B - Booking ${room.room_name}`;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.style.background = "none";
+  closeBtn.style.border = "none";
+  closeBtn.style.color = "#ffffff";
+  closeBtn.style.fontSize = "1.5rem";
+  closeBtn.style.cursor = "pointer";
+  closeBtn.textContent = "✕";
+  closeBtn.onclick = () => {
+    modalOverlay.remove();
+  };
+
+  header.append(title, closeBtn);
+  modalContainer.appendChild(header);
+
+  // Content Area (Two Columns)
+  const body = document.createElement("div");
+  body.style.display = "flex";
+  body.style.flex = "1";
+  body.style.gap = "20px";
+  body.style.overflow = "hidden";
+  body.style.minHeight = "0"; // crucial for nested scroll behavior
+
+  // Left Column (Catalog)
+  const catalogCol = document.createElement("div");
+  catalogCol.style.flex = "7";
+  catalogCol.style.display = "flex";
+  catalogCol.style.flexDirection = "column";
+  catalogCol.style.overflow = "hidden";
+  catalogCol.style.minHeight = "0";
+
+  // Right Column (Cart)
+  const cartCol = document.createElement("div");
+  cartCol.style.flex = "3";
+  cartCol.style.display = "flex";
+  cartCol.style.flexDirection = "column";
+  cartCol.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+  cartCol.style.borderRadius = "8px";
+  cartCol.style.padding = "15px";
+  cartCol.style.overflow = "hidden";
+  cartCol.style.minHeight = "0";
+
+  body.append(catalogCol, cartCol);
+  modalContainer.appendChild(body);
+  modalOverlay.appendChild(modalContainer);
+  document.body.appendChild(modalOverlay);
+
+  // Render POS Catalog and Cart inside modal
+  const renderModalCatalog = () => {
+    catalogCol.innerHTML = "";
+
+    // Search bar
+    const searchBar = document.createElement("input");
+    searchBar.className = "menu-search";
+    searchBar.style.marginBottom = "10px";
+    searchBar.placeholder = "Cari item: bintang, fries, soju, marlboro...";
+    searchBar.value = currentBookingFnbModalSearchQuery;
+    searchBar.oninput = (e) => {
+      currentBookingFnbModalSearchQuery = e.target.value;
+      updateFilteredList();
+    };
+    catalogCol.appendChild(searchBar);
+
+    // Main Tabs Container
+    const mainTabsContainer = document.createElement("div");
+    mainTabsContainer.className = "menu-category-filter";
+    mainTabsContainer.style.marginBottom = "10px";
+    mainTabsContainer.style.borderBottom = "2px solid rgba(255, 255, 255, 0.1)";
+
+    const mainTabs = [
+      { id: "all", label: "Semua", icon: "🌐" },
+      { id: "favorites", label: "Terlaris", icon: "⭐" },
+      { id: "makanan", label: "Makanan", icon: "🍔" },
+      { id: "minuman", label: "Minuman", icon: "🍹" },
+      { id: "rokok", label: "Rokok & Lainnya", icon: "🚬" },
+    ];
+
+    mainTabs.forEach((tab) => {
+      const button = document.createElement("button");
+      button.className = tab.id === currentBookingFnbModalMainTab ? "menu-category-button active" : "menu-category-button";
+      button.style.padding = "10px 15px";
+      button.style.fontSize = "0.9rem";
+      button.textContent = `${tab.icon} ${tab.label}`;
+      button.onclick = () => {
+        currentBookingFnbModalMainTab = tab.id;
+        currentBookingFnbModalSubTab = "all"; // reset sub tab
+        currentBookingFnbModalSpiritFilter = "all"; // reset spirit filter
+        renderModalCatalog();
+      };
+      mainTabsContainer.appendChild(button);
+    });
+    catalogCol.appendChild(mainTabsContainer);
+
+    // Sub Tabs Container (only shown if needed, e.g., for Minuman)
+    if (currentBookingFnbModalMainTab === "minuman") {
+      const subTabsContainer = document.createElement("div");
+      subTabsContainer.className = "menu-category-filter";
+      subTabsContainer.style.marginBottom = "10px";
+      subTabsContainer.style.padding = "4px 0";
+
+      const subTabs = [
+        { id: "all", label: "Semua Minuman" },
+        { id: "Beverage", label: "Soft Drink" },
+        { id: "Beer", label: "Bir" },
+        { id: "Spirit", label: "Spirit / Liquors" },
+        { id: "Anggur", label: "Wine / Anggur" },
+      ];
+
+      subTabs.forEach((tab) => {
+        const button = document.createElement("button");
+        button.className = tab.id === currentBookingFnbModalSubTab ? "menu-category-button active" : "menu-category-button";
+        button.style.padding = "6px 12px";
+        button.style.fontSize = "0.8rem";
+        button.textContent = tab.label;
+        button.onclick = () => {
+          currentBookingFnbModalSubTab = tab.id;
+          currentBookingFnbModalSpiritFilter = "all"; // reset spirit filter
+          renderModalCatalog();
+        };
+        subTabsContainer.appendChild(button);
+      });
+      catalogCol.appendChild(subTabsContainer);
+    }
+
+    // Spirit Sub-classification (if Minuman -> Spirit is active)
+    if (currentBookingFnbModalMainTab === "minuman" && currentBookingFnbModalSubTab === "Spirit") {
+      const spiritContainer = document.createElement("div");
+      spiritContainer.className = "menu-category-filter spirit-filter";
+      spiritContainer.style.marginBottom = "10px";
+      spiritContainer.style.padding = "2px 0";
+
+      const subcategories = ["all", ...FNB_SPIRIT_SUBCATEGORY_ORDER];
+      subcategories.forEach((sub) => {
+        const button = document.createElement("button");
+        button.className = sub === currentBookingFnbModalSpiritFilter ? "menu-category-button active" : "menu-category-button";
+        button.style.padding = "4px 10px";
+        button.style.fontSize = "0.75rem";
+        button.textContent = sub === "all" ? "Semua Spirit" : sub;
+        button.onclick = () => {
+          currentBookingFnbModalSpiritFilter = sub;
+          renderModalCatalog();
+        };
+        spiritContainer.appendChild(button);
+      });
+      catalogCol.appendChild(spiritContainer);
+    }
+
+    // Menu list scroll area
+    const listScroll = document.createElement("div");
+    listScroll.className = "menu-list";
+    listScroll.style.flex = "1";
+    listScroll.style.overflowY = "auto";
+    listScroll.style.minHeight = "0"; // prevent flexbox layout break
+    listScroll.style.display = "flex";
+    listScroll.style.flexWrap = "wrap";
+    listScroll.style.gap = "12px";
+    listScroll.style.padding = "10px 5px";
+    listScroll.style.alignContent = "start"; // avoid vertical stretching
+
+    catalogCol.appendChild(listScroll);
+
+    const updateFilteredList = () => {
+      listScroll.innerHTML = "";
+      
+      let filtered = menuItems;
+
+      // Filter by Search
+      if (currentBookingFnbModalSearchQuery.trim()) {
+        const query = currentBookingFnbModalSearchQuery.toLowerCase().trim();
+        filtered = filtered.filter(item => 
+          String(item.menu_name || "").toLowerCase().includes(query) ||
+          String(item.category || "").toLowerCase().includes(query) ||
+          String(item.subcategory || "").toLowerCase().includes(query)
+        );
+      }
+
+      // Filter by Main Group Tab
+      if (currentBookingFnbModalMainTab === "favorites") {
+        filtered = filtered.filter(item => isFavoriteFnbMenuItem(item));
+      } else if (currentBookingFnbModalMainTab === "makanan") {
+        filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === "food");
+      } else if (currentBookingFnbModalMainTab === "minuman") {
+        const minumanCats = ["beverage", "beer", "spirit", "anggur"];
+        filtered = filtered.filter(item => minumanCats.includes(String(item.category || "").trim().toLowerCase()));
+        
+        // Filter by Sub Tab
+        if (currentBookingFnbModalSubTab !== "all") {
+          filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === currentBookingFnbModalSubTab.toLowerCase());
+        }
+
+        // Filter by Spirit classification
+        if (currentBookingFnbModalSubTab === "Spirit" && currentBookingFnbModalSpiritFilter !== "all") {
+          filtered = filtered.filter(item => {
+            const itemSub = String(item.subcategory || "").trim().toLowerCase();
+            const targetSub = currentBookingFnbModalSpiritFilter.trim().toLowerCase();
+            return itemSub === targetSub;
+          });
+        }
+      } else if (currentBookingFnbModalMainTab === "rokok") {
+        filtered = filtered.filter(item => String(item.category || "").trim().toLowerCase() === "cigarette");
+      }
+
+      if (filtered.length === 0) {
+        listScroll.appendChild(createStateMessage("Item tidak ditemukan."));
+        return;
+      }
+
+      filtered.forEach((menuItem) => {
+        const card = createMenuCardElement(menuItem);
+        
+        // Inline Reset Styles to ensure absolute visual consistency and prevent overlap
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.justifyContent = "space-between";
+        card.style.position = "relative";
+        card.style.padding = "12px";
+        card.style.minHeight = "130px";
+        card.style.width = "calc(50% - 6px)";
+        card.style.boxSizing = "border-box";
+        card.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+        card.style.borderRadius = "12px";
+        card.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+        
+        const badge = card.querySelector(".menu-category-chip");
+        if (badge) {
+          badge.style.position = "absolute";
+          badge.style.top = "8px";
+          badge.style.left = "8px";
+          badge.style.fontSize = "0.65rem";
+          badge.style.padding = "2px 6px";
+          badge.style.margin = "0";
+        }
+
+        const status = card.querySelector(".menu-status");
+        if (status) {
+          status.style.position = "absolute";
+          status.style.top = "8px";
+          status.style.right = "8px";
+          status.style.fontSize = "0.65rem";
+          status.style.padding = "2px 6px";
+          status.style.borderRadius = "4px";
+          status.style.margin = "0";
+        }
+
+        const info = card.querySelector(".menu-card-info");
+        if (info) {
+          info.style.marginTop = "22px"; // clear room for top absolute badges
+          info.style.marginBottom = "4px";
+          info.style.minWidth = "0";
+        }
+
+        const name = card.querySelector(".menu-name");
+        if (name) {
+          name.style.fontSize = "0.95rem";
+          name.style.fontWeight = "bold";
+          name.style.color = "#ffffff";
+          name.style.margin = "0 0 2px 0";
+          name.style.lineHeight = "1.2";
+          name.style.whiteSpace = "normal";
+          name.style.wordBreak = "break-word";
+        }
+
+        const meta = card.querySelector(".menu-meta");
+        if (meta) {
+          meta.style.fontSize = "0.75rem";
+          meta.style.color = "rgba(255, 255, 255, 0.4)";
+          meta.style.margin = "0";
+        }
+
+        const price = card.querySelector(".menu-price");
+        if (price) {
+          price.style.fontSize = "0.95rem";
+          price.style.color = "var(--color-success, #35b779)";
+          price.style.fontWeight = "bold";
+          price.style.margin = "2px 0 6px 0";
+        }
+
+        // Bottom row container for stock and add button
+        const bottomRow = document.createElement("div");
+        bottomRow.style.display = "flex";
+        bottomRow.style.justifyContent = "space-between";
+        bottomRow.style.alignItems = "center";
+        bottomRow.style.marginTop = "auto"; // push to bottom
+        bottomRow.style.gap = "8px";
+
+        const stockBadge = card.querySelector(".menu-stock-badge");
+        if (stockBadge) {
+          stockBadge.style.fontSize = "0.75rem";
+          stockBadge.style.padding = "2px 6px";
+          stockBadge.style.borderRadius = "4px";
+          stockBadge.style.margin = "0";
+          stockBadge.style.alignSelf = "center";
+          bottomRow.appendChild(stockBadge);
+        } else {
+          // Add a dummy spacer to align the button to the right if there's no stock badge
+          const spacer = document.createElement("div");
+          bottomRow.appendChild(spacer);
+        }
+
+        const addButton = card.querySelector(".menu-add-button");
+        if (addButton) {
+          addButton.style.width = "auto";
+          addButton.style.minWidth = "75px";
+          addButton.style.height = "26px";
+          addButton.style.minHeight = "26px";
+          addButton.style.fontSize = "0.75rem";
+          addButton.style.margin = "0";
+          addButton.style.borderRadius = "6px";
+          addButton.style.padding = "0 8px";
+          addButton.style.display = "inline-flex";
+          addButton.style.alignItems = "center";
+          addButton.style.justifyContent = "center";
+          addButton.style.alignSelf = "center";
+
+          addButton.onclick = (e) => {
+            e.stopPropagation();
+            addMenuItemToLocalCart(menuItem);
+          };
+          bottomRow.appendChild(addButton);
+        }
+
+        card.appendChild(bottomRow);
+        listScroll.appendChild(card);
+      });
+    };
+
+    updateFilteredList();
+  };
+
+  const addMenuItemToLocalCart = (menuItem) => {
+    const existing = cart.find(item => item.menu_id === menuItem.menu_id);
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      cart.push({
+        menu_id: menuItem.menu_id,
+        menu_name: menuItem.menu_name,
+        price: menuItem.price,
+        quantity: 1,
+      });
+    }
+    renderModalCart();
+  };
+
+  const renderModalCart = () => {
+    cartCol.innerHTML = "";
+
+    const cartTitle = document.createElement("h4");
+    cartTitle.style.margin = "0 0 10px 0";
+    cartTitle.style.color = "#ffffff";
+    cartTitle.textContent = "Tray Pesanan";
+    cartCol.appendChild(cartTitle);
+
+    const itemsList = document.createElement("div");
+    itemsList.style.flex = "1";
+    itemsList.style.overflowY = "auto";
+    itemsList.style.display = "flex";
+    itemsList.style.flexDirection = "column";
+    itemsList.style.gap = "8px";
+    cartCol.appendChild(itemsList);
+
+    let totalAmount = 0;
+
+    if (cart.length === 0) {
+      const emptyMsg = document.createElement("div");
+      emptyMsg.style.color = "rgba(255, 255, 255, 0.4)";
+      emptyMsg.style.fontSize = "0.9rem";
+      emptyMsg.style.textAlign = "center";
+      emptyMsg.style.marginTop = "20px";
+      emptyMsg.textContent = "Tray masih kosong.";
+      itemsList.appendChild(emptyMsg);
+    } else {
+      cart.forEach((cartItem) => {
+        const itemRow = document.createElement("div");
+        itemRow.style.display = "flex";
+        itemRow.style.justifyContent = "space-between";
+        itemRow.style.alignItems = "center";
+        itemRow.style.padding = "6px 8px";
+        itemRow.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+        itemRow.style.borderRadius = "4px";
+
+        const textGroup = document.createElement("div");
+        textGroup.style.display = "flex";
+        textGroup.style.flexDirection = "column";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.style.fontWeight = "bold";
+        nameSpan.style.fontSize = "0.85rem";
+        nameSpan.style.color = "#fff";
+        nameSpan.textContent = cartItem.menu_name;
+
+        const subtotal = cartItem.price * cartItem.quantity;
+        totalAmount += subtotal;
+
+        const priceSpan = document.createElement("span");
+        priceSpan.style.fontSize = "0.75rem";
+        priceSpan.style.color = "rgba(255, 255, 255, 0.5)";
+        priceSpan.textContent = `${formatCurrency(cartItem.price)} x ${cartItem.quantity} = ${formatCurrency(subtotal)}`;
+
+        textGroup.append(nameSpan, priceSpan);
+
+        const ctrlGroup = document.createElement("div");
+        ctrlGroup.style.display = "flex";
+        ctrlGroup.style.alignItems = "center";
+        ctrlGroup.style.gap = "4px";
+
+        const decBtn = document.createElement("button");
+        decBtn.type = "button";
+        decBtn.style.padding = "2px 6px";
+        decBtn.textContent = "-";
+        decBtn.onclick = () => {
+          cartItem.quantity -= 1;
+          if (cartItem.quantity <= 0) {
+            const index = cart.indexOf(cartItem);
+            cart.splice(index, 1);
+          }
+          renderModalCart();
+        };
+
+        const incBtn = document.createElement("button");
+        incBtn.type = "button";
+        incBtn.style.padding = "2px 6px";
+        incBtn.textContent = "+";
+        incBtn.onclick = () => {
+          cartItem.quantity += 1;
+          renderModalCart();
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.style.background = "none";
+        delBtn.style.border = "none";
+        delBtn.style.color = "var(--occupied)";
+        delBtn.style.cursor = "pointer";
+        delBtn.textContent = "🗑️";
+        delBtn.onclick = () => {
+          const index = cart.indexOf(cartItem);
+          cart.splice(index, 1);
+          renderModalCart();
+        };
+
+        ctrlGroup.append(decBtn, incBtn, delBtn);
+        itemRow.append(textGroup, ctrlGroup);
+        itemsList.appendChild(itemRow);
+      });
+    }
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "10px 0";
+    cartCol.appendChild(divider);
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+    totalRow.style.marginBottom = "15px";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Total Amount:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(totalAmount);
+
+    totalRow.append(totalLabel, totalVal);
+    cartCol.appendChild(totalRow);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "duration-custom-button";
+    confirmBtn.style.width = "100%";
+    confirmBtn.style.backgroundColor = "var(--available)";
+    confirmBtn.style.color = "#fff";
+    confirmBtn.style.fontWeight = "bold";
+    confirmBtn.textContent = "Konfirmasi Pesanan F&B";
+    confirmBtn.onclick = () => {
+      modalOverlay.remove();
+      renderRooms(); // trigger room re-render to display the F&B summary
+    };
+    cartCol.appendChild(confirmBtn);
+  };
+
+  // If menuItems is empty, try to load it dynamically and show a spinner
+  if (menuItems.length === 0) {
+    catalogCol.innerHTML = "<div style='color:rgba(255,255,255,0.6); padding:20px; text-align:center;'>⏳ Memuat daftar menu F&B...</div>";
+    Promise.all([
+      loadMenuItems(),
+      loadInventoryItems()
+    ]).then(() => {
+      console.log("showBookingFnbSelectorModal: Dynamic load success, menuItems count:", menuItems.length);
+      renderModalCatalog();
+    }).catch((err) => {
+      console.error("showBookingFnbSelectorModal: Dynamic load error:", err);
+      catalogCol.innerHTML = `<div style='color:var(--occupied); padding:20px; text-align:center;'>❌ Gagal memuat menu: ${err.message || err}</div>`;
+    });
+  } else {
+    renderModalCatalog();
+  }
+
+  renderModalCart();
+}
+
+function createPaymentSelectionElement(room) {
+  const panel = document.createElement("div");
+  panel.className = "duration-selection";
+
+  const title = document.createElement("p");
+  title.className = "duration-selection-title";
+  title.textContent = `Proses Booking untuk ${room.room_name}`;
+
+  const infoBlock = document.createElement("div");
+  infoBlock.className = "duration-phase-note";
+  infoBlock.style.margin = "8px 0";
+  infoBlock.style.padding = "6px";
+  infoBlock.style.backgroundColor = "rgba(255,255,255,0.05)";
+  infoBlock.style.borderRadius = "4px";
+  
+  let infoHtml = `<strong>Nama Pelanggan:</strong> ${room.customer_name || "-"}<br>`;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    infoHtml += `<strong>Paket:</strong> ${pkg ? pkg.package_name : room.package_id}`;
+  } else {
+    infoHtml += `<strong>Durasi:</strong> ${room.booked_duration_minutes || "-"} menit (Regular)`;
+  }
+  infoBlock.innerHTML = infoHtml;
+  panel.appendChild(title);
+  panel.appendChild(infoBlock);
+
+  const role = getCurrentOperatorRole();
+
+  // Prepayment F&B Section
+  const fnbPrepayField = document.createElement("div");
+  fnbPrepayField.style.display = "flex";
+  fnbPrepayField.style.flexDirection = "column";
+  fnbPrepayField.style.gap = "6px";
+  fnbPrepayField.style.marginTop = "8px";
+  fnbPrepayField.style.marginBottom = "8px";
+  fnbPrepayField.style.padding = "8px";
+  fnbPrepayField.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+  fnbPrepayField.style.borderRadius = "6px";
+  fnbPrepayField.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+
+  const fnbHeader = document.createElement("div");
+  fnbHeader.style.display = "flex";
+  fnbHeader.style.justifyContent = "space-between";
+  fnbHeader.style.alignItems = "center";
+
+  const fnbLabel = document.createElement("span");
+  fnbLabel.className = "duration-payment-label";
+  fnbLabel.style.fontWeight = "bold";
+  fnbLabel.textContent = "Detail Pesanan F&B:";
+
+  fnbHeader.appendChild(fnbLabel);
+
+  if (role !== "receptionist") {
+    const addFnbBtn = document.createElement("button");
+    addFnbBtn.className = "room-button";
+    addFnbBtn.type = "button";
+    addFnbBtn.style.padding = "2px 6px";
+    addFnbBtn.style.fontSize = "0.75rem";
+    addFnbBtn.style.backgroundColor = "var(--available)";
+    addFnbBtn.style.color = "#fff";
+    addFnbBtn.style.border = "none";
+    addFnbBtn.style.borderRadius = "4px";
+    addFnbBtn.textContent = "➕ Tambah Menu";
+    addFnbBtn.onclick = () => {
+      showBookingFnbSelectorModal(room, "prepay");
+    };
+    fnbHeader.appendChild(addFnbBtn);
+  }
+
+  fnbPrepayField.appendChild(fnbHeader);
+
+  let fnbTotal = 0;
+
+  if (isLoadingPrepayFnb) {
+    const loadingMsg = document.createElement("span");
+    loadingMsg.style.fontSize = "0.8rem";
+    loadingMsg.style.color = "rgba(255, 255, 255, 0.5)";
+    loadingMsg.textContent = "⏳ Memuat data F&B...";
+    fnbPrepayField.appendChild(loadingMsg);
+  } else if (prepayFnbError) {
+    const errorMsg = document.createElement("span");
+    errorMsg.style.fontSize = "0.8rem";
+    errorMsg.style.color = "var(--occupied)";
+    errorMsg.textContent = `❌ ${prepayFnbError}`;
+    fnbPrepayField.appendChild(errorMsg);
+  } else if (prepayCartItems.length > 0) {
+    const itemsList = document.createElement("div");
+    itemsList.style.display = "flex";
+    itemsList.style.flexDirection = "column";
+    itemsList.style.gap = "6px";
+    itemsList.style.marginTop = "6px";
+
+    prepayCartItems.forEach((cartItem) => {
+      const itemRow = document.createElement("div");
+      itemRow.style.display = "flex";
+      itemRow.style.justifyContent = "space-between";
+      itemRow.style.alignItems = "center";
+      itemRow.style.fontSize = "0.85rem";
+
+      const textSpan = document.createElement("span");
+      textSpan.textContent = `${cartItem.menu_name} x${cartItem.quantity}`;
+
+      const rightGroup = document.createElement("div");
+      rightGroup.style.display = "flex";
+      rightGroup.style.alignItems = "center";
+      rightGroup.style.gap = "8px";
+
+      const priceSpan = document.createElement("span");
+      const subtotal = cartItem.price * cartItem.quantity;
+      fnbTotal += subtotal;
+      priceSpan.textContent = formatCurrency(subtotal);
+      rightGroup.appendChild(priceSpan);
+
+      if (role !== "receptionist") {
+        const decBtn = document.createElement("button");
+        decBtn.type = "button";
+        decBtn.style.padding = "1px 4px";
+        decBtn.style.fontSize = "0.75rem";
+        decBtn.textContent = "-";
+        decBtn.onclick = () => {
+          cartItem.quantity -= 1;
+          if (cartItem.quantity <= 0) {
+            const idx = prepayCartItems.indexOf(cartItem);
+            prepayCartItems.splice(idx, 1);
+          }
+          renderRooms();
+        };
+
+        const incBtn = document.createElement("button");
+        incBtn.type = "button";
+        incBtn.style.padding = "1px 4px";
+        incBtn.style.fontSize = "0.75rem";
+        incBtn.textContent = "+";
+        incBtn.onclick = () => {
+          cartItem.quantity += 1;
+          renderRooms();
+        };
+
+        rightGroup.append(decBtn, incBtn);
+      }
+
+      itemRow.append(textSpan, rightGroup);
+      itemsList.appendChild(itemRow);
+    });
+
+    const divider = document.createElement("div");
+    divider.style.height = "1px";
+    divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+    divider.style.margin = "4px 0";
+
+    const totalRow = document.createElement("div");
+    totalRow.style.display = "flex";
+    totalRow.style.justifyContent = "space-between";
+    totalRow.style.fontWeight = "bold";
+    totalRow.style.color = "var(--color-success)";
+
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Subtotal F&B:";
+    const totalVal = document.createElement("span");
+    totalVal.textContent = formatCurrency(fnbTotal);
+
+    totalRow.append(totalLabel, totalVal);
+    itemsList.append(divider, totalRow);
+    fnbPrepayField.appendChild(itemsList);
+  } else {
+    const emptyNote = document.createElement("span");
+    emptyNote.style.fontSize = "0.75rem";
+    emptyNote.style.color = "rgba(255, 255, 255, 0.4)";
+    emptyNote.textContent = "Tidak ada pesanan makanan/minuman.";
+    fnbPrepayField.appendChild(emptyNote);
+  }
+
+  panel.appendChild(fnbPrepayField);
+
+  // Kalkulasi Room Prepay. LC direkap final di akhir sesi.
+  let roomPrepayCharge = 0;
+  if (room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    roomPrepayCharge = pkg ? pkg.selling_price : 0;
+  } else {
+    roomPrepayCharge = Math.ceil((Number(room.booked_duration_minutes) || 0) / 60 * (Number(room.rate_per_hour) || 0));
+  }
+
+  let activeGrandTotal = roomPrepayCharge + fnbTotal;
+
+  // Ringkasan Pembayaran (Billing Summary)
+  const billingSummary = document.createElement("div");
+  billingSummary.style.marginTop = "8px";
+  billingSummary.style.marginBottom = "12px";
+  billingSummary.style.padding = "10px";
+  billingSummary.style.backgroundColor = "rgba(53, 183, 121, 0.08)";
+  billingSummary.style.borderRadius = "6px";
+  billingSummary.style.border = "1px solid rgba(53, 183, 121, 0.2)";
+
+  const summaryTitle = document.createElement("p");
+  summaryTitle.style.margin = "0 0 6px 0";
+  summaryTitle.style.fontWeight = "bold";
+  summaryTitle.style.color = "var(--color-success)";
+  summaryTitle.textContent = "Ringkasan Pembayaran Awal:";
+  billingSummary.appendChild(summaryTitle);
+
+  const roomRow = document.createElement("div");
+  roomRow.style.display = "flex";
+  roomRow.style.justifyContent = "space-between";
+  roomRow.style.fontSize = "0.85rem";
+  roomRow.style.color = "rgba(255, 255, 255, 0.8)";
+  roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(roomPrepayCharge)}</span>`;
+  billingSummary.appendChild(roomRow);
+
+  const fnbRow = document.createElement("div");
+  fnbRow.style.display = "flex";
+  fnbRow.style.justifyContent = "space-between";
+  fnbRow.style.fontSize = "0.85rem";
+  fnbRow.style.color = "rgba(255, 255, 255, 0.8)";
+  fnbRow.innerHTML = `<span>Pesanan F&B:</span> <span>${formatCurrency(fnbTotal)}</span>`;
+  if (fnbTotal > 0) {
+    billingSummary.appendChild(fnbRow);
+  }
+
+  const sumDivider = document.createElement("div");
+  sumDivider.style.height = "1px";
+  sumDivider.style.backgroundColor = "rgba(53, 183, 121, 0.2)";
+  sumDivider.style.margin = "6px 0";
+  billingSummary.appendChild(sumDivider);
+
+  const grandTotalRow = document.createElement("div");
+  grandTotalRow.style.display = "flex";
+  grandTotalRow.style.justifyContent = "space-between";
+  grandTotalRow.style.fontWeight = "bold";
+  grandTotalRow.style.fontSize = "1rem";
+  grandTotalRow.style.color = "#ffffff";
+  grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(activeGrandTotal)}</span>`;
+  billingSummary.appendChild(grandTotalRow);
+
+  // Promo / Voucher Input Group (Hanya Kasir)
+  let appliedPromoCode = "";
+  let appliedDiscountVal = 0;
+
+  if (role !== "receptionist") {
+    const promoGroup = document.createElement("div");
+    promoGroup.style.display = "flex";
+    promoGroup.style.flexDirection = "column";
+    promoGroup.style.gap = "6px";
+    promoGroup.style.marginTop = "12px";
+    promoGroup.style.marginBottom = "12px";
+    promoGroup.style.padding = "8px";
+    promoGroup.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+    promoGroup.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+    promoGroup.style.borderRadius = "6px";
+
+    const promoLabel = document.createElement("span");
+    promoLabel.style.fontSize = "12px";
+    promoLabel.style.color = "var(--muted)";
+    promoLabel.textContent = "Kode Promo / Voucher (Opsional):";
+
+    const promoInputRow = document.createElement("div");
+    promoInputRow.style.display = "flex";
+    promoInputRow.style.gap = "8px";
+
+    const promoInput = document.createElement("input");
+    promoInput.type = "text";
+    promoInput.placeholder = "Masukkan kode...";
+    promoInput.style.flex = "1";
+    promoInput.style.minWidth = "0";
+    promoInput.style.width = "100%";
+    promoInput.style.padding = "6px";
+    promoInput.style.fontSize = "12px";
+    promoInput.style.backgroundColor = "var(--surface)";
+    promoInput.style.color = "var(--text)";
+    promoInput.style.border = "1px solid var(--border)";
+    promoInput.style.borderRadius = "4px";
+    promoInput.oninput = (e) => {
+      e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+    };
+
+    const promoBtn = document.createElement("button");
+    promoBtn.type = "button";
+    promoBtn.className = "erp-btn erp-btn-secondary";
+    promoBtn.style.padding = "6px 12px";
+    promoBtn.style.fontSize = "12px";
+    promoBtn.textContent = "Terapkan";
+
+    const promoNotice = document.createElement("div");
+    promoNotice.style.fontSize = "11px";
+    promoNotice.style.marginTop = "4px";
+    promoNotice.style.display = "none";
+
+    promoBtn.onclick = async () => {
+      const code = promoInput.value.trim().toUpperCase();
+      if (!code) {
+        appliedPromoCode = "";
+        appliedDiscountVal = 0;
+        promoNotice.style.color = "var(--muted)";
+        promoNotice.textContent = "Kode dikosongkan.";
+        promoNotice.style.display = "block";
+        updatePrepayTotals();
+        return;
+      }
+
+      promoBtn.disabled = true;
+      promoBtn.textContent = "⌛ Check...";
+
+      try {
+        if (!API_BASE_URL.trim()) {
+          if (code === "MERDEKA50") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.ceil(0.5 * roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+          } else if (code === "VCH100K") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.min(100000, roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
+          } else {
+            appliedPromoCode = "";
+            appliedDiscountVal = 0;
+            promoNotice.style.color = "var(--error)";
+            promoNotice.textContent = `❌ Kode promo "${code}" tidak valid.`;
+          }
+          promoNotice.style.display = "block";
+          updatePrepayTotals();
+          return;
+        }
+
+        const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomPrepayCharge}`;
+        const res = await fetchApiGet(url);
+        const data = await res.json();
+        if (data && data.success) {
+          appliedPromoCode = data.code;
+          appliedDiscountVal = data.discount;
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang: Potongan sewa room <strong>${formatCurrency(data.discount)}</strong>`;
+          promoNotice.style.display = "block";
+        } else {
+          appliedPromoCode = "";
+          appliedDiscountVal = 0;
+          promoNotice.style.color = "var(--error)";
+          promoNotice.textContent = `❌ ${data.error || "Kode tidak valid"}`;
+          promoNotice.style.display = "block";
+        }
+      } catch (error) {
+        console.error(error);
+        promoNotice.style.color = "var(--error)";
+        promoNotice.textContent = "❌ Gagal memvalidasi kode.";
+        promoNotice.style.display = "block";
+      } finally {
+        promoBtn.disabled = false;
+        promoBtn.textContent = "Terapkan";
+        updatePrepayTotals();
+      }
+    };
+
+    function updatePrepayTotals() {
+      const discountedRoomTotal = Math.max(0, roomPrepayCharge - appliedDiscountVal);
+      const newGrandTotal = discountedRoomTotal + lcFeeTotal + fnbTotal;
+      activeGrandTotal = newGrandTotal;
+      roomRow.innerHTML = `<span>Sewa Room:</span> <span>${formatCurrency(discountedRoomTotal)}</span>`;
+      grandTotalRow.innerHTML = `<span>Total Bayar:</span> <span style="color:var(--color-success)">${formatCurrency(activeGrandTotal)}</span>`;
+
+      if (typeof renderShortcuts === "function") {
+        renderShortcuts(activeGrandTotal);
+      }
+      if (typeof recalculateChange === "function") {
+        recalculateChange(activeGrandTotal);
+      }
+    }
+
+    promoInputRow.append(promoInput, promoBtn);
+    promoGroup.append(promoLabel, promoInputRow, promoNotice);
+    billingSummary.appendChild(promoGroup);
+  }
+
+  panel.appendChild(billingSummary);
+  
+  let renderShortcuts, recalculateChange;
+
+  if (role !== "receptionist") {
+    const paymentField = document.createElement("label");
+    paymentField.className = "duration-payment-field";
+
+    const paymentLabel = document.createElement("span");
+    paymentLabel.className = "duration-payment-label";
+    paymentLabel.textContent = "Metode Pembayaran:";
+
+    const paymentSelect = document.createElement("select");
+    paymentSelect.className = "duration-payment-select";
+    paymentSelect.id = `payment-method-select-${room.room_id}`;
+    
+    [
+      ["cash", "Cash"],
+      ["transfer", "Transfer/QRIS"],
+    ].forEach(([value, labelText]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = labelText;
+      paymentSelect.appendChild(option);
+    });
+
+    paymentField.append(paymentLabel, paymentSelect);
+    panel.appendChild(paymentField);
+
+    // Cash Calculator Container (Opsi A)
+    const calculatorContainer = document.createElement("div");
+    calculatorContainer.className = "duration-payment-calculator";
+    calculatorContainer.style.display = paymentSelect.value === "cash" ? "flex" : "none";
+    calculatorContainer.style.flexDirection = "column";
+    calculatorContainer.style.gap = "10px";
+    calculatorContainer.style.padding = "10px 12px";
+    calculatorContainer.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+    calculatorContainer.style.border = "1px solid var(--border)";
+    calculatorContainer.style.borderRadius = "8px";
+    calculatorContainer.style.marginTop = "8px";
+    calculatorContainer.style.marginBottom = "8px";
+
+    const calcHeader = document.createElement("div");
+    calcHeader.style.display = "flex";
+    calcHeader.style.justifyContent = "space-between";
+    calcHeader.style.alignItems = "center";
+    
+    const calcTitle = document.createElement("span");
+    calcTitle.style.fontSize = "11px";
+    calcTitle.style.fontWeight = "800";
+    calcTitle.style.color = "var(--muted)";
+    calcTitle.style.textTransform = "uppercase";
+    calcTitle.style.letterSpacing = "0.5px";
+    calcTitle.textContent = "Kalkulator Kasir (Tunai)";
+    calcHeader.appendChild(calcTitle);
+
+    const inputInfoRow = document.createElement("div");
+    inputInfoRow.style.display = "flex";
+    inputInfoRow.style.gap = "14px";
+    inputInfoRow.style.alignItems = "center";
+    inputInfoRow.style.flexWrap = "wrap";
+
+    const inputGroup = document.createElement("div");
+    inputGroup.style.display = "flex";
+    inputGroup.style.flexDirection = "column";
+    inputGroup.style.gap = "4px";
+    inputGroup.style.flex = "1 1 180px";
+
+    const inputLabel = document.createElement("span");
+    inputLabel.style.fontSize = "11px";
+    inputLabel.style.color = "var(--muted)";
+    inputLabel.textContent = "Uang Diterima (Rp):";
+
+    const cashInput = document.createElement("input");
+    cashInput.type = "text";
+    cashInput.placeholder = "Masukkan jumlah...";
+    cashInput.style.padding = "8px 10px";
+    cashInput.style.fontSize = "13px";
+    cashInput.style.fontWeight = "700";
+    cashInput.style.backgroundColor = "var(--surface)";
+    cashInput.style.color = "var(--text)";
+    cashInput.style.border = "1px solid var(--border)";
+    cashInput.style.borderRadius = "6px";
+    cashInput.style.width = "100%";
+
+    inputGroup.append(inputLabel, cashInput);
+
+    const resultGroup = document.createElement("div");
+    resultGroup.style.display = "flex";
+    resultGroup.style.flexDirection = "column";
+    resultGroup.style.gap = "4px";
+    resultGroup.style.flex = "1 1 180px";
+
+    const resultLabel = document.createElement("span");
+    resultLabel.style.fontSize = "11px";
+    resultLabel.style.color = "var(--muted)";
+    resultLabel.textContent = "Kembalian:";
+
+    const changeDisplay = document.createElement("span");
+    changeDisplay.style.fontSize = "16px";
+    changeDisplay.style.fontWeight = "900";
+    changeDisplay.style.color = "var(--muted)";
+    changeDisplay.textContent = "-";
+
+    resultGroup.append(resultLabel, changeDisplay);
+    inputInfoRow.append(inputGroup, resultGroup);
+
+    const shortcutsRow = document.createElement("div");
+    shortcutsRow.style.display = "flex";
+    shortcutsRow.style.flexWrap = "wrap";
+    shortcutsRow.style.gap = "6px";
+    shortcutsRow.style.marginTop = "2px";
+
+    calculatorContainer.append(calcHeader, inputInfoRow, shortcutsRow);
+
+    // Helpers
+    function formatIndonesianNumber(num) {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    }
+    function parseIndonesianNumber(str) {
+      return Number(str.replace(/\./g, "")) || 0;
+    }
+
+    function getShortcutValues(total) {
+      if (total <= 0) return [];
+      const shortcuts = new Set();
+      shortcuts.add(total);
+      const denoms = [50000, 100000, 500000];
+      denoms.forEach(d => {
+        const val = Math.ceil(total / d) * d;
+        if (val > total) shortcuts.add(val);
+      });
+      const commonBills = [100000, 200000, 500000, 1000000, 1500000, 2000000];
+      commonBills.forEach(b => {
+        if (b > total && b < total * 3) shortcuts.add(b);
+      });
+      return Array.from(shortcuts).sort((a, b) => a - b).slice(0, 5);
+    }
+
+    renderShortcuts = function(total) {
+      shortcutsRow.replaceChildren();
+      const values = getShortcutValues(total);
+      values.forEach(val => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "erp-btn erp-btn-secondary";
+        btn.style.padding = "4px 8px";
+        btn.style.fontSize = "11px";
+        btn.style.fontWeight = "700";
+        if (val === total) {
+          btn.textContent = "Uang Pas";
+          btn.style.borderColor = "var(--success)";
+          btn.style.color = "var(--success)";
+        } else {
+          btn.textContent = formatCurrency(val);
+        }
+        btn.onclick = () => {
+          cashInput.value = formatIndonesianNumber(val);
+          recalculateChange(total);
+        };
+        shortcutsRow.appendChild(btn);
+      });
+    };
+
+    recalculateChange = function(total) {
+      const cashText = cashInput.value;
+      if (isLoadingPrepayFnb) {
+        startButton.disabled = true;
+        startButton.style.opacity = "0.5";
+        startButton.style.cursor = "not-allowed";
+        return;
+      }
+
+      if (!cashText) {
+        changeDisplay.textContent = "-";
+        changeDisplay.style.color = "var(--muted)";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+        return;
+      }
+
+      const cash = parseIndonesianNumber(cashText);
+      const change = cash - total;
+
+      if (change >= 0) {
+        changeDisplay.textContent = formatCurrency(change);
+        changeDisplay.style.color = "var(--success)";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+      } else {
+        changeDisplay.textContent = `Kurang ${formatCurrency(Math.abs(change))}`;
+        changeDisplay.style.color = "var(--error)";
+        startButton.disabled = true;
+        startButton.style.opacity = "0.5";
+        startButton.style.cursor = "not-allowed";
+      }
+    };
+
+    cashInput.oninput = (e) => {
+      let cleanVal = e.target.value.replace(/\D/g, "");
+      if (cleanVal) {
+        e.target.value = formatIndonesianNumber(cleanVal);
+      } else {
+        e.target.value = "";
+      }
+      recalculateChange(activeGrandTotal);
+    };
+
+    paymentSelect.onchange = () => {
+      if (paymentSelect.value === "cash") {
+        calculatorContainer.style.display = "flex";
+        cashInput.focus();
+        recalculateChange(activeGrandTotal);
+      } else {
+        calculatorContainer.style.display = "none";
+        startButton.disabled = false;
+        startButton.style.opacity = "1";
+        startButton.style.cursor = "pointer";
+      }
+    };
+
+    panel.appendChild(calculatorContainer);
+
+    const startButton = document.createElement("button");
+    startButton.className = "duration-custom-button";
+    startButton.type = "button";
+    startButton.style.backgroundColor = "var(--available)";
+    startButton.style.color = "#fff";
+    startButton.style.fontWeight = "800";
+    startButton.style.boxShadow = "0 4px 12px rgba(53, 183, 121, 0.25)";
+    startButton.style.width = "100%";
+    startButton.style.marginBottom = "8px";
+    if (isLoadingPrepayFnb) {
+      startButton.disabled = true;
+      startButton.style.opacity = "0.5";
+      startButton.style.cursor = "not-allowed";
+      startButton.textContent = "⏳ Memuat data F&B...";
+    } else {
+      startButton.textContent = "Terima Pembayaran & Mulai";
+      startButton.onclick = async () => {
+        const method = paymentSelect.value;
+        await payAndStartSession(room.room_id, method, appliedPromoCode);
+      };
+    }
+    panel.appendChild(startButton);
+
+    // Initial load
+    renderShortcuts(activeGrandTotal);
+    recalculateChange(activeGrandTotal);
+  } else {
+    const notice = document.createElement("p");
+    notice.className = "duration-phase-note";
+    notice.style.color = "var(--color-warning)";
+    notice.style.marginBottom = "8px";
+    notice.textContent = "Menunggu pembayaran pelanggan di kasir.";
+    panel.appendChild(notice);
+  }
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "duration-cancel-button";
+  cancelButton.type = "button";
+  cancelButton.style.backgroundColor = "var(--occupied)";
+  cancelButton.style.color = "#fff";
+  cancelButton.style.fontWeight = "800";
+  cancelButton.style.boxShadow = "0 4px 12px rgba(216, 106, 95, 0.25)";
+  cancelButton.style.width = "100%";
+  cancelButton.style.marginBottom = "8px";
+  cancelButton.textContent = "Batalkan Booking";
+  cancelButton.onclick = async () => {
+    if (confirm("Apakah Anda yakin ingin membatalkan booking room ini?")) {
+      await cancelBooking(room.room_id);
+    }
+  };
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "duration-cancel-button";
+  closeButton.type = "button";
+  closeButton.style.backgroundColor = "rgba(255,255,255,0.1)";
+  closeButton.style.color = "#fff";
+  closeButton.style.width = "100%";
+  closeButton.textContent = "Tutup";
+  closeButton.onclick = () => {
+    cancelPaymentSelection();
+  };
+
+  panel.append(cancelButton, closeButton);
 
   return panel;
 }
@@ -4775,7 +8858,10 @@ function createExtendSelectionElement(room) {
     button.dataset.action = "extend-session-duration";
     button.dataset.roomId = room.room_id;
     button.dataset.addMinutes = String(minutes);
-    button.textContent = labelText;
+    if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
+      button.disabled = true;
+    }
+    button.textContent = isExtendingSession ? "Memproses..." : labelText;
     options.appendChild(button);
   });
 
@@ -4790,15 +8876,32 @@ function createExtendSelectionElement(room) {
   input.placeholder = "Custom menit";
   input.dataset.action = "update-custom-extend";
   input.value = customExtendMinutes;
+  if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
+    input.disabled = true;
+  }
 
   const customButton = document.createElement("button");
   customButton.className = "extend-custom-button";
   customButton.type = "button";
   customButton.dataset.action = "extend-session-custom-duration";
   customButton.dataset.roomId = room.room_id;
-  customButton.textContent = "Tambah Custom";
+  if (getCurrentOperatorRole() === "receptionist" || isExtendingSession) {
+    customButton.disabled = true;
+  }
+  customButton.textContent = isExtendingSession ? "Memproses..." : "Tambah Custom";
 
   custom.append(input, customButton);
+
+  const paymentField = document.createElement("div");
+  paymentField.className = "extend-note-field";
+  paymentField.style.backgroundColor = "rgba(124, 58, 237, 0.1)";
+  paymentField.style.padding = "8px 12px";
+  paymentField.style.borderRadius = "var(--radius-sm)";
+  paymentField.style.border = "1px dashed rgba(124, 58, 237, 0.3)";
+  paymentField.style.fontSize = "12px";
+  paymentField.style.color = "#a78bfa";
+  paymentField.style.textAlign = "center";
+  paymentField.textContent = "ℹ️ Biaya tambahan waktu akan ditagihkan saat checkout (Open Bill).";
 
   const noteField = document.createElement("div");
   noteField.className = "extend-note-field";
@@ -4823,7 +8926,7 @@ function createExtendSelectionElement(room) {
   cancelButton.dataset.action = "cancel-extend-selection";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, noteField, cancelButton);
+  panel.append(title, options, custom, paymentField, noteField, cancelButton);
 
   return panel;
 }
@@ -4841,11 +8944,11 @@ function createMenuPanelElement() {
   const title = document.createElement("h2");
   title.className = "menu-panel-title";
   title.id = "menu-panel-title";
-  title.textContent = "Menu F&B";
+  title.textContent = "POS F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "menu-panel-subtitle";
-  subtitle.textContent = "Daftar makanan dan minuman dari Google Sheets.";
+  subtitle.textContent = "Cari cepat, pilih kategori, lalu tambah item ke tray pesanan.";
 
   titleGroup.append(title, subtitle);
   header.appendChild(titleGroup);
@@ -4856,12 +8959,12 @@ function createMenuPanelElement() {
   const search = document.createElement("input");
   search.className = "menu-search";
   search.type = "search";
-  search.placeholder = "Cari menu...";
+  search.placeholder = "Cari item: bintang, fries, soju, marlboro...";
   search.value = menuSearchQuery;
   search.dataset.action = "search-menu";
   search.setAttribute("aria-label", "Cari menu F&B");
 
-  toolbar.append(search, createMenuCategoryFilterElement());
+  toolbar.append(search);
 
   const list = document.createElement("div");
   list.className = "menu-list";
@@ -4886,7 +8989,7 @@ function createMenuPanelElement() {
     }
   }
 
-  panel.append(header, toolbar, list);
+  panel.append(header, createMenuCategoryFilterElement(), createMenuSpiritFilterElement(), toolbar, list);
 
   return panel;
 }
@@ -4895,17 +8998,52 @@ function createMenuCategoryFilterElement() {
   const filter = document.createElement("div");
   filter.className = "menu-category-filter";
   filter.setAttribute("aria-label", "Filter kategori Menu F&B");
+  filter.setAttribute("role", "tablist");
 
-  [["all", "Semua"], ...getMenuCategories().map((category) => [category, category])].forEach(
-    ([value, labelText]) => {
+  getMenuCategories().forEach(
+    (value) => {
+      const labelText = FNB_CATEGORY_LABELS[value] || value;
+      const icon = FNB_CATEGORY_ICONS[value] || "🏷️";
       const button = document.createElement("button");
       button.className =
         value === menuCategoryFilter
           ? "menu-category-button active"
           : "menu-category-button";
       button.type = "button";
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", String(value === menuCategoryFilter));
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
+      button.innerHTML = `<span class="category-tab-icon">${icon}</span><span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
+      filter.appendChild(button);
+    }
+  );
+
+  return filter;
+}
+
+function createMenuSpiritFilterElement() {
+  const subcategories = getAvailableSpiritSubcategories();
+  const filter = document.createElement("div");
+  filter.className = menuCategoryFilter === "Spirit"
+    ? "menu-spirit-filter"
+    : "menu-spirit-filter is-hidden";
+  filter.setAttribute("aria-label", "Filter subkategori Spirit");
+
+  if (menuCategoryFilter !== "Spirit" || subcategories.length === 0) {
+    return filter;
+  }
+
+  [["all", "Semua"], ...subcategories.map((subcategory) => [subcategory, subcategory])].forEach(
+    ([value, labelText]) => {
+      const button = document.createElement("button");
+      button.className =
+        value === menuSpiritFilter
+          ? "menu-spirit-button active"
+          : "menu-spirit-button";
+      button.type = "button";
+      button.dataset.action = "filter-menu-spirit";
+      button.dataset.subcategory = value;
       button.textContent = labelText;
       filter.appendChild(button);
     }
@@ -4916,10 +9054,26 @@ function createMenuCategoryFilterElement() {
 
 function createMenuCardElement(menuItem) {
   const card = document.createElement("article");
-  card.className =
-    menuItem.status === "inactive" ? "menu-card inactive" : "menu-card";
+  const normalizedStatus = String(menuItem.status || "").trim().toLowerCase();
+  const isInactive = normalizedStatus !== "active";
+  const stockInfo = getDynamicMenuStockInfo(menuItem);
+  const hasStockTracking = stockInfo.hasTracking;
+  const availablePortions = stockInfo.availablePortions;
+  const isOutOfStock = hasStockTracking && availablePortions <= 0;
+
+  let cardClass = "menu-card";
+  if (isInactive) {
+    cardClass += " inactive";
+  } else if (isOutOfStock) {
+    cardClass += " out-of-stock";
+  }
+  card.className = cardClass;
+
+  const classification = getFnbMenuClassification(menuItem);
+  const isFavorite = isFavoriteFnbMenuItem(menuItem);
 
   const info = document.createElement("div");
+  info.className = "menu-card-info";
 
   const name = document.createElement("h3");
   name.className = "menu-name";
@@ -4927,32 +9081,63 @@ function createMenuCardElement(menuItem) {
 
   const meta = document.createElement("p");
   meta.className = "menu-meta";
-  meta.textContent = menuItem.category || "Tanpa kategori";
+  const primaryLabel = FNB_CATEGORY_LABELS[classification.primary] || classification.primary || "Tanpa kategori";
+  meta.textContent = classification.subcategory
+    ? `${primaryLabel} / ${classification.subcategory}`
+    : primaryLabel;
 
   info.append(name, meta);
+
+  const badge = document.createElement("span");
+  badge.className = isFavorite ? "menu-category-chip favorite" : "menu-category-chip";
+  badge.textContent = isFavorite ? "Favorit" : (FNB_CATEGORY_LABELS[classification.primary] || classification.primary);
 
   const price = document.createElement("p");
   price.className = "menu-price";
   price.textContent = formatCurrency(menuItem.price);
 
   const status = document.createElement("span");
-  const statusClass = menuItem.status === "active" ? "active" : "inactive";
+  const statusClass = isInactive ? "inactive" : "active";
   status.className = withStatusBadge(
     `menu-status ${statusClass}`,
     statusClass === "active" ? "success" : "neutral"
   );
-  status.textContent = getMenuStatusLabel(menuItem.status);
+  status.textContent = getMenuStatusLabel(normalizedStatus);
+
+  card.append(badge, info, price);
+
+  if (hasStockTracking) {
+    const stockBadge = document.createElement("span");
+    const unitStr = stockInfo.unit ? ` ${stockInfo.unit}` : "";
+    if (isOutOfStock) {
+      stockBadge.className = "menu-stock-badge out-of-stock";
+      stockBadge.textContent = "Stok Habis";
+    } else {
+      stockBadge.className = availablePortions <= 5 ? "menu-stock-badge low-stock" : "menu-stock-badge";
+      stockBadge.textContent = `Stok: ${availablePortions}${unitStr}`;
+    }
+    card.appendChild(stockBadge);
+  }
+
+  card.appendChild(status);
 
   const addButton = document.createElement("button");
-  const isActive = menuItem.status === "active";
-  addButton.className = isActive ? "menu-add-button" : "menu-add-button disabled";
+  const canAdd = !isInactive && !isOutOfStock;
+  addButton.className = canAdd ? "menu-add-button" : "menu-add-button disabled";
   addButton.type = "button";
   addButton.dataset.action = "add-menu-to-cart";
   addButton.dataset.menuId = menuItem.menu_id || "";
-  addButton.disabled = !isActive;
-  addButton.textContent = isActive ? "Tambah ke Keranjang" : "Tidak Aktif";
+  addButton.disabled = !canAdd;
 
-  card.append(info, price, status, addButton);
+  if (isInactive) {
+    addButton.textContent = "Tidak Aktif";
+  } else if (isOutOfStock) {
+    addButton.textContent = "Stok Habis";
+  } else {
+    addButton.textContent = "+ Tambah";
+  }
+
+  card.appendChild(addButton);
 
   return card;
 }
@@ -4997,6 +9182,7 @@ function createFbOrderPanelElement() {
     createFbRoomInfoElement(),
     createFbCartElement(),
     createFbCartTotalElement(),
+    createFbPaymentMethodElement(),
     createFnbOrderNoteElement(),
     lastFnbOrder
       ? createLastFnbOrderElement(lastFnbOrder.order, lastFnbOrder.items)
@@ -5010,6 +9196,35 @@ function createFbOrderPanelElement() {
 function createFbRoomControlElement() {
   const control = document.createElement("div");
   control.className = "fb-room-control";
+
+  const modeLabel = document.createElement("label");
+  modeLabel.className = "transaction-label";
+  modeLabel.textContent = "Jenis Order";
+
+  const modeButtons = document.createElement("div");
+  modeButtons.className = "fb-order-mode-buttons";
+  [
+    ["room", "Order Room"],
+    ["general", "Order F&B Umum"],
+  ].forEach(([mode, labelText]) => {
+    const button = document.createElement("button");
+    button.className = fnbOrderMode === mode ? "fb-order-mode-button active" : "fb-order-mode-button";
+    button.type = "button";
+    button.dataset.action = "set-fnb-order-mode";
+    button.dataset.mode = mode;
+    button.textContent = labelText;
+    modeButtons.appendChild(button);
+  });
+
+  control.append(modeLabel, modeButtons);
+
+  if (fnbOrderMode === "general") {
+    const info = document.createElement("p");
+    info.className = "fb-room-warning";
+    info.textContent = "Order umum disimpan sebagai Open Bill dan dibayar saat tagihan F&B umum ditutup.";
+    control.appendChild(info);
+    return control;
+  }
 
   const label = document.createElement("label");
   label.className = "transaction-label";
@@ -5056,6 +9271,19 @@ function createFbRoomInfoElement() {
   info.className = "fb-room-info";
 
   const selectedRoom = getSelectedFbRoom();
+
+  if (fnbOrderMode === "general") {
+    const roomName = document.createElement("p");
+    roomName.className = "fb-cart-name";
+    roomName.textContent = "F&B Umum";
+
+    const roomStatus = document.createElement("p");
+    roomStatus.className = "fb-cart-meta";
+    roomStatus.textContent = "Tidak terkait room aktif";
+
+    info.append(roomName, roomStatus);
+    return info;
+  }
 
   const roomName = document.createElement("p");
   roomName.className = "fb-cart-name";
@@ -5115,7 +9343,7 @@ function createFbCartRowElement(item) {
 
   const meta = document.createElement("p");
   meta.className = "fb-cart-meta";
-  meta.textContent = item.category || "Tanpa kategori";
+  meta.textContent = FNB_CATEGORY_LABELS[item.category] || item.category || "Tanpa kategori";
 
   info.append(name, meta);
 
@@ -5177,23 +9405,147 @@ function createFbCartTotalElement() {
   return total;
 }
 
-function createFnbOrderNoteElement() {
+function createFbPaymentMethodElement() {
+  const selectedRoom = getSelectedFbRoom();
+  const isGeneralOrder = fnbOrderMode === "general";
+  if ((!isGeneralOrder && (!selectedRoom || !isFbOrderRoomSelectable(selectedRoom))) || fbCartItems.length === 0) {
+    return document.createDocumentFragment();
+  }
+
+  if (isGeneralOrder) {
+    const control = document.createElement("div");
+    control.className = "fb-room-control";
+    control.textContent = "Pembayaran: Open Bill, dibayar saat tagihan F&B umum ditutup.";
+    return control;
+  }
+
   const control = document.createElement("div");
   control.className = "fb-room-control";
 
   const label = document.createElement("label");
   label.className = "transaction-label";
+  label.setAttribute("for", "fbPaymentMethodSelect");
+  label.textContent = "Metode Pembayaran";
+
+  const select = document.createElement("select");
+  select.className = "fb-room-select";
+  select.id = "fbPaymentMethodSelect";
+  select.dataset.action = "update-fb-payment-method";
+
+  const roomBillOpt = document.createElement("option");
+  roomBillOpt.value = "room_bill";
+  roomBillOpt.textContent = isGeneralOrder 
+    ? "Open Bill (Bayar Nanti)" 
+    : "Open Bill (Masuk Tagihan Room)";
+  if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
+  select.appendChild(roomBillOpt);
+
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Tunai / Cash";
+  if (fnbOrderPaymentMethod === "cash") cashOpt.selected = true;
+
+  const transferOpt = document.createElement("option");
+  transferOpt.value = "transfer";
+  transferOpt.textContent = "Transfer / QRIS";
+  if (fnbOrderPaymentMethod === "transfer") transferOpt.selected = true;
+
+  select.append(cashOpt, transferOpt);
+  control.append(label, select);
+
+  return control;
+}
+
+function createFnbOrderNoteElement() {
+  const control = document.createElement("div");
+  control.className = "fb-room-control";
+  control.style.display = "flex";
+  control.style.flexDirection = "column";
+  control.style.gap = "8px";
+
+  const isGeneral = fnbOrderMode === "general";
+  const isPostpaid = fnbOrderPaymentMethod === "room_bill";
+
+  const label = document.createElement("label");
+  label.className = "transaction-label";
   label.setAttribute("for", "fbOrderNote");
-  label.textContent = "Catatan Order";
 
-  const note = document.createElement("textarea");
-  note.className = "fb-order-note";
-  note.id = "fbOrderNote";
-  note.dataset.action = "update-fnb-order-note";
-  note.placeholder = "Contoh: pedas sedikit, antar ke ruangan, tanpa es.";
-  note.value = fnbOrderNote;
+  if (isGeneral && isPostpaid) {
+    label.textContent = "Nama Konsumen (Wajib)";
+    control.appendChild(label);
 
-  control.append(label, note);
+    const activeCustomers = getActiveGeneralFnbCustomers();
+
+    const select = document.createElement("select");
+    select.className = "fb-room-select";
+    select.style.width = "100%";
+    select.style.marginBottom = "4px";
+
+    const newOpt = document.createElement("option");
+    newOpt.value = "__new__";
+    newOpt.textContent = "+ Konsumen Baru";
+    select.appendChild(newOpt);
+
+    activeCustomers.forEach(cust => {
+      const opt = document.createElement("option");
+      opt.value = cust;
+      opt.textContent = cust;
+      if (fnbOrderNote === cust) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "duration-custom-input";
+    nameInput.style.width = "100%";
+    nameInput.placeholder = "Masukkan Nama Konsumen Baru...";
+    
+    // Set initial visibility
+    const isExisting = fnbOrderNote && activeCustomers.includes(fnbOrderNote);
+    if (isExisting) {
+      nameInput.style.display = "none";
+      select.value = fnbOrderNote;
+    } else {
+      nameInput.style.display = "block";
+      select.value = "__new__";
+      nameInput.value = fnbOrderNote;
+    }
+
+    select.onchange = (e) => {
+      if (e.target.value === "__new__") {
+        nameInput.style.display = "block";
+        nameInput.value = "";
+        fnbOrderNote = "";
+        nameInput.focus();
+      } else {
+        nameInput.style.display = "none";
+        fnbOrderNote = e.target.value;
+      }
+    };
+
+    nameInput.oninput = (e) => {
+      fnbOrderNote = e.target.value.trim();
+    };
+
+    control.append(select, nameInput);
+  } else {
+    label.textContent = isGeneral ? "Nama Konsumen & Catatan (Opsional)" : "Catatan Order";
+    control.appendChild(label);
+
+    const note = document.createElement("textarea");
+    note.className = "fb-order-note";
+    note.id = "fbOrderNote";
+    note.dataset.action = "update-fnb-order-note";
+    note.placeholder = isGeneral 
+      ? "Tulis Nama Konsumen atau catatan order jika diperlukan" 
+      : "Contoh: pedas sedikit, antar ke ruangan, tanpa es.";
+    note.value = fnbOrderNote;
+    note.oninput = (e) => {
+      fnbOrderNote = e.target.value;
+    };
+
+    control.appendChild(note);
+  }
 
   return control;
 }
@@ -5248,6 +9600,10 @@ function getFnbOrderStatusLabel(status) {
     return "Billed";
   }
 
+  if (status === "paid") {
+    return "Lunas";
+  }
+
   if (status === "cancelled") {
     return "Dibatalkan";
   }
@@ -5256,7 +9612,7 @@ function getFnbOrderStatusLabel(status) {
 }
 
 function getFnbOrderStatusClass(status) {
-  if (status === "open" || status === "billed" || status === "cancelled") {
+  if (status === "open" || status === "billed" || status === "paid" || status === "cancelled") {
     return status;
   }
 
@@ -5268,8 +9624,7 @@ function createFbOrderActionsElement() {
   actions.className = "fb-order-actions";
   const selectedRoom = getSelectedFbRoom();
   const canSave =
-    Boolean(selectedRoom) &&
-    isFbOrderRoomSelectable(selectedRoom) &&
+    (fnbOrderMode === "general" || (Boolean(selectedRoom) && isFbOrderRoomSelectable(selectedRoom))) &&
     fbCartItems.length > 0 &&
     !isSavingFnbOrder;
 
@@ -5282,12 +9637,16 @@ function createFbOrderActionsElement() {
 
   const saveButton = document.createElement("button");
   saveButton.className = canSave
-    ? "fb-order-button primary"
-    : "fb-order-button primary disabled";
+    ? "fb-order-button success"
+    : "fb-order-button success disabled";
   saveButton.type = "button";
   saveButton.dataset.action = "save-fnb-order";
   saveButton.disabled = !canSave;
-  saveButton.textContent = isSavingFnbOrder ? "Menyimpan..." : "Simpan Order";
+  saveButton.textContent = isSavingFnbOrder
+    ? "Memproses..."
+    : fnbOrderMode === "general"
+      ? "Simpan Open Bill"
+      : "Simpan Order";
 
   actions.append(clearButton, saveButton);
 
@@ -5422,7 +9781,7 @@ function createOpenFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "open-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${order.created_at || "-"} - Sesi: ${order.room_start_time || "-"}`;
+  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -5464,24 +9823,176 @@ function createOpenFnbOrderCardElement(order) {
 function createFnbOrderCancelActionsElement(order) {
   const actions = document.createElement("div");
   actions.className = "fnb-cancel-actions";
+  actions.style.display = "flex";
+  actions.style.gap = "8px";
 
-  const button = document.createElement("button");
-  const canCancel = getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
+  const isGeneral = order.room_id === "FNB-GENERAL";
 
-  button.className = canCancel
+  const cancelButton = document.createElement("button");
+  const canCancel = !order.is_grouped && getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
+
+  cancelButton.className = canCancel
     ? "fnb-cancel-button"
     : "fnb-cancel-button disabled";
-  button.type = "button";
-  button.dataset.action = "cancel-fnb-order";
-  button.dataset.orderId = order.order_id || "";
-  button.disabled = !canCancel;
-  button.textContent = isCancellingFnbOrder && getFnbOrderCanCancel(order)
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "cancel-fnb-order";
+  cancelButton.dataset.orderId = order.order_id || "";
+  cancelButton.disabled = !canCancel;
+  cancelButton.textContent = isCancellingFnbOrder && getFnbOrderCanCancel(order)
     ? "Membatalkan..."
     : getFnbOrderCancelButtonLabel(order);
 
-  actions.appendChild(button);
+  actions.appendChild(cancelButton);
+
+  if (isGeneral && order.order_status === "open") {
+    const payButton = document.createElement("button");
+    payButton.className = "fnb-pay-button";
+    payButton.type = "button";
+    payButton.style.padding = "6px 12px";
+    payButton.style.fontSize = "0.8rem";
+    payButton.style.backgroundColor = "var(--available)";
+    payButton.style.color = "#fff";
+    payButton.style.border = "none";
+    payButton.style.borderRadius = "4px";
+    payButton.style.cursor = "pointer";
+    payButton.style.fontWeight = "bold";
+    payButton.textContent = "💵 Bayar Tagihan";
+    payButton.onclick = () => {
+      showPayOpenFnbOrderModal(order);
+    };
+    actions.appendChild(payButton);
+  }
 
   return actions;
+}
+
+function showPayOpenFnbOrderModal(order) {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const formCard = document.createElement("div");
+  formCard.className = "erp-card";
+  formCard.style.width = "400px";
+  formCard.style.padding = "24px";
+  formCard.style.display = "flex";
+  formCard.style.flexDirection = "column";
+  formCard.style.gap = "16px";
+  formCard.style.backgroundColor = "var(--surface-raised)";
+  formCard.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = `Pembayaran F&B: ${order.room_name}`;
+
+  const detailText = document.createElement("p");
+  detailText.style.margin = "0";
+  detailText.style.fontSize = "0.9rem";
+  detailText.innerHTML = `Total yang harus dibayar: <strong>${formatCurrency(order.order_total)}</strong>`;
+
+  const methodGroup = document.createElement("div");
+  methodGroup.style.display = "flex";
+  methodGroup.style.flexDirection = "column";
+  methodGroup.style.gap = "6px";
+  
+  const methodLabel = document.createElement("label");
+  methodLabel.textContent = "Metode Pembayaran:";
+  
+  const select = document.createElement("select");
+  select.className = "fb-room-select";
+  select.style.width = "100%";
+  select.style.padding = "8px";
+
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Tunai / Cash";
+
+  const transferOpt = document.createElement("option");
+  transferOpt.value = "transfer";
+  transferOpt.textContent = "Transfer / QRIS";
+
+  select.append(cashOpt, transferOpt);
+  methodGroup.append(methodLabel, select);
+
+  const errorNotice = document.createElement("div");
+  errorNotice.style.display = "none";
+  errorNotice.style.color = "var(--occupied)";
+  errorNotice.style.fontSize = "0.85rem";
+
+  const btnGroup = document.createElement("div");
+  btnGroup.style.display = "flex";
+  btnGroup.style.justifyContent = "flex-end";
+  btnGroup.style.gap = "12px";
+  btnGroup.style.marginTop = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "duration-cancel-button";
+  cancelBtn.style.margin = "0";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    overlay.remove();
+  };
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "duration-custom-button";
+  confirmBtn.style.margin = "0";
+  confirmBtn.style.backgroundColor = "var(--available)";
+  confirmBtn.textContent = "Konfirmasi Bayar";
+  
+  confirmBtn.onclick = async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Memproses...";
+    errorNotice.style.display = "none";
+
+    try {
+      const response = await postApiAction({
+        action: "payOpenFnbOrder",
+        order_ids: order.order_id,
+        payment_method: select.value,
+        cashier_name: getLoggedInOperatorName()
+      });
+
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || "Gagal memproses pembayaran F&B.");
+      }
+
+      showInlineNotice("Pembayaran F&B berhasil diproses.");
+      overlay.remove();
+
+      if (response.transaction) {
+        showReceiptPrint(response.transaction);
+      }
+
+      await Promise.all([
+        loadOpenFnbOrders(),
+        loadTodayFnbOrders(),
+        loadTransactionsTabData({ force: true })
+      ]);
+    } catch (err) {
+      errorNotice.textContent = err.message || "Gagal memproses pembayaran.";
+      errorNotice.style.display = "block";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Konfirmasi Bayar";
+    }
+  };
+
+  btnGroup.append(cancelBtn, confirmBtn);
+  formCard.append(title, detailText, methodGroup, errorNotice, btnGroup);
+  overlay.appendChild(formCard);
+  document.body.appendChild(overlay);
 }
 
 function createOpenFnbOrderItemElement(item) {
@@ -5687,7 +10198,7 @@ function createTodayFnbOrderCardElement(order) {
 
   const meta = document.createElement("p");
   meta.className = "today-fnb-meta";
-  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${order.created_at || "-"} - Sesi: ${order.room_start_time || "-"}`;
+  meta.textContent = `${order.room_name || order.room_id || "-"} - Order: ${formatDateTimeLabel(order.created_at)} - Sesi: ${getRoomTimeLabel(order.room_start_time)}`;
 
   titleGroup.append(orderId, meta);
 
@@ -5790,22 +10301,22 @@ function getTodayFnbEmptyMessage() {
 
 function createInventoryPanelElement() {
   const panel = document.createElement("section");
-  panel.className = "inventory-panel";
+  panel.className = "inventory-panel erp-inventory-view";
   panel.setAttribute("aria-labelledby", "inventory-title");
 
   const header = document.createElement("div");
-  header.className = "inventory-header";
+  header.className = "inventory-header erp-header";
 
   const titleGroup = document.createElement("div");
 
   const title = document.createElement("h2");
   title.className = "inventory-title";
   title.id = "inventory-title";
-  title.textContent = "Stok F&B";
+  title.textContent = "Material Management & Stok";
 
   const subtitle = document.createElement("p");
   subtitle.className = "inventory-subtitle";
-  subtitle.textContent = "Pantauan stok dasar menu makanan dan minuman.";
+  subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
 
   titleGroup.append(title, subtitle);
 
@@ -5813,41 +10324,48 @@ function createInventoryPanelElement() {
   actions.className = "inventory-actions";
 
   const refreshButton = document.createElement("button");
-  refreshButton.className = "inventory-button";
+  refreshButton.className = "inventory-button erp-btn-secondary";
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory";
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "Refresh Stok";
+  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
 
-  actions.appendChild(refreshButton);
+  const addButton = document.createElement("button");
+  addButton.className = "inventory-button erp-btn-primary";
+  addButton.type = "button";
+  addButton.dataset.action = "open-add-inventory-item-modal";
+  addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
+  addButton.textContent = "+ Tambah Item F&B Baru";
+  addButton.style.marginLeft = "8px";
+
+  actions.append(refreshButton, addButton);
   header.append(titleGroup, actions);
 
-  const list = document.createElement("div");
-  list.className = "inventory-list";
+  const tableContainer = document.createElement("div");
+  tableContainer.className = "inventory-table-container erp-table-wrap";
 
   if (!API_BASE_URL.trim()) {
-    list.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
+    tableContainer.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
   } else if (isLoadingInventory) {
-    list.appendChild(createStateMessage("Memuat stok F&B..."));
+    tableContainer.appendChild(createStateMessage("Memuat katalog stok SAP/Odoo ERP..."));
   } else if (inventoryItems.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.textContent = "Belum ada data stok F&B.";
-    list.appendChild(empty);
+    empty.textContent = "Belum ada data materi stok.";
+    tableContainer.appendChild(empty);
   } else {
-    const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
-    paginatedInventory.items.forEach((item) => {
-      list.appendChild(createInventoryItemRowElement(item));
-    });
-    list.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
+    tableContainer.appendChild(createInventoryErpTableElement());
+    tableContainer.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
   }
 
   panel.append(
     header,
     createInventorySummaryElement(),
-    list,
+    tableContainer,
     createStockAdjustmentPanelElement(),
-    lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment()
+    lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment(),
+    createAdminPinModalElement(),
+    addInventoryItemForm ? createAddInventoryItemModalElement() : document.createDocumentFragment()
   );
 
   return panel;
@@ -5861,23 +10379,23 @@ function createInventorySummaryElement() {
     negative_items: 0,
   };
   const grid = document.createElement("div");
-  grid.className = "inventory-summary";
+  grid.className = "inventory-summary erp-kpi-grid";
 
   [
-    ["Total Item", Number(summary.total_items) || 0],
-    ["Aman", Number(summary.safe_items) || 0],
-    ["Stok Rendah", Number(summary.low_items) || 0],
-    ["Minus", Number(summary.negative_items) || 0],
-  ].forEach(([labelText, valueText]) => {
+    ["Total SKU Material", Number(summary.total_items) || 0, "neutral"],
+    ["Stok Safe / Normal", Number(summary.safe_items) || 0, "success"],
+    ["Alert Stok Rendah", Number(summary.low_items) || 0, "warning"],
+    ["Stok Out / Minus", Number(summary.negative_items) || 0, "critical"],
+  ].forEach(([labelText, valueText, tone]) => {
     const card = document.createElement("div");
-    card.className = "inventory-summary-card";
+    card.className = `inventory-summary-card erp-kpi-card tone-${tone}`;
 
     const label = document.createElement("p");
-    label.className = "transaction-label";
+    label.className = "transaction-label erp-kpi-label";
     label.textContent = labelText;
 
     const value = document.createElement("p");
-    value.className = "transaction-value";
+    value.className = "transaction-value erp-kpi-val";
     value.textContent = valueText;
 
     card.append(label, value);
@@ -5887,36 +10405,78 @@ function createInventorySummaryElement() {
   return grid;
 }
 
-function createInventoryItemRowElement(item) {
-  const row = document.createElement("article");
-  row.className = "inventory-row";
+function createInventoryErpTableElement() {
+  const table = document.createElement("table");
+  table.className = "erp-inventory-table";
 
-  const info = document.createElement("div");
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>SKU / Item Code</th>
+      <th>Nama Material</th>
+      <th>Kategori</th>
+      <th>Stok Aktual</th>
+      <th>Min. Stok</th>
+      <th>Status</th>
+      <th style="text-align: right;">Aksi</th>
+    </tr>
+  `;
 
-  const name = document.createElement("h3");
-  name.className = "inventory-name";
-  name.textContent = item.stock_item_name || item.stock_item_id || "-";
+  const tbody = document.createElement("tbody");
+  const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
 
-  const meta = document.createElement("p");
-  meta.className = "inventory-meta";
-  meta.textContent = `${item.category || "-"} - Min stok: ${Number(item.min_stock) || 0}`;
+  paginatedInventory.items.forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.className = "erp-inventory-tr";
 
-  info.append(name, meta);
+    const skuTd = document.createElement("td");
+    skuTd.innerHTML = `<span class="erp-sku-badge">${item.stock_item_id || "-"}</span>`;
 
-  const qty = document.createElement("p");
-  qty.className = "inventory-qty";
-  qty.textContent = `${Number(item.stock_qty) || 0} ${item.unit || ""}`.trim();
+    const nameTd = document.createElement("td");
+    nameTd.className = "erp-name-cell";
+    nameTd.textContent = item.stock_item_name || item.stock_item_id || "-";
 
-  const status = document.createElement("span");
-  status.className = withStatusBadge(
-    `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
-    getInventoryStockStatusTone(item.stock_status)
-  );
-  status.textContent = getInventoryStockStatusLabel(item.stock_status);
+    const catTd = document.createElement("td");
+    catTd.className = "erp-cat-cell";
+    catTd.textContent = item.category || "General";
 
-  row.append(info, qty, status);
+    const qtyTd = document.createElement("td");
+    qtyTd.className = "erp-qty-cell";
+    const qtyVal = Number(item.stock_qty) || 0;
+    const unitStr = item.unit ? ` ${item.unit}` : "";
+    qtyTd.innerHTML = `<strong>${qtyVal}</strong><small>${unitStr}</small>`;
 
-  return row;
+    const minTd = document.createElement("td");
+    minTd.className = "erp-min-cell";
+    minTd.textContent = `${Number(item.min_stock) || 0} ${item.unit || ""}`.trim();
+
+    const statusTd = document.createElement("td");
+    const statusSpan = document.createElement("span");
+    statusSpan.className = withStatusBadge(
+      `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
+      getInventoryStockStatusTone(item.stock_status)
+    );
+    statusSpan.textContent = getInventoryStockStatusLabel(item.stock_status);
+    statusTd.appendChild(statusSpan);
+
+    const actionTd = document.createElement("td");
+    actionTd.style.textAlign = "right";
+    const adjustBtn = document.createElement("button");
+    adjustBtn.className = "erp-quick-adjust-btn";
+    adjustBtn.type = "button";
+    adjustBtn.textContent = "Adjust / Restock";
+    adjustBtn.onclick = () => {
+      updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
+      focusStockAdjustmentField(".stock-adjustment-quantity");
+    };
+    actionTd.appendChild(adjustBtn);
+
+    tr.append(skuTd, nameTd, catTd, qtyTd, minTd, statusTd, actionTd);
+    tbody.appendChild(tr);
+  });
+
+  table.append(thead, tbody);
+  return table;
 }
 
 function getInventoryStockStatusLabel(status) {
@@ -6368,7 +10928,7 @@ function createTodayStockMovementRowElement(movement) {
 
   const meta = document.createElement("p");
   meta.className = "stock-movements-meta";
-  meta.textContent = `${movement.created_at || "-"} - ${movement.movement_id || "-"}`;
+  meta.textContent = `${formatDateTimeLabel(movement.created_at)} - ${movement.movement_id || "-"}`;
 
   titleGroup.append(itemName, meta);
 
@@ -6623,8 +11183,8 @@ function createRoomUsageTransactionRowElement(transaction) {
   [
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Room", transaction?.room_name || transaction?.room_id || "-"],
-    ["Mulai", transaction?.start_time || "-"],
-    ["Selesai", transaction?.end_time || "-"],
+    ["Mulai", formatTransactionDateTime(transaction?.start_time)],
+    ["Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", formatDurationMinutes(transaction?.duration_minutes)],
     ["Total Room", formatCurrency(transaction?.room_total)],
     ["F&B", formatCurrency(transaction?.fnb_total)],
@@ -7131,49 +11691,6 @@ function createOwnerDashboardMetricCard({ label, value, badgeText, badgeTone, de
   return card;
 }
 
-function createRoomTvControlElement(room) {
-  const tvDevice = room.tv_device || normalizeRoomTvDevice(null);
-  const panel = document.createElement("div");
-  panel.className = "room-tv-control";
-
-  const badge = document.createElement("p");
-  badge.className = withStatusBadge("room-tv-badge", getTvStatusTone(tvDevice));
-  badge.textContent = getTvStatusBadgeText(tvDevice);
-  panel.appendChild(badge);
-
-  const lastCommand = document.createElement("p");
-  lastCommand.className = "room-tv-last-command";
-  lastCommand.textContent = `Last command: ${getTvActionLabel(tvDevice.last_command)}`;
-  panel.appendChild(lastCommand);
-
-  if (!canControlTv()) {
-    return panel;
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "room-tv-actions";
-
-  [
-    ["power_on", "TV ON"],
-    ["power_off", "TV OFF"],
-    ["test", "TEST"],
-  ].forEach(([tvAction, labelText]) => {
-    const button = document.createElement("button");
-    button.className = "room-tv-button";
-    button.type = "button";
-    button.dataset.action = tvAction === "power_off" ? "confirm-tv-off" : "send-tv-command";
-    button.dataset.tvAction = tvAction;
-    button.dataset.roomId = room.room_id;
-    button.dataset.tvDeviceId = tvDevice.tv_device_id || "";
-    button.disabled = isSendingTvCommand || !API_BASE_URL.trim() || tvDevice.configured === false;
-    button.textContent = isSendingTvCommand ? "Kirim..." : labelText;
-    actions.appendChild(button);
-  });
-
-  panel.appendChild(actions);
-  return panel;
-}
-
 function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, items, emptyText, detailBuilder }) {
   const card = createOwnerDashboardMetricCard({ label, value, badgeText, badgeTone });
   const list = document.createElement("div");
@@ -7206,6 +11723,524 @@ function createOwnerDashboardListCard({ label, value, badgeText, badgeTone, item
   return card;
 }
 
+function buildFinanceOverviewSummary() {
+  const pickNumber = (...values) => {
+    for (const value of values) {
+      if (value === null || value === undefined || value === "") {
+        continue;
+      }
+
+      const numberValue = Number(value);
+
+      if (Number.isFinite(numberValue)) {
+        return numberValue;
+      }
+    }
+
+    return 0;
+  };
+  const hasOwnerReportData = Boolean(
+    ownerReportTransactionSummary ||
+    ownerReportRoomUsageSummary ||
+    ownerReportFnbSalesSummary
+  );
+  const transactionSummary = ownerReportTransactionSummary || todayTransactionSummary || {};
+  const roomSummary = ownerReportRoomUsageSummary || roomUsageSummary || ownerRoomUsageSummary || {};
+  const fnbOrderSummary = todayFnbOrderSummary || {};
+  const fnbSalesSummary = ownerReportFnbSalesSummary || todayFnbSalesSummary || {};
+  const activeRoomCount = rooms.filter((room) => normalizeRoomStatus(room?.status) === "occupied").length;
+  const relevantClosings = hasOwnerReportData ? ownerReportCashierClosings : todayCashierClosings;
+  const latestClosing = relevantClosings[0] || null;
+  const cashDifference = Number(latestClosing?.cash_difference) || 0;
+  const openFnbAmount = Number(fnbOrderSummary.open_amount) || calculateOpenFnbOrdersSummary(openFnbOrders).total_amount;
+  const isActiveShiftReport = ownerReportPeriodFilter === "today";
+  const fallbackTransactions = hasOwnerReportData ? [] : todayTransactions;
+
+  return {
+    totalPenjualan: pickNumber(transactionSummary.total_revenue_all, roomSummary.total_grand_revenue),
+    sudahDibayar: pickNumber(transactionSummary.paid_revenue, transactionSummary.total_revenue_paid, roomSummary.paid_revenue),
+    belumDibayar: pickNumber(transactionSummary.unpaid_revenue, roomSummary.unpaid_revenue),
+    cashMasuk: pickNumber(transactionSummary.cash_revenue),
+    transferMasuk: pickNumber(transactionSummary.transfer_revenue),
+    penjualanRoom: pickNumber(
+      roomSummary.total_room_revenue,
+      fallbackTransactions.reduce((total, transaction) => total + (Number(transaction.room_total) || 0), 0)
+    ),
+    penjualanFnb: pickNumber(
+      fnbSalesSummary.total_fnb_sales,
+      roomSummary.total_fnb_revenue,
+      fallbackTransactions.reduce((total, transaction) => total + (Number(transaction.fnb_total) || 0), 0)
+    ),
+    pesananFnbBerjalan: isActiveShiftReport ? openFnbAmount : 0,
+    totalTransaksi: pickNumber(transactionSummary.total_transactions, fallbackTransactions.length),
+    transaksiBelumDibayar: pickNumber(
+      transactionSummary.unpaid_transactions,
+      fallbackTransactions.filter((transaction) => transaction.payment_status === "unpaid").length
+    ),
+    roomBerjalan: activeRoomCount,
+    totalSesi: Number(roomSummary.total_sessions) || 0,
+    roomTeraktif: roomSummary.top_room_name || "-",
+    menuTerlaris: fnbSalesSummary.top_menu_name || "-",
+    setoranKasirTersimpan: relevantClosings.length > 0,
+    jumlahClosing: relevantClosings.length,
+    latestClosing,
+    cashDifference,
+  };
+}
+
+function getFinanceCashStatus(summary) {
+  if (!summary.setoranKasirTersimpan) {
+    const isActiveShiftReport = ownerReportPeriodFilter === "today";
+
+    return {
+      label: isActiveShiftReport ? "Belum Tutup Shift" : "Belum Ada Closing",
+      tone: "warning",
+      detail: isActiveShiftReport
+        ? "Kasir belum menyimpan laporan tutup shift."
+        : "Belum ada laporan tutup shift pada periode ini.",
+    };
+  }
+
+  if (summary.cashDifference > 0) {
+    return {
+      label: "Kas Lebih",
+      tone: "warning",
+      detail: `Ada kelebihan uang kas ${formatCurrency(summary.cashDifference)}.`,
+    };
+  }
+
+  if (summary.cashDifference < 0) {
+    return {
+      label: "Kas Kurang",
+      tone: "danger",
+      detail: `Ada kekurangan uang kas ${formatCurrency(Math.abs(summary.cashDifference))}.`,
+    };
+  }
+
+  return {
+    label: "Kas Cocok",
+    tone: "success",
+    detail: "Setoran kasir terakhir tercatat cocok.",
+  };
+}
+
+function buildFinanceChecklist(summary) {
+  const checklist = [];
+
+  if (summary.belumDibayar > 0 || summary.transaksiBelumDibayar > 0) {
+    checklist.push({
+      label: "Tagihan belum dibayar",
+      value: formatCurrency(summary.belumDibayar),
+      tone: "warning",
+      detail: `${summary.transaksiBelumDibayar} transaksi perlu dicek.`,
+    });
+  }
+
+  if (summary.pesananFnbBerjalan > 0) {
+    checklist.push({
+      label: "F&B belum masuk tagihan",
+      value: formatCurrency(summary.pesananFnbBerjalan),
+      tone: "warning",
+      detail: "Masih ada pesanan F&B berjalan.",
+    });
+  }
+
+  if (summary.roomBerjalan > 0) {
+    checklist.push({
+      label: "Room masih berjalan",
+      value: `${summary.roomBerjalan} room`,
+      tone: "info",
+      detail: "Pastikan room selesai sebelum tutup shift final.",
+    });
+  }
+
+  const cashStatus = getFinanceCashStatus(summary);
+  if (cashStatus.tone !== "success") {
+    checklist.push({
+      label: cashStatus.label,
+      value: "Perlu dicek",
+      tone: cashStatus.tone,
+      detail: cashStatus.detail,
+    });
+  }
+
+  return checklist;
+}
+
+function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral" }) {
+  const card = document.createElement("article");
+  card.className = `finance-overview-card finance-overview-card--${tone}`;
+
+  const labelElement = document.createElement("p");
+  labelElement.className = "finance-overview-label";
+  labelElement.textContent = label;
+
+  const valueElement = document.createElement("p");
+  valueElement.className = "finance-overview-value";
+  valueElement.textContent = value;
+
+  card.append(labelElement, valueElement);
+
+  if (detail) {
+    const detailElement = document.createElement("p");
+    detailElement.className = "finance-overview-detail";
+    detailElement.textContent = detail;
+    card.appendChild(detailElement);
+  }
+
+  return card;
+}
+
+function createFinanceChecklistElement(items) {
+  const panel = document.createElement("section");
+  panel.className = "finance-checklist";
+  panel.setAttribute("aria-labelledby", "finance-checklist-title");
+
+  const title = document.createElement("h3");
+  title.className = "finance-checklist-title";
+  title.id = "finance-checklist-title";
+  title.textContent = "Hal yang Perlu Dicek";
+
+  const list = document.createElement("div");
+  list.className = "finance-checklist-list";
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "finance-checklist-empty";
+    empty.textContent = "Tidak ada hal penting yang perlu dicek untuk shift ini.";
+    list.appendChild(empty);
+  } else {
+    items.forEach((item) => {
+      const row = document.createElement("article");
+      row.className = "finance-checklist-row";
+
+      const info = document.createElement("div");
+
+      const label = document.createElement("p");
+      label.className = "finance-checklist-label";
+      label.textContent = item.label;
+
+      const detail = document.createElement("p");
+      detail.className = "finance-checklist-detail";
+      detail.textContent = item.detail;
+
+      info.append(label, detail);
+
+      const badge = document.createElement("span");
+      badge.className = withStatusBadge("finance-checklist-badge", item.tone);
+      badge.textContent = item.value;
+
+      row.append(info, badge);
+      list.appendChild(row);
+    });
+  }
+
+  panel.append(title, list);
+  return panel;
+}
+
+function createOwnerReportPeriodFilterElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "period-filter owner-report-period-filter";
+  wrapper.setAttribute("aria-label", "Filter periode laporan owner");
+
+  const buttons = document.createElement("div");
+  buttons.className = "period-filter-buttons";
+
+  TRANSACTION_PERIOD_OPTIONS.forEach(([period, labelText]) => {
+    const button = document.createElement("button");
+    button.className = period === ownerReportPeriodFilter
+      ? "period-filter-button active"
+      : "period-filter-button";
+    button.type = "button";
+    button.dataset.action = "filter-owner-report-period";
+    button.dataset.period = period;
+    button.textContent = labelText;
+    buttons.appendChild(button);
+  });
+
+  wrapper.appendChild(buttons);
+
+  if (ownerReportPeriodFilter === "custom") {
+    const custom = document.createElement("div");
+    custom.className = "custom-date-filter";
+
+    const startField = document.createElement("div");
+    startField.className = "custom-date-field";
+
+    const startLabel = document.createElement("label");
+    startLabel.className = "custom-date-label";
+    startLabel.textContent = "Tanggal Operasional Mulai";
+
+    const startInput = document.createElement("input");
+    startInput.className = "custom-date-input";
+    startInput.type = "date";
+    startInput.dataset.action = "update-owner-report-custom-start-date";
+    startInput.value = ownerReportCustomStartDate;
+
+    startField.append(startLabel, startInput);
+
+    const endField = document.createElement("div");
+    endField.className = "custom-date-field";
+
+    const endLabel = document.createElement("label");
+    endLabel.className = "custom-date-label";
+    endLabel.textContent = "Tanggal Operasional Akhir";
+
+    const endInput = document.createElement("input");
+    endInput.className = "custom-date-input";
+    endInput.type = "date";
+    endInput.dataset.action = "update-owner-report-custom-end-date";
+    endInput.value = ownerReportCustomEndDate;
+
+    endField.append(endLabel, endInput);
+
+    const applyButton = document.createElement("button");
+    applyButton.className = "period-filter-apply-button";
+    applyButton.type = "button";
+    applyButton.dataset.action = "apply-owner-report-custom-period";
+    applyButton.textContent = "Terapkan";
+
+    custom.append(startField, endField, applyButton);
+    wrapper.appendChild(custom);
+  }
+
+  if (ownerReportPeriodNotice) {
+    const notice = document.createElement("p");
+    notice.className = "period-filter-notice";
+    notice.textContent = ownerReportPeriodNotice;
+    wrapper.appendChild(notice);
+  }
+
+  return wrapper;
+}
+
+function createOwnerReportPrintSection(titleText, rows) {
+  const section = document.createElement("section");
+  section.className = "closing-print-section owner-report-print-section";
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+
+  const grid = document.createElement("div");
+  grid.className = "closing-print-grid owner-report-print-grid";
+
+  rows.forEach(([labelText, valueText, helperText]) => {
+    const row = document.createElement("div");
+    row.className = "closing-print-row";
+
+    const label = document.createElement("p");
+    label.className = "closing-print-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "closing-print-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+
+    if (helperText) {
+      const helper = document.createElement("p");
+      helper.className = "closing-print-helper";
+      helper.textContent = helperText;
+      row.appendChild(helper);
+    }
+
+    grid.appendChild(row);
+  });
+
+  section.append(title, grid);
+
+  return section;
+}
+
+function createOwnerReportPrintPreviewElement() {
+  const summary = buildFinanceOverviewSummary();
+  const cashStatus = getFinanceCashStatus(summary);
+  const checklist = buildFinanceChecklist(summary);
+  const latestClosing = summary.latestClosing || {};
+
+  const print = document.createElement("section");
+  print.className = "closing-print owner-report-print";
+  print.setAttribute("aria-labelledby", "owner-report-print-title");
+
+  const header = document.createElement("div");
+  header.className = "closing-print-header";
+
+  const title = document.createElement("h2");
+  title.className = "closing-print-title";
+  title.id = "owner-report-print-title";
+  title.textContent = "Laporan Owner";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "closing-print-subtitle";
+  subtitle.textContent = `Happy Song Karaoke - ${getOwnerReportPeriodTitleSuffix()}`;
+
+  header.append(title, subtitle);
+
+  const moneySummary = createOwnerReportPrintSection("Ringkasan Uang Masuk", [
+    ["Total Penjualan", formatCurrency(summary.totalPenjualan), `${summary.totalTransaksi} transaksi tercatat.`],
+    ["Sudah Dibayar", formatCurrency(summary.sudahDibayar), "Uang yang sudah tercatat lunas."],
+    ["Belum Dibayar", formatCurrency(summary.belumDibayar), `${summary.transaksiBelumDibayar} transaksi belum lunas.`],
+    ["Cash", formatCurrency(summary.cashMasuk), "Pembayaran tunai dari transaksi lunas."],
+    ["Transfer", formatCurrency(summary.transferMasuk), "Pembayaran transfer yang perlu cocok dengan mutasi/QRIS."],
+  ]);
+
+  const operationalSummary = createOwnerReportPrintSection("Penjualan Operasional", [
+    ["Penjualan Room", formatCurrency(summary.penjualanRoom), `${summary.totalSesi} sesi room tercatat.`],
+    ["Penjualan F&B", formatCurrency(summary.penjualanFnb), `Menu terlaris: ${summary.menuTerlaris}`],
+    ["F&B Berjalan", formatCurrency(summary.pesananFnbBerjalan), "Pesanan aktif yang belum masuk tagihan akhir."],
+    ["Room Teraktif", summary.roomTeraktif, "Room dengan pemakaian terbesar pada periode ini."],
+    ["Room Berjalan", `${summary.roomBerjalan} room`, "Room yang masih occupied saat laporan dibuka."],
+  ]);
+
+  const closingSummary = createOwnerReportPrintSection("Status Tutup Shift", [
+    ["Status Kas", cashStatus.label, cashStatus.detail],
+    ["Closing Terakhir", latestClosing.closing_id || "-", formatDateTimeLabel(latestClosing.created_at) || "Belum ada closing pada periode ini."],
+    ["Selisih Cash", formatCurrency(summary.cashDifference), "Selisih dari closing kasir terakhir pada periode ini."],
+    ["Jumlah Closing", `${summary.jumlahClosing} closing`, "Jumlah laporan tutup shift yang tercatat."],
+  ]);
+
+  const checklistSection = document.createElement("section");
+  checklistSection.className = "closing-print-section owner-report-print-section";
+
+  const checklistTitle = document.createElement("h3");
+  checklistTitle.textContent = "Hal yang Perlu Dicek";
+
+  const checklistNote = document.createElement("p");
+  checklistNote.className = "closing-print-note";
+  checklistNote.textContent = checklist.length > 0
+    ? checklist.map((item) => `${item.label}: ${item.detail}`).join(" | ")
+    : "Tidak ada hal penting yang perlu dicek pada periode ini.";
+
+  checklistSection.append(checklistTitle, checklistNote);
+
+  const footer = document.createElement("p");
+  footer.className = "closing-print-note";
+  footer.textContent = "Dicetak dari Dashboard Owner Happy Song Karaoke. Gunakan laporan ini sebagai arsip evaluasi operasional.";
+
+  const actions = document.createElement("div");
+  actions.className = "closing-print-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "closing-print-button";
+  printButton.type = "button";
+  printButton.dataset.action = "print-owner-report";
+  printButton.textContent = "Cetak";
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "closing-print-button secondary";
+  closeButton.type = "button";
+  closeButton.dataset.action = "hide-owner-report-print";
+  closeButton.textContent = "Tutup Preview Cetak";
+
+  actions.append(printButton, closeButton);
+  print.append(header, moneySummary, operationalSummary, closingSummary, checklistSection, footer, actions);
+
+  return print;
+}
+
+function createFinanceOverviewElement() {
+  const section = document.createElement("section");
+  section.className = "finance-overview";
+  section.setAttribute("aria-labelledby", "finance-overview-title");
+
+  const summary = buildFinanceOverviewSummary();
+  const cashStatus = getFinanceCashStatus(summary);
+  const checklist = buildFinanceChecklist(summary);
+
+  const header = document.createElement("div");
+  header.className = "finance-overview-header";
+
+  const titleGroup = document.createElement("div");
+
+  const title = document.createElement("h2");
+  title.className = "finance-overview-title";
+  title.id = "finance-overview-title";
+  title.textContent = `Ringkasan Keuangan Owner - ${getOwnerReportPeriodTitleSuffix()}`;
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "finance-overview-subtitle";
+  subtitle.textContent = "Pantau uang masuk, tagihan berjalan, penjualan room, dan penjualan F&B sesuai periode operasional.";
+
+  titleGroup.append(title, subtitle);
+
+  const status = document.createElement("span");
+  status.className = withStatusBadge("finance-overview-status", cashStatus.tone);
+  status.textContent = cashStatus.label;
+
+  const actions = document.createElement("div");
+  actions.className = "finance-overview-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "owner-dashboard-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-owner-report-print";
+  printButton.disabled = isLoadingOwnerReport;
+  printButton.textContent = "Preview Cetak";
+
+  actions.append(status, printButton);
+  header.append(titleGroup, actions);
+
+  const grid = document.createElement("div");
+  grid.className = "finance-overview-grid";
+
+  [
+    {
+      label: "Total Penjualan",
+      value: formatCurrency(summary.totalPenjualan),
+      detail: `${summary.totalTransaksi} transaksi tercatat`,
+      tone: "gold",
+    },
+    {
+      label: "Sudah Dibayar",
+      value: formatCurrency(summary.sudahDibayar),
+      detail: "Uang yang sudah tercatat lunas",
+      tone: "success",
+    },
+    {
+      label: "Belum Dibayar",
+      value: formatCurrency(summary.belumDibayar),
+      detail: `${summary.transaksiBelumDibayar} transaksi belum lunas`,
+      tone: summary.belumDibayar > 0 ? "warning" : "success",
+    },
+    {
+      label: "Penjualan Room",
+      value: formatCurrency(summary.penjualanRoom),
+      detail: `${summary.totalSesi} sesi, room teraktif: ${summary.roomTeraktif}`,
+      tone: "neutral",
+    },
+    {
+      label: "Penjualan F&B",
+      value: formatCurrency(summary.penjualanFnb),
+      detail: `Menu terlaris: ${summary.menuTerlaris}`,
+      tone: "neutral",
+    },
+    {
+      label: "F&B Berjalan",
+      value: formatCurrency(summary.pesananFnbBerjalan),
+      detail: "Pesanan belum masuk tagihan akhir",
+      tone: summary.pesananFnbBerjalan > 0 ? "warning" : "success",
+    },
+  ].forEach((item) => {
+    grid.appendChild(createFinanceOverviewMetricCard(item));
+  });
+
+  section.append(
+    header,
+    createOwnerReportPeriodFilterElement(),
+    createOperationalShiftNoteElement("finance-overview-note"),
+    grid,
+    createFinanceChecklistElement(checklist)
+  );
+
+  if (isLoadingOwnerReport) {
+    section.appendChild(createStateMessage("Memuat laporan owner periode...", "info"));
+  }
+
+  return section;
+}
+
 function createOwnerDashboardElement() {
   const section = document.createElement("section");
   section.className = "owner-dashboard";
@@ -7219,11 +12254,11 @@ function createOwnerDashboardElement() {
   const title = document.createElement("h2");
   title.className = "owner-dashboard-title";
   title.id = "owner-dashboard-title";
-  title.textContent = "Dashboard Owner";
+  title.textContent = `Dashboard Owner - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "owner-dashboard-subtitle";
-  subtitle.textContent = "Ringkasan cepat shift aktif berdasarkan tanggal operasional karaoke.";
+  subtitle.textContent = "Ringkasan cepat berdasarkan filter periode laporan owner.";
 
   titleGroup.append(title, subtitle);
 
@@ -7231,12 +12266,12 @@ function createOwnerDashboardElement() {
   refreshButton.className = "owner-dashboard-button";
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-owner-dashboard";
-  refreshButton.disabled = isLoadingOwnerDashboard || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingOwnerDashboard ? "Memuat..." : "Refresh Dashboard";
+  refreshButton.disabled = isLoadingOwnerDashboard || isLoadingOwnerReport || !API_BASE_URL.trim();
+  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Refresh Dashboard";
 
   header.append(titleGroup, refreshButton);
 
-  const summary = ownerRoomUsageSummary || {
+  const summary = ownerReportRoomUsageSummary || ownerRoomUsageSummary || {
     total_sessions: 0,
     total_duration_minutes: 0,
     total_duration_hours: 0,
@@ -7260,7 +12295,7 @@ function createOwnerDashboardElement() {
 
   [
     {
-      label: "Total Revenue Shift Aktif",
+      label: "Total Penjualan Periode",
       value: formatCurrency(summary.total_grand_revenue),
       detail: `${Number(summary.total_sessions) || 0} sesi tercatat`,
     },
@@ -7648,7 +12683,9 @@ function createTransactionHistoryElement() {
   list.className = "transaction-list";
   const filteredTransactions = getFilteredTodayTransactions();
 
-  if (filteredTransactions.length === 0) {
+  if (isLoadingTransactionsTabData) {
+    list.appendChild(createStateMessage("Memuat data transaksi..."));
+  } else if (filteredTransactions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "state-message";
     empty.textContent = getEmptyTransactionMessage();
@@ -7665,6 +12702,34 @@ function createTransactionHistoryElement() {
     header,
     createTransactionPeriodFilterElement(),
     summaryGrid,
+    createTransactionFilterElement(),
+    list
+  );
+
+  return history;
+}
+
+function renderTransactionsClosing() {
+  return createTransactionsClosingElement();
+}
+
+function createTransactionsClosingElement() {
+  const closing = document.createElement("section");
+  closing.className = "transaction-history transaction-closing-panel";
+  closing.setAttribute("aria-labelledby", "transaction-closing-title");
+
+  const header = document.createElement("div");
+  header.className = "transaction-history-header";
+
+  const title = document.createElement("h2");
+  title.id = "transaction-closing-title";
+  title.textContent = `Shift Kasir - ${getTransactionPeriodTitleSuffix()}`;
+
+  header.appendChild(title);
+
+  closing.append(
+    header,
+    createTransactionPeriodFilterElement(),
     createCashierRevenueSummaryElement(calculateCashierRevenueSummary(todayTransactions)),
     createCashierClosingTriggerElement(),
     cashierClosingPreviewVisible
@@ -7673,12 +12738,10 @@ function createTransactionHistoryElement() {
     renderCashierClosingHistory(),
     closingPrintPreviewVisible && selectedClosingForPrint
       ? createClosingPrintPreviewElement(selectedClosingForPrint)
-      : document.createDocumentFragment(),
-    createTransactionFilterElement(),
-    list
+      : document.createDocumentFragment()
   );
 
-  return history;
+  return closing;
 }
 
 function createCashierClosingTriggerElement() {
@@ -7718,7 +12781,9 @@ function createCashierClosingHistoryElement() {
   const list = document.createElement("div");
   list.className = "cashier-closing-history-list";
 
-  if (todayCashierClosings.length === 0) {
+  if (isLoadingTransactionsTabData) {
+    list.appendChild(createStateMessage("Memuat riwayat closing kasir..."));
+  } else if (todayCashierClosings.length === 0) {
     const empty = document.createElement("p");
     empty.className = "state-message";
     empty.textContent = getEmptyCashierClosingMessage();
@@ -7738,6 +12803,401 @@ function createCashierClosingHistoryElement() {
 
 function createClosingPrintPreviewElement(closing) {
   const print = document.createElement("section");
+  print.className = "closing-print closing-receipt";
+  print.setAttribute("aria-labelledby", "closing-print-title");
+
+  const header = document.createElement("header");
+  header.className = "closing-receipt-header";
+
+  const brand = document.createElement("p");
+  brand.className = "closing-receipt-brand";
+  brand.textContent = "HAPPY SONG KARAOKE";
+
+  const title = document.createElement("h2");
+  title.className = "closing-print-title";
+  title.id = "closing-print-title";
+  title.textContent = "Laporan Tutup Shift";
+
+  header.append(brand, title);
+
+  const details = closing?.closing_details || null;
+  const snapshotSummary = details?.summary || {};
+  const transactionSummary = snapshotSummary.transactions || {};
+  const lcSummary = snapshotSummary.lc || {};
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
+  const identitySection = createClosingReceiptSection("Data Closing", [
+    ["Tanggal", formatClosingDate(closing?.closing_date)],
+    ["ID", closing?.closing_id || "-"],
+    ["Kasir", closing?.cashier_name || "-"],
+    ["Waktu", formatDateTimeLabel(closing?.created_at)],
+  ]);
+
+  const salesRows = details?.snapshot_available
+    ? [
+        ["Room", formatCurrency(transactionSummary.room_total)],
+        ["F&B", formatCurrency(transactionSummary.fnb_total)],
+        ["LC", formatCurrency(transactionSummary.lc_total)],
+        ["Diskon", formatClosingSignedCurrency(-(Number(transactionSummary.promo_discount) || 0))],
+        ["Total Tagihan", formatCurrency(transactionSummary.grand_total), "total"],
+      ]
+    : [
+        ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
+        ["Total Tagihan", formatCurrency(closing?.total_revenue), "total"],
+      ];
+  const salesSection = createClosingReceiptSection("Ringkasan Omzet", salesRows);
+
+  const paymentSection = createClosingReceiptSection("Pembayaran", [
+    ["Cash Sistem", formatCurrency(closing?.cash_expected)],
+    ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+    ["Selisih", formatClosingSignedCurrency(closing?.cash_difference), "total"],
+    ["Transfer", formatCurrency(closing?.transfer_revenue)],
+    ["Belum Lunas", formatCurrency(closing?.unpaid_revenue)],
+  ]);
+
+  print.append(header, identitySection, salesSection, paymentSection);
+
+  if (closing?.closing_details_loading) {
+    print.appendChild(createClosingReceiptMessage("Memuat rincian closing..."));
+  } else if (details?.snapshot_available) {
+    print.appendChild(createClosingTransactionDetailsSection(details));
+    print.appendChild(createClosingLcDetailsSection(details));
+    print.appendChild(createClosingOperationalSummarySection(details));
+  } else {
+    print.appendChild(createClosingReceiptMessage(
+      closing?.closing_details_error
+        || "Rincian transaksi tidak tersedia untuk closing lama. Rekap agregat tetap dapat dicetak."
+    ));
+  }
+
+  if (parsedDenoms.length > 0) {
+    print.appendChild(createClosingReceiptSection(
+      "Pecahan Cash",
+      parsedDenoms.map((denom) => [
+        `${denom.label} x${denom.qty}`,
+        formatCurrency(denom.total),
+      ])
+    ));
+  }
+
+  print.appendChild(createClosingReceiptSection("Catatan", [
+    [parsedNote || "-", ""],
+  ], "note"));
+
+  const signatures = document.createElement("section");
+  signatures.className = "closing-receipt-signatures";
+  ["Kasir", "Manager"].forEach((labelText) => {
+    const signature = document.createElement("div");
+    signature.className = "closing-receipt-signature";
+    const line = document.createElement("span");
+    const label = document.createElement("p");
+    label.textContent = labelText;
+    signature.append(line, label);
+    signatures.appendChild(signature);
+  });
+
+  const footer = document.createElement("p");
+  footer.className = "closing-receipt-footer";
+  footer.textContent = details?.snapshot_available
+    ? `Closing tersimpan - ${Number(lcSummary.assignment_count) || 0} penugasan LC`
+    : "Closing tersimpan";
+
+  const actions = document.createElement("div");
+  actions.className = "closing-print-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "closing-print-button";
+  printButton.type = "button";
+  printButton.dataset.action = "print-closing";
+  printButton.textContent = "Cetak Lengkap";
+  printButton.disabled = Boolean(closing?.closing_details_loading);
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "closing-print-button secondary";
+  closeButton.type = "button";
+  closeButton.dataset.action = "hide-closing-print";
+  closeButton.textContent = "Tutup Preview";
+
+  actions.append(printButton, closeButton);
+  print.append(signatures, footer, actions);
+  return print;
+}
+
+function createClosingReceiptSection(titleText, rows, modifierClass = "") {
+  const section = document.createElement("section");
+  section.className = modifierClass
+    ? `closing-receipt-section closing-receipt-section--${modifierClass}`
+    : "closing-receipt-section";
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  section.appendChild(title);
+
+  rows.forEach(([labelText, valueText, rowType]) => {
+    const row = document.createElement("div");
+    row.className = rowType === "total"
+      ? "closing-receipt-row closing-receipt-row--total"
+      : "closing-receipt-row";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const value = document.createElement("strong");
+    value.textContent = valueText;
+    row.append(label, value);
+    section.appendChild(row);
+  });
+
+  return section;
+}
+
+function createClosingReceiptMessage(messageText) {
+  const message = document.createElement("p");
+  message.className = "closing-receipt-message";
+  message.textContent = messageText;
+  return message;
+}
+
+function createClosingTransactionDetailsSection(details) {
+  const section = document.createElement("section");
+  section.className = "closing-receipt-section closing-receipt-details";
+  const title = document.createElement("h3");
+  title.textContent = "Rincian Transaksi";
+  section.appendChild(title);
+
+  const transactions = Array.isArray(details?.transactions) ? details.transactions : [];
+  const fnbItems = Array.isArray(details?.fnb_items) ? details.fnb_items : [];
+  const itemsByTransaction = fnbItems.reduce((map, item) => {
+    const key = String(item.transaction_id || "").trim();
+    if (!key) return map;
+    if (!map[key]) map[key] = [];
+    map[key].push(item);
+    return map;
+  }, {});
+
+  transactions.forEach((transaction) => {
+    const article = document.createElement("article");
+    article.className = "closing-receipt-transaction";
+
+    const heading = document.createElement("h4");
+    const roomName = transaction.room_name || transaction.room_id || "Transaksi";
+    const duration = Number(transaction.duration_minutes) > 0
+      ? ` | ${formatClosingDuration(transaction.duration_minutes)}`
+      : "";
+    heading.textContent = `${roomName}${duration}`;
+    article.appendChild(heading);
+
+    if (transaction.start_time || transaction.end_time) {
+      const time = document.createElement("p");
+      time.className = "closing-receipt-meta";
+      time.textContent = `${formatClosingClock(transaction.start_time)}-${formatClosingClock(transaction.end_time)}`;
+      article.appendChild(time);
+    }
+
+    [
+      ["Room", transaction.room_total],
+      ["F&B", transaction.fnb_total],
+      ["LC", transaction.lc_total],
+    ].forEach(([label, amount]) => {
+      if (Number(amount)) article.appendChild(createClosingReceiptAmountRow(label, amount));
+    });
+
+    (itemsByTransaction[String(transaction.transaction_id || "").trim()] || []).forEach((item) => {
+      article.appendChild(createClosingReceiptAmountRow(
+        `${formatClosingQuantity(item.quantity)}x ${item.menu_name || "Item F&B"}`,
+        item.subtotal,
+        "item"
+      ));
+    });
+
+    if (Number(transaction.promo_discount)) {
+      article.appendChild(createClosingReceiptAmountRow("Diskon", -Number(transaction.promo_discount)));
+    }
+    article.appendChild(createClosingReceiptAmountRow("Total", transaction.grand_total, "total"));
+
+    const payment = document.createElement("p");
+    payment.className = "closing-receipt-payment";
+    payment.textContent = `${String(transaction.payment_method || "-").toUpperCase()} - ${String(transaction.payment_status || "-").toUpperCase()}`;
+    article.appendChild(payment);
+    section.appendChild(article);
+  });
+
+  const unlinkedOrders = groupClosingFnbItemsByOrder_(fnbItems.filter((item) => !String(item.transaction_id || "").trim()));
+  Object.keys(unlinkedOrders).forEach((orderId) => {
+    const items = unlinkedOrders[orderId];
+    const article = document.createElement("article");
+    article.className = "closing-receipt-transaction";
+    const heading = document.createElement("h4");
+    heading.textContent = `${items[0]?.room_name || "F&B"} | ${String(items[0]?.order_status || "OPEN").toUpperCase()}`;
+    article.appendChild(heading);
+    items.forEach((item) => {
+      article.appendChild(createClosingReceiptAmountRow(
+        `${formatClosingQuantity(item.quantity)}x ${item.menu_name || "Item F&B"}`,
+        item.subtotal,
+        "item"
+      ));
+    });
+    section.appendChild(article);
+  });
+
+  if (transactions.length === 0) {
+    section.appendChild(createClosingReceiptMessage("Tidak ada transaksi pada snapshot closing."));
+  }
+  return section;
+}
+
+function createClosingReceiptAmountRow(labelText, amount, modifier = "") {
+  return createClosingReceiptValueRow(labelText, formatClosingSignedCurrency(amount), modifier);
+}
+
+function createClosingReceiptValueRow(labelText, valueText, modifier = "") {
+  const row = document.createElement("div");
+  row.className = modifier
+    ? `closing-receipt-row closing-receipt-row--${modifier}`
+    : "closing-receipt-row";
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  const value = document.createElement("strong");
+  value.textContent = valueText;
+  row.append(label, value);
+  return row;
+}
+
+function createClosingLcDetailsSection(details) {
+  const section = document.createElement("section");
+  section.className = "closing-receipt-section closing-receipt-details";
+  const title = document.createElement("h3");
+  title.textContent = "Rekap LC";
+  section.appendChild(title);
+
+  const lcRows = Array.isArray(details?.lc_details) ? details.lc_details : [];
+  const groups = lcRows.reduce((map, row) => {
+    const key = String(row.lc_id || row.lc_name || "LC").trim();
+    if (!map[key]) {
+      map[key] = { name: row.lc_name || row.lc_id || "LC", work: [], bonus: [] };
+    }
+    if (String(row.entry_type || "").toLowerCase() === "bonus") map[key].bonus.push(row);
+    else map[key].work.push(row);
+    return map;
+  }, {});
+
+  Object.values(groups).forEach((group) => {
+    const article = document.createElement("article");
+    article.className = "closing-receipt-lc";
+    const heading = document.createElement("h4");
+    heading.textContent = String(group.name || "LC").toUpperCase();
+    article.appendChild(heading);
+
+    let completedMinutes = 0;
+    let activeCount = 0;
+    let roomEarning = 0;
+    group.work.forEach((work) => {
+      const workStatus = String(work.work_status || "").toLowerCase();
+      const isComplete = ["done", "closed", "paid"].includes(workStatus)
+        || (!workStatus && Boolean(work.end_time));
+      const isActive = workStatus === "active";
+      if (isComplete) {
+        completedMinutes += Number(work.duration_minutes) || 0;
+        roomEarning += Number(work.rate) || 0;
+      } else if (isActive) {
+        activeCount += 1;
+      }
+
+      const line = document.createElement("p");
+      line.className = "closing-receipt-lc-line";
+      if (isComplete) {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${formatClosingClock(work.start_time)}-${formatClosingClock(work.end_time)} ${formatClosingDuration(work.duration_minutes)}`;
+      } else if (isActive) {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${formatClosingClock(work.start_time)}-AKTIF`;
+      } else {
+        line.textContent = `${work.room_name || work.room_id || "Room"} ${String(work.work_status || "TIDAK SELESAI").toUpperCase()}`;
+      }
+      article.appendChild(line);
+    });
+
+    const bonusTotal = group.bonus.reduce((total, bonus) => total + (Number(bonus.bonus_total) || 0), 0);
+    article.appendChild(createClosingReceiptAmountRow(`${group.work.length} sesi | ${formatClosingDuration(completedMinutes)}`, roomEarning));
+    article.appendChild(createClosingReceiptAmountRow("Bonus penjualan", bonusTotal));
+    article.appendChild(createClosingReceiptAmountRow("Total hak", roomEarning + bonusTotal, "total"));
+    if (activeCount > 0) {
+      const warning = document.createElement("p");
+      warning.className = "closing-receipt-warning";
+      warning.textContent = `${activeCount} penugasan masih aktif dan tidak masuk total jam selesai.`;
+      article.appendChild(warning);
+    }
+    section.appendChild(article);
+  });
+
+  const summary = details?.summary?.lc || {};
+  section.appendChild(createClosingReceiptValueRow("Total penugasan", `${Number(summary.assignment_count) || 0} sesi`));
+  section.appendChild(createClosingReceiptValueRow("Total jam LC", formatClosingDuration(summary.completed_duration_minutes)));
+  section.appendChild(createClosingReceiptAmountRow("Hak room LC", summary.room_earning_total));
+  section.appendChild(createClosingReceiptAmountRow("Bonus LC", summary.sales_bonus_total));
+  section.appendChild(createClosingReceiptAmountRow("Kewajiban LC", summary.total_lc_obligation, "total"));
+
+  if (lcRows.length === 0) {
+    section.appendChild(createClosingReceiptMessage("Tidak ada aktivitas LC pada closing ini."));
+  }
+  return section;
+}
+
+function createClosingOperationalSummarySection(details) {
+  const summary = details?.summary?.transactions || {};
+  const fnbItems = Array.isArray(details?.fnb_items) ? details.fnb_items : [];
+  const orderIds = new Set(fnbItems.map((item) => item.order_id).filter(Boolean));
+  return createClosingReceiptSection("Operasional", [
+    ["Room terjual", `${Number(summary.room_sessions) || 0} sesi`],
+    ["Total room-hours", formatClosingDuration(summary.room_duration_minutes)],
+    ["Order F&B", `${orderIds.size} order`],
+    ["Item F&B", `${fnbItems.reduce((total, item) => total + (Number(item.quantity) || 0), 0)} item`],
+  ]);
+}
+
+function groupClosingFnbItemsByOrder_(items) {
+  return items.reduce((map, item) => {
+    const key = String(item.order_id || "Tanpa ID").trim();
+    if (!map[key]) map[key] = [];
+    map[key].push(item);
+    return map;
+  }, {});
+}
+
+function formatClosingClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date).replace(".", ":");
+}
+
+function formatClosingDate(value) {
+  const normalized = String(value || "").trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized || "-";
+  const [year, month, day] = normalized.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+function formatClosingDuration(value) {
+  const totalMinutes = Math.max(0, Math.round(Number(value) || 0));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}j ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatClosingQuantity(value) {
+  const quantity = Number(value) || 0;
+  return Number.isInteger(quantity) ? String(quantity) : quantity.toFixed(2).replace(/\.00$/, "");
+}
+
+function formatClosingSignedCurrency(value) {
+  const amount = Number(value) || 0;
+  if (amount < 0) return `-${formatCurrency(Math.abs(amount))}`;
+  return formatCurrency(amount);
+}
+
+function createLegacyClosingPrintPreviewElement(closing) {
+  const print = document.createElement("section");
   print.className = "closing-print";
   print.setAttribute("aria-labelledby", "closing-print-title");
 
@@ -7747,39 +13207,159 @@ function createClosingPrintPreviewElement(closing) {
   const title = document.createElement("h2");
   title.className = "closing-print-title";
   title.id = "closing-print-title";
-  title.textContent = "Rekap Closing Kasir";
+  title.textContent = "Laporan Tutup Shift Kasir";
 
   const subtitle = document.createElement("p");
   subtitle.className = "closing-print-subtitle";
-  subtitle.textContent = "Karaoke POS";
+  subtitle.textContent = "Happy Song Karaoke - arsip operasional kasir";
 
   header.append(title, subtitle);
 
-  const identity = createClosingPrintSection("Data Closing", [
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
+  // Main Print Table Report
+  const printTable = document.createElement("table");
+  printTable.className = "cashier-closing-table";
+  printTable.style.width = "100%";
+  printTable.style.borderCollapse = "collapse";
+  printTable.style.margin = "15px 0";
+  printTable.style.fontSize = "12px";
+
+  const printTableBody = document.createElement("tbody");
+
+  // Section 1: Data Closing
+  const trDataHeader = document.createElement("tr");
+  trDataHeader.className = "table-section-header";
+  trDataHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdDataHeader = document.createElement("td");
+  tdDataHeader.colSpan = 2;
+  tdDataHeader.style.fontWeight = "800";
+  tdDataHeader.textContent = "I. DATA CLOSING";
+  trDataHeader.appendChild(tdDataHeader);
+  printTableBody.appendChild(trDataHeader);
+
+  const dataRows = [
     ["ID Closing", closing?.closing_id || "-"],
     ["Tanggal Closing", closing?.closing_date || "-"],
-    ["Waktu Closing", closing?.created_at || "-"],
+    ["Waktu Closing", formatDateTimeLabel(closing?.created_at)],
     ["Kasir", closing?.cashier_name || "-"],
-  ]);
+  ];
+  dataRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
 
-  const transactionSummary = createClosingPrintSection("Ringkasan Transaksi", [
+  // Section 2: Ringkasan Transaksi
+  const trTransHeader = document.createElement("tr");
+  trTransHeader.className = "table-section-header";
+  trTransHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdTransHeader = document.createElement("td");
+  tdTransHeader.colSpan = 2;
+  tdTransHeader.style.fontWeight = "800";
+  tdTransHeader.textContent = "II. RINGKASAN TRANSAKSI";
+  trTransHeader.appendChild(tdTransHeader);
+  printTableBody.appendChild(trTransHeader);
+
+  const transSummaryRows = [
     ["Total Transaksi", `${Number(closing?.total_transactions) || 0} transaksi`],
     ["Transaksi Lunas", `${Number(closing?.paid_transactions) || 0} transaksi`],
-    ["Belum Dibayar", `${Number(closing?.unpaid_transactions) || 0} transaksi`],
+    ["Transaksi Belum Dibayar", `${Number(closing?.unpaid_transactions) || 0} transaksi`],
     ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
     ["Total Tagihan", formatCurrency(closing?.total_revenue)],
-  ]);
+  ];
+  transSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.style.fontWeight = label.includes("Total") || label.includes("Omzet") ? "bold" : "normal"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
 
-  const paymentSummary = createClosingPrintSection("Pembayaran", [
-    ["Cash Sistem", formatCurrency(closing?.cash_expected)],
-    ["Cash Aktual", formatCurrency(closing?.cash_actual)],
-    [
-      "Selisih Cash",
-      `${formatCurrency(closing?.cash_difference)} - ${getClosingHistoryDifferenceLabel(Number(closing?.cash_difference) || 0)}`,
-    ],
-    ["Transfer", formatCurrency(closing?.transfer_revenue)],
-    ["Sisa Belum Dibayar", formatCurrency(closing?.unpaid_revenue)],
-  ]);
+  // Section 3: Pemeriksaan Kas (Cash)
+  const trCashHeader = document.createElement("tr");
+  trCashHeader.className = "table-section-header";
+  trCashHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdCashHeader = document.createElement("td");
+  tdCashHeader.colSpan = 2;
+  tdCashHeader.style.fontWeight = "800";
+  tdCashHeader.textContent = "III. PEMERIKSAAN KAS (CASH)";
+  trCashHeader.appendChild(tdCashHeader);
+  printTableBody.appendChild(trCashHeader);
+
+  const cashSummaryRows = [
+    ["Cash Sistem (Expected)", formatCurrency(closing?.cash_expected)],
+    ["Cash Aktual (Fisik)", formatCurrency(closing?.cash_actual)],
+    ["Selisih Cash", `${formatCurrency(closing?.cash_difference)} - ${getClosingHistoryDifferenceLabel(Number(closing?.cash_difference) || 0)}`],
+  ];
+  cashSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    tr.className = label === "Selisih Cash" ? `highlight-row ${getCashDifferenceClass(Number(closing?.cash_difference) || 0)}` : "";
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.style.fontWeight = "bold"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
+
+  // Section 4: Rincian Pecahan Uang Fisik jika ada
+  if (parsedDenoms.length > 0) {
+    const trDenomHeader = document.createElement("tr");
+    trDenomHeader.className = "table-section-header";
+    trDenomHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+    const tdDenomHeader = document.createElement("td");
+    tdDenomHeader.colSpan = 2;
+    tdDenomHeader.style.fontWeight = "800";
+    tdDenomHeader.textContent = "IV. RINCIAN SETORAN UANG FISIK";
+    trDenomHeader.appendChild(tdDenomHeader);
+    printTableBody.appendChild(trDenomHeader);
+
+    parsedDenoms.forEach((denom) => {
+      const tr = document.createElement("tr");
+      const td1 = document.createElement("td"); 
+      td1.style.padding = "8px"; 
+      td1.style.borderBottom = "1px dashed var(--border)"; 
+      td1.textContent = `${denom.label} (x${denom.qty})`;
+      
+      const td2 = document.createElement("td"); 
+      td2.style.padding = "8px"; 
+      td2.style.borderBottom = "1px dashed var(--border)"; 
+      td2.style.textAlign = "right"; 
+      td2.style.fontWeight = "bold";
+      td2.className = "text-gold";
+      td2.textContent = formatCurrency(denom.total);
+
+      tr.append(td1, td2);
+      printTableBody.appendChild(tr);
+    });
+  }
+
+  // Section 5: Pemeriksaan Transfer & Unpaid
+  const trTransferHeader = document.createElement("tr");
+  trTransferHeader.className = "table-section-header";
+  trTransferHeader.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+  const tdTransferHeader = document.createElement("td");
+  tdTransferHeader.colSpan = 2;
+  tdTransferHeader.style.fontWeight = "800";
+  tdTransferHeader.textContent = "V. PEMERIKSAAN KAS LAINNYA";
+  trTransferHeader.appendChild(tdTransferHeader);
+  printTableBody.appendChild(trTransferHeader);
+
+  const transferSummaryRows = [
+    ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
+    ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
+    ["Sisa Belum Dibayar (Unpaid)", formatCurrency(closing?.unpaid_revenue)],
+  ];
+  transferSummaryRows.forEach(([label, value]) => {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.style.padding = "8px"; td1.style.borderBottom = "1px solid var(--border)"; td1.textContent = label;
+    const td2 = document.createElement("td"); td2.style.padding = "8px"; td2.style.borderBottom = "1px solid var(--border)"; td2.style.textAlign = "right"; td2.textContent = value;
+    tr.append(td1, td2);
+    printTableBody.appendChild(tr);
+  });
+
+  printTable.appendChild(printTableBody);
 
   const noteSection = document.createElement("section");
   noteSection.className = "closing-print-section";
@@ -7789,13 +13369,31 @@ function createClosingPrintPreviewElement(closing) {
 
   const note = document.createElement("p");
   note.className = "closing-print-note";
-  note.textContent = closing?.note || "-";
+  note.textContent = parsedNote || "-";
 
   noteSection.append(noteTitle, note);
 
+  const signatureSection = document.createElement("section");
+  signatureSection.className = "closing-print-signatures";
+
+  ["Kasir", "Owner / Supervisor"].forEach((labelText) => {
+    const signature = document.createElement("div");
+    signature.className = "closing-print-signature";
+
+    const line = document.createElement("div");
+    line.className = "closing-print-signature-line";
+
+    const label = document.createElement("p");
+    label.className = "closing-print-label";
+    label.textContent = labelText;
+
+    signature.append(line, label);
+    signatureSection.appendChild(signature);
+  });
+
   const footer = document.createElement("p");
   footer.className = "closing-print-note";
-  footer.textContent = "Dicetak dari Dashboard Kasir Karaoke";
+  footer.textContent = "Dicetak dari Dashboard Kasir Happy Song Karaoke. Simpan laporan ini sebagai arsip tutup shift.";
 
   const actions = document.createElement("div");
   actions.className = "closing-print-actions";
@@ -7813,14 +13411,16 @@ function createClosingPrintPreviewElement(closing) {
   closeButton.textContent = "Tutup Preview Cetak";
 
   actions.append(printButton, closeButton);
-  print.append(header, identity, transactionSummary, paymentSummary, noteSection, footer, actions);
+  print.append(header, printTable, noteSection, signatureSection, footer, actions);
 
   return print;
 }
 
-function createClosingPrintSection(titleText, rows) {
+function createClosingPrintSection(titleText, rows, modifierClass = "") {
   const section = document.createElement("section");
-  section.className = "closing-print-section";
+  section.className = modifierClass
+    ? `closing-print-section ${modifierClass}`
+    : "closing-print-section";
 
   const title = document.createElement("h3");
   title.textContent = titleText;
@@ -7828,7 +13428,7 @@ function createClosingPrintSection(titleText, rows) {
   const grid = document.createElement("div");
   grid.className = "closing-print-grid";
 
-  rows.forEach(([labelText, valueText]) => {
+  rows.forEach(([labelText, valueText, helperText]) => {
     const row = document.createElement("div");
     row.className = "closing-print-row";
 
@@ -7841,6 +13441,14 @@ function createClosingPrintSection(titleText, rows) {
     value.textContent = valueText;
 
     row.append(label, value);
+
+    if (helperText) {
+      const helper = document.createElement("p");
+      helper.className = "closing-print-helper";
+      helper.textContent = helperText;
+      row.appendChild(helper);
+    }
+
     grid.appendChild(row);
   });
 
@@ -7855,7 +13463,7 @@ function createCashierClosingRowElement(closing) {
 
   [
     ["ID Closing", closing?.closing_id || "-"],
-    ["Waktu Closing", closing?.created_at || "-"],
+    ["Waktu Closing", formatDateTimeLabel(closing?.created_at)],
     ["Kasir", closing?.cashier_name || "-"],
     ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
@@ -7882,6 +13490,8 @@ function createCashierClosingRowElement(closing) {
     row.appendChild(item);
   });
 
+  const { note: parsedNote, denoms: parsedDenoms } = parseClosingNoteAndDenoms(closing?.note || "");
+
   const noteItem = document.createElement("div");
   noteItem.className = "cashier-closing-history-note";
 
@@ -7891,9 +13501,33 @@ function createCashierClosingRowElement(closing) {
 
   const noteValue = document.createElement("p");
   noteValue.className = "cashier-closing-history-value";
-  noteValue.textContent = closing?.note || "-";
+  noteValue.textContent = parsedNote || "-";
 
   noteItem.append(noteLabel, noteValue);
+
+  if (parsedDenoms.length > 0) {
+    const denomDetails = document.createElement("div");
+    denomDetails.style.marginTop = "8px";
+    denomDetails.style.padding = "6px 10px";
+    denomDetails.style.background = "rgba(226, 184, 92, 0.05)";
+    denomDetails.style.border = "1px dashed rgba(226, 184, 92, 0.2)";
+    denomDetails.style.borderRadius = "4px";
+    denomDetails.style.fontSize = "11px";
+    denomDetails.style.color = "var(--text-secondary)";
+
+    const denomTitle = document.createElement("strong");
+    denomTitle.style.display = "block";
+    denomTitle.style.marginBottom = "4px";
+    denomTitle.style.color = "var(--gold)";
+    denomTitle.textContent = "Rincian Pecahan Uang Fisik:";
+    denomDetails.appendChild(denomTitle);
+
+    const listText = parsedDenoms.map(d => `${d.label} (${d.qty}x)`).join(", ");
+    const textNode = document.createTextNode(listText);
+    denomDetails.appendChild(textNode);
+    noteItem.appendChild(denomDetails);
+  }
+
   row.appendChild(noteItem);
 
   const actionItem = document.createElement("div");
@@ -8092,6 +13726,24 @@ function createTransactionActionsElement(transaction) {
   summaryButton.textContent = "Lihat Ringkasan";
   actions.appendChild(summaryButton);
 
+  const printButton = document.createElement("button");
+  printButton.className = "transaction-action-button";
+  printButton.type = "button";
+  printButton.dataset.action = "show-receipt-print";
+  printButton.dataset.transactionId = transaction?.transaction_id || "";
+  printButton.textContent = transaction?.payment_status === "paid" ? "Cetak Ulang" : "Cetak Struk";
+  actions.appendChild(printButton);
+
+  if (roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "transaction-action-button btn-danger";
+    deleteButton.type = "button";
+    deleteButton.dataset.action = "delete-transaction";
+    deleteButton.dataset.transactionId = transaction?.transaction_id || "";
+    deleteButton.textContent = "Hapus Transaksi";
+    actions.appendChild(deleteButton);
+  }
+
   if (transaction?.payment_status !== "unpaid") {
     return actions;
   }
@@ -8149,7 +13801,7 @@ function setPaginationPage(key, page) {
   const state = getPaginationState(key);
   const totalPages = getPaginationTotalPages(state.totalItems || 0);
   state.page = Math.max(1, Math.min(Number(page) || 1, totalPages));
-  renderRooms();
+  renderDashboardTabPanels();
 }
 
 function clampPaginationPage(key, totalItems) {
@@ -8205,7 +13857,7 @@ function createPaginationControlsElement(key, totalItems) {
 
   const info = document.createElement("p");
   info.className = "pagination-info";
-  info.textContent = `Menampilkan ${rangeStart}-${rangeEnd} dari ${totalItems} data · Halaman ${page} dari ${totalPages}`;
+  info.textContent = `Menampilkan ${rangeStart}-${rangeEnd} dari ${totalItems} data - Halaman ${page} dari ${totalPages}`;
 
   const actions = document.createElement("div");
   actions.className = "pagination-actions";
@@ -8248,6 +13900,9 @@ function openMasterDataForm(type, mode, item = null) {
       price: "",
       stock_item_id: "",
       qty_per_unit: "",
+      bonus_sales_lc: "",
+      hpp: "",
+      variable_cost_rate: "5",
       status: "active",
     },
     inventory: {
@@ -8394,15 +14049,27 @@ function createMasterDataFormElement() {
   }
 
   if (masterDataForm.type === "menu") {
-    if (masterDataForm.mode === "edit") {
-      grid.appendChild(createMasterField({ label: "Menu ID", field: "menu_id", disabled: true }));
-    }
+    const stockItemOptions = [
+      ["", "-- Tanpa Tracking Stok --"],
+      ...inventoryItems.map((item) => [
+        item.stock_item_id,
+        `${item.stock_item_id} - ${item.stock_item_name || item.stock_item_id} (${item.unit || "unit"})`,
+      ]),
+    ];
 
     grid.append(
       createMasterField({ label: "Nama Menu", field: "menu_name" }),
       createMasterField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Harga", field: "price", type: "number" }),
-      createMasterField({ label: "Stock Item ID", field: "stock_item_id", helper: "Kosongkan jika stok tidak otomatis berkurang." }),
+      createMasterField({ label: "HPP", field: "hpp", type: "number" }),
+      createMasterField({ label: "Var Cost %", field: "variable_cost_rate", type: "number" }),
+      createMasterField({ label: "Bonus Sales LC", field: "bonus_sales_lc", type: "number" }),
+      createMasterField({
+        label: "Item Stok Terhubung",
+        field: "stock_item_id",
+        helper: "Pilih item stok dari Inventory yang berkurang saat menu terjual.",
+        options: stockItemOptions,
+      }),
       createMasterField({ label: "Qty per Unit", field: "qty_per_unit", type: "number" }),
       createMasterField({
         label: "Status",
@@ -8460,24 +14127,24 @@ function createMasterDataFormElement() {
 
 function getMasterStatusBadge(status) {
   const normalizedStatus = String(status || "").trim().toLowerCase();
-  const tone = normalizedStatus === "active" || normalizedStatus === "available"
-    ? "success"
-    : normalizedStatus === "maintenance"
-      ? "warning"
-      : normalizedStatus === "occupied"
-        ? "danger"
-        : normalizedStatus === "inactive"
-          ? "neutral"
-          : "neutral";
+  const roomTone = ROOM_STATUS_CONFIG[normalizedStatus]?.tone;
+  const tone = roomTone
+    || (normalizedStatus === "active"
+      ? "success"
+      : normalizedStatus === "inactive"
+        ? "neutral"
+        : "neutral");
   const badge = document.createElement("span");
   badge.className = withStatusBadge("master-status-badge", tone);
-  badge.textContent = normalizedStatus || "unknown";
+  badge.textContent = ROOM_STATUS_CONFIG[normalizedStatus]?.label || normalizedStatus || "unknown";
   return badge;
 }
 
-function createMasterTable(headers, rows, emptyText) {
+function createMasterTable(headers, rows, emptyText, paginationKey = "") {
   const wrapper = document.createElement("div");
   wrapper.className = "master-table-wrap";
+  const paginated = paginationKey ? getPaginatedSlice(paginationKey, rows) : null;
+  const visibleRows = paginated ? paginated.items : rows;
 
   const table = document.createElement("table");
   table.className = "master-table";
@@ -8502,7 +14169,7 @@ function createMasterTable(headers, rows, emptyText) {
     tr.appendChild(td);
     tbody.appendChild(tr);
   } else {
-    rows.forEach((cells) => {
+    visibleRows.forEach((cells) => {
       const tr = document.createElement("tr");
       cells.forEach((cell) => {
         const td = document.createElement("td");
@@ -8519,6 +14186,11 @@ function createMasterTable(headers, rows, emptyText) {
 
   table.append(thead, tbody);
   wrapper.appendChild(table);
+
+  if (paginationKey) {
+    wrapper.appendChild(createPaginationControlsElement(paginationKey, rows.length));
+  }
+
   return wrapper;
 }
 
@@ -8547,7 +14219,7 @@ function createMasterActionButton(type, item) {
   return actions;
 }
 
-function createSettingsSection(titleText, subtitleText, addType, tableElement) {
+function createSettingsSection(titleText, subtitleText, addType, tableElement, extraControls = null) {
   const section = document.createElement("section");
   section.className = "settings-section";
 
@@ -8563,20 +14235,161 @@ function createSettingsSection(titleText, subtitleText, addType, tableElement) {
   subtitle.textContent = subtitleText;
   titleGroup.append(title, subtitle);
 
-  const addButton = document.createElement("button");
-  addButton.className = "master-button primary";
-  addButton.type = "button";
-  addButton.dataset.action = "add-master-data";
-  addButton.dataset.masterType = addType;
-  addButton.textContent = "Tambah";
+  header.appendChild(titleGroup);
 
-  header.append(titleGroup, addButton);
-  section.append(header, tableElement);
+  if (addType) {
+    const addButton = document.createElement("button");
+    addButton.className = "master-button primary";
+    addButton.type = "button";
+    addButton.dataset.action = "add-master-data";
+    addButton.dataset.masterType = addType;
+    addButton.textContent = "Tambah";
+    header.appendChild(addButton);
+  }
+  section.append(header);
+
+  if (extraControls) {
+    section.appendChild(extraControls);
+  }
+
+  section.appendChild(tableElement);
   return section;
 }
 
+function createSettingsSearchControl(labelText, value, action, placeholder) {
+  const searchWrap = document.createElement("label");
+  searchWrap.className = "master-form-field settings-search-field";
+
+  const searchLabel = document.createElement("span");
+  searchLabel.className = "master-form-label";
+  searchLabel.textContent = labelText;
+
+  const searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.className = "master-form-input";
+  searchInput.placeholder = placeholder;
+  searchInput.value = value;
+  searchInput.dataset.action = action;
+
+  searchWrap.append(searchLabel, searchInput);
+  return searchWrap;
+}
+
+function createSettingsSelectControl(labelText, value, action, options) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field settings-search-field";
+
+  const label = document.createElement("span");
+  label.className = "master-form-label";
+  label.textContent = labelText;
+
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+  select.dataset.action = action;
+  select.value = value;
+
+  options.forEach(([optionValue, text]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+function matchesSettingsMenuAnalysisFilter(menuItem) {
+  const profit = getMenuProfitAnalysis(menuItem);
+
+  if (settingsMenuAnalysisFilter === "margin_danger") {
+    return profit.marginPercent < 30;
+  }
+
+  if (settingsMenuAnalysisFilter === "margin_warning") {
+    return profit.marginPercent >= 30 && profit.marginPercent < 40;
+  }
+
+  if (settingsMenuAnalysisFilter === "hpp_empty") {
+    return profit.hpp <= 0;
+  }
+
+  if (settingsMenuAnalysisFilter === "bonus_lc") {
+    return Number(menuItem?.bonus_sales_lc) > 0;
+  }
+
+  if (settingsMenuAnalysisFilter === "varcost_empty") {
+    return profit.variableCostRate <= 0;
+  }
+
+  return true;
+}
+
+function createSettingsSubTabsElement() {
+  const tabs = [
+    ["rooms", "Ruangan"],
+    ["menu", "Menu F&B"],
+    ["packages", "Paket"],
+    ["inventory", "Inventory"],
+    ["access", "Akses"],
+    ["audit", "Audit"],
+    ["quality", "Kualitas Data"],
+  ];
+  const nav = document.createElement("div");
+  nav.className = "settings-sub-tabs";
+
+  tabs.forEach(([key, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = key === activeSettingsSubTab ? "settings-sub-tab active" : "settings-sub-tab";
+    button.dataset.action = "switch-settings-subtab";
+    button.dataset.settingsTab = key;
+    button.textContent = label;
+    nav.appendChild(button);
+  });
+
+  return nav;
+}
+
+function getActiveSettingsSectionElement() {
+  if (activeSettingsSubTab === "menu") {
+    return createMenuSettingsSection();
+  }
+
+  if (activeSettingsSubTab === "inventory") {
+    return createInventorySettingsSection();
+  }
+
+  if (activeSettingsSubTab === "packages") {
+    return createPackageSettingsSection();
+  }
+
+  if (activeSettingsSubTab === "access") {
+    return createAccessSettingsSection();
+  }
+
+  if (activeSettingsSubTab === "audit") {
+    return createMasterAuditLogSection();
+  }
+
+  if (activeSettingsSubTab === "quality") {
+    return createMasterDataQualitySection();
+  }
+
+  return createRoomSettingsSection();
+}
+
 function createRoomSettingsSection() {
-  const rows = rooms.map((room) => [
+  const query = settingsRoomSearchQuery.trim().toLowerCase();
+  const filteredRooms = query
+    ? rooms.filter((room) => [
+      room.room_id,
+      room.room_name,
+      room.status,
+      room.tv_device_id,
+    ].join(" ").toLowerCase().includes(query))
+    : rooms;
+  const rows = filteredRooms.map((room) => [
     room.room_id || "-",
     room.room_name || "-",
     formatCurrency(room.rate_per_hour),
@@ -8589,32 +14402,121 @@ function createRoomSettingsSection() {
     "Pengaturan Ruangan",
     "Kelola data master room tanpa mengubah waktu sesi aktif.",
     "room",
-    createMasterTable(["ID", "Room", "Tarif/Jam", "TV", "Status", "Aksi"], rows, "Belum ada room.")
+    createMasterTable(["ID", "Room", "Tarif/Jam", "TV", "Status", "Aksi"], rows, "Room tidak ditemukan.", "settingsRooms"),
+    createSettingsSearchControl("Cari Ruangan", settingsRoomSearchQuery, "filter-settings-room", "Cari nama room, ID, status, atau TV")
   );
 }
 
+function getMenuProfitAnalysis(menuItem) {
+  const price = Number(menuItem?.price) || 0;
+  const hpp = Number(menuItem?.hpp) || 0;
+  const variableCostRate = Number(menuItem?.variable_cost_rate) || 0;
+  const bonusSalesLc = Number(menuItem?.bonus_sales_lc) || 0;
+  const variableCostAmount = Number.isFinite(Number(menuItem?.variable_cost_amount))
+    ? Number(menuItem.variable_cost_amount)
+    : price * variableCostRate / 100;
+  const marginAmount = Number.isFinite(Number(menuItem?.margin_amount))
+    ? Number(menuItem.margin_amount)
+    : price - hpp - variableCostAmount - bonusSalesLc;
+  const marginPercent = Number.isFinite(Number(menuItem?.margin_percent))
+    ? Number(menuItem.margin_percent)
+    : price > 0 ? marginAmount / price * 100 : 0;
+
+  return {
+    hpp,
+    variableCostRate,
+    variableCostAmount,
+    marginAmount,
+    marginPercent,
+  };
+}
+
 function createMenuSettingsSection() {
-  const rows = menuItems.map((menuItem) => [
-    menuItem.menu_id || "-",
-    menuItem.menu_name || "-",
-    menuItem.category || "-",
-    formatCurrency(menuItem.price),
-    menuItem.stock_item_id || "-",
-    Number(menuItem.stock_qty_per_unit) || 0,
-    getMasterStatusBadge(menuItem.status),
-    createMasterActionButton("menu", menuItem),
-  ]);
+  const query = settingsMenuSearchQuery.trim().toLowerCase();
+  const filteredMenuItems = menuItems.filter((menuItem) => {
+    const matchesAnalysis = matchesSettingsMenuAnalysisFilter(menuItem);
+
+    if (!matchesAnalysis) {
+      return false;
+    }
+
+    if (query) {
+      const haystack = [
+        menuItem.menu_id,
+        menuItem.menu_name,
+        menuItem.category,
+        menuItem.stock_item_id,
+      ].join(" ").toLowerCase();
+
+      return haystack.includes(query);
+    }
+
+    return true;
+  });
+
+  const controls = document.createElement("div");
+  controls.className = "settings-control-row";
+  controls.append(
+    createSettingsSearchControl(
+      "Cari Menu F&B",
+      settingsMenuSearchQuery,
+      "filter-settings-menu",
+      "Cari nama, kategori, ID menu, atau stock item"
+    ),
+    createSettingsSelectControl(
+      "Filter Analisa",
+      settingsMenuAnalysisFilter,
+      "filter-settings-menu-analysis",
+      [
+        ["all", "Semua"],
+        ["margin_danger", "Margin Bahaya (<30%)"],
+        ["margin_warning", "Margin Tipis (30-40%)"],
+        ["hpp_empty", "HPP Kosong"],
+        ["bonus_lc", "Bonus LC Ada"],
+        ["varcost_empty", "Var Cost Kosong"],
+      ]
+    )
+  );
+
+  const rows = filteredMenuItems.map((menuItem) => {
+    const profit = getMenuProfitAnalysis(menuItem);
+
+    return [
+      menuItem.menu_id || "-",
+      menuItem.menu_name || "-",
+      menuItem.category || "-",
+      formatCurrency(menuItem.price),
+      formatCurrency(profit.hpp),
+      `${formatDecimal(profit.variableCostRate)}% / ${formatCurrency(profit.variableCostAmount)}`,
+      formatCurrency(menuItem.bonus_sales_lc || 0),
+      formatCurrency(profit.marginAmount),
+      formatPercent(profit.marginPercent),
+      getMasterStatusBadge(menuItem.status),
+      createMasterActionButton("menu", menuItem),
+    ];
+  });
 
   return createSettingsSection(
     "Pengaturan Menu F&B",
     "Kelola menu aktif/inaktif dan mapping stok.",
     "menu",
-    createMasterTable(["ID", "Menu", "Kategori", "Harga", "Stock Item", "Qty/Unit", "Status", "Aksi"], rows, "Belum ada menu.")
+    createMasterTable(["ID", "Menu", "Kategori", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
+    controls
   );
 }
 
 function createInventorySettingsSection() {
-  const rows = inventoryItems.map((item) => [
+  const query = settingsInventorySearchQuery.trim().toLowerCase();
+  const filteredInventoryItems = query
+    ? inventoryItems.filter((item) => [
+      item.stock_item_id,
+      item.stock_item_name,
+      item.category,
+      item.unit,
+      item.status,
+    ].join(" ").toLowerCase().includes(query))
+    : inventoryItems;
+  const rows = filteredInventoryItems.map((item) => [
     item.stock_item_id || "-",
     item.stock_item_name || "-",
     item.category || "-",
@@ -8629,25 +14531,144 @@ function createInventorySettingsSection() {
     "Pengaturan Inventory",
     "Kelola master item dan min stok. Restock tetap melalui fitur Stok.",
     "inventory",
-    createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Belum ada inventory.")
+    createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Inventory tidak ditemukan.", "settingsInventory"),
+    createSettingsSearchControl("Cari Inventory", settingsInventorySearchQuery, "filter-settings-inventory", "Cari item, kategori, unit, ID, atau status")
+  );
+}
+
+function getPackageDetailsForSettings(packageId) {
+  return packageDetailsByPackageId[packageId] || [];
+}
+
+function getPackageComponentLabel(type) {
+  const normalized = String(type || "").trim().toLowerCase();
+  const labels = {
+    menu: "Menu F&B",
+    service: "Service",
+    inventory: "Inventory",
+    room: "Room",
+  };
+
+  return labels[normalized] || type || "-";
+}
+
+function createPackageDetailButton(pkg) {
+  const actions = document.createElement("div");
+  actions.className = "master-row-actions";
+
+  const button = document.createElement("button");
+  button.className = pkg.package_id === selectedSettingsPackageId ? "master-button primary" : "master-button";
+  button.type = "button";
+  button.dataset.action = "view-settings-package-detail";
+  button.dataset.packageId = pkg.package_id || "";
+  button.disabled = !pkg.package_id || isLoadingPackageDetails;
+  button.textContent = pkg.package_id === selectedSettingsPackageId ? "Terbuka" : "Detail";
+
+  actions.appendChild(button);
+  return actions;
+}
+
+function createPackageDetailsElement() {
+  if (!selectedSettingsPackageId) {
+    return createStateMessage("Pilih Detail pada salah satu paket untuk melihat isi paket.");
+  }
+
+  const selectedPackage = packages.find((pkg) => pkg.package_id === selectedSettingsPackageId);
+  const details = getPackageDetailsForSettings(selectedSettingsPackageId);
+  const wrapper = document.createElement("div");
+  wrapper.className = "settings-package-detail";
+
+  const title = document.createElement("h4");
+  title.className = "settings-section-title";
+  title.textContent = selectedPackage
+    ? `Isi Paket: ${selectedPackage.package_name}`
+    : `Isi Paket: ${selectedSettingsPackageId}`;
+
+  if (isLoadingPackageDetails) {
+    wrapper.append(title, createStateMessage("Memuat detail paket..."));
+    return wrapper;
+  }
+
+  const rows = details.map((detail) => [
+    detail.line_no ? String(detail.line_no) : "-",
+    getPackageComponentLabel(detail.component_type),
+    detail.component_name || detail.component_ref_id || "-",
+    detail.component_ref_id || "-",
+    `${formatDecimal(detail.qty)} ${detail.unit || ""}`.trim(),
+    formatCurrency(detail.hpp || detail.cost_amount || 0),
+    detail.is_choice ? "Pilihan" : "Included",
+    detail.note || "-",
+  ]);
+
+  wrapper.append(
+    title,
+    createMasterTable(
+      ["No", "Tipe", "Komponen", "Ref", "Qty", "HPP/Cost", "Mode", "Catatan"],
+      rows,
+      "Detail paket belum ada.",
+      "settingsPackageDetails"
+    )
+  );
+
+  return wrapper;
+}
+
+function createPackageSettingsSection() {
+  const query = settingsPackageSearchQuery.trim().toLowerCase();
+  const filteredPackages = query
+    ? packages.filter((pkg) => [
+      pkg.package_id,
+      pkg.package_name,
+      pkg.package_category,
+      pkg.package_type,
+      pkg.status,
+      pkg.valid_day_type,
+      pkg.note,
+    ].join(" ").toLowerCase().includes(query))
+    : packages;
+
+  const rows = filteredPackages.map((pkg) => [
+    pkg.package_id || "-",
+    pkg.package_name || "-",
+    pkg.package_category || "-",
+    formatCurrency(pkg.selling_price || 0),
+    `${Number(pkg.duration_minutes) || 0} menit`,
+    pkg.valid_day_type || "-",
+    getMasterStatusBadge(pkg.status),
+    createPackageDetailButton(pkg),
+  ]);
+
+  const content = document.createElement("div");
+  content.className = "settings-package-content";
+  content.append(
+    createMasterTable(
+      ["ID", "Paket", "Kategori", "Harga", "Durasi", "Hari", "Status", "Detail"],
+      rows,
+      "Paket tidak ditemukan.",
+      "settingsPackages"
+    ),
+    createPackageDetailsElement()
+  );
+
+  return createSettingsSection(
+    "Pengaturan Paket",
+    "Lihat master paket dan komponen included sebelum tahap tambah/edit paket diaktifkan.",
+    "",
+    content,
+    createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
   );
 }
 
 function createAccessSettingsSection() {
-  const section = document.createElement("section");
-  section.className = "settings-section access-settings-section";
-
-  const header = document.createElement("div");
-  header.className = "settings-section-header";
-
-  const titleGroup = document.createElement("div");
-  const title = document.createElement("h3");
-  title.className = "settings-section-title";
-  title.textContent = "Pengaturan Akses";
-  const subtitle = document.createElement("p");
-  subtitle.className = "settings-section-subtitle";
-  subtitle.textContent = "Daftar role aktif untuk proteksi PIN admin.";
-  titleGroup.append(title, subtitle);
+  const query = settingsAccessSearchQuery.trim().toLowerCase();
+  const filteredEmployees = query
+    ? employees.filter((employee) => [
+      employee.employee_id,
+      employee.employee_name,
+      employee.role,
+      employee.status,
+    ].join(" ").toLowerCase().includes(query))
+    : employees;
 
   const refreshButton = document.createElement("button");
   refreshButton.className = "master-button";
@@ -8656,20 +14677,27 @@ function createAccessSettingsSection() {
   refreshButton.disabled = isLoadingSettingsData || !API_BASE_URL.trim();
   refreshButton.textContent = isLoadingSettingsData ? "Memuat..." : "Refresh Akses";
 
-  const rows = employees.map((employee) => [
+  const controls = document.createElement("div");
+  controls.className = "settings-control-row";
+  controls.append(
+    createSettingsSearchControl("Cari Akses", settingsAccessSearchQuery, "filter-settings-access", "Cari nama, role, status, atau ID"),
+    refreshButton
+  );
+
+  const rows = filteredEmployees.map((employee) => [
     employee.employee_id || "-",
     employee.employee_name || "-",
     getMasterStatusBadge(employee.role),
     getMasterStatusBadge(employee.status),
   ]);
 
-  header.append(titleGroup, refreshButton);
-  section.append(
-    header,
-    createMasterTable(["ID", "Nama", "Role", "Status"], rows, "Belum ada data employee.")
+  return createSettingsSection(
+    "Pengaturan Akses",
+    "Daftar role aktif untuk proteksi PIN owner/manager.",
+    "",
+    createMasterTable(["ID", "Nama", "Role", "Status"], rows, "Data akses tidak ditemukan.", "settingsAccess"),
+    controls
   );
-
-  return section;
 }
 
 function normalizeNameForDuplicateCheck(name) {
@@ -8706,7 +14734,7 @@ function createQualityIssue({ type, id, name, issue, severity, recommendation, c
 
 function detectRoomQualityIssues(sourceRooms) {
   const nameCounts = createNameCountMap(sourceRooms, (room) => room.room_name);
-  const validStatuses = new Set(["available", "occupied", "maintenance"]);
+  const validStatuses = VALID_ROOM_STATUS_KEYS;
   const issues = [];
 
   sourceRooms.forEach((room) => {
@@ -8769,17 +14797,6 @@ function detectRoomQualityIssues(sourceRooms) {
         severity: isOccupied ? "blocked" : "safe_cleanup",
         recommendation: isOccupied ? "Jangan cleanup saat occupied" : "Delete permanen jika belum punya histori",
         cleanupCandidate: !isOccupied,
-      }));
-    }
-
-    if (!String(room.tv_device_id || "").trim()) {
-      issues.push(createQualityIssue({
-        type: "room",
-        id: room.room_id,
-        name: roomName,
-        issue: "TV device ID kosong",
-        severity: "info",
-        recommendation: "Isi TV device jika dipakai integrasi TV",
       }));
     }
 
@@ -9085,7 +15102,8 @@ function createQualityIssueTable(issues) {
   return createMasterTable(
     ["Tipe", "ID", "Nama", "Issue", "Severity", "Rekomendasi", "Aksi"],
     rows,
-    "Tidak ada issue master data."
+    "Tidak ada issue master data.",
+    "settingsQuality"
   );
 }
 
@@ -9231,7 +15249,7 @@ function createMasterAuditLogSection() {
   header.append(titleGroup, refreshButton);
 
   const rows = masterAuditLogs.map((log) => [
-    log.created_at || "-",
+    formatDateTimeLabel(log.created_at),
     log.entity_type || "-",
     log.entity_id || "-",
     log.entity_name || "-",
@@ -9250,7 +15268,8 @@ function createMasterAuditLogSection() {
       : createMasterTable(
         ["Waktu", "Entity", "ID", "Nama", "Action", "Changed By", "Result", "Alasan Blokir", "Note"],
         rows,
-        "Belum ada audit log master data."
+        "Belum ada audit log master data.",
+        "settingsAudit"
       )
   );
 
@@ -9272,7 +15291,7 @@ function createSettingsPanelElement() {
   title.textContent = "Pengaturan";
   const subtitle = document.createElement("p");
   subtitle.className = "settings-subtitle";
-  subtitle.textContent = "Kelola master data ruangan, menu F&B, inventory, dan mapping TV.";
+  subtitle.textContent = "Kelola master data ruangan, menu F&B, dan inventory.";
   titleGroup.append(title, subtitle);
 
   const refreshButton = document.createElement("button");
@@ -9293,27 +15312,80 @@ function createSettingsPanelElement() {
   panel.appendChild(createDeleteMasterConfirmationElement());
   panel.appendChild(createAdminPinModalElement());
 
-  const tvDeviceFormModal = createTvDeviceFormModalElement();
-  if (tvDeviceFormModal) {
-    panel.appendChild(tvDeviceFormModal);
-  }
-
   if (isLoadingSettingsData) {
     panel.appendChild(createStateMessage("Memuat data pengaturan..."));
     return panel;
   }
 
   panel.append(
-    createRoomSettingsSection(),
-    createMenuSettingsSection(),
-    createInventorySettingsSection(),
-    createTvIntegrationSection(),
-    createAccessSettingsSection(),
-    createMasterAuditLogSection(),
-    createMasterDataQualitySection()
+    createSettingsSubTabsElement(),
+    getActiveSettingsSectionElement()
   );
 
+  if (getCurrentOperatorRole() === "owner") {
+    panel.appendChild(createOwnerTestingCleanupSection());
+  }
+
   return panel;
+}
+
+function createOwnerTestingCleanupSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section";
+  section.style.border = "1px solid rgba(245, 158, 11, 0.45)";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Cleanup Data Testing";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Hanya menghapus row dengan is_test=TRUE dan test_run_id yang sama.";
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const form = document.createElement("div");
+  form.className = "settings-control-row";
+
+  const idField = document.createElement("label");
+  idField.className = "master-form-field";
+  const idLabel = document.createElement("span");
+  idLabel.className = "master-form-label";
+  idLabel.textContent = "Test Run ID";
+  const idInput = document.createElement("input");
+  idInput.className = "master-form-input";
+  idInput.dataset.action = "update-cleanup-test-run-id";
+  idInput.placeholder = "TEST-YYYYMMDD...";
+  idInput.value = cleanupTestRunIdInput || lastOwnerTestRunId;
+  idField.append(idLabel, idInput);
+
+  const pinField = document.createElement("label");
+  pinField.className = "master-form-field";
+  const pinLabel = document.createElement("span");
+  pinLabel.className = "master-form-label";
+  pinLabel.textContent = "PIN Manager/Owner";
+  const pinInput = document.createElement("input");
+  pinInput.className = "master-form-input";
+  pinInput.type = "password";
+  pinInput.inputMode = "numeric";
+  pinInput.dataset.action = "update-cleanup-test-owner-pin";
+  pinInput.value = cleanupTestOwnerPinInput;
+  pinField.append(pinLabel, pinInput);
+
+  const button = document.createElement("button");
+  button.className = "master-button danger";
+  button.type = "button";
+  button.dataset.action = "cleanup-test-run";
+  button.disabled = isCleaningTestRun || !API_BASE_URL.trim();
+  button.textContent = isCleaningTestRun ? "Membersihkan..." : "Bersihkan Test Run";
+
+  form.append(idField, pinField, button);
+  section.append(header, form);
+
+  return section;
 }
 
 function findMasterItem(type, id) {
@@ -9478,10 +15550,10 @@ async function submitDeleteMasterData() {
   }
 
   openAdminPinModal({
-    title: "PIN Admin Delete Permanen",
-    message: `Masukkan PIN owner/admin untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
+    title: "PIN Manager Delete Permanen",
+    message: `Masukkan PIN owner/manager untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
     requestedAction: `delete_permanent_${deleteMasterConfirmation.type}`,
-    requiredRole: "admin",
+    requiredRole: "manager",
     validatePin: false,
     onSuccess: (authData, adminPin) => executeDeleteMasterData(adminPin, authData),
   });
@@ -9518,7 +15590,7 @@ async function executeDeleteMasterData(adminPin, authData) {
     adminPinModal = null;
     deleteMasterConfirmation = null;
     showInlineNotice(message);
-    await loadSettingsTabData();
+    await loadSettingsTabData({ force: true });
     return { success: true, message };
   } catch (error) {
     console.error("Gagal delete permanen.", error);
@@ -9627,10 +15699,25 @@ function createDeleteField(labelText, field, value) {
   return wrapper;
 }
 
-function openAdminPinModal({ title, message, requestedAction, requiredRole = "admin", validatePin = true, onSuccess }) {
+function openAdminPinModal({ title, message, requestedAction, requiredRole = "manager", validatePin = true, onSuccess }) {
+  const operatorPin = getLoggedInOperatorPin();
+  if (isOperatorLoggedIn() && roleMeetsRequired(currentOperator.role, requiredRole) && operatorPin) {
+    console.log("openAdminPinModal: Bypassing PIN modal, operator role matches or exceeds required role.");
+    if (typeof onSuccess === "function") {
+      setTimeout(async () => {
+        try {
+          await onSuccess({ success: true, employee: currentOperator }, operatorPin);
+        } catch (err) {
+          console.error("Error executing onSuccess in bypassed PIN validation:", err);
+        }
+      }, 0);
+    }
+    return;
+  }
+
   adminPinModal = {
-    title: title || "PIN Admin",
-    message: message || "Masukkan PIN owner/admin untuk melanjutkan.",
+    title: title || "PIN Manager",
+    message: message || "Masukkan PIN owner/manager untuk melanjutkan.",
     requestedAction: requestedAction || "admin_action",
     requiredRole,
     validatePin,
@@ -9677,13 +15764,16 @@ function syncAdminPinModalControls() {
 }
 
 async function submitAdminPinModal() {
+  console.log("submitAdminPinModal: triggered");
   if (!adminPinModal || isValidatingAdminPin) {
+    console.log("submitAdminPinModal: skipped, adminPinModal is null or already validating", { adminPinModal, isValidatingAdminPin });
     return;
   }
 
   const adminPin = String(adminPinModal.pin || "").trim();
 
   if (!adminPin) {
+    console.log("submitAdminPinModal: failed, empty pin");
     adminPinModal = {
       ...adminPinModal,
       error: "PIN wajib diisi.",
@@ -9693,8 +15783,10 @@ async function submitAdminPinModal() {
   }
 
   const pendingAction = adminPinModal.onSuccess;
+  console.log("submitAdminPinModal: pendingAction is", typeof pendingAction);
 
   if (adminPinModal.validatePin === false) {
+    console.log("submitAdminPinModal: bypassing validation");
     isValidatingAdminPin = true;
     renderRooms();
 
@@ -9722,6 +15814,7 @@ async function submitAdminPinModal() {
     return;
   }
 
+  console.log("submitAdminPinModal: starting API validation request...");
   isValidatingAdminPin = true;
   renderRooms();
 
@@ -9729,28 +15822,33 @@ async function submitAdminPinModal() {
     const data = await postApiAction({
       action: "validateAdminPin",
       pin: adminPin,
-      required_role: adminPinModal.requiredRole || "admin",
+      required_role: adminPinModal.requiredRole || "manager",
       requested_action: adminPinModal.requestedAction || "admin_action",
       changed_by: getLoggedInOperatorName(),
     });
 
+    console.log("submitAdminPinModal: validation API response received", data);
+
     if (!data || (data.ok !== true && data.success !== true)) {
-      throw new Error(data?.message || data?.error || "PIN admin tidak valid.");
+      throw new Error(data?.message || data?.error || "PIN owner/manager tidak valid.");
     }
 
     const authData = data.data || {};
+    console.log("submitAdminPinModal: validation successful, authData:", authData);
     adminPinModal = null;
     isValidatingAdminPin = false;
     renderRooms();
 
     if (typeof pendingAction === "function") {
+      console.log("submitAdminPinModal: executing pending success action...");
       await pendingAction(authData, adminPin);
     }
   } catch (error) {
+    console.error("submitAdminPinModal: error validated PIN", error);
     adminPinModal = {
       ...adminPinModal,
       pin: "",
-      error: error.message || "PIN admin tidak valid.",
+      error: error.message || "PIN owner/manager tidak valid.",
     };
     isValidatingAdminPin = false;
     renderRooms();
@@ -9772,18 +15870,18 @@ function createAdminPinModalElement() {
   const title = document.createElement("h3");
   title.className = "master-delete-title";
   title.id = "admin-pin-title";
-  title.textContent = adminPinModal.title || "PIN Admin";
+  title.textContent = adminPinModal.title || "PIN Manager";
 
   const message = document.createElement("p");
   message.className = "master-delete-warning";
-  message.textContent = adminPinModal.message || "Masukkan PIN owner/admin untuk melanjutkan.";
+  message.textContent = adminPinModal.message || "Masukkan PIN owner/manager untuk melanjutkan.";
 
   const field = document.createElement("label");
   field.className = "master-form-field";
 
   const label = document.createElement("span");
   label.className = "master-form-label";
-  label.textContent = "PIN Admin";
+  label.textContent = "PIN Owner/Manager";
 
   const input = document.createElement("input");
   input.className = "master-form-input";
@@ -9857,6 +15955,9 @@ function buildMasterPayload(authData = null, adminPin = "") {
       menu_name: values.menu_name || "",
       category: values.category || "",
       price: Number(values.price),
+      hpp: Number(values.hpp || 0),
+      variable_cost_rate: Number(values.variable_cost_rate || 0),
+      bonus_sales_lc: Number(values.bonus_sales_lc || 0),
       stock_item_id: values.stock_item_id || "",
       qty_per_unit: Number(values.qty_per_unit || values.stock_qty_per_unit || 0),
       status: values.status || "active",
@@ -9887,10 +15988,10 @@ async function submitMasterDataForm() {
 
   if (isSensitiveMasterDataChange()) {
     openAdminPinModal({
-      title: "PIN Admin Master Data",
+      title: "PIN Manager Master Data",
       message: getSensitiveMasterDataMessage(),
       requestedAction: getSensitiveMasterDataAction(),
-      requiredRole: "admin",
+      requiredRole: "manager",
       onSuccess: (authData, adminPin) => executeMasterDataSubmit(authData, adminPin),
     });
     return;
@@ -9952,7 +16053,7 @@ function getSensitiveMasterDataAction() {
 
 function getSensitiveMasterDataMessage() {
   if (!masterDataForm) {
-    return "Masukkan PIN owner/admin untuk menyimpan perubahan.";
+    return "Masukkan PIN owner/manager untuk menyimpan perubahan.";
   }
 
   const labels = {
@@ -9962,7 +16063,7 @@ function getSensitiveMasterDataMessage() {
   };
   const action = getSensitiveMasterDataAction();
 
-  return `Masukkan PIN owner/admin untuk ${labels[action] || "menyimpan perubahan sensitif"}.`;
+  return `Masukkan PIN owner/manager untuk ${labels[action] || "menyimpan perubahan sensitif"}.`;
 }
 
 async function executeMasterDataSubmit(authData = null, adminPin = "") {
@@ -9982,7 +16083,7 @@ async function executeMasterDataSubmit(authData = null, adminPin = "") {
 
     showInlineNotice(data.message || "Master data berhasil disimpan.");
     masterDataForm = null;
-    await loadSettingsTabData();
+    await loadSettingsTabData({ force: true });
     await Promise.all([
       loadMenuItems(),
       loadInventoryItems(),
@@ -10019,7 +16120,35 @@ function saveActiveDashboardTab(tabKey) {
 }
 
 function isValidDashboardTab(tabKey) {
-  return DASHBOARD_TABS.some((tab) => tab.key === tabKey);
+  return DASHBOARD_TABS.some((tab) => tab.key === tabKey) && canAccessDashboardTab(tabKey);
+}
+
+function isValidReportSubTab(tabKey) {
+  const allowedTabs = ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || [];
+  return REPORT_SUB_TABS.some((tab) => tab.key === tabKey) && allowedTabs.includes(tabKey);
+}
+
+function ensureActiveDashboardTabAllowed() {
+  if (!isValidDashboardTab(activeDashboardTab)) {
+    activeDashboardTab = getDefaultDashboardTabForCurrentRole();
+    saveActiveDashboardTab(activeDashboardTab);
+  }
+}
+
+function ensureActiveReportSubTabAllowed() {
+  if (!isValidReportSubTab(activeReportSubTab)) {
+    activeReportSubTab = (ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || [])[0] || "cashier";
+  }
+}
+
+function setActiveReportSubTab(tabKey) {
+  if (!isValidReportSubTab(tabKey) || activeReportSubTab === tabKey) {
+    return;
+  }
+
+  activeReportSubTab = tabKey;
+  renderRooms();
+  refreshActiveTabData();
 }
 
 function setActiveDashboardTab(tabKey) {
@@ -10029,46 +16158,2723 @@ function setActiveDashboardTab(tabKey) {
 
   activeDashboardTab = tabKey;
   saveActiveDashboardTab(tabKey);
+  noticeMessage = "";
+  noticeType = "info";
+  noticeTabKey = "";
   renderRooms();
   refreshActiveTabData();
+
+  if (tabKey === "rooms" && isOperatorLoggedIn() && !isUserBusy()) {
+    silentReloadRooms();
+  }
 }
 
-function refreshActiveTabData() {
+async function refreshActiveTabData() {
+  ensureActiveDashboardTabAllowed();
+
   if (!API_BASE_URL.trim() && activeDashboardTab !== "rooms") {
     return;
   }
 
+  const loads = [];
+
   switch (activeDashboardTab) {
     case "rooms":
-      loadRoomRecoveryCandidates();
+      loads.push(loadRoomRecoveryCandidates());
+      if (inventoryItems.length === 0) {
+        loads.push(loadInventoryItems());
+      }
+      if (menuItems.length === 0) {
+        loads.push(loadMenuItems());
+      }
+      loads.push(loadOpenFnbOrders());
       break;
     case "fnb":
-      loadMenuItems();
-      loadOpenFnbOrders();
-      loadTodayFnbOrders();
+      if (inventoryItems.length === 0) {
+        loads.push(loadInventoryItems());
+      }
+      if (menuItems.length === 0) {
+        loads.push(loadMenuItems());
+      }
+      loads.push(loadOpenFnbOrders(), loadTodayFnbOrders());
       break;
     case "stock":
-      loadInventoryItems();
-      loadTodayStockMovements();
+      if (inventoryItems.length === 0) {
+        loads.push(loadInventoryItems());
+      }
+      loads.push(loadTodayStockMovements());
       break;
     case "reports":
-      loadOwnerDashboardSummary();
-      loadTodayFnbSalesReport();
-      loadRoomUsageReport();
+      if (activeReportSubTab === "owner") {
+        loads.push(loadOwnerPeriodReport(), loadOwnerDashboardSummary());
+      } else if (activeReportSubTab === "fnb") {
+        loads.push(loadTodayFnbSalesReport());
+      } else if (activeReportSubTab === "cashier") {
+        loads.push(loadTodayCashierClosings());
+      } else if (activeReportSubTab === "room") {
+        loads.push(loadRoomUsageReport());
+      }
       break;
     case "transactions":
-      loadTodayTransactions();
-      loadTodayCashierClosings();
+      loads.push(loadTransactionsTabData());
       break;
     case "audit":
-      loadTodayRoomTimeLogs();
+      loads.push(loadTodayRoomTimeLogs());
       break;
     case "settings":
-      loadSettingsTabData();
+      loads.push(loadSettingsTabData());
+      break;
+    case "lc":
+      if (activeLcSubTab === "master") {
+        loads.push(loadLcs());
+      } else if (activeLcSubTab === "reports") {
+        loads.push(loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate));
+      } else if (activeLcSubTab === "payroll") {
+        loads.push(loadLcPayrollData());
+      } else if (activeLcSubTab === "finance") {
+        loads.push(loadLcs(true), loadLcFinanceSummary());
+      }
+      break;
+    case "promosi":
+      loads.push(loadPromos());
       break;
     default:
       break;
   }
+
+  await Promise.allSettled(loads);
+}
+
+// ==========================================
+// PROMOSI & VOUCHER FUNCTIONS
+// ==========================================
+let promosList = [];
+let isLoadingPromos = false;
+let isSavingPromo = false;
+let showAddPromoModal = false;
+
+async function loadPromos() {
+  if (!API_BASE_URL.trim()) {
+    promosList = [
+      { code: "MERDEKA50", type: "promo", discount_type: "percentage", discount_value: 50, status: "active", created_at: "2026-07-24T00:00:00Z" },
+      { code: "VCH100K", type: "voucher", discount_type: "nominal", discount_value: 100000, status: "active", created_at: "2026-07-24T00:00:00Z", used_in_transaction_id: "", used_at: "" }
+    ];
+    return;
+  }
+
+  isLoadingPromos = true;
+  if (activeDashboardTab === "promosi") {
+    renderRooms();
+  }
+
+  try {
+    const res = await fetchApiGet(buildApiUrl("getPromos"));
+    const data = await res.json();
+    if (data && data.success) {
+      promosList = data.promos || [];
+    }
+  } catch (error) {
+    console.error("Error loading promos:", error);
+  } finally {
+    isLoadingPromos = false;
+    if (activeDashboardTab === "promosi") {
+      renderRooms();
+    }
+  }
+}
+
+async function executeSavePromo(promoData) {
+  if (!API_BASE_URL.trim()) {
+    promosList.push({
+      ...promoData,
+      status: "active",
+      used_in_transaction_id: "",
+      used_at: "",
+      created_at: new Date().toISOString()
+    });
+    showAddPromoModal = false;
+    alert("Promo berhasil ditambahkan (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  isSavingPromo = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "savePromo",
+      ...promoData
+    });
+    if (data && data.success) {
+      alert(data.message || "Kode promosi berhasil disimpan.");
+      showAddPromoModal = false;
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal menyimpan kode promosi.");
+    }
+  } catch (error) {
+    console.error("Error saving promo:", error);
+    alert(error.message || "Terjadi kesalahan koneksi saat menyimpan.");
+  } finally {
+    isSavingPromo = false;
+    renderRooms();
+  }
+}
+
+async function executeDeletePromo(code) {
+  if (!confirm(`Apakah Anda yakin ingin menghapus kode "${code}" secara permanen?`)) {
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    promosList = promosList.filter(p => p.code !== code);
+    alert("Promo berhasil dihapus (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  try {
+    const data = await postApiAction({
+      action: "deletePromo",
+      code: code
+    });
+    if (data && data.success) {
+      alert(data.message || "Kode promosi berhasil dihapus.");
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal menghapus kode.");
+    }
+  } catch (error) {
+    console.error("Error deleting promo:", error);
+    alert(error.message || "Terjadi kesalahan koneksi saat menghapus.");
+  }
+}
+
+async function togglePromoStatus(code, currentStatus) {
+  const newStatus = currentStatus === "active" ? "inactive" : "active";
+
+  if (!API_BASE_URL.trim()) {
+    const promo = promosList.find(p => p.code === code);
+    if (promo) {
+      promo.status = newStatus;
+    }
+    renderRooms();
+    return;
+  }
+
+  try {
+    const data = await postApiAction({
+      action: "updatePromoStatus",
+      code: code,
+      status: newStatus
+    });
+    if (data && data.success) {
+      await loadPromos();
+    } else {
+      alert(data.error || "Gagal mengubah status.");
+    }
+  } catch (error) {
+    console.error("Error updating status:", error);
+    alert(error.message || "Terjadi kesalahan koneksi.");
+  }
+}
+
+function createPromosiPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "promosi-panel erp-card";
+  panel.style.padding = "24px";
+  panel.style.display = "flex";
+  panel.style.flexDirection = "column";
+  panel.style.gap = "20px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+
+  const title = document.createElement("h2");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = "Manajemen Promosi & Voucher";
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  addBtn.style.padding = "10px 20px";
+  addBtn.style.fontWeight = "bold";
+  addBtn.textContent = "+ Buat Promo / Voucher";
+  addBtn.onclick = () => {
+    showAddPromoModal = true;
+    renderRooms();
+  };
+
+  header.append(title, addBtn);
+  panel.appendChild(header);
+
+  if (isLoadingPromos) {
+    panel.appendChild(createStateMessage("Memuat data promosi..."));
+  } else if (promosList.length === 0) {
+    panel.appendChild(createStateMessage("Belum ada kode promo atau voucher yang terdaftar.", "info"));
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "table-responsive";
+
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Kode Promo</th>
+          <th>Tipe</th>
+          <th>Tipe Diskon</th>
+          <th>Nilai Potongan</th>
+          <th>Status</th>
+          <th>Penggunaan</th>
+          <th style="text-align: center;">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${promosList.map(row => {
+          const typeLabel = row.type === "voucher" ? "Voucher (Sekali Pakai)" : "Promo (Berkali-kali)";
+          const discTypeLabel = row.discount_type === "percentage" ? "Persentase (%)" : "Potongan Rupiah (Nominal)";
+          const discValLabel = row.discount_type === "percentage" ? `${row.discount_value}%` : formatCurrency(row.discount_value);
+          const statusBadge = row.status === "active"
+            ? `<span class="badge badge-success" style="background-color: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Aktif</span>`
+            : `<span class="badge badge-error" style="background-color: var(--error); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Tidak Aktif</span>`;
+          
+          let usageInfo = "-";
+          if (row.type === "voucher") {
+            if (row.used_in_transaction_id) {
+              usageInfo = `<span style="color: var(--muted); font-size:11px;">Dipakai di ${row.used_in_transaction_id}<br>${formatSimpleDate(row.used_at)}</span>`;
+            } else {
+              usageInfo = `<span class="badge badge-info" style="border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px; font-size:10px;">Belum Terpakai</span>`;
+            }
+          }
+
+          return `
+            <tr>
+              <td><strong>${escapeHtml(row.code)}</strong></td>
+              <td>${typeLabel}</td>
+              <td>${discTypeLabel}</td>
+              <td><strong>${discValLabel}</strong></td>
+              <td>${statusBadge}</td>
+              <td>${usageInfo}</td>
+              <td style="text-align: center; white-space: nowrap; gap: 6px;">
+                <button type="button" class="erp-btn erp-btn-secondary btn-toggle-status" style="padding: 4px 8px; font-size: 12px; margin-right: 6px;" data-code="${row.code}" data-status="${row.status}">
+                  ${row.status === "active" ? "Nonaktifkan" : "Aktifkan"}
+                </button>
+                <button type="button" class="erp-btn erp-btn-secondary btn-delete-promo" style="padding: 4px 8px; font-size: 12px; border-color: var(--error); color: var(--error);" data-code="${row.code}">
+                  Hapus
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    `;
+
+    table.querySelectorAll(".btn-toggle-status").forEach(btn => {
+      btn.onclick = () => {
+        togglePromoStatus(btn.dataset.code, btn.dataset.status);
+      };
+    });
+
+    table.querySelectorAll(".btn-delete-promo").forEach(btn => {
+      btn.onclick = () => {
+        executeDeletePromo(btn.dataset.code);
+      };
+    });
+
+    tableWrapper.appendChild(table);
+    panel.appendChild(tableWrapper);
+  }
+
+  if (showAddPromoModal) {
+    panel.appendChild(createAddPromoModalOverlay());
+  }
+
+  return panel;
+}
+
+function createAddPromoModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const formCard = document.createElement("form");
+  formCard.className = "erp-card";
+  formCard.style.width = "400px";
+  formCard.style.padding = "24px";
+  formCard.style.display = "flex";
+  formCard.style.flexDirection = "column";
+  formCard.style.gap = "16px";
+  formCard.style.backgroundColor = "var(--surface-raised)";
+  formCard.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = "Buat Kode Promo / Voucher";
+
+  const codeGroup = document.createElement("div");
+  codeGroup.style.display = "flex";
+  codeGroup.style.flexDirection = "column";
+  codeGroup.style.gap = "6px";
+  const codeLabel = document.createElement("label");
+  codeLabel.textContent = "Kode Promo (Kapital, tanpa spasi):";
+  const codeInput = document.createElement("input");
+  codeInput.type = "text";
+  codeInput.placeholder = "Contoh: MERDEKA50";
+  codeInput.required = true;
+  codeInput.style.padding = "8px";
+  codeInput.style.backgroundColor = "var(--surface)";
+  codeInput.style.color = "var(--text)";
+  codeInput.style.border = "1px solid var(--border)";
+  codeInput.style.borderRadius = "4px";
+  codeInput.oninput = (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/\s+/g, "");
+  };
+  codeGroup.append(codeLabel, codeInput);
+
+  const typeGroup = document.createElement("div");
+  typeGroup.style.display = "flex";
+  typeGroup.style.flexDirection = "column";
+  typeGroup.style.gap = "6px";
+  const typeLabel = document.createElement("label");
+  typeLabel.textContent = "Tipe Penggunaan:";
+  const typeSelect = document.createElement("select");
+  typeSelect.style.padding = "8px";
+  typeSelect.style.backgroundColor = "var(--surface)";
+  typeSelect.style.color = "var(--text)";
+  typeSelect.style.border = "1px solid var(--border)";
+  typeSelect.style.borderRadius = "4px";
+  typeSelect.innerHTML = `
+    <option value="promo">Promo (Bisa dipakai berulang kali)</option>
+    <option value="voucher">Voucher (Sekali pakai)</option>
+  `;
+  typeGroup.append(typeLabel, typeSelect);
+
+  const discTypeGroup = document.createElement("div");
+  discTypeGroup.style.display = "flex";
+  discTypeGroup.style.flexDirection = "column";
+  discTypeGroup.style.gap = "6px";
+  const discTypeLabel = document.createElement("label");
+  discTypeLabel.textContent = "Tipe Potongan:";
+  const discTypeSelect = document.createElement("select");
+  discTypeSelect.style.padding = "8px";
+  discTypeSelect.style.backgroundColor = "var(--surface)";
+  discTypeSelect.style.color = "var(--text)";
+  discTypeSelect.style.border = "1px solid var(--border)";
+  discTypeSelect.style.borderRadius = "4px";
+  discTypeSelect.innerHTML = `
+    <option value="percentage">Persentase (%)</option>
+    <option value="nominal">Nominal Rupiah (Rp)</option>
+  `;
+  discTypeGroup.append(discTypeLabel, discTypeSelect);
+
+  const valGroup = document.createElement("div");
+  valGroup.style.display = "flex";
+  valGroup.style.flexDirection = "column";
+  valGroup.style.gap = "6px";
+  const valLabel = document.createElement("label");
+  valLabel.textContent = "Nilai Potongan:";
+  const valInput = document.createElement("input");
+  valInput.type = "number";
+  valInput.min = "1";
+  valInput.placeholder = "Persen (1-100) atau nominal (misal: 50000)";
+  valInput.required = true;
+  valInput.style.padding = "8px";
+  valInput.style.backgroundColor = "var(--surface)";
+  valInput.style.color = "var(--text)";
+  valInput.style.border = "1px solid var(--border)";
+  valInput.style.borderRadius = "4px";
+  valGroup.append(valLabel, valInput);
+
+  discTypeSelect.onchange = () => {
+    if (discTypeSelect.value === "percentage") {
+      valInput.max = "100";
+      valInput.placeholder = "Masukkan nilai persen (1 - 100)";
+    } else {
+      valInput.removeAttribute("max");
+      valInput.placeholder = "Masukkan nominal rupiah (misal: 50000)";
+    }
+  };
+
+  const actionGroup = document.createElement("div");
+  actionGroup.style.display = "flex";
+  actionGroup.style.gap = "8px";
+  actionGroup.style.justifyContent = "flex-end";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.padding = "8px 16px";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingPromo ? "Menyimpan..." : "Simpan";
+  saveBtn.disabled = isSavingPromo;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.style.padding = "8px 16px";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    showAddPromoModal = false;
+    renderRooms();
+  };
+
+  actionGroup.append(saveBtn, cancelBtn);
+  formCard.append(title, codeGroup, typeGroup, discTypeGroup, valGroup, actionGroup);
+  overlay.appendChild(formCard);
+
+  formCard.onsubmit = async (e) => {
+    e.preventDefault();
+    const payload = {
+      code: codeInput.value,
+      type: typeSelect.value,
+      discount_type: discTypeSelect.value,
+      discount_value: Number(valInput.value)
+    };
+    await executeSavePromo(payload);
+  };
+
+  return overlay;
+}
+
+// ==========================================
+// LADY COMPANION (LC) INTEGRATION FUNCTIONS
+// ==========================================
+
+async function loadLcs(force = false) {
+  if (lcs.length > 0 && !force) {
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    lcs = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, status: "active", availability: "available", updated_at: "2026-07-23T09:00:00Z" },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, status: "active", availability: "available", updated_at: "2026-07-23T09:00:00Z" },
+      { lc_id: "LC-003", lc_name: "Amel", rate_per_room: 200000, status: "active", availability: "busy", updated_at: "2026-07-23T09:00:00Z" },
+    ];
+    return;
+  }
+
+  isLoadingLcs = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+  try {
+    const response = await fetchApiGet(buildApiUrl("getLcMasterList"));
+    const data = await response.json();
+    if (data && data.success) {
+      lcs = data.lcs || [];
+    }
+  } catch (error) {
+    console.error("Error loading LCs:", error);
+  } finally {
+    isLoadingLcs = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+async function loadLcWorkReports(period = "today", startDate = "", endDate = "") {
+  if (!API_BASE_URL.trim()) {
+    lcWorkReports = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 5, total_earnings: 875000, logs: [
+        { log_id: "LWL-1", session_id: "ROOM-001-SESSION-1", lc_id: "LC-001", lc_name: "Siska", rate: 175000, status: "done", created_at: "2026-07-23T01:00:00Z", closed_at: "2026-07-23T03:00:00Z" }
+      ] },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 3, total_earnings: 525000, logs: [] },
+    ];
+    return;
+  }
+
+  isLoadingLcWorkReports = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+  try {
+    const response = await fetchApiGet(buildApiUrl("getLcWorkReports", {
+      period,
+      start_date: startDate,
+      end_date: endDate,
+    }));
+    const data = await response.json();
+    if (data && data.success) {
+      lcWorkReports = data.reports || [];
+    }
+  } catch (error) {
+    console.error("Error loading LC work reports:", error);
+  } finally {
+    isLoadingLcWorkReports = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+// Payroll states for LC
+let lcPayrollPendingReports = [];
+let lcPayrollHistory = [];
+let isLoadingLcPayroll = false;
+let isProcessingLcPayroll = false;
+let lcPayrollStartDate = "";
+let lcPayrollEndDate = "";
+
+let selectedLcPayrollDetail = null;
+let isLoadingLcPayrollDetail = false;
+let selectedLcForSlip = null;
+let lcFinanceSummary = null;
+let isLoadingLcFinance = false;
+let isSavingLcCashAdvance = false;
+let isSavingPettyCashEntry = false;
+let lcFinancePeriod = "today";
+let lcCashAdvanceForm = {
+  lc_id: "",
+  amount: "",
+  note: "",
+};
+let pettyCashForm = {
+  entry_type: "cash_in",
+  amount: "",
+  category: "manual_topup",
+  note: "",
+};
+
+async function loadLcFinanceSummary(period = lcFinancePeriod) {
+  lcFinancePeriod = period || "today";
+
+  if (!API_BASE_URL.trim()) {
+    lcFinanceSummary = {
+      summary: {
+        sales_bonus_total: 0,
+        cash_advance_total: 0,
+        petty_cash_in_total: 1000000,
+        petty_cash_out_total: 0,
+        petty_cash_balance: 1000000,
+      },
+      cash_advances: [],
+      petty_cash_ledger: [],
+      sales_bonus_logs: [],
+    };
+    return;
+  }
+
+  isLoadingLcFinance = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+
+  try {
+    if (!lcs.length) {
+      await loadLcs(true);
+    }
+
+    const url = `${API_BASE_URL}?action=getLcFinanceSummary&period=${encodeURIComponent(lcFinancePeriod)}`;
+    const res = await fetchApiGet(url);
+    const data = await res.json();
+
+    if (data && data.success) {
+      lcFinanceSummary = data;
+    } else {
+      showInlineNotice(data?.error || "Gagal memuat ringkasan LC finance.", "error");
+    }
+  } catch (error) {
+    console.error("Error loading LC finance summary:", error);
+    showInlineNotice(error.message || "Gagal memuat ringkasan LC finance.", "error");
+  } finally {
+    isLoadingLcFinance = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+async function submitLcCashAdvance() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (!lcCashAdvanceForm.lc_id) {
+    showInlineNotice("Pilih LC terlebih dahulu.", "error");
+    return;
+  }
+
+  const amount = Number(lcCashAdvanceForm.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showInlineNotice("Nominal kasbon wajib lebih dari 0.", "error");
+    return;
+  }
+
+  isSavingLcCashAdvance = true;
+  renderRooms();
+
+  try {
+    const result = await postApiAction({
+      action: "createLcCashAdvance",
+      lc_id: lcCashAdvanceForm.lc_id,
+      amount,
+      note: lcCashAdvanceForm.note,
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+    });
+
+    if (result && result.success) {
+      lcCashAdvanceForm = { lc_id: "", amount: "", note: "" };
+      showInlineNotice(result.message || "Kasbon LC berhasil dicatat.");
+      await loadLcFinanceSummary();
+      await loadLcPayrollData(lcPayrollStartDate, lcPayrollEndDate);
+    } else {
+      showInlineNotice(result?.error || "Gagal mencatat kasbon LC.", "error");
+    }
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencatat kasbon LC.", "error");
+  } finally {
+    isSavingLcCashAdvance = false;
+    renderRooms();
+  }
+}
+
+async function submitPettyCashEntry() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  const amount = Number(pettyCashForm.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showInlineNotice("Nominal petty cash wajib lebih dari 0.", "error");
+    return;
+  }
+
+  isSavingPettyCashEntry = true;
+  renderRooms();
+
+  try {
+    const result = await postApiAction({
+      action: "recordPettyCashEntry",
+      entry_type: pettyCashForm.entry_type,
+      amount,
+      category: pettyCashForm.category,
+      note: pettyCashForm.note,
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+    });
+
+    if (result && result.success) {
+      pettyCashForm = { entry_type: "cash_in", amount: "", category: "manual_topup", note: "" };
+      showInlineNotice(result.message || "Mutasi petty cash berhasil dicatat.");
+      await loadLcFinanceSummary();
+    } else {
+      showInlineNotice(result?.error || "Gagal mencatat petty cash.", "error");
+    }
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal mencatat petty cash.", "error");
+  } finally {
+    isSavingPettyCashEntry = false;
+    renderRooms();
+  }
+}
+
+async function loadLcPayrollDetail(payrollId) {
+  if (!API_BASE_URL.trim()) {
+    selectedLcPayrollDetail = {
+      payroll_id: payrollId,
+      details: [
+        {
+          lc_id: "LC-001",
+          lc_name: "Siska",
+          rate_per_room: 175000,
+          total_sessions: 4,
+          total_earnings: 700000,
+          logs: [
+            { log_id: "LWL-1", session_id: "ROOM-001-SESSION-1", rate: 175000, created_at: "2026-07-24T10:00:00Z" }
+          ]
+        }
+      ]
+    };
+    renderRooms();
+    return;
+  }
+
+  isLoadingLcPayrollDetail = true;
+  renderRooms();
+
+  try {
+    const url = `${API_BASE_URL}?action=getLcPayrollDetails&payroll_id=${payrollId}`;
+    const res = await fetchApiGet(url);
+    const data = await res.json();
+    if (data && data.success) {
+      selectedLcPayrollDetail = data;
+    } else {
+      showInlineNotice(data.error || "Gagal memuat rincian payroll.", "error");
+    }
+  } catch (error) {
+    console.error("Error loading LC payroll detail:", error);
+    showInlineNotice("Terjadi kesalahan saat memuat rincian payroll.", "error");
+  } finally {
+    isLoadingLcPayrollDetail = false;
+    renderRooms();
+  }
+}
+
+function downloadPendingPayrollCsv() {
+  if (lcPayrollPendingReports.length === 0) {
+    showInlineNotice("Tidak ada data payroll untuk diunduh.", "error");
+    return;
+  }
+  
+  // CSV headers
+  const headers = ["ID LC", "Nama Panggilan", "Tarif per Jam", "Total Sesi Pending", "Total Gaji"];
+  
+  // CSV rows
+  const rows = lcPayrollPendingReports.map(rep => [
+    rep.lc_id,
+    rep.lc_name,
+    rep.rate_per_room,
+    rep.total_sessions,
+    rep.total_earnings
+  ]);
+  
+  // Build CSV content
+  const csvContent = [
+    headers.join(","),
+    ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))
+  ].join("\n");
+  
+  // Trigger file download
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `pengajuan_payroll_${lcPayrollStartDate}_sd_${lcPayrollEndDate}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+async function loadLcPayrollData(startDate = "", endDate = "") {
+  if (!API_BASE_URL.trim()) {
+    lcPayrollPendingReports = [
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 4, total_earnings: 700000 },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 2, total_earnings: 350000 },
+    ];
+    lcPayrollHistory = [
+      { payroll_id: "LCPAY-20260710-1002", start_date: "2026-06-26", end_date: "2026-07-09", total_amount: 1050000, total_sessions: 6, total_lcs_paid: 2, processed_at: "2026-07-10T10:02:00Z", processed_by: "Kasir" }
+    ];
+    lcPayrollStartDate = startDate || "2026-07-10";
+    lcPayrollEndDate = endDate || "2026-07-23";
+    return;
+  }
+
+  isLoadingLcPayroll = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+
+  try {
+    const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${startDate}&end_date=${endDate}`;
+    const pendingRes = await fetch(pendingUrl);
+    const pendingData = await pendingRes.json();
+    if (pendingData && pendingData.success) {
+      lcPayrollPendingReports = pendingData.reports || [];
+      lcPayrollStartDate = pendingData.current_range.startDate;
+      lcPayrollEndDate = pendingData.current_range.endDate;
+    }
+
+    const historyUrl = `${API_BASE_URL}?action=getLcPayrollHistory`;
+    const historyRes = await fetch(historyUrl);
+    const historyData = await historyRes.json();
+    if (historyData && historyData.success) {
+      lcPayrollHistory = historyData.history || [];
+    }
+  } catch (error) {
+    console.error("Error loading LC payroll data:", error);
+  } finally {
+    isLoadingLcPayroll = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+async function executeProcessLcPayroll() {
+  if (!API_BASE_URL.trim()) {
+    const mockRecord = {
+      payroll_id: "LCPAY-MOCK-" + Math.floor(Math.random() * 9000 + 1000),
+      start_date: lcPayrollStartDate,
+      end_date: lcPayrollEndDate,
+      total_amount: lcPayrollPendingReports.reduce((sum, r) => sum + r.total_earnings, 0),
+      total_sessions: lcPayrollPendingReports.reduce((sum, r) => sum + r.total_sessions, 0),
+      total_lcs_paid: lcPayrollPendingReports.length,
+      processed_at: new Date().toISOString(),
+      processed_by: getLoggedInOperatorName() || "Kasir",
+    };
+    lcPayrollHistory.unshift(mockRecord);
+    lcPayrollPendingReports = [];
+    alert("Payroll berhasil diproses (Mock Mode).");
+    renderRooms();
+    return;
+  }
+
+  isProcessingLcPayroll = true;
+  if (activeDashboardTab === "lc") {
+    renderRooms();
+  }
+
+  try {
+    const operator = getLoggedInOperatorName() || "Kasir";
+    const result = await postApiAction({
+      action: "processLcPayroll",
+      start_date: lcPayrollStartDate,
+      end_date: lcPayrollEndDate,
+      cashier_name: operator
+    });
+    if (result && result.success) {
+      alert(result.message || "Payroll berhasil diproses.");
+      await loadLcPayrollData();
+    } else {
+      alert("Gagal memproses payroll: " + (result.error || "Unknown error"));
+    }
+  } catch (error) {
+    console.error("Error processing LC payroll:", error);
+    alert(error.message || "Terjadi kesalahan koneksi saat memproses payroll.");
+  } finally {
+    isProcessingLcPayroll = false;
+    if (activeDashboardTab === "lc") {
+      renderRooms();
+    }
+  }
+}
+
+// Filter states for LC Reports
+let lcReportPeriod = "today";
+let lcReportStartDate = "";
+let lcReportEndDate = "";
+let selectedLcDetailForLogs = null;
+
+function createLcPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "lc-panel erp-card";
+  panel.style.display = "flex";
+  panel.style.flexDirection = "column";
+  panel.style.gap = "16px";
+
+  const header = document.createElement("div");
+  header.className = "lc-header";
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.flexWrap = "wrap";
+  header.style.gap = "12px";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h2");
+  title.className = "lc-title font-title";
+  title.style.margin = "0";
+  title.textContent = "Pengelolaan Lady Companion (LC)";
+  const subtitle = document.createElement("p");
+  subtitle.className = "lc-subtitle";
+  subtitle.style.margin = "4px 0 0 0";
+  subtitle.style.fontSize = "14px";
+  subtitle.style.color = "var(--muted)";
+  subtitle.textContent = "Manajemen data master LC dan laporan gaji sesi.";
+  titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
+
+  const subNav = document.createElement("div");
+  subNav.className = "lc-sub-nav";
+  subNav.style.display = "flex";
+  subNav.style.gap = "8px";
+  subNav.style.borderBottom = "1px solid var(--border)";
+  subNav.style.paddingBottom = "8px";
+
+  const tabsConfig = [
+    { key: "master", label: "Master LC" },
+    { key: "reports", label: "Laporan Kerja & Gaji" },
+    { key: "finance", label: "Kasbon & Petty Cash" },
+    { key: "payroll", label: "Payroll LC" },
+  ];
+
+  tabsConfig.forEach(tab => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = activeLcSubTab === tab.key ? "erp-btn erp-btn-secondary active" : "erp-btn erp-btn-secondary";
+    btn.style.padding = "8px 16px";
+    btn.style.fontSize = "14px";
+    btn.style.fontWeight = "bold";
+    if (activeLcSubTab === tab.key) {
+      btn.style.backgroundColor = "var(--gold)";
+      btn.style.color = "var(--bg)";
+    }
+    btn.textContent = tab.label;
+    btn.onclick = () => {
+      activeLcSubTab = tab.key;
+      if (tab.key === "master") {
+        loadLcs(true);
+      } else if (tab.key === "reports") {
+        loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+      } else if (tab.key === "finance") {
+        loadLcs(true);
+        loadLcFinanceSummary();
+      } else if (tab.key === "payroll") {
+        loadLcPayrollData();
+      }
+      renderRooms();
+    };
+    subNav.appendChild(btn);
+  });
+
+  panel.append(header, subNav);
+
+  if (activeLcSubTab === "master") {
+    panel.appendChild(createLcMasterSubTabElement());
+  } else if (activeLcSubTab === "reports") {
+    panel.appendChild(createLcReportsSubTabElement());
+  } else if (activeLcSubTab === "finance") {
+    panel.appendChild(createLcFinanceSubTabElement());
+  } else if (activeLcSubTab === "payroll") {
+    panel.appendChild(createLcPayrollSubTabElement());
+  }
+
+  if (selectedLcForSlip) {
+    panel.appendChild(createLcSlipModalOverlay());
+  }
+
+  if (addLcForm) {
+    panel.appendChild(createAddLcModalOverlay());
+  }
+  if (editLcForm) {
+    panel.appendChild(createEditLcModalOverlay());
+  }
+  if (deleteLcConfirmation) {
+    panel.appendChild(createDeleteLcModalOverlay());
+  }
+  if (adminPinModal) {
+    const pinModalEl = createAdminPinModalElement();
+    if (pinModalEl && pinModalEl.style) {
+      pinModalEl.style.position = "fixed";
+      pinModalEl.style.top = "0";
+      pinModalEl.style.left = "0";
+      pinModalEl.style.width = "100%";
+      pinModalEl.style.height = "100%";
+      pinModalEl.style.backgroundColor = "rgba(0,0,0,0.7)";
+      pinModalEl.style.display = "flex";
+      pinModalEl.style.justifyContent = "center";
+      pinModalEl.style.alignItems = "center";
+      pinModalEl.style.zIndex = "1010";
+
+      const dialog = pinModalEl.querySelector(".master-delete-dialog");
+      if (dialog) {
+        dialog.style.width = "400px";
+        dialog.style.backgroundColor = "var(--surface-raised)";
+        dialog.style.padding = "24px";
+        dialog.style.borderRadius = "var(--radius-md)";
+        dialog.style.border = "1px solid var(--border)";
+      }
+    }
+    panel.appendChild(pinModalEl);
+  }
+
+  return panel;
+}
+
+function createLcMasterSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-master-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "12px";
+
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.justifyContent = "flex-end";
+  
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  addBtn.style.padding = "8px 16px";
+  addBtn.style.fontWeight = "bold";
+  addBtn.textContent = "+ Tambah LC Baru";
+  addBtn.onclick = () => {
+    addLcForm = { lc_name: "", rate_per_room: 175000, status: "active" };
+    renderRooms();
+  };
+  toolbar.appendChild(addBtn);
+  container.appendChild(toolbar);
+
+  if (isLoadingLcs) {
+    container.appendChild(createStateMessage("Memuat data master LC..."));
+    return container;
+  }
+
+  if (lcs.length === 0) {
+    container.appendChild(createStateMessage("Belum ada data LC terdaftar.", "info"));
+    return container;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID LC</th>
+      <th>Nama Panggilan</th>
+      <th>Tarif / Jam</th>
+      <th>Status Keaktifan</th>
+      <th>Ketersediaan</th>
+      <th style="text-align: center;">Aksi</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(lcs.length / itemsPerPage);
+  if (lcMasterPage > totalPages && totalPages > 0) {
+    lcMasterPage = totalPages;
+  }
+  const startIndex = (lcMasterPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedLcs = lcs.slice(startIndex, endIndex);
+
+  paginatedLcs.forEach(lc => {
+    const tr = document.createElement("tr");
+    
+    const statusText = lc.status === "active" ? "Aktif" : "Tidak Aktif";
+    const statusClass = lc.status === "active" ? "badge badge-success" : "badge badge-danger";
+    
+    const availText = lc.availability === "busy" ? "Sedang Nge-room" : "Tersedia";
+    const availClass = lc.availability === "busy" ? "badge badge-danger" : "badge badge-success";
+
+    tr.innerHTML = `
+      <td><strong>${lc.lc_id}</strong></td>
+      <td>${escapeHtml(lc.lc_name)}</td>
+      <td>${formatCurrency(lc.rate_per_room)}</td>
+      <td><span class="${statusClass}">${statusText}</span></td>
+      <td><span class="${availClass}">${availText}</span></td>
+      <td style="text-align: center; display: flex; justify-content: center; gap: 8px;">
+        <button type="button" class="erp-btn erp-btn-secondary btn-edit-lc" style="padding: 4px 8px; font-size: 12px;" data-id="${lc.lc_id}">Edit</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" style="padding: 4px 8px; font-size: 12px; background-color: var(--color-danger); color: #fff;" data-id="${lc.lc_id}">Hapus</button>
+      </td>
+    `;
+
+    tr.querySelector(".btn-edit-lc").onclick = () => {
+      editLcForm = { ...lc };
+      renderRooms();
+    };
+    
+    tr.querySelector(".btn-delete-lc").onclick = () => {
+      deleteLcConfirmation = { ...lc };
+      renderRooms();
+    };
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.appendChild(tableWrapper);
+
+  if (totalPages > 1) {
+    const pagination = document.createElement("div");
+    pagination.className = "erp-pagination";
+    pagination.style.display = "flex";
+    pagination.style.justifyContent = "center";
+    pagination.style.alignItems = "center";
+    pagination.style.gap = "12px";
+    pagination.style.marginTop = "12px";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "erp-btn erp-btn-secondary";
+    prevBtn.textContent = "«";
+    prevBtn.disabled = lcMasterPage === 1;
+    prevBtn.onclick = () => {
+      lcMasterPage--;
+      renderRooms();
+    };
+
+    const label = document.createElement("span");
+    label.style.fontSize = "14px";
+    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages}`;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "erp-btn erp-btn-secondary";
+    nextBtn.textContent = "»";
+    nextBtn.disabled = lcMasterPage === totalPages;
+    nextBtn.onclick = () => {
+      lcMasterPage++;
+      renderRooms();
+    };
+
+    pagination.append(prevBtn, label, nextBtn);
+    container.appendChild(pagination);
+  }
+
+  return container;
+}
+
+function createLcReportsSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-reports-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "16px";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "lc-reports-filter-toolbar";
+  toolbar.style.display = "flex";
+  toolbar.style.flexWrap = "wrap";
+  toolbar.style.alignItems = "center";
+  toolbar.style.gap = "12px";
+  toolbar.style.backgroundColor = "var(--surface-raised)";
+  toolbar.style.padding = "12px";
+  toolbar.style.borderRadius = "var(--radius-md)";
+  toolbar.style.border = "1px solid var(--border)";
+
+  const periodSelectGroup = document.createElement("div");
+  periodSelectGroup.style.display = "flex";
+  periodSelectGroup.style.flexDirection = "column";
+  periodSelectGroup.style.gap = "4px";
+
+  const periodLabel = document.createElement("label");
+  periodLabel.style.fontSize = "12px";
+  periodLabel.style.color = "var(--muted)";
+  periodLabel.textContent = "Periode:";
+
+  const periodSelect = document.createElement("select");
+  periodSelect.className = "duration-payment-select";
+  periodSelect.style.padding = "6px";
+  periodSelect.style.borderRadius = "var(--radius-sm)";
+  
+  [
+    ["today", "Hari Ini"],
+    ["yesterday", "Kemarin"],
+    ["this_week", "Minggu Ini"],
+    ["last_week", "Minggu Lalu"],
+    ["this_month", "Bulan Ini"],
+    ["last_month", "Bulan Lalu"],
+    ["custom", "Kustom Tanggal"]
+  ].forEach(([val, lbl]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = lcReportPeriod === val;
+    periodSelect.appendChild(opt);
+  });
+
+  periodSelectGroup.append(periodLabel, periodSelect);
+  toolbar.appendChild(periodSelectGroup);
+
+  const customGroup = document.createElement("div");
+  customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  customGroup.style.gap = "8px";
+  customGroup.style.alignItems = "center";
+
+  const startField = document.createElement("div");
+  startField.style.display = "flex";
+  startField.style.flexDirection = "column";
+  startField.style.gap = "4px";
+  const startLbl = document.createElement("label");
+  startLbl.style.fontSize = "12px";
+  startLbl.style.color = "var(--muted)";
+  startLbl.textContent = "Dari:";
+  const startInput = document.createElement("input");
+  startInput.type = "date";
+  startInput.className = "duration-custom-input";
+  startInput.value = lcReportStartDate;
+  startField.append(startLbl, startInput);
+
+  const endField = document.createElement("div");
+  endField.style.display = "flex";
+  endField.style.flexDirection = "column";
+  endField.style.gap = "4px";
+  const endLbl = document.createElement("label");
+  endLbl.style.fontSize = "12px";
+  endLbl.style.color = "var(--muted)";
+  endLbl.textContent = "Sampai:";
+  const endInput = document.createElement("input");
+  endInput.type = "date";
+  endInput.className = "duration-custom-input";
+  endInput.value = lcReportEndDate;
+  endField.append(endLbl, endInput);
+
+  customGroup.append(startField, endField);
+  toolbar.appendChild(customGroup);
+
+  periodSelect.onchange = (e) => {
+    lcReportPeriod = e.target.value;
+    customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  };
+
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  applyBtn.style.padding = "8px 16px";
+  applyBtn.style.alignSelf = "flex-end";
+  applyBtn.style.fontWeight = "bold";
+  applyBtn.textContent = "Terapkan Filter";
+  applyBtn.onclick = async () => {
+    lcReportStartDate = startInput.value;
+    lcReportEndDate = endInput.value;
+    await loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
+    renderRooms();
+  };
+  toolbar.appendChild(applyBtn);
+  container.appendChild(toolbar);
+
+  if (isLoadingLcWorkReports) {
+    container.appendChild(createStateMessage("Memuat laporan kerja & gaji LC..."));
+    return container;
+  }
+
+  if (lcWorkReports.length === 0) {
+    container.appendChild(createStateMessage("Tidak ada transaksi kerja LC pada periode ini.", "info"));
+    return container;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID LC</th>
+      <th>Nama Panggilan</th>
+      <th>Tarif per Jam</th>
+      <th style="text-align: center;">Total Sesi / Job</th>
+      <th>Total Pendapatan (Gaji)</th>
+      <th style="text-align: center;">Aksi</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(lcWorkReports.length / itemsPerPage);
+  if (lcReportsPage > totalPages && totalPages > 0) {
+    lcReportsPage = totalPages;
+  }
+  const startIndex = (lcReportsPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedReports = lcWorkReports.slice(startIndex, endIndex);
+
+  paginatedReports.forEach(rep => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${rep.lc_id}</strong></td>
+      <td>${escapeHtml(rep.lc_name)}</td>
+      <td>${formatCurrency(rep.rate_per_room)}</td>
+      <td style="text-align: center;">${rep.total_sessions}</td>
+      <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+      <td style="text-align: center;">
+        <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
+      </td>
+    `;
+
+    tr.querySelector(".btn-detail-lc-logs").onclick = () => {
+      selectedLcDetailForLogs = rep;
+      renderRooms();
+    };
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.appendChild(tableWrapper);
+
+  if (totalPages > 1) {
+    const pagination = document.createElement("div");
+    pagination.className = "erp-pagination";
+    pagination.style.display = "flex";
+    pagination.style.justifyContent = "center";
+    pagination.style.alignItems = "center";
+    pagination.style.gap = "12px";
+    pagination.style.marginTop = "12px";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "erp-btn erp-btn-secondary";
+    prevBtn.textContent = "«";
+    prevBtn.disabled = lcReportsPage === 1;
+    prevBtn.onclick = () => {
+      lcReportsPage--;
+      renderRooms();
+    };
+
+    const label = document.createElement("span");
+    label.style.fontSize = "14px";
+    label.textContent = `Halaman ${lcReportsPage} dari ${totalPages}`;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "erp-btn erp-btn-secondary";
+    nextBtn.textContent = "»";
+    nextBtn.disabled = lcReportsPage === totalPages;
+    nextBtn.onclick = () => {
+      lcReportsPage++;
+      renderRooms();
+    };
+
+    pagination.append(prevBtn, label, nextBtn);
+    container.appendChild(pagination);
+  }
+
+  if (selectedLcDetailForLogs) {
+    container.appendChild(createLcDetailLogsOverlay());
+  }
+
+  return container;
+}
+
+function createLcFinanceMetric(label, value, accent = false) {
+  const item = document.createElement("div");
+  item.style.display = "flex";
+  item.style.flexDirection = "column";
+  item.style.gap = "4px";
+  item.style.backgroundColor = "var(--bg)";
+  item.style.border = "1px solid var(--border)";
+  item.style.borderRadius = "var(--radius-sm)";
+  item.style.padding = "12px";
+
+  const text = document.createElement("span");
+  text.style.fontSize = "12px";
+  text.style.color = "var(--muted)";
+  text.textContent = label;
+
+  const amount = document.createElement("strong");
+  amount.style.fontSize = "18px";
+  amount.style.color = accent ? "var(--gold)" : "var(--text)";
+  amount.textContent = formatCurrency(value || 0);
+
+  item.append(text, amount);
+  return item;
+}
+
+function createLcFinanceSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-finance-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "16px";
+
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.justifyContent = "space-between";
+  toolbar.style.alignItems = "center";
+  toolbar.style.gap = "12px";
+  toolbar.style.flexWrap = "wrap";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.textContent = "Kasbon LC & Petty Cash";
+  const subtitle = document.createElement("p");
+  subtitle.style.margin = "4px 0 0";
+  subtitle.style.fontSize = "13px";
+  subtitle.style.color = "var(--muted)";
+  subtitle.textContent = "Kasbon langsung dicatat oleh kasir dan otomatis menjadi mutasi petty cash.";
+  titleGroup.append(title, subtitle);
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "erp-btn erp-btn-secondary";
+  refreshBtn.style.padding = "8px 12px";
+  refreshBtn.disabled = isLoadingLcFinance;
+  refreshBtn.textContent = isLoadingLcFinance ? "Memuat..." : "Refresh";
+  refreshBtn.onclick = () => loadLcFinanceSummary();
+
+  toolbar.append(titleGroup, refreshBtn);
+  container.appendChild(toolbar);
+
+  if (isLoadingLcFinance && !lcFinanceSummary) {
+    container.appendChild(createStateMessage("Memuat data kasbon dan petty cash..."));
+    return container;
+  }
+
+  const summary = lcFinanceSummary?.summary || {};
+  const metricGrid = document.createElement("div");
+  metricGrid.style.display = "grid";
+  metricGrid.style.gridTemplateColumns = "repeat(auto-fit, minmax(170px, 1fr))";
+  metricGrid.style.gap = "12px";
+  metricGrid.append(
+    createLcFinanceMetric("Saldo Petty Cash", summary.petty_cash_balance, true),
+    createLcFinanceMetric("Cash In Hari Ini", summary.petty_cash_in_total),
+    createLcFinanceMetric("Cash Out Hari Ini", summary.petty_cash_out_total),
+    createLcFinanceMetric("Kasbon LC Hari Ini", summary.cash_advance_total),
+    createLcFinanceMetric("Bonus Sales LC Hari Ini", summary.sales_bonus_total)
+  );
+  container.appendChild(metricGrid);
+
+  const formGrid = document.createElement("div");
+  formGrid.style.display = "grid";
+  formGrid.style.gridTemplateColumns = "repeat(auto-fit, minmax(280px, 1fr))";
+  formGrid.style.gap = "16px";
+
+  const cashAdvanceCard = document.createElement("div");
+  cashAdvanceCard.className = "erp-card";
+  cashAdvanceCard.style.padding = "16px";
+  cashAdvanceCard.style.display = "flex";
+  cashAdvanceCard.style.flexDirection = "column";
+  cashAdvanceCard.style.gap = "12px";
+  cashAdvanceCard.innerHTML = `<h4 style="margin:0;">Input Kasbon LC</h4>`;
+
+  const lcSelect = document.createElement("select");
+  lcSelect.className = "duration-payment-select";
+  lcSelect.value = lcCashAdvanceForm.lc_id;
+  lcSelect.innerHTML = `<option value="">Pilih LC</option>${lcs.map(lc => `<option value="${escapeHtml(lc.lc_id)}" ${lcCashAdvanceForm.lc_id === lc.lc_id ? "selected" : ""}>${escapeHtml(lc.lc_name)} (${escapeHtml(lc.lc_id)})</option>`).join("")}`;
+  lcSelect.onchange = (event) => {
+    lcCashAdvanceForm.lc_id = event.target.value;
+  };
+
+  const advanceAmount = document.createElement("input");
+  advanceAmount.type = "number";
+  advanceAmount.min = "0";
+  advanceAmount.step = "1000";
+  advanceAmount.className = "duration-custom-input";
+  advanceAmount.placeholder = "Nominal kasbon";
+  advanceAmount.value = lcCashAdvanceForm.amount;
+  advanceAmount.oninput = (event) => {
+    lcCashAdvanceForm.amount = event.target.value;
+  };
+
+  const advanceNote = document.createElement("input");
+  advanceNote.type = "text";
+  advanceNote.className = "duration-custom-input";
+  advanceNote.placeholder = "Catatan";
+  advanceNote.value = lcCashAdvanceForm.note;
+  advanceNote.oninput = (event) => {
+    lcCashAdvanceForm.note = event.target.value;
+  };
+
+  const advanceBtn = document.createElement("button");
+  advanceBtn.type = "button";
+  advanceBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  advanceBtn.style.padding = "10px 14px";
+  advanceBtn.disabled = isSavingLcCashAdvance;
+  advanceBtn.textContent = isSavingLcCashAdvance ? "Mencatat..." : "Catat Kasbon";
+  advanceBtn.onclick = submitLcCashAdvance;
+  cashAdvanceCard.append(lcSelect, advanceAmount, advanceNote, advanceBtn);
+
+  const pettyCard = document.createElement("div");
+  pettyCard.className = "erp-card";
+  pettyCard.style.padding = "16px";
+  pettyCard.style.display = "flex";
+  pettyCard.style.flexDirection = "column";
+  pettyCard.style.gap = "12px";
+  pettyCard.innerHTML = `<h4 style="margin:0;">Mutasi Petty Cash Manual</h4>`;
+
+  const pettyType = document.createElement("select");
+  pettyType.className = "duration-payment-select";
+  pettyType.innerHTML = `
+    <option value="cash_in" ${pettyCashForm.entry_type === "cash_in" ? "selected" : ""}>Cash In</option>
+    <option value="cash_out" ${pettyCashForm.entry_type === "cash_out" ? "selected" : ""}>Cash Out</option>
+  `;
+  pettyType.onchange = (event) => {
+    pettyCashForm.entry_type = event.target.value;
+  };
+
+  const pettyAmount = document.createElement("input");
+  pettyAmount.type = "number";
+  pettyAmount.min = "0";
+  pettyAmount.step = "1000";
+  pettyAmount.className = "duration-custom-input";
+  pettyAmount.placeholder = "Nominal";
+  pettyAmount.value = pettyCashForm.amount;
+  pettyAmount.oninput = (event) => {
+    pettyCashForm.amount = event.target.value;
+  };
+
+  const pettyNote = document.createElement("input");
+  pettyNote.type = "text";
+  pettyNote.className = "duration-custom-input";
+  pettyNote.placeholder = "Catatan";
+  pettyNote.value = pettyCashForm.note;
+  pettyNote.oninput = (event) => {
+    pettyCashForm.note = event.target.value;
+  };
+
+  const pettyBtn = document.createElement("button");
+  pettyBtn.type = "button";
+  pettyBtn.className = "erp-btn erp-btn-secondary";
+  pettyBtn.style.padding = "10px 14px";
+  pettyBtn.disabled = isSavingPettyCashEntry;
+  pettyBtn.textContent = isSavingPettyCashEntry ? "Mencatat..." : "Catat Mutasi";
+  pettyBtn.onclick = submitPettyCashEntry;
+  pettyCard.append(pettyType, pettyAmount, pettyNote, pettyBtn);
+
+  formGrid.append(cashAdvanceCard, pettyCard);
+  container.appendChild(formGrid);
+
+  const histories = document.createElement("div");
+  histories.style.display = "grid";
+  histories.style.gridTemplateColumns = "repeat(auto-fit, minmax(320px, 1fr))";
+  histories.style.gap = "16px";
+
+  const bonusLogs = (lcFinanceSummary?.sales_bonus_logs || []).slice(-12).reverse();
+  const advances = (lcFinanceSummary?.cash_advances || []).slice(-12).reverse();
+  const ledgers = (lcFinanceSummary?.petty_cash_ledger || []).slice(-12).reverse();
+
+  const bonusHistory = document.createElement("div");
+  bonusHistory.className = "erp-card";
+  bonusHistory.style.padding = "16px";
+  bonusHistory.innerHTML = `
+    <h4 style="margin:0 0 12px;">Rincian Bonus Penjualan Produk</h4>
+    ${bonusLogs.length ? `
+      <div class="table-responsive">
+        <table class="erp-table" style="width:100%; border-collapse:collapse;">
+          <thead><tr><th>LC</th><th>Produk</th><th>Qty</th><th>Bonus / Item</th><th>Total</th><th>Referensi</th></tr></thead>
+          <tbody>${bonusLogs.map(row => `
+            <tr>
+              <td>${escapeHtml(row.lc_name || row.lc_id || "-")}</td>
+              <td>${escapeHtml(row.menu_name || "-")}</td>
+              <td>${(Number(row.quantity) || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
+              <td>${formatCurrency(row.bonus_per_item)}</td>
+              <td><strong>${formatCurrency(row.bonus_total)}</strong></td>
+              <td>${escapeHtml(row.transaction_id || row.order_id || "-")}</td>
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </div>
+    ` : `<div class="state-message info">Belum ada bonus penjualan produk pada periode ini.</div>`}
+  `;
+
+  const advanceHistory = document.createElement("div");
+  advanceHistory.className = "erp-card";
+  advanceHistory.style.padding = "16px";
+  advanceHistory.innerHTML = `
+    <h4 style="margin:0 0 12px;">Kasbon LC Hari Ini</h4>
+    ${advances.length ? `
+      <div class="table-responsive">
+        <table class="erp-table" style="width:100%; border-collapse:collapse;">
+          <thead><tr><th>LC</th><th>Nominal</th><th>Status</th><th>Kasir</th></tr></thead>
+          <tbody>${advances.map(row => `
+            <tr>
+              <td>${escapeHtml(row.lc_name || row.lc_id || "-")}</td>
+              <td><strong>${formatCurrency(row.amount)}</strong></td>
+              <td>${escapeHtml(row.status || "open")}</td>
+              <td>${escapeHtml(row.cashier_name || "Kasir")}</td>
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </div>
+    ` : `<div class="state-message info">Belum ada kasbon LC hari ini.</div>`}
+  `;
+
+  const ledgerHistory = document.createElement("div");
+  ledgerHistory.className = "erp-card";
+  ledgerHistory.style.padding = "16px";
+  ledgerHistory.innerHTML = `
+    <h4 style="margin:0 0 12px;">Mutasi Petty Cash Hari Ini</h4>
+    ${ledgers.length ? `
+      <div class="table-responsive">
+        <table class="erp-table" style="width:100%; border-collapse:collapse;">
+          <thead><tr><th>Kategori</th><th>In</th><th>Out</th><th>Saldo</th></tr></thead>
+          <tbody>${ledgers.map(row => `
+            <tr>
+              <td>${escapeHtml(row.category || "-")}</td>
+              <td>${formatCurrency(row.cash_in_amount)}</td>
+              <td>${formatCurrency(row.cash_out_amount)}</td>
+              <td><strong>${formatCurrency(row.balance_after)}</strong></td>
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </div>
+    ` : `<div class="state-message info">Belum ada mutasi petty cash hari ini.</div>`}
+  `;
+
+  histories.append(bonusHistory, advanceHistory, ledgerHistory);
+  container.appendChild(histories);
+
+  return container;
+}
+
+function createLcPayrollSubTabElement() {
+  const container = document.createElement("div");
+  container.className = "lc-payroll-subtab";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "24px";
+
+  const pendingSection = document.createElement("div");
+  pendingSection.className = "erp-card";
+  pendingSection.style.padding = "16px";
+  pendingSection.style.backgroundColor = "var(--surface-raised)";
+  pendingSection.style.borderRadius = "var(--radius-md)";
+  pendingSection.style.border = "1px solid var(--border)";
+  pendingSection.style.display = "flex";
+  pendingSection.style.flexDirection = "column";
+  pendingSection.style.gap = "16px";
+
+  const secHeader = document.createElement("div");
+  secHeader.style.display = "flex";
+  secHeader.style.justifyContent = "space-between";
+  secHeader.style.alignItems = "center";
+  secHeader.style.flexWrap = "wrap";
+  secHeader.style.gap = "12px";
+
+  const secTitleGroup = document.createElement("div");
+  const secTitle = document.createElement("h3");
+  secTitle.style.margin = "0";
+  secTitle.textContent = "Pembayaran Payroll LC (2 Mingguan)";
+  const secDesc = document.createElement("p");
+  secDesc.style.margin = "4px 0 0 0";
+  secDesc.style.fontSize = "13px";
+  secDesc.style.color = "var(--muted)";
+  secDesc.textContent = "Tentukan periode payroll dan proses pembayaran instan untuk sesi kerja done yang belum dibayar.";
+  secTitleGroup.append(secTitle, secDesc);
+  secHeader.appendChild(secTitleGroup);
+
+  const dateFilters = document.createElement("div");
+  dateFilters.style.display = "flex";
+  dateFilters.style.gap = "12px";
+  dateFilters.style.alignItems = "center";
+
+  const startCol = document.createElement("div");
+  startCol.style.display = "flex";
+  startCol.style.flexDirection = "column";
+  startCol.style.gap = "4px";
+  const startLbl = document.createElement("label");
+  startLbl.style.fontSize = "11px";
+  startLbl.style.color = "var(--muted)";
+  startLbl.textContent = "Dari Tanggal:";
+  const startIn = document.createElement("input");
+  startIn.type = "date";
+  startIn.className = "duration-custom-input";
+  startIn.value = lcPayrollStartDate;
+  startCol.append(startLbl, startIn);
+
+  const endCol = document.createElement("div");
+  endCol.style.display = "flex";
+  endCol.style.flexDirection = "column";
+  endCol.style.gap = "4px";
+  const endLbl = document.createElement("label");
+  endLbl.style.fontSize = "11px";
+  endLbl.style.color = "var(--muted)";
+  endLbl.textContent = "Sampai Tanggal:";
+  const endIn = document.createElement("input");
+  endIn.type = "date";
+  endIn.className = "duration-custom-input";
+  endIn.value = lcPayrollEndDate;
+  endCol.append(endLbl, endIn);
+
+  const filterBtn = document.createElement("button");
+  filterBtn.type = "button";
+  filterBtn.className = "erp-btn erp-btn-secondary";
+  filterBtn.style.padding = "8px 12px";
+  filterBtn.textContent = "Filter";
+  filterBtn.onclick = async () => {
+    await loadLcPayrollData(startIn.value, endIn.value);
+  };
+
+  const downloadCsvBtn = document.createElement("button");
+  downloadCsvBtn.type = "button";
+  downloadCsvBtn.className = "erp-btn erp-btn-secondary";
+  downloadCsvBtn.style.padding = "8px 12px";
+  downloadCsvBtn.textContent = "Download CSV Pengajuan";
+  downloadCsvBtn.onclick = () => {
+    downloadPendingPayrollCsv();
+  };
+
+  const buttonGroup = document.createElement("div");
+  buttonGroup.style.display = "flex";
+  buttonGroup.style.gap = "8px";
+  buttonGroup.style.alignSelf = "flex-end";
+  buttonGroup.append(downloadCsvBtn, filterBtn);
+
+  dateFilters.append(startCol, endCol, buttonGroup);
+  secHeader.appendChild(dateFilters);
+  pendingSection.appendChild(secHeader);
+
+  if (isLoadingLcPayroll) {
+    pendingSection.appendChild(createStateMessage("Memuat data payroll..."));
+    container.appendChild(pendingSection);
+    return container;
+  }
+
+  const summaryBox = document.createElement("div");
+  summaryBox.style.display = "grid";
+  summaryBox.style.gridTemplateColumns = "repeat(auto-fit, minmax(180px, 1fr))";
+  summaryBox.style.gap = "12px";
+  summaryBox.style.backgroundColor = "var(--bg)";
+  summaryBox.style.padding = "12px";
+  summaryBox.style.borderRadius = "var(--radius-sm)";
+  summaryBox.style.border = "1px solid var(--border)";
+
+  const totalRoomEarning = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.room_earning_total ?? r.total_earnings ?? 0), 0);
+  const totalSalesBonus = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.sales_bonus_total || 0), 0);
+  const totalCashAdvance = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.cash_advance_deducted || 0), 0);
+  const totalCashAdvanceOutstanding = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.cash_advance_outstanding || 0), 0);
+  const totalGross = totalRoomEarning + totalSalesBonus;
+  const totalAmount = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.net_payout_total ?? r.total_earnings ?? 0), 0);
+  const totalSessions = lcPayrollPendingReports.reduce((sum, r) => sum + r.total_sessions, 0);
+  const totalLcs = lcPayrollPendingReports.length;
+
+  summaryBox.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Net Payout Payroll:</span>
+      <strong style="font-size:18px; color:var(--gold)">${formatCurrency(totalAmount)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Gaji Room:</span>
+      <strong style="font-size:18px;">${formatCurrency(totalRoomEarning)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Bonus Sales:</span>
+      <strong style="font-size:18px;">${formatCurrency(totalSalesBonus)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Potongan Kasbon:</span>
+      <strong style="font-size:18px;">${formatCurrency(totalCashAdvance)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Kasbon Outstanding:</span>
+      <strong style="font-size:18px;">${formatCurrency(totalCashAdvanceOutstanding)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Gross Earning:</span>
+      <strong style="font-size:18px;">${formatCurrency(totalGross)}</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Total Sesi / Job:</span>
+      <strong style="font-size:18px;">${totalSessions} Sesi</strong>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted)">Jumlah LC Dibayar:</span>
+      <strong style="font-size:18px;">${totalLcs} Orang</strong>
+    </div>
+  `;
+  pendingSection.appendChild(summaryBox);
+
+  if (lcPayrollPendingReports.length === 0) {
+    const noPending = createStateMessage("Tidak ada sesi kerja LC yang belum dibayar pada periode ini.", "info");
+    pendingSection.appendChild(noPending);
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "table-responsive";
+    
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>ID LC</th>
+          <th>Nama Panggilan</th>
+          <th>Tarif per Jam</th>
+          <th style="text-align: center;">Total Sesi Pending</th>
+          <th>Gaji Room</th>
+          <th>Bonus Sales</th>
+          <th>Kasbon</th>
+          <th>Sisa Kasbon</th>
+          <th>Net Payout</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lcPayrollPendingReports.map(rep => `
+          <tr>
+            <td><strong>${rep.lc_id}</strong></td>
+            <td>${escapeHtml(rep.lc_name)}</td>
+            <td>${formatCurrency(rep.rate_per_room)}</td>
+            <td style="text-align: center;">${rep.total_sessions}</td>
+            <td>${formatCurrency(rep.room_earning_total ?? rep.total_earnings)}</td>
+            <td>${formatCurrency(rep.sales_bonus_total || 0)}</td>
+            <td>${formatCurrency(rep.cash_advance_deducted || 0)}</td>
+            <td>${formatCurrency(rep.cash_advance_outstanding || 0)}</td>
+            <td><strong>${formatCurrency(rep.net_payout_total ?? rep.total_earnings)}</strong></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    tableWrapper.appendChild(table);
+    pendingSection.appendChild(tableWrapper);
+
+    const processBtn = document.createElement("button");
+    processBtn.type = "button";
+    processBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+    processBtn.style.padding = "10px 20px";
+    processBtn.style.alignSelf = "flex-end";
+    processBtn.style.fontWeight = "bold";
+    processBtn.textContent = isProcessingLcPayroll ? "Memproses..." : "Proses Pembayaran Payroll";
+    processBtn.disabled = isProcessingLcPayroll;
+    processBtn.onclick = async () => {
+      if (confirm(`Konfirmasi pembayaran payroll net sebesar ${formatCurrency(totalAmount)} untuk periode ini?`)) {
+        await executeProcessLcPayroll();
+      }
+    };
+    pendingSection.appendChild(processBtn);
+  }
+
+  container.appendChild(pendingSection);
+
+  const historySection = document.createElement("div");
+  historySection.className = "erp-card";
+  historySection.style.padding = "16px";
+  historySection.style.display = "flex";
+  historySection.style.flexDirection = "column";
+  historySection.style.gap = "12px";
+
+  const historyTitle = document.createElement("h3");
+  historyTitle.style.margin = "0";
+  historyTitle.textContent = "Riwayat Pembayaran Payroll";
+  historySection.appendChild(historyTitle);
+
+  if (lcPayrollHistory.length === 0) {
+    historySection.appendChild(createStateMessage("Belum ada riwayat pembayaran payroll.", "info"));
+  } else {
+    const histTableWrapper = document.createElement("div");
+    histTableWrapper.className = "table-responsive";
+
+    const histTable = document.createElement("table");
+    histTable.className = "erp-table";
+    histTable.style.width = "100%";
+    histTable.style.borderCollapse = "collapse";
+    histTable.innerHTML = `
+      <thead>
+        <tr>
+          <th>ID Payroll</th>
+          <th>Periode Kerja</th>
+          <th>Net Payout</th>
+          <th style="text-align: center;">Total Sesi</th>
+          <th style="text-align: center;">LC Terbayar</th>
+          <th>Tanggal Diproses</th>
+          <th>Operator</th>
+          <th style="text-align: center;">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lcPayrollHistory.map(row => `
+          <tr>
+            <td><strong>${row.payroll_id}</strong></td>
+            <td>${formatSimpleDate(row.start_date)} s.d. ${formatSimpleDate(row.end_date)}</td>
+            <td><strong>${formatCurrency(row.total_amount)}</strong></td>
+            <td style="text-align: center;">${row.total_sessions} Sesi</td>
+            <td style="text-align: center;">${row.total_lcs_paid} LC</td>
+            <td>${new Date(row.processed_at).toLocaleString("id-ID")}</td>
+            <td>${escapeHtml(row.processed_by || "Kasir")}</td>
+            <td style="text-align: center;">
+              <button type="button" class="erp-btn erp-btn-secondary btn-detail-payroll" style="padding: 4px 8px; font-size: 12px; border-color: var(--gold);" data-id="${row.payroll_id}">Detail</button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+
+    histTable.querySelectorAll(".btn-detail-payroll").forEach(btn => {
+      const payrollId = btn.dataset.id;
+      btn.onclick = () => {
+        loadLcPayrollDetail(payrollId);
+      };
+    });
+
+    histTableWrapper.appendChild(histTable);
+    historySection.appendChild(histTableWrapper);
+  }
+
+  if (isLoadingLcPayrollDetail) {
+    historySection.appendChild(createStateMessage("Memuat rincian payroll..."));
+  } else if (selectedLcPayrollDetail) {
+    historySection.appendChild(createLcPayrollDetailElement());
+  }
+
+  container.appendChild(historySection);
+  return container;
+}
+
+function createLcPayrollDetailElement() {
+  const detailsContainer = document.createElement("div");
+  detailsContainer.className = "lc-payroll-detail-panel erp-card";
+  detailsContainer.style.padding = "16px";
+  detailsContainer.style.backgroundColor = "var(--surface-raised)";
+  detailsContainer.style.borderRadius = "var(--radius-md)";
+  detailsContainer.style.border = "1px solid var(--gold)";
+  detailsContainer.style.display = "flex";
+  detailsContainer.style.flexDirection = "column";
+  detailsContainer.style.gap = "12px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+
+  const title = document.createElement("h4");
+  title.style.margin = "0";
+  title.style.color = "var(--gold)";
+  title.textContent = `Rincian Pembayaran LC - Payroll ${selectedLcPayrollDetail.payroll_id}`;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.style.padding = "4px 8px";
+  closeBtn.style.fontSize = "12px";
+  closeBtn.textContent = "Tutup Rincian";
+  closeBtn.onclick = () => {
+    selectedLcPayrollDetail = null;
+    renderRooms();
+  };
+
+  header.append(title, closeBtn);
+  detailsContainer.appendChild(header);
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>ID LC</th>
+        <th>Nama Panggilan</th>
+        <th>Tarif per Jam</th>
+        <th style="text-align: center;">Total Sesi Kerja</th>
+        <th>Total Pembayaran Gaji</th>
+        <th style="text-align: center;">Aksi</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${selectedLcPayrollDetail.details.map(rep => `
+        <tr>
+          <td><strong>${rep.lc_id}</strong></td>
+          <td>${escapeHtml(rep.lc_name)}</td>
+          <td>${formatCurrency(rep.rate_per_room)}</td>
+          <td style="text-align: center;">${rep.total_sessions} Sesi</td>
+          <td><strong>${formatCurrency(rep.total_earnings)}</strong></td>
+          <td style="text-align: center;">
+            <button type="button" class="erp-btn erp-btn-secondary btn-slip-lc" style="padding: 4px 8px; font-size: 12px; border-color: var(--gold);" data-id="${rep.lc_id}">Slip Gaji</button>
+          </td>
+        </tr>
+      `).join("")}
+    </tbody>
+  `;
+
+  table.querySelectorAll(".btn-slip-lc").forEach(btn => {
+    const lcId = btn.dataset.id;
+    const lcData = selectedLcPayrollDetail.details.find(d => d.lc_id === lcId);
+    btn.onclick = () => {
+      selectedLcForSlip = {
+        payroll_id: selectedLcPayrollDetail.payroll_id,
+        ...lcData
+      };
+      renderRooms();
+    };
+  });
+
+  tableWrapper.appendChild(table);
+  detailsContainer.appendChild(tableWrapper);
+
+  return detailsContainer;
+}
+
+function createLcSlipModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1020";
+
+  const container = document.createElement("div");
+  container.className = "erp-card";
+  container.style.width = "400px";
+  container.style.maxHeight = "90vh";
+  container.style.overflowY = "auto";
+  container.style.padding = "24px";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "16px";
+  container.style.backgroundColor = "var(--surface-raised)";
+  container.style.border = "1px solid var(--border)";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.textAlign = "center";
+  title.style.color = "var(--gold)";
+  title.textContent = "SLIP GAJI LADY COMPANION";
+
+  const content = document.createElement("div");
+  content.className = "thermal-slip-preview";
+  content.style.fontFamily = "monospace";
+  content.style.fontSize = "12px";
+  content.style.backgroundColor = "#fff";
+  content.style.color = "#000";
+  content.style.padding = "16px";
+  content.style.borderRadius = "4px";
+  content.style.border = "1px dashed #aaa";
+  content.style.whiteSpace = "pre-wrap";
+
+  const divider = "--------------------------------";
+  const doubleDivider = "================================";
+
+  const lc = selectedLcForSlip;
+  const lines = [
+    centerText("HAPPY SONG KARAOKE", 32),
+    centerText("SLIP GAJI PARTNER (LC)", 32),
+    divider,
+    padText("ID Payroll", lc.payroll_id, 32),
+    padText("ID LC", lc.lc_id, 32),
+    padText("Nama", lc.lc_name, 32),
+    divider,
+    "Rincian Sesi Kerja:",
+  ];
+
+  (lc.logs || []).forEach((log, index) => {
+    const dateStr = formatTransactionDateTime(log.created_at).split(" - ")[0];
+    const roomName = log.session_id.split("-")[0];
+    
+    let durationMinutes = Math.round(Number(log.duration_minutes) || 0);
+    if (durationMinutes <= 0 && log.created_at && log.closed_at) {
+      const ms = new Date(log.closed_at).getTime() - new Date(log.created_at).getTime();
+      durationMinutes = Math.max(1, Math.ceil(ms / 60000));
+    }
+    if (durationMinutes <= 0 && Number(log.rate) > 0 && Number(lc.rate_per_room) > 0) {
+      durationMinutes = Math.ceil(Number(log.rate) / Number(lc.rate_per_room)) * 60;
+    }
+    const durationHours = durationMinutes > 0 ? durationMinutes / 60 : 0;
+    
+    lines.push(`${index + 1}. Room: ${roomName} (${dateStr})`);
+    
+    const formattedHours = durationHours > 0 ? `${durationHours.toFixed(1)} Jam` : "N/A";
+    lines.push(padText(`   ${formattedHours} @ ${formatCurrency(lc.rate_per_room)}/Jam`, formatCurrency(log.rate), 32));
+  });
+
+  lines.push(
+    divider,
+    padText("Total Sesi", `${lc.total_sessions} Sesi`, 32),
+    padText("Tarif per Jam", formatCurrency(lc.rate_per_room), 32),
+    doubleDivider,
+    padText("TOTAL GAJI", formatCurrency(lc.total_earnings), 32),
+    doubleDivider,
+    "",
+    centerText("TANDA TERIMA", 32),
+    "",
+    "",
+    centerText("( ______________________ )", 32),
+    centerText(lc.lc_name, 32),
+  );
+
+  content.textContent = lines.join("\n");
+  container.appendChild(title);
+  container.appendChild(content);
+
+  const actionGroup = document.createElement("div");
+  actionGroup.style.display = "flex";
+  actionGroup.style.gap = "8px";
+  actionGroup.style.justifyContent = "flex-end";
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printBtn.style.padding = "8px 16px";
+  printBtn.style.fontWeight = "bold";
+  printBtn.textContent = "Cetak Slip";
+  printBtn.onclick = () => {
+    const printWindow = window.open("", "_blank");
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Cetak Slip Gaji ${lc.lc_name}</title>
+          <style>
+            body {
+              font-family: monospace;
+              font-size: 14px;
+              white-space: pre-wrap;
+              padding: 20px;
+              width: 300px;
+            }
+            @media print {
+              body { padding: 0; margin: 0; width: 58mm; }
+            }
+          </style>
+        </head>
+        <body>${content.textContent}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.style.padding = "8px 16px";
+  closeBtn.textContent = "Tutup";
+  closeBtn.onclick = () => {
+    selectedLcForSlip = null;
+    renderRooms();
+  };
+
+  actionGroup.append(printBtn, closeBtn);
+  container.appendChild(actionGroup);
+  overlay.appendChild(container);
+
+  return overlay;
+}
+
+function centerText(text, width) {
+  const clean = String(text).slice(0, width);
+  const padLeft = Math.floor((width - clean.length) / 2);
+  return " ".repeat(padLeft) + clean;
+}
+
+function padText(left, right, width) {
+  const l = String(left);
+  const r = String(right);
+  const space = width - l.length - r.length;
+  return l + " ".repeat(Math.max(1, space)) + r;
+}
+
+function createAddLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = "Tambah Lady Companion (LC) Baru";
+
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
+  nameField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Nama Panggilan:</label>
+    <input type="text" class="duration-custom-input text-input-name" placeholder="Nama Panggilan LC" value="${escapeHtml(addLcForm.lc_name || "")}">
+  `;
+
+  const rateField = document.createElement("div");
+  rateField.style.display = "flex";
+  rateField.style.flexDirection = "column";
+  rateField.style.gap = "4px";
+  rateField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Tarif per Jam (Rp):</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="150000" value="${addLcForm.rate_per_room || 150000}">
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    addLcForm = null;
+    renderRooms();
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingLc ? "Menyimpan..." : "Simpan";
+  saveBtn.disabled = isSavingLc;
+  saveBtn.onclick = () => {
+    const name = formEl.querySelector(".text-input-name").value.trim();
+    const rate = Number(formEl.querySelector(".text-input-rate").value) || 0;
+    console.log("saveBtn.onclick: clicked", { name, rate });
+    if (!name) {
+      showInlineNotice("Nama panggilan wajib diisi.", "error");
+      return;
+    }
+    
+    addLcForm.lc_name = name;
+    addLcForm.rate_per_room = rate;
+    
+    console.log("saveBtn.onclick: opening PIN modal...");
+    openAdminPinModal({
+      title: "PIN Manager Tambah LC",
+      message: "Masukkan PIN owner/manager untuk mendaftarkan LC baru.",
+      requestedAction: "save_lc_master",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        console.log("saveBtn.onclick onSuccess: PIN validated, starting executeSaveLcMaster...");
+        await executeSaveLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, saveBtn);
+  formEl.append(title, nameField, rateField, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeSaveLcMaster(adminPin) {
+  console.log("executeSaveLcMaster: triggered", { addLcForm, isSavingLc });
+  if (isSavingLc || !addLcForm) {
+    console.log("executeSaveLcMaster: skipped, isSavingLc is true or addLcForm is null");
+    return;
+  }
+
+  isSavingLc = true;
+  renderRooms();
+
+  console.log("executeSaveLcMaster: sending saveLcMaster request to API...");
+  try {
+    const response = await postApiAction({
+      action: "saveLcMaster",
+      lc_name: addLcForm.lc_name,
+      rate_per_room: addLcForm.rate_per_room,
+      status: addLcForm.status || "active",
+      availability: "available",
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    console.log("executeSaveLcMaster: API response received", response);
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal menyimpan data LC.");
+    }
+
+    console.log("executeSaveLcMaster: save successful, clearing form and reloading LCs...");
+    showInlineNotice("LC berhasil didaftarkan.");
+    addLcForm = null;
+    await loadLcs(true);
+    console.log("executeSaveLcMaster: LCs reloaded successfully");
+  } catch (error) {
+    console.error("executeSaveLcMaster: error occurred", error);
+    showInlineNotice(error.message || "Gagal mendaftarkan LC.", "error");
+  } finally {
+    console.log("executeSaveLcMaster: resetting isSavingLc to false and rendering");
+    isSavingLc = false;
+    renderRooms();
+  }
+}
+
+function createEditLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Edit Lady Companion (LC) - ${editLcForm.lc_id}`;
+
+  const nameField = document.createElement("div");
+  nameField.style.display = "flex";
+  nameField.style.flexDirection = "column";
+  nameField.style.gap = "4px";
+  nameField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Nama Panggilan:</label>
+    <input type="text" class="duration-custom-input text-input-name" placeholder="Nama Panggilan LC" value="${escapeHtml(editLcForm.lc_name || "")}">
+  `;
+
+  const rateField = document.createElement("div");
+  rateField.style.display = "flex";
+  rateField.style.flexDirection = "column";
+  rateField.style.gap = "4px";
+  rateField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Tarif per Jam (Rp):</label>
+    <input type="number" class="duration-custom-input text-input-rate" placeholder="150000" value="${editLcForm.rate_per_room}">
+  `;
+
+  const statusField = document.createElement("div");
+  statusField.style.display = "flex";
+  statusField.style.flexDirection = "column";
+  statusField.style.gap = "4px";
+  statusField.innerHTML = `
+    <label style="font-size: 12px; color: var(--muted);">Status Keaktifan:</label>
+    <select class="duration-payment-select text-select-status" style="width: 100%;">
+      <option value="active" ${editLcForm.status === "active" ? "selected" : ""}>Aktif</option>
+      <option value="inactive" ${editLcForm.status === "inactive" ? "selected" : ""}>Tidak Aktif</option>
+    </select>
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    editLcForm = null;
+    renderRooms();
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isSavingLc ? "Menyimpan..." : "Simpan Perubahan";
+  saveBtn.disabled = isSavingLc;
+  saveBtn.onclick = () => {
+    const name = formEl.querySelector(".text-input-name").value.trim();
+    const rate = Number(formEl.querySelector(".text-input-rate").value) || 0;
+    const status = formEl.querySelector(".text-select-status").value;
+    
+    if (!name) {
+      showInlineNotice("Nama panggilan wajib diisi.", "error");
+      return;
+    }
+    
+    editLcForm.lc_name = name;
+    editLcForm.rate_per_room = rate;
+    editLcForm.status = status;
+    
+    openAdminPinModal({
+      title: "PIN Manager Edit LC",
+      message: "Masukkan PIN owner/manager untuk mengubah data LC.",
+      requestedAction: "update_lc_master",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        await executeUpdateLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, saveBtn);
+  formEl.append(title, nameField, rateField, statusField, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeUpdateLcMaster(adminPin) {
+  if (isSavingLc || !editLcForm) return;
+
+  isSavingLc = true;
+  renderRooms();
+
+  try {
+    const response = await postApiAction({
+      action: "updateLcMaster",
+      lc_id: editLcForm.lc_id,
+      lc_name: editLcForm.lc_name,
+      rate_per_room: editLcForm.rate_per_room,
+      status: editLcForm.status,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal memperbarui data LC.");
+    }
+
+    showInlineNotice("Data LC berhasil diperbarui.");
+    editLcForm = null;
+    await loadLcs(true);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memperbarui data LC.", "error");
+  } finally {
+    isSavingLc = false;
+    renderRooms();
+  }
+}
+
+function createDeleteLcModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "400px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Hapus Lady Companion - ${deleteLcConfirmation.lc_id}`;
+
+  const msg = document.createElement("p");
+  msg.style.margin = "0";
+  msg.style.fontSize = "14px";
+  msg.style.color = "var(--text)";
+  msg.textContent = `Apakah Anda yakin ingin menghapus ${deleteLcConfirmation.lc_name} secara permanen? Aksi ini memerlukan PIN owner/manager dan hanya dapat dilakukan jika LC belum memiliki riwayat kerja.`;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    deleteLcConfirmation = null;
+    renderRooms();
+  };
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "erp-btn";
+  deleteBtn.style.backgroundColor = "var(--color-danger)";
+  deleteBtn.style.color = "#fff";
+  deleteBtn.style.fontWeight = "bold";
+  deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen (Manager)";
+  deleteBtn.disabled = isDeletingLc;
+  deleteBtn.onclick = () => {
+    openAdminPinModal({
+      title: "PIN Manager Hapus LC",
+      message: "Masukkan PIN owner/manager untuk menghapus data LC secara permanen.",
+      requestedAction: "delete_lc_master",
+      requiredRole: "manager",
+      validatePin: false,
+      onSuccess: async (authData, adminPin) => {
+        return executeDeleteLcMaster(adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, deleteBtn);
+  formEl.append(title, msg, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeDeleteLcMaster(adminPin) {
+  if (isDeletingLc || !deleteLcConfirmation) return { success: false };
+
+  isDeletingLc = true;
+  renderRooms();
+
+  try {
+    const response = await postApiAction({
+      action: "deleteLcMaster",
+      lc_id: deleteLcConfirmation.lc_id,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!response || response.ok !== true) {
+      const message = isAdminPinDeleteError(response)
+        ? "PIN tidak valid atau akses tidak cukup. Gunakan PIN owner/manager."
+        : response?.message || response?.error || "Gagal menghapus data LC.";
+
+      if (adminPinModal) {
+        adminPinModal = {
+          ...adminPinModal,
+          pin: "",
+          error: message,
+        };
+      }
+
+      showInlineNotice(message, "error");
+      return { success: false, message };
+    }
+
+    showInlineNotice("LC berhasil dihapus secara permanen.");
+    adminPinModal = null;
+    deleteLcConfirmation = null;
+    await loadLcs(true);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Gagal menghapus LC.";
+    showInlineNotice(message, "error");
+
+    if (adminPinModal) {
+      adminPinModal = {
+        ...adminPinModal,
+        pin: "",
+        error: message,
+      };
+    }
+
+    return { success: false, message };
+  } finally {
+    isDeletingLc = false;
+    renderRooms();
+  }
+}
+
+function createLcDetailLogsOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1000";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "650px";
+  formEl.style.maxWidth = "90%";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.textContent = `Riwayat Sesi Kerja LC - ${selectedLcDetailForLogs.lc_name}`;
+
+  const infoText = document.createElement("p");
+  infoText.style.margin = "0";
+  infoText.style.fontSize = "14px";
+  infoText.style.color = "var(--muted)";
+  infoText.textContent = `Menampilkan log kerja untuk ${selectedLcDetailForLogs.lc_id}. Total Sesi: ${selectedLcDetailForLogs.total_sessions}, Total Gaji: ${formatCurrency(selectedLcDetailForLogs.total_earnings)}`;
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+  tableWrapper.style.maxHeight = "300px";
+  tableWrapper.style.overflowY = "auto";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>ID Log</th>
+      <th>ID Sesi Room</th>
+      <th>Tarif (Rp)</th>
+      <th>Status Kerja</th>
+      <th>Waktu Mulai</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const logs = selectedLcDetailForLogs.logs || [];
+  
+  if (logs.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--muted);">Tidak ada riwayat sesi.</td>`;
+    tbody.appendChild(tr);
+  } else {
+    logs.forEach(log => {
+      const tr = document.createElement("tr");
+      const statusText = log.status === "active" ? "Aktif" : (log.status === "done" ? "Selesai" : "Batal");
+      const statusClass = log.status === "active" ? "badge badge-primary" : (log.status === "done" ? "badge badge-success" : "badge badge-danger");
+
+      tr.innerHTML = `
+        <td><small>${log.log_id}</small></td>
+        <td><small>${log.session_id}</small></td>
+        <td>${formatCurrency(log.rate)}</td>
+        <td><span class="${statusClass}">${statusText}</span></td>
+        <td><small>${formatDateTimeLabel(log.created_at)}</small></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.textContent = "Tutup";
+  closeBtn.onclick = () => {
+    selectedLcDetailForLogs = null;
+    renderRooms();
+  };
+  actions.appendChild(closeBtn);
+
+  formEl.append(title, infoText, tableWrapper, actions);
+  overlay.appendChild(formEl);
+  return overlay;
 }
 
 function renderDashboardGlobal() {
@@ -10082,12 +18888,25 @@ function renderDashboardGlobal() {
     fragment.appendChild(createStateMessage(errorMessage, "error"));
   }
 
-  if (noticeMessage) {
+  if (noticeMessage && (!noticeTabKey || noticeTabKey === activeDashboardTab)) {
     fragment.appendChild(createStateMessage(noticeMessage, noticeType));
   }
 
   if (stockWarningMessages.length > 0) {
     fragment.appendChild(createStockWarningListElement(stockWarningMessages));
+  }
+
+  const latestTransaction = getLatestTodayTransaction();
+  const unpaidTransactions = Array.isArray(todayTransactions)
+    ? todayTransactions.filter(tx => tx.payment_status === "unpaid" && tx.transaction_type === "session_checkout")
+    : [];
+
+  if (!lastTransaction && !receiptPrintVisible && activeDashboardTab === "rooms") {
+    if (unpaidTransactions.length > 0) {
+      fragment.appendChild(createUnpaidTransactionsTrayElement(unpaidTransactions));
+    } else if (latestTransaction) {
+      fragment.appendChild(createLatestTransactionShortcutElement(latestTransaction));
+    }
   }
 
   if (lastTransaction) {
@@ -10098,8 +18917,12 @@ function renderDashboardGlobal() {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
-  if (tvOffConfirmation) {
-    fragment.appendChild(createTvOffConfirmationElement());
+  if (ownerReportPrintVisible) {
+    fragment.appendChild(createOwnerReportPrintPreviewElement());
+  }
+
+  if (cashierClosingConfirmationVisible) {
+    fragment.appendChild(createCashierClosingConfirmationElement());
   }
 
   if (roomRecoveryConfirmation) {
@@ -10114,10 +18937,12 @@ function renderAppTabs() {
     return;
   }
 
+  ensureActiveDashboardTabAllowed();
+
   const fragment = document.createDocumentFragment();
   const roomsWarningCount = getRoomsTimeWarningCount();
 
-  DASHBOARD_TABS.forEach((tab) => {
+  getVisibleDashboardTabs().forEach((tab) => {
     const button = document.createElement("button");
     const label = document.createElement("span");
 
@@ -10153,13 +18978,144 @@ function renderAppTabs() {
   appTabsNav.replaceChildren(fragment);
 }
 
+function createFnbSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "fnb-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu F&B");
+
+  [
+    ["order", "🛒 Pesan Menu", "Input order F&B baru untuk room"],
+    ["open", "⏳ Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
+    ["history", "📜 Riwayat F&B", "Lihat rekapan penjualan F&B hari ini"],
+  ].forEach(([key, label, description]) => {
+    const button = document.createElement("button");
+    button.className = activeFnbSubTab === key
+      ? "fnb-subnav-button active"
+      : "fnb-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-fnb-subtab";
+    button.dataset.fnbSubtab = key;
+    button.setAttribute("aria-pressed", activeFnbSubTab === key ? "true" : "false");
+    button.title = description;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "fnb-subnav-label";
+    labelSpan.textContent = label;
+
+    button.appendChild(labelSpan);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
+function createTransactionsSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "transactions-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu Transaksi");
+
+  [
+    ["history", "📑 Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
+    ["closing", "💵 Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
+  ].forEach(([key, label, description]) => {
+    const button = document.createElement("button");
+    button.className = activeTransactionsSubTab === key
+      ? "transactions-subnav-button active"
+      : "transactions-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-transactions-subtab";
+    button.dataset.transactionsSubtab = key;
+    button.setAttribute("aria-pressed", activeTransactionsSubTab === key ? "true" : "false");
+    button.title = description;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "transactions-subnav-label";
+    labelSpan.textContent = label;
+
+    button.appendChild(labelSpan);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
+function createReportsSubNavElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "reports-subnav";
+  wrapper.setAttribute("aria-label", "Sub menu laporan");
+
+  ensureActiveReportSubTabAllowed();
+  const allowedReportTabs = new Set(ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || []);
+
+  REPORT_SUB_TABS.filter((tab) => allowedReportTabs.has(tab.key)).forEach((tab) => {
+    const button = document.createElement("button");
+    button.className = activeReportSubTab === tab.key
+      ? "reports-subnav-button active"
+      : "reports-subnav-button";
+    button.type = "button";
+    button.dataset.action = "switch-report-subtab";
+    button.dataset.reportTab = tab.key;
+    button.setAttribute("aria-pressed", activeReportSubTab === tab.key ? "true" : "false");
+
+    const label = document.createElement("span");
+    label.className = "reports-subnav-label";
+    label.textContent = tab.label;
+
+    const description = document.createElement("span");
+    description.className = "reports-subnav-description";
+    description.textContent = tab.description;
+
+    button.append(label, description);
+    wrapper.appendChild(button);
+  });
+
+  return wrapper;
+}
+
+function createReportsSubTabContentElement() {
+  const wrapper = document.createElement("div");
+  wrapper.className = `reports-subtab-content reports-subtab-content--${activeReportSubTab}`;
+
+  switch (activeReportSubTab) {
+    case "owner":
+      wrapper.append(
+        createFinanceOverviewElement(),
+        createOwnerDashboardElement()
+      );
+      break;
+    case "cashier":
+      if (closingPrintPreviewVisible && selectedClosingForPrint) {
+        wrapper.appendChild(createClosingPrintPreviewElement(selectedClosingForPrint));
+      } else {
+        wrapper.appendChild(renderCashierClosingHistory());
+      }
+      break;
+    case "fnb":
+      wrapper.appendChild(createTodayFnbSalesReportPanelElement());
+      break;
+    case "room":
+      wrapper.append(
+        createRoomOccupancyElement(),
+        createRoomUsageReportPanelElement()
+      );
+      break;
+    default:
+      wrapper.appendChild(createStateMessage("Sub menu laporan tidak dikenal.", "error"));
+      break;
+  }
+
+  return wrapper;
+}
+
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
-      ensureRoomRecoveryCandidatesLoaded();
+      if (getCurrentOperatorRole() !== "receptionist") {
+        ensureRoomRecoveryCandidatesLoaded();
 
-      if (hasRoomRecoveryCandidates()) {
-        panel.appendChild(createRoomRecoveryPanelElement());
+        if (hasRoomRecoveryCandidates()) {
+          panel.appendChild(createRoomRecoveryPanelElement());
+        }
       }
 
       const roomsContainer = document.createElement("div");
@@ -10176,14 +19132,35 @@ function appendDashboardTabContent(panel, tabKey) {
       panel.appendChild(roomsContainer);
       break;
     }
-    case "fnb":
-      panel.append(
-        createMenuPanelElement(),
-        createFbOrderPanelElement(),
-        createOpenFnbOrdersPanelElement(),
-        createTodayFnbOrdersPanelElement()
-      );
-      break;
+    case "fnb": {
+        // Insert sub-navigation for F&B
+        panel.appendChild(createFnbSubNavElement());
+        // Render content based on selected sub-tab
+        if (activeFnbSubTab === "order") {
+          panel.append(
+            createMenuPanelElement(),
+            createFbOrderPanelElement()
+          );
+        } else if (activeFnbSubTab === "open") {
+          panel.appendChild(createOpenFnbOrdersPanelElement());
+        } else if (activeFnbSubTab === "history") {
+          panel.appendChild(createTodayFnbOrdersPanelElement());
+        }
+        break;
+      }
+      case "transactions": {
+        // Insert sub-navigation for Transactions
+        panel.appendChild(createTransactionsSubNavElement());
+        // Render based on selected sub-tab (history or closing)
+        if (activeTransactionsSubTab === "history") {
+          // Existing transaction history UI
+          panel.appendChild(renderTransactionHistory());
+        } else if (activeTransactionsSubTab === "closing") {
+          // Shift Kasir UI – reuse the same transaction history which already includes closing components
+          panel.appendChild(renderTransactionsClosing());
+        }
+        break;
+      }
     case "stock":
       panel.append(
         createInventoryPanelElement(),
@@ -10192,25 +19169,21 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "reports":
       panel.append(
-        createOwnerDashboardElement(),
-        createRoomOccupancyElement(),
-        createTodayFnbSalesReportPanelElement(),
-        createRoomUsageReportPanelElement()
+        createReportsSubNavElement(),
+        createReportsSubTabContentElement()
       );
-      break;
-    case "transactions":
-      try {
-        panel.appendChild(renderTransactionHistory());
-      } catch (error) {
-        console.warn("Gagal merender riwayat transaksi.", error);
-        panel.appendChild(createStateMessage("Riwayat transaksi gagal ditampilkan.", "error"));
-      }
       break;
     case "audit":
       panel.appendChild(createTodayRoomTimeLogsPanelElement());
       break;
     case "settings":
       panel.appendChild(createSettingsPanelElement());
+      break;
+    case "lc":
+      panel.appendChild(createLcPanelElement());
+      break;
+    case "promosi":
+      panel.appendChild(createPromosiPanelElement());
       break;
     default:
       break;
@@ -10222,9 +19195,11 @@ function renderDashboardTabPanels() {
     return;
   }
 
+  ensureActiveDashboardTabAllowed();
+
   const fragment = document.createDocumentFragment();
 
-  DASHBOARD_TABS.forEach((tab) => {
+  getVisibleDashboardTabs().forEach((tab) => {
     const panel = document.createElement("section");
     panel.className = activeDashboardTab === tab.key
       ? `app-tab-panel app-tab-panel--${tab.key} active`
@@ -10244,6 +19219,8 @@ function renderDashboardTabPanels() {
 }
 
 function renderRooms() {
+  ensureActiveDashboardTabAllowed();
+  ensureActiveReportSubTabAllowed();
   renderDashboardGlobal();
   renderAppTabs();
   renderDashboardTabPanels();
@@ -10274,6 +19251,11 @@ function updateRunningTimers() {
       timer.classList.toggle("warning", status === "warning");
       applyRoomTimeVisualState(card, status);
       updateRoomTimeBadge(badge, status);
+
+      if (status === "expired") {
+        sendTvOffForExpiredCountdown(card.dataset.roomId, timer.dataset.scheduledEndTime);
+      }
+
       return;
     }
 
@@ -10289,18 +19271,63 @@ function updateRunningTimers() {
 function showDurationSelection(roomId) {
   durationSelectionRoomId = roomId;
   customDurationMinutes = "";
+  bookingCartItems = []; // reset cart for new booking
   renderRooms();
 }
 
 function cancelDurationSelection() {
   durationSelectionRoomId = "";
   customDurationMinutes = "";
+  bookingCartItems = []; // clear cart
   renderRooms();
 }
 
 function updateCustomDuration(value) {
   customDurationMinutes = value;
 }
+
+function updateCustomerName(value) {
+  customerNameInput = value;
+}
+
+function updateDurationPaymentMethod(value) {
+  durationPaymentMethod = value === "transfer" ? "transfer" : "cash";
+}
+
+function createRoomSessionIdempotencyKey(roomId, durationMinutes) {
+  return [
+    "prepare",
+    roomId || "room",
+    String(durationMinutes || 0),
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2, 8),
+  ].join("-");
+}
+
+// Idempotency key untuk payAndStartSession — di-cache per roomId agar
+// retry dalam satu sesi pembayaran menggunakan key yang SAMA, sehingga
+// server bisa mendeteksi duplikat dan tidak membuat transaksi ganda.
+const _payAndStartIdempotencyKeys = {};
+function createPayAndStartIdempotencyKey(roomId, paymentMethod) {
+  const cacheKey = `${roomId}__${paymentMethod}`;
+  if (!_payAndStartIdempotencyKeys[cacheKey]) {
+    _payAndStartIdempotencyKeys[cacheKey] = [
+      "pay",
+      roomId || "room",
+      paymentMethod || "cash",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 8),
+    ].join("-");
+  }
+  return _payAndStartIdempotencyKeys[cacheKey];
+}
+
+// Hapus cache idempotency setelah pembayaran berhasil atau room reset
+function clearPayAndStartIdempotencyKey(roomId, paymentMethod) {
+  const cacheKey = `${roomId}__${paymentMethod}`;
+  delete _payAndStartIdempotencyKeys[cacheKey];
+}
+
 
 function showExtendSelection(roomId) {
   extendSelectionRoomId = roomId;
@@ -10313,6 +19340,7 @@ function cancelExtendSelection() {
   extendSelectionRoomId = "";
   customExtendMinutes = "";
   extendSessionNote = "";
+  extendPaymentMethod = "cash";
   renderRooms();
 }
 
@@ -10322,6 +19350,180 @@ function updateCustomExtendMinutes(value) {
 
 function updateExtendSessionNote(value) {
   extendSessionNote = value;
+}
+
+// ── LC Mid-Session Selection ──
+
+let pendingLcSelections = {};
+let pendingLcDurations = {};
+
+function showLcSelection(roomId) {
+  lcSelectionRoomId = roomId;
+  pendingLcSelections = {};
+  pendingLcDurations = {};
+  const room = rooms.find(r => r.room_id === roomId);
+  if (room) {
+    const assignmentsById = new Map(parseLcAssignmentsFromRoom(room).map((assignment) => [assignment.lc_id, assignment.duration_minutes]));
+    const lcIds = String(room.lc_ids || "").trim();
+    if (lcIds) {
+      lcIds.split(",").map(id => id.trim()).filter(Boolean).forEach(id => {
+        if (id !== "PENDING") {
+          pendingLcSelections[id] = true;
+          pendingLcDurations[id] = assignmentsById.get(id) || getDefaultLcDurationMinutes(room);
+        }
+      });
+    }
+  }
+  renderRooms();
+}
+
+function cancelLcSelection() {
+  lcSelectionRoomId = "";
+  pendingLcSelections = {};
+  pendingLcDurations = {};
+  renderRooms();
+}
+
+function createSelectLcModalOverlay(room) {
+  const panel = document.createElement("div");
+  panel.className = "lc-selection-panel";
+
+  const title = document.createElement("p");
+  title.className = "lc-selection-title";
+  title.textContent = `Input LC Final untuk ${room.room_name}`;
+
+  const lcIdsRaw = String(room.lc_ids || "").trim();
+  const allIds = lcIdsRaw.split(",").map(id => id.trim()).filter(Boolean);
+  const bookedCount = allIds.length;
+  const selectedCount = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]).length;
+
+  const counter = document.createElement("p");
+  counter.className = "lc-selection-counter";
+  counter.textContent = `Terpilih: ${selectedCount} orang`;
+
+  const availableLcs = lcs.filter(lc => lc.status === "active" && (lc.availability === "available" || pendingLcSelections[lc.lc_id]));
+
+  const listContainer = document.createElement("div");
+  listContainer.className = "lc-selection-list";
+
+  if (availableLcs.length === 0) {
+    const noLcMsg = document.createElement("p");
+    noLcMsg.className = "lc-selection-empty";
+    noLcMsg.textContent = "Tidak ada LC yang tersedia saat ini.";
+    listContainer.appendChild(noLcMsg);
+  } else {
+    availableLcs.forEach(lc => {
+      const itemLabel = document.createElement("label");
+      itemLabel.className = "lc-selection-item";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = lc.lc_id;
+      cb.checked = !!pendingLcSelections[lc.lc_id];
+      cb.dataset.action = "toggle-lc-checkbox";
+      cb.onchange = () => {
+        if (cb.checked) {
+          pendingLcSelections[lc.lc_id] = true;
+          const currentLcIds = String(room.lc_ids || "").split(",").map(id => id.trim()).filter(Boolean);
+          const isNewLc = !currentLcIds.includes(lc.lc_id);
+          const defaultDuration = isNewLc ? getRemainingSessionMinutes(room) : getDefaultLcDurationMinutes(room);
+          pendingLcDurations[lc.lc_id] = pendingLcDurations[lc.lc_id] || defaultDuration;
+        } else {
+          delete pendingLcSelections[lc.lc_id];
+          delete pendingLcDurations[lc.lc_id];
+        }
+        renderRooms();
+      };
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = lc.lc_name;
+
+      const rateSpan = document.createElement("span");
+      rateSpan.className = "lc-selection-rate";
+      rateSpan.textContent = currencyFormatter.format(Number(lc.rate_per_room) || 175000);
+
+      itemLabel.append(cb, nameSpan, rateSpan);
+
+      if (cb.checked) {
+        const currentLcIds = String(room.lc_ids || "").split(",").map(id => id.trim()).filter(Boolean);
+        const isNewLc = !currentLcIds.includes(lc.lc_id);
+        const defaultDuration = isNewLc ? getRemainingSessionMinutes(room) : getDefaultLcDurationMinutes(room);
+        const durationInput = createLcDurationSelectElement(
+          room,
+          lc.lc_id,
+          pendingLcDurations[lc.lc_id] || defaultDuration
+        );
+        itemLabel.appendChild(durationInput);
+      }
+
+      listContainer.appendChild(itemLabel);
+    });
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "lc-selection-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "room-button lc-selection-save";
+  saveBtn.type = "button";
+  saveBtn.dataset.action = "save-lc-selection";
+  saveBtn.dataset.roomId = room.room_id;
+  saveBtn.textContent = isSavingSessionLcs ? "Menyimpan..." : "Simpan Pilihan";
+  saveBtn.disabled = isSavingSessionLcs || selectedCount === 0;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "room-button lc-selection-cancel";
+  cancelBtn.type = "button";
+  cancelBtn.dataset.action = "cancel-lc-selection";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.disabled = isSavingSessionLcs;
+
+  actions.append(saveBtn, cancelBtn);
+  panel.append(title, counter, listContainer, actions);
+
+  return panel;
+}
+
+async function saveSessionLcSelection(roomId) {
+  const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
+  const selectedIds = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]);
+
+  if (selectedIds.length === 0) {
+    showInlineNotice("Pilih minimal 1 LC.", "error");
+    return;
+  }
+
+  isSavingSessionLcs = true;
+  renderRooms();
+
+  try {
+    const result = await postApiAction({
+      action: "assignSessionLcs",
+      room_id: roomId,
+      lc_ids: selectedIds.join(","),
+      lc_assignments: JSON.stringify(selectedIds.map((lcId) => ({
+        lc_id: lcId,
+        duration_minutes: normalizeLcDurationMinutesForRoom(room, pendingLcDurations[lcId]),
+      }))),
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (result?.ok || result?.success) {
+      showInlineNotice("Pilihan LC berhasil disimpan.", "success");
+      lcSelectionRoomId = "";
+      pendingLcSelections = {};
+      pendingLcDurations = {};
+      await loadRooms();
+    } else {
+      showInlineNotice(result?.error || result?.message || "Gagal menyimpan pilihan LC.", "error");
+    }
+  } catch (err) {
+    console.error("Error saving LC selection:", err);
+    showInlineNotice(err.message || "Gagal menghubungi server. Coba lagi.", "error");
+  } finally {
+    isSavingSessionLcs = false;
+    renderRooms();
+  }
 }
 
 async function loadTodayRoomTimeLogs() {
@@ -10371,7 +19573,9 @@ async function fetchTodayRoomTimeLogsFromApi() {
     params.set("room_id", roomTimeLogRoomFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(
+    buildApiUrl("getTodayRoomTimeLogs", Object.fromEntries(params.entries()))
+  );
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -10573,7 +19777,7 @@ function createRoomTimeLogRowElement(log) {
 
   const meta = document.createElement("p");
   meta.className = "room-time-logs-meta";
-  meta.textContent = `${log.created_at || "-"} - ${log.log_id || "-"}`;
+  meta.textContent = `${formatDateTimeLabel(log.created_at)} - ${log.log_id || "-"}`;
 
   titleGroup.append(roomName, meta);
 
@@ -10639,7 +19843,27 @@ function getExtendSuccessMessage(roomName, addMinutes) {
   return `Waktu ${roomName} berhasil ditambah ${formatDurationMinutes(minutes)}.`;
 }
 
+function createExtendSessionIdempotencyKey(roomId, addMinutes) {
+  return [
+    "extend",
+    roomId || "room",
+    String(Number(addMinutes) || 0),
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2, 8),
+  ].join("-");
+}
+
 async function extendSession(roomId, addMinutes) {
+  if (isExtendingSession) {
+    showInlineNotice("Tambah waktu sedang diproses. Tunggu sebentar.");
+    return;
+  }
+
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan menambah waktu sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -10659,8 +19883,10 @@ async function extendSession(roomId, addMinutes) {
 
   const room = rooms.find((item) => item.room_id === roomId);
   const roomName = room?.room_name || "ruangan";
+  const idempotencyKey = createExtendSessionIdempotencyKey(roomId, selectedMinutes);
 
   isExtendingSession = true;
+  pendingExtendSessionRequestKey = idempotencyKey;
   setActionButtonsDisabled(true);
   renderRooms();
 
@@ -10670,6 +19896,9 @@ async function extendSession(roomId, addMinutes) {
       room_id: roomId,
       add_minutes: selectedMinutes,
       cashier_name: getLoggedInOperatorName(),
+      payment_method: "",
+      payment_status: "unpaid",
+      idempotency_key: idempotencyKey,
     };
 
     if (extendSessionNote.trim()) {
@@ -10686,17 +19915,26 @@ async function extendSession(roomId, addMinutes) {
     extendSelectionRoomId = "";
     customExtendMinutes = "";
     extendSessionNote = "";
-    await loadRooms();
-    await loadTodayRoomTimeLogs();
+    extendPaymentMethod = "cash";
+    await Promise.all([
+      loadRooms(),
+      loadTodayRoomTimeLogs()
+    ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menambah waktu sesi.", "error");
   } finally {
     isExtendingSession = false;
+    pendingExtendSessionRequestKey = "";
     setActionButtonsDisabled(false);
   }
 }
 
 async function startSession(roomId, durationMinutes) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -10709,8 +19947,12 @@ async function startSession(roomId, durationMinutes) {
     return;
   }
 
-  if (selectedDuration < 15) {
-    showInlineNotice("Durasi minimal 15 menit.", "error");
+  if (selectedDuration < getMinimumSessionMinutes()) {
+    showInlineNotice(getMinimumSessionMessage(), "error");
+    return;
+  }
+
+  if (!validateOwnerTestModeBeforeSubmit()) {
     return;
   }
 
@@ -10721,15 +19963,24 @@ async function startSession(roomId, durationMinutes) {
       action: "startSession",
       room_id: roomId,
       duration_minutes: selectedDuration,
+      dev_test_duration: canUseDevShortSessions(),
+      ...buildOwnerTestModePayload(),
     });
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal memulai sesi.");
     }
 
-    showInlineNotice("Sesi berhasil dimulai.");
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "start_session");
+      showInlineNotice("Sesi berhasil dimulai. TV dinyalakan.");
+    } catch (tvError) {
+      showInlineNotice(`Sesi berhasil dimulai. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+    }
+
     durationSelectionRoomId = "";
     customDurationMinutes = "";
+    lastOwnerTestRunId = data.test_run_id || lastOwnerTestRunId;
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memulai sesi.", "error");
@@ -10738,7 +19989,341 @@ async function startSession(roomId, durationMinutes) {
   }
 }
 
+async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "", lcIds = "", prepareKey = "") {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  const selectedDuration = Number(durationMinutes);
+
+  if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
+    showInlineNotice("Durasi wajib berupa angka positif.", "error");
+    return;
+  }
+
+  if (selectedDuration < getMinimumSessionMinutes()) {
+    showInlineNotice(getMinimumSessionMessage(), "error");
+    return;
+  }
+
+  if (!validateOwnerTestModeBeforeSubmit()) {
+    return;
+  }
+
+  isPreparingRoomSession = true;
+  preparingRoomSessionKey = prepareKey || (packageId ? `${roomId}:package:${packageId}` : `${roomId}:${selectedDuration}`);
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "prepareRoomSession",
+      room_id: roomId,
+      duration_minutes: selectedDuration,
+      dev_test_duration: canUseDevShortSessions(),
+      payment_method: "cash",
+      cashier_name: getLoggedInOperatorName(),
+      customer_name: customerName,
+      package_id: packageId,
+      lc_ids: "",
+      lc_assignments: "",
+      fnb_items: bookingCartItems.map(item => ({
+        menu_id: item.menu_id,
+        quantity: item.quantity
+      })),
+      idempotency_key: createRoomSessionIdempotencyKey(roomId, selectedDuration),
+      ...buildOwnerTestModePayload(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal menyiapkan booking room.");
+    }
+
+    showInlineNotice(data.message || "Booking room berhasil disiapkan.");
+    bookingCartItems = []; // clear receptionist cart on success
+    durationSelectionRoomId = "";
+    customDurationMinutes = "";
+    durationPaymentMethod = "cash";
+    lastOwnerTestRunId = data.test_run_id || lastOwnerTestRunId;
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyiapkan booking room.", "error");
+  } finally {
+    isPreparingRoomSession = false;
+    preparingRoomSessionKey = "";
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function loadPackages() {
+  if (!API_BASE_URL.trim()) return;
+  try {
+    packages = await fetchPackagesFromApi();
+  } catch (error) {
+    console.error("Gagal memuat paket:", error);
+  }
+}
+
+async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (isActivatingPreparedSession) {
+    return;
+  }
+
+  isActivatingPreparedSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+  try {
+    const data = await postApiAction({
+      action: "payAndStartSession",
+      room_id: roomId,
+      payment_method: paymentMethod,
+      promo_code: promoCode,
+      lc_ids: "",
+      lc_assignments: "",
+      cashier_name: getLoggedInOperatorName(),
+      fnb_items: prepayCartItems.map(item => ({
+        menu_id: item.menu_id,
+        quantity: item.quantity
+      })),
+      idempotency_key: createPayAndStartIdempotencyKey(roomId, paymentMethod),
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memproses pembayaran.");
+    }
+    showInlineNotice(data.message || "Pembayaran berhasil diproses.");
+    lastOwnerTestRunId = data.test_run_id || data.transaction?.test_run_id || lastOwnerTestRunId;
+    clearPayAndStartIdempotencyKey(roomId, paymentMethod); // bersihkan cache key setelah sukses
+    prepayCartItems = []; // clear cashier cart on success
+    paymentSelectionRoomId = "";
+    delete selectedLcIdsForRoom[roomId];
+    delete selectedLcDurationsForRoom[roomId];
+    if (data.transaction) {
+      showBillingSummary(data.transaction);
+    }
+    await Promise.all([
+      loadRooms(),
+      loadTransactionsTabData({ force: true })
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memproses pembayaran.", "error");
+  } finally {
+    isActivatingPreparedSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function cancelBooking(roomId) {
+  if (!API_BASE_URL.trim()) return;
+  if (isCancellingBooking) return;
+  isCancellingBooking = true;
+  setActionButtonsDisabled(true);
+  try {
+    const data = await postApiAction({
+      action: "cancelBooking",
+      room_id: roomId,
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal membatalkan booking.");
+    }
+    showInlineNotice("Pemesanan berhasil dibatalkan.");
+    paymentSelectionRoomId = "";
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membatalkan booking.", "error");
+  } finally {
+    isCancellingBooking = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function restoreSessionCheckout(transactionId) {
+  if (!API_BASE_URL.trim()) return;
+  setActionButtonsDisabled(true);
+  showInlineNotice("⏳ Sedang memulihkan sesi ruangan...", "info");
+  
+  try {
+    const data = await postApiAction({
+      action: "restoreSessionCheckout",
+      transaction_id: transactionId
+    });
+    
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memulihkan sesi.");
+    }
+    
+    showInlineNotice("✅ Sesi ruangan berhasil dipulihkan ke status aktif!");
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulihkan sesi.", "error");
+  } finally {
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
+async function completeCleaning(roomId) {
+  if (!API_BASE_URL.trim()) return;
+  if (completingCleaningRoomId) {
+    if (completingCleaningRoomId !== roomId) {
+      showInlineNotice("Tunggu proses cleaning room sebelumnya selesai.", "warning");
+    }
+    return;
+  }
+
+  completingCleaningRoomId = roomId;
+  renderRooms();
+  try {
+    const data = await postApiAction({
+      action: "completeCleaning",
+      room_id: roomId,
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal menyelesaikan cleaning.");
+    }
+
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "complete_cleaning");
+      showInlineNotice("Room siap digunakan kembali. TV dinyalakan.");
+    } catch (tvError) {
+      showInlineNotice(`Room siap digunakan kembali. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+    }
+
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyelesaikan cleaning.", "error");
+  } finally {
+    completingCleaningRoomId = "";
+    renderRooms();
+  }
+}
+
+async function showPaymentSelection(roomId) {
+  paymentSelectionRoomId = roomId;
+  paymentMethodSelection = "cash";
+  prepayCartItems = []; // reset cashier cart
+  isLoadingPrepayFnb = true;
+  prepayFnbError = "";
+  renderRooms();
+
+  try {
+    const result = await fetchOpenFnbOrdersFromApi(roomId, "");
+    console.log("showPaymentSelection: fetchOpenFnbOrdersFromApi result:", result);
+    if (paymentSelectionRoomId !== roomId) return; // user closed it
+    
+    if (result.orders.length > 0) {
+      showInlineNotice(`Ditemukan ${result.orders.length} pesanan F&B open. Memuat rincian...`, "info");
+      const orderIds = result.orders.map(o => o.order_id);
+      const detailedOrders = await fetchFnbOrdersByIds(orderIds);
+      console.log("showPaymentSelection: detailedOrders:", detailedOrders);
+      if (paymentSelectionRoomId !== roomId) return; // check again
+      
+      const itemsList = [];
+      detailedOrders.forEach(order => {
+        if (Array.isArray(order.items)) {
+          order.items.forEach(item => {
+            const existing = itemsList.find(x => x.menu_id === item.menu_id);
+            if (existing) {
+              existing.quantity += item.quantity;
+            } else {
+              itemsList.push({
+                menu_id: item.menu_id,
+                menu_name: item.menu_name,
+                price: item.price,
+                quantity: item.quantity,
+              });
+            }
+          });
+        }
+      });
+      prepayCartItems = itemsList;
+      showInlineNotice(`Berhasil memuat ${prepayCartItems.length} menu F&B ke bil pembayaran Kasir.`, "success");
+    } else {
+      console.log("showPaymentSelection: result.orders is empty");
+      showInlineNotice("Penyelidikan F&B: 0 pesanan F&B aktif ditemukan untuk room ini.", "warning");
+    }
+  } catch (error) {
+    console.warn("Gagal memuat F&B prepay", error);
+    prepayFnbError = "Gagal memuat detail pesanan F&B dari server.";
+  } finally {
+    isLoadingPrepayFnb = false;
+    renderRooms();
+  }
+}
+
+function cancelPaymentSelection() {
+  paymentSelectionRoomId = "";
+  prepayCartItems = [];
+  isLoadingPrepayFnb = false;
+  prepayFnbError = "";
+  renderRooms();
+}
+
+async function activatePreparedSession(roomId) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan memulai countdown sesi.", "error");
+    return;
+  }
+
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  isActivatingPreparedSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "activatePreparedSession",
+      room_id: roomId,
+      cashier_name: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memulai countdown.");
+    }
+
+    try {
+      await sendLocalTvCommand(roomId, "power_on", "activate_prepared_session");
+      showInlineNotice(`${data.message || "Countdown room berhasil dimulai."} TV dinyalakan.`);
+    } catch (tvError) {
+      showInlineNotice(
+        `${data.message || "Countdown room berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
+        "warning"
+      );
+    }
+
+    await loadRooms();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulai countdown.", "error");
+  } finally {
+    isActivatingPreparedSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
 async function closeSession(roomId) {
+  if (getCurrentOperatorRole() === "receptionist") {
+    showInlineNotice("Resepsionis tidak diizinkan menyelesaikan sesi.", "error");
+    return;
+  }
+
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -10761,6 +20346,7 @@ async function closeSession(roomId) {
       ...(data.transaction || {}),
       fnb_orders: Array.isArray(data.fnb_orders) ? data.fnb_orders : [],
       stock_movements: Array.isArray(data.stock_movements) ? data.stock_movements : [],
+      lc_sales_bonus_logs: Array.isArray(data.lc_sales_bonus_logs) ? data.lc_sales_bonus_logs : [],
     };
     stockWarningMessages = Array.isArray(data.stock_warnings) ? data.stock_warnings : [];
 
@@ -10768,84 +20354,38 @@ async function closeSession(roomId) {
       transactionFnbDetails[transaction.transaction_id] = transaction.fnb_orders;
     }
 
-    showInlineNotice("Sesi berhasil diselesaikan.");
-    showBillingSummary(transaction);
-    await loadRooms();
-    await loadOpenFnbOrders();
-    await loadTodayFnbOrders();
-    await loadInventoryItems();
-    await loadTodayFnbSalesReport();
-    await loadTodayTransactions();
+    try {
+      await sendLocalTvCommand(roomId, "power_off", "close_session");
+      const bonusCount = transaction.lc_sales_bonus_logs.length;
+      showInlineNotice(bonusCount > 0
+        ? `Sesi berhasil diselesaikan. ${bonusCount} bonus sales LC difinalkan. TV dimatikan.`
+        : "Sesi berhasil diselesaikan. TV dimatikan.");
+    } catch (tvError) {
+      const bonusCount = transaction.lc_sales_bonus_logs.length;
+      showInlineNotice(bonusCount > 0
+        ? `Sesi berhasil diselesaikan. ${bonusCount} bonus sales LC difinalkan. Namun TV gagal dimatikan: ${tvError.message}`
+        : `Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
+    }
+
+    if (transaction.transaction_id) {
+      showBillingSummary(transaction);
+    } else {
+      clearBillingSummary();
+    }
+    await Promise.all([
+      loadRooms(),
+      loadOpenFnbOrders(),
+      loadTodayFnbOrders(),
+      loadInventoryItems(),
+      loadMenuItems(),
+      loadTodayFnbSalesReport(),
+      loadTransactionsTabData({ force: true })
+    ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyelesaikan sesi.", "error");
   } finally {
     setActionButtonsDisabled(false);
   }
-}
-
-function openTvOffConfirmation(roomId, tvDeviceId) {
-  const room = rooms.find((item) => item.room_id === roomId);
-
-  if (!room || !tvDeviceId) {
-    showInlineNotice("TV belum disetting untuk room ini.", "error");
-    return;
-  }
-
-  tvOffConfirmation = {
-    room_id: roomId,
-    room_name: room.room_name || roomId,
-    tv_device_id: tvDeviceId,
-  };
-  renderRooms();
-}
-
-function closeTvOffConfirmation() {
-  if (isSendingTvCommand) {
-    return;
-  }
-
-  tvOffConfirmation = null;
-  renderRooms();
-}
-
-function createTvOffConfirmationElement() {
-  const overlay = document.createElement("section");
-  overlay.className = "master-delete-modal tv-off-modal";
-  overlay.setAttribute("aria-labelledby", "tv-off-title");
-
-  const dialog = document.createElement("div");
-  dialog.className = "master-delete-dialog tv-off-dialog";
-
-  const title = document.createElement("h3");
-  title.className = "master-delete-title";
-  title.id = "tv-off-title";
-  title.textContent = "Konfirmasi TV OFF";
-
-  const warning = document.createElement("p");
-  warning.className = "master-delete-warning";
-  warning.textContent = `Kirim perintah TV OFF untuk ${tvOffConfirmation.room_name}?`;
-
-  const actions = document.createElement("div");
-  actions.className = "master-delete-actions";
-
-  const cancelButton = document.createElement("button");
-  cancelButton.className = "master-button secondary";
-  cancelButton.type = "button";
-  cancelButton.dataset.action = "close-tv-off-confirmation";
-  cancelButton.textContent = "Batal";
-
-  const confirmButton = document.createElement("button");
-  confirmButton.className = "master-button danger";
-  confirmButton.type = "button";
-  confirmButton.dataset.action = "submit-tv-off";
-  confirmButton.disabled = isSendingTvCommand;
-  confirmButton.textContent = isSendingTvCommand ? "Mengirim..." : "Kirim TV OFF";
-
-  actions.append(cancelButton, confirmButton);
-  dialog.append(title, warning, actions);
-  overlay.appendChild(dialog);
-
-  return overlay;
 }
 
 function openRoomRecoveryConfirmation(roomId, sessionId) {
@@ -11061,54 +20601,17 @@ async function submitRoomRecovery() {
   }
 }
 
-async function sendTvCommand(roomId, tvDeviceId, tvAction) {
+async function markTransactionPaid(transactionId, paymentMethod, promoCode = "", options = {}) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
   }
 
-  if (!tvDeviceId) {
-    showInlineNotice("TV belum disetting untuk room ini.", "error");
-    return;
+  if (markingTransactionPaidIds.has(transactionId)) {
+    return; // sudah dalam proses mark paid untuk transaksi ini
   }
 
-  isSendingTvCommand = true;
-  setActionButtonsDisabled(true);
-  renderRooms();
-
-  try {
-    const data = await postApiAction({
-      action: "sendTvCommand",
-      room_id: roomId,
-      tv_device_id: tvDeviceId,
-      tv_action: tvAction,
-      trigger_source: "room_card",
-      cashier_name: getLoggedInOperatorName(),
-    });
-
-    if (!data || data.success !== true) {
-      throw new Error(data?.message || "Perintah TV gagal dikirim.");
-    }
-
-    showInlineNotice(data.message || "Perintah TV berhasil dikirim.");
-    tvOffConfirmation = null;
-    await loadRooms();
-  } catch (error) {
-    showInlineNotice(error.message || "Perintah TV gagal dikirim.", "error");
-    await loadRooms();
-  } finally {
-    isSendingTvCommand = false;
-    setActionButtonsDisabled(false);
-    renderRooms();
-  }
-}
-
-async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
-  if (!API_BASE_URL.trim()) {
-    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
-    return;
-  }
-
+  markingTransactionPaidIds.add(transactionId);
   setActionButtonsDisabled(true);
 
   try {
@@ -11116,6 +20619,7 @@ async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
       action: "markTransactionPaid",
       transaction_id: transactionId,
       payment_method: paymentMethod,
+      promo_code: promoCode,
     });
 
     if (!data || data.ok !== true) {
@@ -11127,14 +20631,164 @@ async function markTransactionPaid(transactionId, paymentMethod, options = {}) {
       lastTransaction?.transaction_id === data.transaction?.transaction_id
     ) {
       lastTransaction = data.transaction || lastTransaction;
+      if (lastTransaction) {
+        loadFnbDetailsForTransaction(lastTransaction);
+      }
     }
 
     showInlineNotice("Pembayaran berhasil ditandai lunas.");
-    await loadTodayTransactions();
+    await loadTransactionsTabData({ force: true });
   } catch (error) {
     showInlineNotice(error.message || "Gagal menandai pembayaran lunas.", "error");
   } finally {
+    markingTransactionPaidIds.delete(transactionId);
     setActionButtonsDisabled(false);
+  }
+}
+
+async function deleteTransaction(transactionId) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+
+  if (!transactionId) {
+    return;
+  }
+
+  if (deletingTransactionIds.has(transactionId)) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Apakah Anda yakin ingin menghapus transaksi ${transactionId} secara permanen? Tindakan ini tidak dapat dibatalkan.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Manager Hapus Transaksi",
+    message: `Masukkan PIN owner/manager untuk menghapus transaksi ${transactionId}.`,
+    requestedAction: `delete_transaction_${transactionId}`,
+    requiredRole: "manager",
+    validatePin: false,
+    onSuccess: (authData, adminPin) => executeDeleteTransaction(transactionId, adminPin, authData),
+  });
+}
+
+async function executeDeleteTransaction(transactionId, adminPin, authData) {
+  if (deletingTransactionIds.has(transactionId)) {
+    return { success: false };
+  }
+
+  deletingTransactionIds.add(transactionId);
+  setActionButtonsDisabled(true);
+
+  try {
+    const data = await postApiAction({
+      action: "deleteTransaction",
+      transaction_id: transactionId,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Gagal menghapus transaksi.";
+      showInlineNotice(message, "error");
+
+      if (adminPinModal) {
+        adminPinModal = {
+          ...adminPinModal,
+          pin: "",
+          error: message,
+        };
+      }
+      return { success: false, message };
+    }
+
+    const message = data.message || "Transaksi berhasil dihapus secara permanen.";
+    adminPinModal = null;
+    showInlineNotice(message);
+
+    if (lastTransaction?.transaction_id === transactionId) {
+      lastTransaction = null;
+    }
+
+    await loadTransactionsTabData({ force: true });
+    renderRooms();
+
+    return { success: true, message };
+  } catch (error) {
+    console.error("Gagal menghapus transaksi.", error);
+    const message = "Terjadi kendala saat menghapus transaksi. Silakan coba lagi.";
+    showInlineNotice(message, "error");
+    return { success: false, message };
+  } finally {
+    deletingTransactionIds.delete(transactionId);
+    setActionButtonsDisabled(false);
+  }
+}
+
+async function cleanupTestRun() {
+  if (!roleMeetsRequired(getCurrentOperatorRole(), "manager")) {
+    showInlineNotice("Cleanup data testing hanya tersedia untuk Manager Operasional.", "error");
+    return;
+  }
+
+  const testRunId = (cleanupTestRunIdInput || lastOwnerTestRunId || "").trim();
+  const ownerPin = cleanupTestOwnerPinInput.trim();
+
+  if (!testRunId) {
+    showInlineNotice("Isi Test Run ID yang akan dibersihkan.", "error");
+    return;
+  }
+
+  if (!ownerPin) {
+    showInlineNotice("PIN Manager Operasional wajib diisi untuk cleanup data testing.", "error");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Bersihkan permanen semua data testing untuk ${testRunId}? Data production tidak akan disentuh.`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  isCleaningTestRun = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "cleanupTestRun",
+      test_run_id: testRunId,
+      admin_pin: ownerPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal membersihkan data testing.");
+    }
+
+    cleanupTestRunIdInput = "";
+    cleanupTestOwnerPinInput = "";
+    if (lastOwnerTestRunId === testRunId) {
+      lastOwnerTestRunId = "";
+    }
+    showInlineNotice(data.message || "Data testing berhasil dibersihkan.");
+    await Promise.all([
+      loadRooms(),
+      loadTransactionsTabData({ force: true }),
+      loadTodayFnbOrders(),
+      loadTodayStockMovements(),
+    ]);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membersihkan data testing.", "error");
+  } finally {
+    isCleaningTestRun = false;
+    renderRooms();
   }
 }
 
@@ -11157,10 +20811,11 @@ async function saveCashierClosing() {
   renderRooms();
 
   try {
+    const compiledNote = compileClosingNote();
     const data = await postApiAction({
       action: "saveCashierClosing",
       cash_actual: Number(cashierClosingCashActual || 0),
-      note: cashierClosingNote,
+      note: compiledNote,
       cashier_name: getLoggedInOperatorName(),
     });
 
@@ -11169,6 +20824,10 @@ async function saveCashierClosing() {
     }
 
     lastCashierClosing = data.closing || null;
+    cashierClosingConfirmationVisible = false;
+    cashierClosingCashActual = "";
+    cashierClosingNote = "";
+    resetClosingDenominations();
     showInlineNotice("Closing kasir berhasil disimpan.");
     await loadTodayCashierClosings();
   } catch (error) {
@@ -11180,13 +20839,28 @@ async function saveCashierClosing() {
 }
 
 async function postApiAction(payload) {
-  const response = await fetch(API_BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/plain;charset=utf-8",
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_POST_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(API_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      cache: "no-store",
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Permintaan ke server terlalu lama. Coba ulang beberapa saat lagi.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`Permintaan gagal dengan status ${response.status}.`);
@@ -11234,7 +20908,7 @@ function renderOperatorHeader() {
 
   const operatorLabel = document.createElement("span");
   operatorLabel.className = "operator-session-label";
-  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${currentOperator.role})`;
+  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${getOperatorRoleLabel(currentOperator.role)})`;
 
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
@@ -11367,7 +21041,7 @@ async function handleOperatorLogin() {
       throw new Error("PIN tidak valid");
     }
 
-    saveOperatorSession(employee);
+    saveOperatorSession(employee, pin);
     loginPin = "";
     loginErrorMessage = "";
     renderOperatorHeader();
@@ -11429,52 +21103,18 @@ async function handleRoomAction(event) {
   }
 
   if (action === "refresh-settings-data") {
-    await loadSettingsTabData();
+    await loadSettingsTabData({ force: true });
     return;
   }
 
-  if (action === "refresh-tv-integration") {
-    await Promise.all([loadTvDevices(), loadTvControlLogs()]);
+  if (action === "switch-settings-subtab") {
+    activeSettingsSubTab = button.dataset.settingsTab || "rooms";
+    renderRooms();
     return;
   }
 
-  if (action === "add-tv-device-mapping") {
-    openTvDeviceForm("create");
-    return;
-  }
-
-  if (action === "edit-tv-device-mapping") {
-    const device = findTvDeviceItem(button.dataset.tvDeviceId || "");
-
-    if (!device) {
-      showInlineNotice("TV device tidak ditemukan.", "error");
-      return;
-    }
-
-    openTvDeviceForm("edit", device);
-    return;
-  }
-
-  if (action === "close-tv-device-form") {
-    closeTvDeviceForm();
-    return;
-  }
-
-  if (action === "submit-tv-device-form") {
-    await submitTvDeviceForm();
-    return;
-  }
-
-  if (action === "toggle-tv-device-status") {
-    await toggleTvDeviceStatus(button.dataset.tvDeviceId || "");
-    return;
-  }
-
-  if (action === "send-tv-test-from-settings") {
-    await sendTvCommandFromSettings(
-      button.dataset.roomId || "",
-      button.dataset.tvDeviceId || ""
-    );
+  if (action === "view-settings-package-detail") {
+    await selectSettingsPackage(button.dataset.packageId);
     return;
   }
 
@@ -11492,6 +21132,13 @@ async function handleRoomAction(event) {
     }
 
     openMasterDataForm(button.dataset.masterType, "edit", item);
+    setTimeout(() => {
+      const form = document.querySelector(".master-form");
+      if (form && typeof form.scrollIntoView === "function") {
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 0);
+    showInlineNotice(`Form edit ${getMasterEntityName(button.dataset.masterType, item)} dibuka.`);
     return;
   }
 
@@ -11527,8 +21174,23 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-add-inventory-item-modal") {
+    openAddInventoryItemModal();
+    return;
+  }
+
+  if (action === "close-add-inventory-item-modal") {
+    closeAddInventoryItemModal();
+    return;
+  }
+
+  if (action === "submit-add-inventory-item") {
+    submitAddInventoryItem();
+    return;
+  }
+
   if (action === "refresh-master-audit-logs") {
-    await loadMasterDataAuditLogs();
+    await loadMasterDataAuditLogs({ force: true });
     return;
   }
 
@@ -11539,6 +21201,33 @@ async function handleRoomAction(event) {
 
   if (action === "submit-master-form") {
     await submitMasterDataForm();
+    return;
+  }
+
+  if (action === "switch-fnb-subtab") {
+    const subtab = button.dataset.fnbSubtab;
+    if (subtab && ["order", "open", "history"].includes(subtab)) {
+      activeFnbSubTab = subtab;
+      renderDashboardTabPanels();
+    }
+    return;
+  }
+
+  if (action === "switch-transactions-subtab") {
+    const subtab = button.dataset.transactionsSubtab;
+    if (subtab && ["history", "closing"].includes(subtab)) {
+      activeTransactionsSubTab = subtab;
+      renderDashboardTabPanels();
+    }
+    return;
+  }
+
+  if (action === "switch-report-subtab") {
+    const subtab = button.dataset.reportTab;
+    if (subtab && REPORT_SUB_TABS.some((t) => t.key === subtab)) {
+      activeReportSubTab = subtab;
+      renderDashboardTabPanels();
+    }
     return;
   }
 
@@ -11562,33 +21251,12 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-receipt-print") {
-    showReceiptPrint(lastTransaction);
+    showReceiptPrint(await findTransactionForAction(button));
     return;
   }
 
   if (action === "hide-receipt-print") {
     hideReceiptPrint();
-    return;
-  }
-
-  if (action === "confirm-tv-off") {
-    openTvOffConfirmation(button.dataset.roomId || roomId || "", button.dataset.tvDeviceId || "");
-    return;
-  }
-
-  if (action === "close-tv-off-confirmation") {
-    closeTvOffConfirmation();
-    return;
-  }
-
-  if (action === "submit-tv-off") {
-    if (tvOffConfirmation) {
-      await sendTvCommand(
-        tvOffConfirmation.room_id,
-        tvOffConfirmation.tv_device_id,
-        "power_off"
-      );
-    }
     return;
   }
 
@@ -11610,12 +21278,13 @@ async function handleRoomAction(event) {
     return;
   }
 
-  if (action === "send-tv-command") {
-    await sendTvCommand(
-      button.dataset.roomId || roomId || "",
-      button.dataset.tvDeviceId || "",
-      button.dataset.tvAction || ""
-    );
+  if (action === "close-cashier-closing-confirmation") {
+    closeCashierClosingConfirmation();
+    return;
+  }
+
+  if (action === "confirm-save-cashier-closing") {
+    await saveCashierClosing();
     return;
   }
 
@@ -11645,7 +21314,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-closing-print") {
-    showClosingPrintPreview(button.dataset.closingId || "");
+    await showClosingPrintPreview(button.dataset.closingId || "");
     return;
   }
 
@@ -11660,7 +21329,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "save-cashier-closing") {
-    await saveCashierClosing();
+    openCashierClosingConfirmation();
     return;
   }
 
@@ -11668,8 +21337,10 @@ async function handleRoomAction(event) {
     const summary = button.closest(".billing-summary");
     const transactionId = button.dataset.transactionId || summary?.dataset.transactionId || "";
     const paymentMethod = summary?.querySelector(".billing-payment-select")?.value || "";
+    const promoInput = summary?.querySelector(".billing-payment-promo-input");
+    const promoCode = promoInput ? promoInput.getAttribute("data-applied-promo-code") || "" : "";
 
-    await markTransactionPaid(transactionId, paymentMethod, { updateBillingSummary: true });
+    await markTransactionPaid(transactionId, paymentMethod, promoCode, { updateBillingSummary: true });
     return;
   }
 
@@ -11693,8 +21364,18 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "filter-menu-spirit") {
+    setMenuSpiritFilter(button.dataset.subcategory || "all");
+    return;
+  }
+
   if (action === "add-menu-to-cart") {
     addMenuItemToCart(button.dataset.menuId || "");
+    return;
+  }
+
+  if (action === "set-fnb-order-mode") {
+    setFnbOrderMode(button.dataset.mode || "room");
     return;
   }
 
@@ -11735,6 +21416,7 @@ async function handleRoomAction(event) {
 
   if (action === "refresh-inventory") {
     await loadInventoryItems();
+    await loadMenuItems();
     return;
   }
 
@@ -11749,7 +21431,35 @@ async function handleRoomAction(event) {
   }
 
   if (action === "refresh-owner-dashboard") {
-    await loadOwnerDashboardSummary();
+    await Promise.all([
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return;
+  }
+
+  if (action === "filter-owner-report-period") {
+    setOwnerReportPeriodFilter(button.dataset.period || "today");
+    return;
+  }
+
+  if (action === "apply-owner-report-custom-period") {
+    await applyOwnerReportCustomPeriod();
+    return;
+  }
+
+  if (action === "show-owner-report-print") {
+    showOwnerReportPrintPreview();
+    return;
+  }
+
+  if (action === "hide-owner-report-print") {
+    hideOwnerReportPrintPreview();
+    return;
+  }
+
+  if (action === "print-owner-report") {
+    printOwnerReport();
     return;
   }
 
@@ -11803,6 +21513,17 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "delete-transaction") {
+    const transactionId = button.dataset.transactionId || "";
+    await deleteTransaction(transactionId);
+    return;
+  }
+
+  if (action === "cleanup-test-run") {
+    await cleanupTestRun();
+    return;
+  }
+
   if (action === "show-transaction-summary") {
     showTransactionFromHistory(button.dataset.transactionId || "");
     return;
@@ -11817,12 +21538,15 @@ async function handleRoomAction(event) {
     return;
   }
 
-  if (action === "start-session-duration") {
-    await startSession(button.dataset.roomId || "", Number(button.dataset.durationMinutes));
+  if (action === "prepare-room-session-duration") {
+    const roomId = button.dataset.roomId || "";
+    const durationMinutes = Number(button.dataset.durationMinutes);
+    await prepareRoomSession(roomId, durationMinutes, customerNameInput, "", "", `${roomId}:${durationMinutes}`);
+    customerNameInput = "";
     return;
   }
 
-  if (action === "start-session-custom-duration") {
+  if (action === "prepare-room-session-custom-duration") {
     const selectedDuration = Number(customDurationMinutes);
 
     if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
@@ -11830,12 +21554,14 @@ async function handleRoomAction(event) {
       return;
     }
 
-    if (selectedDuration < 15) {
-      showInlineNotice("Durasi minimal 15 menit.", "error");
+    if (selectedDuration < getMinimumSessionMinutes()) {
+      showInlineNotice(getMinimumSessionMessage(), "error");
       return;
     }
 
-    await startSession(button.dataset.roomId || "", selectedDuration);
+    const roomId = button.dataset.roomId || "";
+    await prepareRoomSession(roomId, selectedDuration, customerNameInput, "", "", `${roomId}:custom`);
+    customerNameInput = "";
     return;
   }
 
@@ -11845,7 +21571,35 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-extend-selection") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan menambah waktu.", "error");
+      return;
+    }
     showExtendSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "show-lc-selection") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan memilih LC.", "error");
+      return;
+    }
+    showLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "cancel-lc-selection") {
+    cancelLcSelection();
+    return;
+  }
+
+  if (action === "save-lc-selection") {
+    await saveSessionLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "toggle-lc-checkbox") {
+    // handled inline by onchange — no-op
     return;
   }
 
@@ -11897,6 +21651,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (room.status === "waiting_payment") {
+    showPaymentSelection(roomId);
+    return;
+  }
+
   if (room.status === "occupied") {
     await closeSession(roomId);
     return;
@@ -11904,6 +21663,16 @@ async function handleRoomAction(event) {
 
   if (room.status === "maintenance") {
     showInlineNotice("Ruangan sedang dalam perbaikan.", "error");
+    return;
+  }
+
+  if (room.status === "paid_waiting_start") {
+    await activatePreparedSession(roomId);
+    return;
+  }
+
+  if (room.status === "cleaning") {
+    await completeCleaning(roomId);
     return;
   }
 
@@ -11929,13 +21698,61 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-owner-report-custom-start-date") {
+    updateOwnerReportCustomStartDate(field.value);
+    return;
+  }
+
+  if (action === "update-owner-report-custom-end-date") {
+    updateOwnerReportCustomEndDate(field.value);
+    return;
+  }
+
   if (action === "search-menu") {
     setMenuSearchQuery(field.value);
     return;
   }
 
+  if (action === "update-customer-name") {
+    updateCustomerName(field.value);
+    return;
+  }
+
+  if (action === "update-owner-test-mode-pin") {
+    ownerTestModePin = field.value.replace(/\D/g, "");
+    field.value = ownerTestModePin;
+    return;
+  }
+
+  if (action === "update-owner-test-mode-note") {
+    ownerTestModeNote = field.value;
+    return;
+  }
+
+  if (action === "update-cleanup-test-run-id") {
+    cleanupTestRunIdInput = field.value.trim();
+    return;
+  }
+
+  if (action === "update-cleanup-test-owner-pin") {
+    cleanupTestOwnerPinInput = field.value.replace(/\D/g, "");
+    field.value = cleanupTestOwnerPinInput;
+    return;
+  }
+
   if (action === "update-fnb-order-note") {
     updateFnbOrderNote(field.value);
+    return;
+  }
+
+  if (action === "update-fb-payment-method") {
+    fnbOrderPaymentMethod = field.value;
+    renderRooms();
+    return;
+  }
+
+  if (action === "update-duration-payment-method") {
+    updateDurationPaymentMethod(field.value);
     return;
   }
 
@@ -11951,6 +21768,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-extend-session-note") {
     updateExtendSessionNote(field.value);
+    return;
+  }
+
+  if (action === "update-extend-payment-method") {
+    extendPaymentMethod = field.value;
     return;
   }
 
@@ -11979,8 +21801,43 @@ function handleDashboardInput(event) {
     return;
   }
 
-  if (action === "update-tv-device-form") {
-    updateTvDeviceForm(field.dataset.field, field.value);
+  if (action === "filter-settings-menu") {
+    settingsMenuSearchQuery = field.value;
+    resetPaginationPage("settingsMenu");
+    renderRooms();
+    return;
+  }
+
+  if (action === "filter-settings-room") {
+    settingsRoomSearchQuery = field.value;
+    resetPaginationPage("settingsRooms");
+    renderRooms();
+    return;
+  }
+
+  if (action === "filter-settings-inventory") {
+    settingsInventorySearchQuery = field.value;
+    resetPaginationPage("settingsInventory");
+    renderRooms();
+    return;
+  }
+
+  if (action === "filter-settings-package") {
+    settingsPackageSearchQuery = field.value;
+    resetPaginationPage("settingsPackages");
+    renderRooms();
+    return;
+  }
+
+  if (action === "filter-settings-access") {
+    settingsAccessSearchQuery = field.value;
+    resetPaginationPage("settingsAccess");
+    renderRooms();
+    return;
+  }
+
+  if (action === "update-add-inventory-item-form") {
+    updateAddInventoryItemForm(field.dataset.field, field.value);
     return;
   }
 
@@ -12009,17 +21866,29 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const ownerTestToggle = event.target.closest("[data-action='toggle-owner-test-mode']");
+
+  if (ownerTestToggle) {
+    ownerTestModeEnabled = Boolean(ownerTestToggle.checked);
+    if (!ownerTestModeEnabled) {
+      ownerTestModePin = "";
+      ownerTestModeNote = "";
+    }
+    renderRooms();
+    return;
+  }
+
+  const durationPaymentField = event.target.closest("[data-action='update-duration-payment-method']");
+
+  if (durationPaymentField) {
+    updateDurationPaymentMethod(durationPaymentField.value);
+    return;
+  }
+
   const masterField = event.target.closest("[data-action='update-master-form']");
 
   if (masterField) {
     updateMasterDataForm(masterField.dataset.field, masterField.value);
-    return;
-  }
-
-  const tvDeviceField = event.target.closest("[data-action='update-tv-device-form']");
-
-  if (tvDeviceField) {
-    updateTvDeviceForm(tvDeviceField.dataset.field, tvDeviceField.value);
     return;
   }
 
@@ -12051,7 +21920,7 @@ function handleDashboardChange(event) {
 
   if (auditEntityFilter) {
     masterAuditEntityFilter = auditEntityFilter.value || "all";
-    loadMasterDataAuditLogs();
+    loadMasterDataAuditLogs({ force: true });
     return;
   }
 
@@ -12059,7 +21928,16 @@ function handleDashboardChange(event) {
 
   if (auditActionFilter) {
     masterAuditActionFilter = auditActionFilter.value || "all";
-    loadMasterDataAuditLogs();
+    loadMasterDataAuditLogs({ force: true });
+    return;
+  }
+
+  const menuAnalysisFilter = event.target.closest("[data-action='filter-settings-menu-analysis']");
+
+  if (menuAnalysisFilter) {
+    settingsMenuAnalysisFilter = menuAnalysisFilter.value || "all";
+    resetPaginationPage("settingsMenu");
+    renderRooms();
     return;
   }
 
@@ -12114,7 +21992,22 @@ document.addEventListener("input", (event) => {
 
   loginPin = loginPinInput.value.replace(/\D/g, "");
   loginErrorMessage = "";
-  renderLoginScreen();
+  
+  // Update the input value in-place to avoid cursor jumps / redraws
+  loginPinInput.value = loginPin;
+
+  // Update the submit button status and remove error message without re-rendering the whole screen
+  const loginForm = loginPinInput.closest("[data-action='operator-login-form']");
+  if (loginForm) {
+    const submitButton = loginForm.querySelector(".operator-login-button");
+    if (submitButton) {
+      submitButton.disabled = isLoggingIn || !loginPin.trim();
+    }
+    const errorEl = loginForm.querySelector(".operator-login-error");
+    if (errorEl) {
+      errorEl.remove();
+    }
+  }
 });
 
 document.addEventListener("submit", (event) => {
@@ -12148,6 +22041,18 @@ if (dashboardShell) {
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
+// Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
+setInterval(async () => {
+  if (!isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
+    return;
+  }
+  if (isUserBusy()) {
+    console.info("Auto-refresh ditunda: Pengguna sedang sibuk.");
+    return;
+  }
+  await silentReloadRooms();
+}, 10000);
+
 async function initializeDashboard() {
   renderOperatorHeader();
   renderLoginScreen();
@@ -12163,19 +22068,17 @@ async function initializeDashboard() {
 
   dashboardDataInitialized = true;
   renderRooms();
-  loadMenuItems();
-  loadOpenFnbOrders();
-  loadInventoryItems();
-  await loadRooms();
-  await Promise.all([
-    loadTodayFnbOrders(),
-    loadTodayStockMovements(),
-    loadOwnerDashboardSummary(),
-    loadTodayFnbSalesReport(),
-    loadRoomUsageReport(),
-    loadTodayRoomTimeLogs(),
-    loadTodayTransactions(),
-    loadTodayCashierClosings(),
-    activeDashboardTab === "settings" ? loadSettingsTabData() : Promise.resolve(),
-  ]);
+
+  const initialLoads = [
+    loadRooms(),
+    loadPackages(),
+    loadLcs(),
+  ];
+
+  if (activeDashboardTab === "transactions") {
+    initialLoads.push(loadTransactionsTabData());
+  }
+
+  await Promise.allSettled(initialLoads);
+  await refreshActiveTabData();
 }

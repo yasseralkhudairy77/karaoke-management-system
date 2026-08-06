@@ -16,6 +16,7 @@ temp/
 node_modules/
 dist/
 build/
+public/
 
 # Local Netlify folder
 .netlify

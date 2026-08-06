@@ -1,1 +1,5 @@
 node_modules/
+ngrok
+ngrok.exe
+ngrok.yml
+ngrok-*.tgz
