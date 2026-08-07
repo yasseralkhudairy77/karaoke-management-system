@@ -8617,6 +8617,288 @@ function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) 
   return rows;
 }
 
+function buildLcFnbBonusReconciliationContext_() {
+  ensureLcSalesBonusLogsSheet_();
+  ensureLcWorkLogsSheet_();
+  ensureRoomSessionsSheet_();
+  ensureFnbOrdersSheetColumns_();
+  ensureFnbOrderItemsSheet_();
+
+  var bonusRows = readSheetAsObjects_("LcSalesBonusLogs");
+  bonusRows.forEach(function (row, index) {
+    row.__row_number = index + 2;
+  });
+
+  return {
+    sessions: readSheetAsObjects_(ROOM_SESSIONS_SHEET),
+    work_logs: readSheetAsObjects_("LcWorkLogs"),
+    orders: readFnbOrdersOrEmpty_(),
+    items_by_order_id: groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_()),
+    bonus_rows: bonusRows,
+    menu_map: getMenuItemsMap_(),
+  };
+}
+
+function findLcBonusSessionForTransaction_(transaction, context) {
+  var transactionId = String(transaction.transaction_id || "").trim();
+  var roomId = String(transaction.room_id || "").trim();
+  var transactionStart = normalizeFnbOrderDateTime_(transaction.start_time);
+  var fallback = null;
+
+  for (var index = context.sessions.length - 1; index >= 0; index--) {
+    var session = context.sessions[index];
+    if (String(session.closed_transaction_id || "").trim() === transactionId) {
+      return session;
+    }
+    if (
+      !fallback
+      && String(session.room_id || "").trim() === roomId
+      && normalizeFnbOrderDateTime_(session.start_time) === transactionStart
+    ) {
+      fallback = session;
+    }
+  }
+
+  return fallback;
+}
+
+function getFinalLcSnapshotsForSession_(session, context) {
+  var sessionId = String(session && session.session_id || "").trim();
+  var snapshotsById = {};
+
+  context.work_logs.forEach(function (log) {
+    if (String(log.session_id || "").trim() !== sessionId) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var status = String(log.status || "").trim().toLowerCase();
+    if (!lcId || lcId === "PENDING" || status === "cancelled") {
+      return;
+    }
+
+    snapshotsById[lcId] = {
+      lc_id: lcId,
+      lc_name: log.lc_name || lcId,
+    };
+  });
+
+  return Object.keys(snapshotsById).sort().map(function (lcId) {
+    return snapshotsById[lcId];
+  });
+}
+
+function getFnbOrdersForBonusSession_(transaction, session, context) {
+  var referencedIds = {};
+  parseCommaSeparatedIds_(transaction.fnb_order_ids || "").forEach(function (orderId) {
+    referencedIds[orderId] = true;
+  });
+  var roomId = String(session.room_id || transaction.room_id || "").trim();
+  var sessionStart = normalizeFnbOrderDateTime_(session.start_time || transaction.start_time);
+
+  return context.orders.filter(function (order) {
+    var status = String(order.order_status || "").trim().toLowerCase();
+    if (status === "cancelled" || status === "voided") {
+      return false;
+    }
+
+    var orderId = String(order.order_id || "").trim();
+    var matchesReference = !!referencedIds[orderId];
+    var matchesSession = String(order.room_id || "").trim() === roomId
+      && normalizeFnbOrderDateTime_(order.room_start_time) === sessionStart;
+
+    return matchesReference || matchesSession;
+  });
+}
+
+function buildExpectedLcFnbBonusRows_(transaction, session, context) {
+  var lcs = getFinalLcSnapshotsForSession_(session, context);
+  var orders = getFnbOrdersForBonusSession_(transaction, session, context);
+  var operationalDate = resolveTransactionOperationalDateString_(transaction)
+    || getOperationalDateString_(session.end_time || session.start_time);
+  var expectedRows = [];
+
+  if (lcs.length === 0) {
+    return {
+      lcs: lcs,
+      orders: orders,
+      rows: expectedRows,
+      operational_date: operationalDate,
+    };
+  }
+
+  orders.forEach(function (order) {
+    var orderItems = context.items_by_order_id[order.order_id] || [];
+    orderItems.forEach(function (item) {
+      var masterItem = context.menu_map[String(item.menu_id || "").trim()] || {};
+      var bonusPerItem = Number(item.bonus_sales_lc);
+      if (!isFinite(bonusPerItem) || bonusPerItem <= 0) {
+        bonusPerItem = Number(masterItem.bonus_sales_lc || masterItem.bonus_per_item) || 0;
+      }
+
+      var quantity = Number(item.quantity) || 0;
+      var totalBonus = Math.round(bonusPerItem * quantity);
+      if (totalBonus <= 0) {
+        return;
+      }
+
+      var baseShare = Math.floor(totalBonus / lcs.length);
+      var remainder = totalBonus - baseShare * lcs.length;
+      lcs.forEach(function (lc, index) {
+        var bonusTotal = baseShare + (index < remainder ? 1 : 0);
+        if (bonusTotal <= 0) {
+          return;
+        }
+        expectedRows.push({
+          transaction_id: transaction.transaction_id || "",
+          order_id: order.order_id || "",
+          menu_id: item.menu_id || "",
+          menu_name: item.menu_name || masterItem.menu_name || item.menu_id || "",
+          category: item.category || masterItem.category || "",
+          lc_id: lc.lc_id,
+          lc_name: lc.lc_name,
+          quantity: quantity / lcs.length,
+          bonus_per_item: bonusPerItem,
+          bonus_total: bonusTotal,
+          operational_date: operationalDate,
+        });
+      });
+    });
+  });
+
+  return {
+    lcs: lcs,
+    orders: orders,
+    rows: expectedRows,
+    operational_date: operationalDate,
+  };
+}
+
+function buildLcFnbBonusAllocationMap_(rows) {
+  var map = {};
+  (rows || []).forEach(function (row) {
+    var key = [
+      String(row.order_id || "").trim(),
+      String(row.menu_id || "").trim(),
+      String(row.lc_id || "").trim(),
+    ].join("|");
+    if (!key.replace(/\|/g, "")) {
+      return;
+    }
+    map[key] = (map[key] || 0) + (Number(row.bonus_total) || 0);
+  });
+  return map;
+}
+
+function lcFnbBonusAllocationMapsEqual_(first, second) {
+  var keys = {};
+  Object.keys(first || {}).forEach(function (key) { keys[key] = true; });
+  Object.keys(second || {}).forEach(function (key) { keys[key] = true; });
+  return Object.keys(keys).every(function (key) {
+    return Number(first[key] || 0) === Number(second[key] || 0);
+  });
+}
+
+function reconcileLcFnbBonusForTransaction_(transaction, context, options) {
+  var config = options || {};
+  var session = findLcBonusSessionForTransaction_(transaction, context);
+  if (!session) {
+    return {
+      status: "skipped",
+      reason: "SESSION_NOT_FOUND",
+      transaction_id: transaction.transaction_id || "",
+    };
+  }
+
+  var expected = buildExpectedLcFnbBonusRows_(transaction, session, context);
+  var orderIds = {};
+  expected.orders.forEach(function (order) {
+    orderIds[String(order.order_id || "").trim()] = true;
+  });
+  var existingRows = context.bonus_rows.filter(function (row) {
+    return orderIds[String(row.order_id || "").trim()]
+      && !isLcFinanceRowVoided_(row)
+      && ["cancelled", "voided"].indexOf(String(row.source_status || "").trim().toLowerCase()) === -1;
+  });
+  var expectedMap = buildLcFnbBonusAllocationMap_(expected.rows);
+  var existingMap = buildLcFnbBonusAllocationMap_(existingRows);
+  var expectedTotal = expected.rows.reduce(function (sum, row) {
+    return sum + (Number(row.bonus_total) || 0);
+  }, 0);
+  var existingTotal = existingRows.reduce(function (sum, row) {
+    return sum + (Number(row.bonus_total) || 0);
+  }, 0);
+  var allocationsMatch = lcFnbBonusAllocationMapsEqual_(expectedMap, existingMap);
+  var hasPayrollLock = existingRows.some(function (row) {
+    return !!String(row.payroll_id || "").trim();
+  });
+  var result = {
+    status: allocationsMatch ? "matched" : hasPayrollLock ? "blocked" : "change_required",
+    reason: hasPayrollLock && !allocationsMatch ? "PAYROLL_LOCKED" : "",
+    transaction_id: transaction.transaction_id || "",
+    session_id: session.session_id || "",
+    room_id: transaction.room_id || session.room_id || "",
+    room_name: transaction.room_name || session.room_name || "",
+    operational_date: expected.operational_date,
+    lc_count: expected.lcs.length,
+    lc_ids: expected.lcs.map(function (lc) { return lc.lc_id; }),
+    order_count: expected.orders.length,
+    expected_log_count: expected.rows.length,
+    existing_log_count: existingRows.length,
+    expected_total: expectedTotal,
+    existing_total: existingTotal,
+    delta: expectedTotal - existingTotal,
+    created_logs: 0,
+    voided_logs: 0,
+  };
+
+  if (allocationsMatch || hasPayrollLock || config.dry_run === true) {
+    return result;
+  }
+
+  var now = toJakartaIsoString_(new Date());
+  var bonusSheet = ensureLcSalesBonusLogsSheet_();
+  var bonusHeaders = getHeaderMap_(bonusSheet);
+  existingRows.forEach(function (row) {
+    setRowValues_(bonusSheet, bonusHeaders, row.__row_number, {
+      voided_at: now,
+      void_reason: "Diganti rekonsiliasi pembagian rata per room.",
+    });
+    row.voided_at = now;
+    row.void_reason = "Diganti rekonsiliasi pembagian rata per room.";
+    result.voided_logs += 1;
+  });
+
+  expected.rows.forEach(function (row) {
+    var newRow = {
+      bonus_log_id: generateLcFinanceId_("LCBONUS"),
+      operational_date: row.operational_date,
+      transaction_id: row.transaction_id,
+      order_id: row.order_id,
+      menu_id: row.menu_id,
+      menu_name: row.menu_name,
+      category: row.category,
+      lc_id: row.lc_id,
+      lc_name: row.lc_name,
+      quantity: row.quantity,
+      bonus_per_item: row.bonus_per_item,
+      bonus_total: row.bonus_total,
+      source_status: "fnb_bonus_reconciled",
+      payroll_id: "",
+      created_at: now,
+      created_by: config.changed_by || "System Reconciliation",
+      voided_at: "",
+      void_reason: "",
+    };
+    appendObjectRow_(bonusSheet, newRow);
+    context.bonus_rows.push(newRow);
+    result.created_logs += 1;
+  });
+
+  result.status = "reconciled";
+  return result;
+}
+
 function getTodayTransactions_() {
   return getTransactionsByPeriod_("today", "", "");
 }
@@ -10943,6 +11225,36 @@ function closeSession_(roomId, cashierName, requestPayload) {
       }
     }
 
+    var lcBonusReconciliation = null;
+    if (activeRoomSession && activeRoomSession.session) {
+      try {
+        var reconciliationTransaction = transaction || {
+          transaction_id: prepayTxId || "",
+          transaction_type: "session_checkout",
+          room_id: room.room_id || "",
+          room_name: room.room_name || "",
+          start_time: startTime || "",
+          end_time: endTime,
+          created_at: endTime,
+          fnb_order_ids: fnbOrderIds,
+        };
+        lcBonusReconciliation = reconcileLcFnbBonusForTransaction_(
+          reconciliationTransaction,
+          buildLcFnbBonusReconciliationContext_(),
+          {
+            dry_run: false,
+            changed_by: cashierName || "Kasir",
+          }
+        );
+      } catch (bonusReconciliationError) {
+        Logger.log("Gagal merekonsiliasi bonus F&B LC saat checkout: " + bonusReconciliationError.message);
+        lcBonusReconciliation = {
+          status: "error",
+          reason: bonusReconciliationError.message,
+        };
+      }
+    }
+
     return {
       ok: true,
       message: "Sesi berhasil diselesaikan.",
@@ -10950,6 +11262,7 @@ function closeSession_(roomId, cashierName, requestPayload) {
       fnb_orders: fnbOrders,
       stock_movements: stockResult.movements,
       stock_warnings: stockResult.warnings,
+      lc_bonus_reconciliation: lcBonusReconciliation,
     };
   } finally {
     lock.releaseLock();
