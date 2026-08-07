@@ -8944,6 +8944,7 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
         entry_source: transaction.entry_source || "",
         source_note: transaction.source_note || "",
         entered_by: transaction.entered_by || "",
+        operational_date: resolveTransactionOperationalDateString_(transaction),
       };
     })
     .sort(function (first, second) {
@@ -9493,6 +9494,13 @@ function matchesOperationalPeriod_(operationalDate, periodResult) {
 }
 
 function resolveTransactionOperationalDateString_(transaction) {
+  if (String(transaction.entry_source || "").trim().toLowerCase() === "manual_power_outage") {
+    return getOperationalDateString_(transaction.start_time)
+      || getOperationalDateString_(transaction.created_at)
+      || getOperationalDateString_(transaction.end_time)
+      || "";
+  }
+
   return getOperationalDateString_(transaction.created_at)
     || getOperationalDateString_(transaction.end_time)
     || getOperationalDateString_(transaction.start_time)
@@ -13886,12 +13894,14 @@ function createManualOutageTransaction_(payload) {
       idempotencyKey
     );
     if (existingRow) {
+      var existingTransaction = getRowObject_(transactionsSheet, transactionHeaders, existingRow);
       return {
         ok: true,
         success: true,
         idempotent_replay: true,
         message: "Transaksi manual ini sudah pernah disimpan.",
-        transaction: getRowObject_(transactionsSheet, transactionHeaders, existingRow),
+        operational_date: resolveTransactionOperationalDateString_(existingTransaction),
+        transaction: existingTransaction,
       };
     }
 
@@ -13966,6 +13976,7 @@ function createManualOutageTransaction_(payload) {
     var endDate = new Date(startDate.getTime() + durationMinutes * 60000);
     var normalizedStartTime = toJakartaIsoString_(startDate);
     var normalizedEndTime = toJakartaIsoString_(mode === "room" ? endDate : startDate);
+    var operationalDate = getOperationalDateString_(normalizedStartTime);
     var transactionId = generateTransactionId_();
     var sessionId = mode === "room" ? generateRoomSessionId_(room.room_id) : "";
     var fnbTotal = normalizedItems.reduce(function (sum, item) {
@@ -14039,7 +14050,7 @@ function createManualOutageTransaction_(payload) {
       general_bill_id: mode === "general_fnb" && detailedOrders[0]
         ? detailedOrders[0].general_bill_id
         : "",
-      created_at: normalizedEndTime,
+      created_at: normalizedStartTime,
       entry_source: "manual_power_outage",
       source_note: sourceNote,
       entered_by: enteredBy,
@@ -14097,7 +14108,7 @@ function createManualOutageTransaction_(payload) {
       detailedOrders,
       transactionId,
       sourceCashierName,
-      normalizedEndTime
+      normalizedStartTime
     );
 
     if (normalizedLcs.length > 0 && detailedOrders.length > 0) {
@@ -14155,6 +14166,7 @@ function createManualOutageTransaction_(payload) {
       ok: true,
       success: true,
       message: "Transaksi manual berhasil disimpan dan siap dicetak.",
+      operational_date: operationalDate,
       transaction: transaction,
       fnb_orders: detailedOrders,
       lc_details: {

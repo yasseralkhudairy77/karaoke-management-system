@@ -9329,6 +9329,9 @@ textarea.action-confirmation-input {
 
 /* Owner-only backdate entry used after offline operations. */
 .manual-transaction-panel {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   background: rgba(28, 24, 19, 0.92);
   padding: 18px;
@@ -9403,6 +9406,34 @@ textarea.action-confirmation-input {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.manual-operational-period {
+  display: grid;
+  gap: 3px;
+  margin: 2px 0 14px;
+  border-left: 3px solid #4fd19a;
+  background: rgba(29, 130, 91, 0.14);
+  padding: 10px 12px;
+  color: #bdf8df;
+}
+
+.manual-operational-period strong {
+  color: #e8fff5;
+  font-size: 0.9rem;
+}
+
+.manual-operational-period span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.manual-operational-period.invalid {
+  border-left-color: var(--gold);
+  background: rgba(212, 160, 39, 0.1);
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .manual-transaction-fields label {

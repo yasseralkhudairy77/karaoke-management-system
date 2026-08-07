@@ -475,8 +475,9 @@ const REPORT_SUB_TABS = [
   },
 ];
 
+const OPERATIONAL_CUTOFF_HOUR = 10;
 const OPERATIONAL_SHIFT_NOTE =
-  "Tanggal operasional mengikuti cutoff jam 10:00. Transaksi sebelum pukul 10:00 masuk shift hari sebelumnya.";
+  `Tanggal operasional mengikuti cutoff jam ${String(OPERATIONAL_CUTOFF_HOUR).padStart(2, "0")}:00. Transaksi sebelum pukul ${String(OPERATIONAL_CUTOFF_HOUR).padStart(2, "0")}:00 masuk shift hari sebelumnya.`;
 const ROOM_STATUS_CONFIG = {
   available: {
     label: "Kosong",
@@ -21275,6 +21276,30 @@ function getManualTransactionTotals() {
   return { roomTotal, fnbTotal, lcTotal, grandTotal: roomTotal + fnbTotal + lcTotal };
 }
 
+function addDaysToDateInput(dateString, dayOffset) {
+  const match = String(dateString || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + dayOffset));
+  return date.toISOString().slice(0, 10);
+}
+
+function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDraft()) {
+  const date = String(draft?.date || "").trim();
+  const timeMatch = String(draft?.time || "").trim().match(/^(\d{2}):(\d{2})$/);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !timeMatch) return null;
+
+  const hour = Number(timeMatch[1]);
+  const operationalDate = hour < OPERATIONAL_CUTOFF_HOUR ? addDaysToDateInput(date, -1) : date;
+  if (!operationalDate) return null;
+
+  const nextDate = addDaysToDateInput(operationalDate, 1);
+  return {
+    operationalDate,
+    label: formatClosingDate(operationalDate),
+    range: `${formatClosingDate(operationalDate)} 10:00 - ${formatClosingDate(nextDate)} 09:59`,
+  };
+}
+
 function createManualOption(value, label, selectedValue) {
   const option = document.createElement("option");
   option.value = value;
@@ -21309,6 +21334,7 @@ function createManualTransactionPanelElement() {
       <label><span>Metode Bayar</span><select data-action="update-manual-transaction" data-field="payment_method"></select></label>
       <label><span>Status</span><select data-action="update-manual-transaction" data-field="payment_status"></select></label>
     </div>
+    <div class="manual-operational-period" role="status" aria-live="polite"></div>
     <div class="manual-transaction-room-fields manual-transaction-fields"></div>
     <div class="manual-transaction-fields">
       <label><span class="manual-customer-label"></span><input type="text" data-action="update-manual-transaction" data-field="customer_name"></label>
@@ -21348,6 +21374,18 @@ function createManualTransactionPanelElement() {
   setValue("source_note", draft.source_note);
   fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Cash"], ["transfer", "Transfer"]], draft.payment_method);
   fillManualSelect(panel.querySelector("[data-field='payment_status']"), [["paid", "Lunas"], ["unpaid", "Belum Dibayar"]], draft.payment_status);
+  const operationalPeriod = getManualTransactionOperationalPeriod(draft);
+  const operationalPeriodBox = panel.querySelector(".manual-operational-period");
+  if (operationalPeriod) {
+    const title = document.createElement("strong");
+    title.textContent = `Masuk periode operasional ${operationalPeriod.label}`;
+    const detail = document.createElement("span");
+    detail.textContent = `Rentang shift ${operationalPeriod.range}. Acuan transaksi manual adalah Jam Mulai.`;
+    operationalPeriodBox.append(title, detail);
+  } else {
+    operationalPeriodBox.textContent = "Isi tanggal nota dan jam mulai untuk melihat periode operasional.";
+    operationalPeriodBox.classList.add("invalid");
+  }
 
   const roomFields = panel.querySelector(".manual-transaction-room-fields");
   const lcDetail = panel.querySelector(".manual-lc-detail");
@@ -23596,6 +23634,7 @@ function reviewManualTransaction() {
   const draft = ensureManualTransactionDraft();
   const room = rooms.find((item) => item.room_id === draft.room_id);
   const totals = getManualTransactionTotals();
+  const operationalPeriod = getManualTransactionOperationalPeriod(draft);
   openActionConfirmation({
     tone: "warning",
     title: "Simpan Transaksi Backdate?",
@@ -23603,6 +23642,8 @@ function reviewManualTransaction() {
     details: [
       ["Jenis", draft.mode === "room" ? "Room + F&B + LC" : "F&B Umum"],
       ["Waktu", `${draft.date} ${draft.time}`],
+      ["Periode Operasional", operationalPeriod?.label || "-"],
+      ["Rentang Shift", operationalPeriod?.range || "-"],
       ["Ruangan", draft.mode === "room" ? (room?.room_name || room?.room_id || "-") : "Tanpa room"],
       ["Kasir Nota", draft.cashier_name.trim() || "Kasir Manual"],
       ["Durasi", draft.mode === "room" ? formatDurationMinutes(draft.duration_minutes) : "-"],
@@ -23622,6 +23663,7 @@ async function saveManualTransaction() {
   const draft = ensureManualTransactionDraft();
   const error = validateManualTransactionDraft();
   if (error) throw new Error(error);
+  const operationalPeriod = getManualTransactionOperationalPeriod(draft);
 
   if (!manualTransactionIdempotencyKey) {
     manualTransactionIdempotencyKey = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
@@ -23658,6 +23700,10 @@ async function saveManualTransaction() {
 
     const transaction = {
       ...(data.transaction || {}),
+      operational_date: data.operational_date
+        || data.transaction?.operational_date
+        || operationalPeriod?.operationalDate
+        || "",
       fnb_orders: Array.isArray(data.fnb_orders) ? data.fnb_orders : [],
       lc_details: data.lc_details || null,
     };
@@ -23671,8 +23717,13 @@ async function saveManualTransaction() {
     actionConfirmationModal = null;
     resetManualTransactionDraft();
     await loadTodayTransactions();
+    const savedPeriodLabel = transaction.operational_date
+      ? formatClosingDate(transaction.operational_date)
+      : operationalPeriod?.label;
     showFloatingToast(
-      data.idempotent_replay ? "Transaksi sebelumnya ditemukan, tidak dibuat ganda." : "Transaksi manual berhasil disimpan.",
+      data.idempotent_replay
+        ? `Transaksi sebelumnya ditemukan di periode operasional ${savedPeriodLabel || "-"}, tidak dibuat ganda.`
+        : `Transaksi manual tersimpan di periode operasional ${savedPeriodLabel || "-"}.`,
       "success"
     );
     showReceiptPrint(transaction);
