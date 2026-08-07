@@ -414,6 +414,10 @@ let rooms = [];
 let errorMessage = "";
 let noticeMessage = "";
 let noticeType = "info";
+let actionConfirmationModal = null;
+let actionModalSequence = 0;
+let floatingToastSequence = 0;
+const floatingToastTimers = new Map();
 let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
@@ -1004,7 +1008,8 @@ function isUserBusy() {
     transactionDeleteConfirmation ||
     deleteLcConfirmation ||
     roomRecoveryConfirmation ||
-    lcDurationEditor
+    lcDurationEditor ||
+    actionConfirmationModal
   ) {
     return true;
   }
@@ -1865,7 +1870,53 @@ function canSubmitStockAdjustment() {
   );
 }
 
-async function submitStockAdjustment() {
+function submitStockAdjustment() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+  if (!stockAdjustmentForm.stock_item_id) {
+    showInlineNotice("Pilih item stok terlebih dahulu.", "error");
+    return;
+  }
+  if (!isStockAdjustmentQuantityValid()) {
+    showInlineNotice(
+      stockAdjustmentForm.adjustment_type === "restock"
+        ? "Jumlah restock harus lebih dari 0."
+        : "Stok aktual harus 0 atau lebih.",
+      "error"
+    );
+    return;
+  }
+
+  const item = inventoryItems.find(
+    (inventoryItem) => inventoryItem.stock_item_id === stockAdjustmentForm.stock_item_id
+  );
+  const currentStock = Number(item?.stock_qty) || 0;
+  const quantity = Number(stockAdjustmentForm.quantity) || 0;
+  const nextStock = stockAdjustmentForm.adjustment_type === "restock"
+    ? currentStock + quantity
+    : quantity;
+
+  openActionConfirmation({
+    tone: "warning",
+    title: "Konfirmasi Perubahan Stok",
+    message: "Perubahan ini akan masuk ke riwayat mutasi stok dan memengaruhi ketersediaan menu.",
+    details: [
+      ["Item", item?.stock_item_name || stockAdjustmentForm.stock_item_id],
+      ["Jenis", stockAdjustmentForm.adjustment_type === "restock" ? "Restock / Stok Masuk" : "Set Stok Aktual"],
+      ["Stok Saat Ini", `${currentStock} ${item?.unit || ""}`.trim()],
+      ["Nilai Input", `${quantity} ${item?.unit || ""}`.trim()],
+      ["Stok Setelahnya", `${nextStock} ${item?.unit || ""}`.trim()],
+      ["Catatan", stockAdjustmentForm.note.trim() || "-"],
+    ],
+    confirmLabel: "Simpan Perubahan Stok",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executeStockAdjustment(),
+  });
+}
+
+async function executeStockAdjustment() {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi.", "error");
     return;
@@ -1901,7 +1952,7 @@ async function submitStockAdjustment() {
     }
 
     lastStockAdjustment = data;
-    showInlineNotice("Stok berhasil diperbarui.");
+    showInlineNotice("Stok berhasil diperbarui.", "success");
     stockAdjustmentForm = {
       stock_item_id: "",
       adjustment_type: "restock",
@@ -2719,7 +2770,7 @@ async function createInventoryAudit() {
     selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : [];
     hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
     await loadInventoryAudits();
-    showInlineNotice("Stock Opname baru dibuat. Silakan input qty fisik outlet.");
+    showInlineNotice("Stock Opname baru dibuat. Silakan input qty fisik outlet.", "success");
   } catch (error) {
     showInlineNotice(error.message || "Gagal membuat Stock Opname.", "error");
   } finally {
@@ -2908,21 +2959,46 @@ async function saveInventoryAuditCounts() {
     selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : selectedInventoryAuditLines;
     hydrateInventoryAuditDraftsFromLines(selectedInventoryAuditLines);
     await loadInventoryAudits();
-    showInlineNotice("Hitungan fisik Stock Opname tersimpan.");
+    showInlineNotice("Hitungan fisik Stock Opname tersimpan.", "success");
+    return true;
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan hitungan Stock Opname.", "error");
+    return false;
   } finally {
     isSavingInventoryAudit = false;
     renderRooms();
   }
 }
 
-async function submitInventoryAudit() {
+function submitInventoryAudit() {
   if (!selectedInventoryAudit?.audit_id || isSavingInventoryAudit) {
     return;
   }
 
-  await saveInventoryAuditCounts();
+  const countedLines = selectedInventoryAuditLines.filter((line) => {
+    const value = inventoryAuditCountDraft[line.stock_item_id];
+    return value !== "" && value !== null && value !== undefined;
+  }).length;
+  openActionConfirmation({
+    tone: "warning",
+    title: "Submit Stock Opname",
+    message: "Hitungan akan disimpan lalu dikirim untuk approval. Setelah submit, kasir tidak dapat mengubah hitungan.",
+    details: [
+      ["ID Opname", selectedInventoryAudit.audit_id],
+      ["Item Terhitung", `${countedLines} dari ${selectedInventoryAuditLines.length}`],
+      ["Status Berikutnya", "Menunggu approval owner/manager"],
+    ],
+    confirmLabel: "Simpan & Submit",
+    cancelLabel: "Periksa Hitungan",
+    onConfirm: () => executeSubmitInventoryAudit(),
+  });
+}
+
+async function executeSubmitInventoryAudit() {
+  const countsSaved = await saveInventoryAuditCounts();
+  if (!countsSaved) {
+    return;
+  }
   isSavingInventoryAudit = true;
   renderRooms();
 
@@ -2940,7 +3016,7 @@ async function submitInventoryAudit() {
     selectedInventoryAudit = data.audit || selectedInventoryAudit;
     selectedInventoryAuditLines = Array.isArray(data.lines) ? data.lines : selectedInventoryAuditLines;
     await loadInventoryAudits();
-    showInlineNotice("Stock Opname disubmit. Menunggu approval pemeriksa.");
+    showInlineNotice("Stock Opname disubmit. Menunggu approval pemeriksa.", "success");
   } catch (error) {
     showInlineNotice(error.message || "Gagal submit Stock Opname.", "error");
   } finally {
@@ -2954,6 +3030,28 @@ function approveInventoryAudit() {
     return;
   }
 
+  const changedLines = selectedInventoryAuditLines.filter((line) => {
+    const counted = Number(line.count_qty);
+    const book = Number(line.book_qty_snapshot);
+    return Number.isFinite(counted) && Number.isFinite(book) && counted !== book;
+  });
+  openActionConfirmation({
+    tone: "danger",
+    title: "Approve & Posting Stock Opname",
+    message: "Selisih opname akan diposting ke stok sistem. Setelah approval, perubahan tidak dapat diedit dari halaman opname.",
+    details: [
+      ["ID Opname", selectedInventoryAudit.audit_id],
+      ["Total Item", `${selectedInventoryAuditLines.length} item`],
+      ["Item Berselisih", `${changedLines.length} item`],
+      ["Tindakan", "Posting koreksi stok"],
+    ],
+    confirmLabel: "Lanjut ke PIN Approval",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => openInventoryAuditApprovalPin(),
+  });
+}
+
+function openInventoryAuditApprovalPin() {
   openAdminPinModal({
     title: "PIN Approval Stock Opname",
     message: "Masukkan PIN owner/manager untuk approve dan posting selisih stok.",
@@ -2988,7 +3086,7 @@ async function executeApproveInventoryAudit(adminPin) {
       loadInventoryItems(),
       loadTodayStockMovements()
     ]);
-    showInlineNotice("Stock Opname berhasil di-approve dan stok sudah diposting.");
+    showInlineNotice("Stock Opname berhasil di-approve dan stok sudah diposting.", "success");
   } catch (error) {
     showInlineNotice(error.message || "Gagal approve Stock Opname.", "error");
   } finally {
@@ -3180,6 +3278,266 @@ function showInlineNotice(message, type = "info") {
   noticeMessage = message;
   noticeType = type;
   renderRooms();
+  showFloatingToast(message, type);
+}
+
+function getFloatingToastContainer() {
+  let container = document.querySelector(".floating-toast-container");
+
+  if (!container) {
+    container = document.createElement("section");
+    container.className = "floating-toast-container";
+    container.setAttribute("aria-label", "Notifikasi aplikasi");
+    container.setAttribute("aria-live", "polite");
+    document.body.appendChild(container);
+  }
+
+  return container;
+}
+
+function dismissFloatingToast(toastId) {
+  const toast = document.querySelector(`[data-toast-id="${toastId}"]`);
+  const timerId = floatingToastTimers.get(toastId);
+
+  if (timerId) {
+    window.clearTimeout(timerId);
+    floatingToastTimers.delete(toastId);
+  }
+
+  toast?.remove();
+}
+
+function showFloatingToast(message, type = "info") {
+  const safeMessage = String(message || "").trim();
+  if (!safeMessage) {
+    return;
+  }
+
+  const container = getFloatingToastContainer();
+  const toastId = `toast-${Date.now()}-${++floatingToastSequence}`;
+  const normalizedType = ["success", "warning", "error", "info"].includes(type)
+    ? type
+    : "info";
+  const labels = {
+    success: "Berhasil",
+    warning: "Perhatian",
+    error: "Gagal",
+    info: "Informasi",
+  };
+  const toast = document.createElement("article");
+  toast.className = `floating-toast floating-toast--${normalizedType}`;
+  toast.dataset.toastId = toastId;
+
+  const content = document.createElement("div");
+  content.className = "floating-toast-content";
+
+  const title = document.createElement("strong");
+  title.className = "floating-toast-title";
+  title.textContent = labels[normalizedType];
+
+  const text = document.createElement("p");
+  text.className = "floating-toast-message";
+  text.textContent = safeMessage;
+  content.append(title, text);
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "floating-toast-close";
+  closeButton.type = "button";
+  closeButton.title = "Tutup notifikasi";
+  closeButton.setAttribute("aria-label", "Tutup notifikasi");
+  closeButton.textContent = "\u00d7";
+  closeButton.onclick = () => dismissFloatingToast(toastId);
+
+  toast.append(content, closeButton);
+  container.prepend(toast);
+
+  while (container.children.length > 4) {
+    const oldestToast = container.lastElementChild;
+    if (!oldestToast) {
+      break;
+    }
+    dismissFloatingToast(oldestToast.dataset.toastId || "");
+  }
+
+  const duration = normalizedType === "error"
+    ? 9000
+    : normalizedType === "warning"
+      ? 7000
+      : 4500;
+  const timerId = window.setTimeout(() => dismissFloatingToast(toastId), duration);
+  floatingToastTimers.set(toastId, timerId);
+}
+
+function openActionConfirmation(options = {}) {
+  actionConfirmationModal = {
+    id: `action-modal-${Date.now()}-${++actionModalSequence}`,
+    mode: options.mode || "confirm",
+    tone: options.tone || "warning",
+    title: options.title || "Konfirmasi",
+    message: options.message || "",
+    details: Array.isArray(options.details) ? options.details : [],
+    confirmLabel: options.confirmLabel || "Lanjutkan",
+    cancelLabel: options.cancelLabel || "Kembali",
+    field: options.field || null,
+    fieldValue: options.field?.value || "",
+    busy: false,
+    onConfirm: typeof options.onConfirm === "function" ? options.onConfirm : null,
+  };
+  renderRooms();
+}
+
+function openActionResult(options = {}) {
+  openActionConfirmation({
+    ...options,
+    mode: "result",
+    confirmLabel: options.confirmLabel || "Tutup",
+  });
+}
+
+function closeActionConfirmation() {
+  if (actionConfirmationModal?.busy) {
+    return;
+  }
+  actionConfirmationModal = null;
+  renderRooms();
+}
+
+function updateActionConfirmationField(value) {
+  if (actionConfirmationModal) {
+    actionConfirmationModal.fieldValue = value;
+  }
+}
+
+async function confirmActionConfirmation() {
+  const modal = actionConfirmationModal;
+  if (!modal || modal.busy) {
+    return;
+  }
+
+  if (modal.mode === "result") {
+    closeActionConfirmation();
+    return;
+  }
+
+  const fieldValue = String(modal.fieldValue || "").trim();
+  if (modal.field?.required && fieldValue.length < Number(modal.field.minLength || 1)) {
+    showFloatingToast(
+      modal.field.errorMessage || `${modal.field.label || "Kolom"} wajib diisi.`,
+      "error"
+    );
+    return;
+  }
+
+  modal.busy = true;
+  renderRooms();
+
+  try {
+    await modal.onConfirm?.(fieldValue);
+  } catch (error) {
+    showFloatingToast(error.message || "Tindakan tidak dapat diproses.", "error");
+  } finally {
+    if (actionConfirmationModal?.id === modal.id) {
+      actionConfirmationModal = null;
+    }
+    renderRooms();
+  }
+}
+
+function createActionConfirmationElement() {
+  if (!actionConfirmationModal) {
+    return document.createDocumentFragment();
+  }
+
+  const modal = actionConfirmationModal;
+  const overlay = document.createElement("section");
+  overlay.className = "action-confirmation-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", `${modal.id}-title`);
+
+  const dialog = document.createElement("div");
+  dialog.className = `action-confirmation-dialog action-confirmation-dialog--${modal.tone}`;
+
+  const header = document.createElement("div");
+  header.className = "action-confirmation-header";
+
+  const icon = document.createElement("span");
+  icon.className = "action-confirmation-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = modal.tone === "danger" ? "!" : modal.tone === "success" ? "\u2713" : "i";
+
+  const title = document.createElement("h3");
+  title.id = `${modal.id}-title`;
+  title.className = "action-confirmation-title";
+  title.textContent = modal.title;
+  header.append(icon, title);
+  dialog.appendChild(header);
+
+  if (modal.message) {
+    const message = document.createElement("p");
+    message.className = "action-confirmation-message";
+    message.textContent = modal.message;
+    dialog.appendChild(message);
+  }
+
+  if (modal.details.length > 0) {
+    const details = document.createElement("dl");
+    details.className = "action-confirmation-details";
+    modal.details.forEach(([labelText, valueText]) => {
+      const row = document.createElement("div");
+      row.className = "action-confirmation-detail";
+      const label = document.createElement("dt");
+      label.textContent = labelText;
+      const value = document.createElement("dd");
+      value.textContent = valueText || "-";
+      row.append(label, value);
+      details.appendChild(row);
+    });
+    dialog.appendChild(details);
+  }
+
+  if (modal.field) {
+    const field = document.createElement("label");
+    field.className = "action-confirmation-field";
+    const fieldLabel = document.createElement("span");
+    fieldLabel.textContent = modal.field.label || "Catatan";
+    const input = modal.field.multiline
+      ? document.createElement("textarea")
+      : document.createElement("input");
+    input.className = "action-confirmation-input";
+    input.value = modal.fieldValue || "";
+    input.placeholder = modal.field.placeholder || "";
+    input.disabled = modal.busy;
+    input.oninput = (event) => updateActionConfirmationField(event.target.value);
+    field.append(fieldLabel, input);
+    dialog.appendChild(field);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "action-confirmation-actions";
+
+  if (modal.mode !== "result") {
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "action-confirmation-button action-confirmation-button--secondary";
+    cancelButton.type = "button";
+    cancelButton.disabled = modal.busy;
+    cancelButton.textContent = modal.cancelLabel;
+    cancelButton.onclick = closeActionConfirmation;
+    actions.appendChild(cancelButton);
+  }
+
+  const confirmButton = document.createElement("button");
+  confirmButton.className = `action-confirmation-button action-confirmation-button--${modal.tone}`;
+  confirmButton.type = "button";
+  confirmButton.disabled = modal.busy;
+  confirmButton.textContent = modal.busy ? "Memproses..." : modal.confirmLabel;
+  confirmButton.onclick = confirmActionConfirmation;
+  actions.appendChild(confirmButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  window.setTimeout(() => confirmButton.focus(), 0);
+  return overlay;
 }
 
 function showBillingSummary(transaction) {
@@ -4177,9 +4535,26 @@ function clearFbCart() {
     return;
   }
 
-  fbCartItems = [];
-  resetFnbOrderIdempotencyKey();
-  renderRooms();
+  if (fbCartItems.length === 0) {
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "danger",
+    title: "Kosongkan Keranjang F&B",
+    message: "Semua item yang sudah dipilih akan dikeluarkan dari keranjang.",
+    details: [
+      ["Jumlah Menu", `${fbCartItems.length} jenis`],
+      ["Total", formatCurrency(calculateFbCartTotal())],
+    ],
+    confirmLabel: "Kosongkan Keranjang",
+    cancelLabel: "Kembali",
+    onConfirm: () => {
+      fbCartItems = [];
+      resetFnbOrderIdempotencyKey();
+      renderRooms();
+    },
+  });
 }
 
 function calculateFbCartTotal() {
@@ -4421,7 +4796,77 @@ function buildFnbOrderPayload(idempotencyKey) {
   };
 }
 
+function getFnbOrderPaymentLabel() {
+  const labels = {
+    room_bill: "Masuk tagihan room",
+    general_bill: "Open bill pelanggan",
+    cash: "Cash - langsung lunas",
+    transfer: "Transfer / QRIS - langsung lunas",
+  };
+  return labels[fnbOrderPaymentMethod] || fnbOrderPaymentMethod || "-";
+}
+
+function getFnbOrderValidationError() {
+  const selectedRoom = getSelectedFbRoom();
+  const isGeneralOrder = fnbOrderMode === "general";
+
+  if (!API_BASE_URL.trim()) {
+    return "API belum dikonfigurasi. Isi URL server dulu di config.js.";
+  }
+  if (!isGeneralOrder && !selectedRoom) {
+    return "Pilih ruangan terlebih dahulu.";
+  }
+  if (!isGeneralOrder && !isFbOrderRoomSelectable(selectedRoom)) {
+    return "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.";
+  }
+  if (isGeneralOrder && !generalFnbCustomerName.trim()) {
+    return "Nama pemesan wajib diisi untuk order F&B umum.";
+  }
+  if (fbCartItems.length === 0) {
+    return "Keranjang F&B masih kosong.";
+  }
+  return "";
+}
+
 async function saveFnbOrder() {
+  const validationError = getFnbOrderValidationError();
+  if (validationError) {
+    showInlineNotice(validationError, "error");
+    return;
+  }
+
+  if (isSavingFnbOrder || activeFnbOrderSavePromise) {
+    showFloatingToast("Order sedang disimpan. Mohon tunggu hasilnya.", "warning");
+    return activeFnbOrderSavePromise;
+  }
+
+  const selectedRoom = getSelectedFbRoom();
+  const isGeneralOrder = fnbOrderMode === "general";
+  const targetName = isGeneralOrder
+    ? generalFnbCustomerName.trim()
+    : selectedRoom?.room_name || selectedFbRoomId;
+  const itemSummary = fbCartItems
+    .map((item) => `${Number(item.quantity) || 0}x ${item.menu_name || item.menu_id}`)
+    .join(", ");
+
+  openActionConfirmation({
+    tone: "warning",
+    title: "Periksa Order F&B",
+    message: "Pastikan tujuan tagihan dan isi pesanan sudah benar sebelum disimpan.",
+    details: [
+      [isGeneralOrder ? "Pelanggan" : "Room", targetName],
+      ["Pesanan", itemSummary],
+      ["Pembayaran", getFnbOrderPaymentLabel()],
+      ["Total", formatCurrency(calculateFbCartTotal())],
+      ["Catatan", fnbOrderNote.trim() || "-"],
+    ],
+    confirmLabel: "Simpan Order",
+    cancelLabel: "Kembali Edit",
+    onConfirm: () => executeSaveFnbOrder(),
+  });
+}
+
+async function executeSaveFnbOrder() {
   if (activeFnbOrderSavePromise) {
     return activeFnbOrderSavePromise;
   }
@@ -4496,7 +4941,13 @@ async function performFnbOrderSave(isGeneralOrder) {
       generalFnbCustomerName = "";
       fnbOrderPaymentMethod = isGeneralOrder ? "general_bill" : "room_bill";
     }
-    showInlineNotice("Order F&B berhasil disimpan.");
+    const isDuplicateReplay = Boolean(data.duplicate_replay || data.idempotent_replay);
+    showInlineNotice(
+      isDuplicateReplay
+        ? "Order ini sudah tersimpan sebelumnya dan tidak dibuat ulang."
+        : "Order F&B berhasil disimpan.",
+      isDuplicateReplay ? "warning" : "success"
+    );
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
@@ -4531,6 +4982,35 @@ async function performFnbOrderSave(isGeneralOrder) {
       };
       
       showReceiptPrint(tempTransaction);
+    }
+
+    if (isDuplicateReplay) {
+      openActionResult({
+        tone: "warning",
+        title: "Order Ganda Dicegah",
+        message: "Permintaan yang sama sudah pernah diterima. Sistem menggunakan order sebelumnya dan tidak membuat tagihan kedua.",
+        details: [
+          ["ID Order", data.order?.order_id || "-"],
+          ["Room / Pelanggan", data.order?.room_name || data.order?.customer_name || "-"],
+          ["Total", formatCurrency(data.order?.order_total || 0)],
+        ],
+        confirmLabel: "Mengerti",
+      });
+    } else {
+      openActionResult({
+        tone: "success",
+        title: "Order F&B Tersimpan",
+        message: data.order?.order_status === "paid"
+          ? "Pembayaran tercatat lunas. Nota sudah disiapkan untuk dicetak."
+          : "Order sudah masuk ke tagihan yang dipilih dan tidak perlu disimpan ulang.",
+        details: [
+          ["ID Order", data.order?.order_id || "-"],
+          ["Room / Pelanggan", data.order?.room_name || data.order?.customer_name || "-"],
+          ["Status", data.order?.order_status === "paid" ? "Lunas" : "Open / Belum ditagihkan"],
+          ["Total", formatCurrency(data.order?.order_total || 0)],
+        ],
+        confirmLabel: data.order?.order_status === "paid" ? "Lanjut ke Nota" : "Selesai",
+      });
     }
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan order F&B.", "error");
@@ -4577,20 +5057,27 @@ function requestCancelFnbOrder(orderId) {
     return;
   }
 
-  const reasonInput = window.prompt("Masukkan alasan pembatalan order F&B:");
-
-  if (reasonInput === null) {
-    return;
-  }
-
-  const reason = reasonInput.trim() || "Tanpa alasan";
-  const confirmed = window.confirm("Batalkan order F&B ini? Tindakan ini tidak bisa dibatalkan.");
-
-  if (!confirmed) {
-    return;
-  }
-
-  cancelFnbOrder(orderId, reason);
+  openActionConfirmation({
+    tone: "danger",
+    title: "Batalkan Order F&B",
+    message: "Order akan dibatalkan dan stok terkait dikembalikan. Tindakan ini tidak dapat dibatalkan kembali.",
+    details: [
+      ["ID Order", order.order_id || orderId],
+      ["Room / Pelanggan", order.room_name || order.customer_name || "-"],
+      ["Total", formatCurrency(order.order_total || 0)],
+    ],
+    field: {
+      label: "Alasan pembatalan",
+      placeholder: "Contoh: salah input jumlah pesanan",
+      multiline: true,
+      required: true,
+      minLength: 5,
+      errorMessage: "Alasan pembatalan minimal 5 karakter.",
+    },
+    confirmLabel: "Ya, Batalkan Order",
+    cancelLabel: "Kembali",
+    onConfirm: (reason) => cancelFnbOrder(orderId, reason),
+  });
 }
 
 async function cancelFnbOrder(orderId, reason) {
@@ -9586,11 +10073,7 @@ function createPaymentSelectionElement(room) {
   cancelButton.style.width = "100%";
   cancelButton.style.marginBottom = "8px";
   cancelButton.textContent = "Batalkan Booking";
-  cancelButton.onclick = async () => {
-    if (confirm("Apakah Anda yakin ingin membatalkan booking room ini?")) {
-      await cancelBooking(room.room_id);
-    }
-  };
+  cancelButton.onclick = () => requestCancelBooking(room.room_id);
 
   const closeButton = document.createElement("button");
   closeButton.className = "duration-cancel-button";
@@ -10496,6 +10979,32 @@ async function settleGeneralFnbBill(generalBillId) {
     return;
   }
 
+  const paymentMethod = generalFnbBillPaymentMethods[generalBillId] || "cash";
+  openActionConfirmation({
+    tone: "success",
+    title: "Konfirmasi Pembayaran F&B",
+    message: "Pastikan nominal dan metode pembayaran sesuai dengan yang diterima dari pelanggan.",
+    details: [
+      ["Pelanggan", bill.customer_name || "-"],
+      ["Jumlah Order", `${bill.orders.length} order`],
+      ["Jumlah Item", `${bill.total_items} item`],
+      ["Metode", paymentMethod === "transfer" ? "Transfer / QRIS" : "Cash"],
+      ["Total", formatCurrency(bill.total_amount)],
+    ],
+    confirmLabel: "Bayar & Cetak Nota",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executeSettleGeneralFnbBill(generalBillId),
+  });
+}
+
+async function executeSettleGeneralFnbBill(generalBillId) {
+  if (!generalBillId || isSettlingGeneralFnbBill) return;
+  const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
+  if (!bill) {
+    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    return;
+  }
+
   isSettlingGeneralFnbBill = true;
   renderRooms();
   try {
@@ -10516,7 +11025,7 @@ async function settleGeneralFnbBill(generalBillId) {
       selectedGeneralFnbBillId = "";
       generalFnbCustomerName = "";
     }
-    showInlineNotice("Tagihan F&B umum berhasil dibayar.");
+    showInlineNotice("Tagihan F&B umum berhasil dibayar.", "success");
     await Promise.all([
       loadOpenFnbOrders(),
       loadTodayFnbOrders(),
@@ -17650,7 +18159,7 @@ async function executeSavePromo(promoData) {
       created_at: new Date().toISOString()
     });
     showAddPromoModal = false;
-    alert("Promo berhasil ditambahkan (Mock Mode).");
+    showInlineNotice("Promo berhasil ditambahkan (Mock Mode).", "success");
     renderRooms();
     return;
   }
@@ -17664,15 +18173,15 @@ async function executeSavePromo(promoData) {
       ...promoData
     });
     if (data && data.success) {
-      alert(data.message || "Kode promosi berhasil disimpan.");
+      showInlineNotice(data.message || "Kode promosi berhasil disimpan.", "success");
       showAddPromoModal = false;
       await loadPromos();
     } else {
-      alert(data.error || "Gagal menyimpan kode promosi.");
+      showInlineNotice(data.error || "Gagal menyimpan kode promosi.", "error");
     }
   } catch (error) {
     console.error("Error saving promo:", error);
-    alert(error.message || "Terjadi kesalahan koneksi saat menyimpan.");
+    showInlineNotice(error.message || "Terjadi kesalahan koneksi saat menyimpan.", "error");
   } finally {
     isSavingPromo = false;
     renderRooms();
@@ -17680,13 +18189,29 @@ async function executeSavePromo(promoData) {
 }
 
 async function executeDeletePromo(code) {
-  if (!confirm(`Apakah Anda yakin ingin menghapus kode "${code}" secara permanen?`)) {
-    return;
-  }
+  const promo = promosList.find((item) => item.code === code);
+  openActionConfirmation({
+    tone: "danger",
+    title: "Hapus Promo / Voucher",
+    message: "Kode akan dihapus permanen dan tidak dapat digunakan pada transaksi berikutnya.",
+    details: [
+      ["Kode", code],
+      ["Jenis", promo?.type === "voucher" ? "Voucher" : "Promo"],
+      ["Status", promo?.status === "active" ? "Aktif" : "Tidak aktif"],
+      ["Nilai", promo?.discount_type === "percentage"
+        ? `${Number(promo.discount_value) || 0}%`
+        : formatCurrency(promo?.discount_value || 0)],
+    ],
+    confirmLabel: "Ya, Hapus Kode",
+    cancelLabel: "Kembali",
+    onConfirm: () => performDeletePromo(code),
+  });
+}
 
+async function performDeletePromo(code) {
   if (!API_BASE_URL.trim()) {
     promosList = promosList.filter(p => p.code !== code);
-    alert("Promo berhasil dihapus (Mock Mode).");
+    showInlineNotice("Promo berhasil dihapus (Mock Mode).", "success");
     renderRooms();
     return;
   }
@@ -17697,14 +18222,14 @@ async function executeDeletePromo(code) {
       code: code
     });
     if (data && data.success) {
-      alert(data.message || "Kode promosi berhasil dihapus.");
+      showInlineNotice(data.message || "Kode promosi berhasil dihapus.", "success");
       await loadPromos();
     } else {
-      alert(data.error || "Gagal menghapus kode.");
+      showInlineNotice(data.error || "Gagal menghapus kode.", "error");
     }
   } catch (error) {
     console.error("Error deleting promo:", error);
-    alert(error.message || "Terjadi kesalahan koneksi saat menghapus.");
+    showInlineNotice(error.message || "Terjadi kesalahan koneksi saat menghapus.", "error");
   }
 }
 
@@ -17728,12 +18253,16 @@ async function togglePromoStatus(code, currentStatus) {
     });
     if (data && data.success) {
       await loadPromos();
+      showInlineNotice(
+        `Promo ${code} berhasil ${newStatus === "active" ? "diaktifkan" : "dinonaktifkan"}.`,
+        "success"
+      );
     } else {
-      alert(data.error || "Gagal mengubah status.");
+      showInlineNotice(data.error || "Gagal mengubah status.", "error");
     }
   } catch (error) {
     console.error("Error updating status:", error);
-    alert(error.message || "Terjadi kesalahan koneksi.");
+    showInlineNotice(error.message || "Terjadi kesalahan koneksi.", "error");
   }
 }
 
@@ -18250,7 +18779,39 @@ async function loadLcFinanceSummary(period = lcFinancePeriod) {
   }
 }
 
-async function submitLcCashAdvance() {
+function submitLcCashAdvance() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+  if (!lcCashAdvanceForm.lc_id) {
+    showInlineNotice("Pilih LC terlebih dahulu.", "error");
+    return;
+  }
+  const amount = Number(lcCashAdvanceForm.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showInlineNotice("Nominal kasbon wajib lebih dari 0.", "error");
+    return;
+  }
+
+  const lc = lcs.find((item) => item.lc_id === lcCashAdvanceForm.lc_id);
+  openActionConfirmation({
+    tone: "warning",
+    title: "Konfirmasi Kasbon LC",
+    message: "Kasbon akan dicatat sebagai potongan pada perhitungan payroll LC.",
+    details: [
+      ["LC", lc?.lc_name || lcCashAdvanceForm.lc_id],
+      ["Nominal", formatCurrency(amount)],
+      ["Catatan", lcCashAdvanceForm.note.trim() || "-"],
+      ["Dicatat Oleh", getLoggedInOperatorName()],
+    ],
+    confirmLabel: "Catat Kasbon",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executeLcCashAdvance(),
+  });
+}
+
+async function executeLcCashAdvance() {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi.", "error");
     return;
@@ -18281,7 +18842,7 @@ async function submitLcCashAdvance() {
 
     if (result && result.success) {
       lcCashAdvanceForm = { lc_id: "", amount: "", note: "" };
-      showInlineNotice(result.message || "Kasbon LC berhasil dicatat.");
+      showInlineNotice(result.message || "Kasbon LC berhasil dicatat.", "success");
       await loadLcFinanceSummary();
       await loadLcPayrollData(lcPayrollStartDate, lcPayrollEndDate);
     } else {
@@ -18295,7 +18856,40 @@ async function submitLcCashAdvance() {
   }
 }
 
-async function submitPettyCashEntry() {
+function submitPettyCashEntry() {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+  const amount = Number(pettyCashForm.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showInlineNotice("Nominal petty cash wajib lebih dari 0.", "error");
+    return;
+  }
+
+  const currentBalance = Number(lcFinanceSummary?.summary?.petty_cash_balance) || 0;
+  const nextBalance = pettyCashForm.entry_type === "cash_out"
+    ? currentBalance - amount
+    : currentBalance + amount;
+  openActionConfirmation({
+    tone: pettyCashForm.entry_type === "cash_out" ? "danger" : "warning",
+    title: "Konfirmasi Mutasi Petty Cash",
+    message: "Pastikan jenis mutasi dan nominal sesuai dengan uang fisik.",
+    details: [
+      ["Jenis", pettyCashForm.entry_type === "cash_out" ? "Kas Keluar" : "Kas Masuk"],
+      ["Kategori", pettyCashForm.category || "-"],
+      ["Nominal", formatCurrency(amount)],
+      ["Saldo Saat Ini", formatCurrency(currentBalance)],
+      ["Perkiraan Saldo", formatCurrency(nextBalance)],
+      ["Catatan", pettyCashForm.note.trim() || "-"],
+    ],
+    confirmLabel: "Catat Mutasi",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executePettyCashEntry(),
+  });
+}
+
+async function executePettyCashEntry() {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi.", "error");
     return;
@@ -18322,7 +18916,7 @@ async function submitPettyCashEntry() {
 
     if (result && result.success) {
       pettyCashForm = { entry_type: "cash_in", amount: "", category: "manual_topup", note: "" };
-      showInlineNotice(result.message || "Mutasi petty cash berhasil dicatat.");
+      showInlineNotice(result.message || "Mutasi petty cash berhasil dicatat.", "success");
       await loadLcFinanceSummary();
     } else {
       showInlineNotice(result?.error || "Gagal mencatat petty cash.", "error");
@@ -18472,7 +19066,7 @@ async function executeProcessLcPayroll() {
     };
     lcPayrollHistory.unshift(mockRecord);
     lcPayrollPendingReports = [];
-    alert("Payroll berhasil diproses (Mock Mode).");
+    showInlineNotice("Payroll berhasil diproses (Mock Mode).", "success");
     renderRooms();
     return;
   }
@@ -18491,14 +19085,14 @@ async function executeProcessLcPayroll() {
       cashier_name: operator
     });
     if (result && result.success) {
-      alert(result.message || "Payroll berhasil diproses.");
+      showInlineNotice(result.message || "Payroll berhasil diproses.", "success");
       await loadLcPayrollData();
     } else {
-      alert("Gagal memproses payroll: " + (result.error || "Unknown error"));
+      showInlineNotice("Gagal memproses payroll: " + (result.error || "Unknown error"), "error");
     }
   } catch (error) {
     console.error("Error processing LC payroll:", error);
-    alert(error.message || "Terjadi kesalahan koneksi saat memproses payroll.");
+    showInlineNotice(error.message || "Terjadi kesalahan koneksi saat memproses payroll.", "error");
   } finally {
     isProcessingLcPayroll = false;
     if (activeDashboardTab === "lc") {
@@ -19528,10 +20122,21 @@ function createLcPayrollSubTabElement() {
     processBtn.style.fontWeight = "bold";
     processBtn.textContent = isProcessingLcPayroll ? "Memproses..." : "Proses Pembayaran Payroll";
     processBtn.disabled = isProcessingLcPayroll;
-    processBtn.onclick = async () => {
-      if (confirm(`Konfirmasi pembayaran payroll net sebesar ${formatCurrency(totalAmount)} untuk periode ini?`)) {
-        await executeProcessLcPayroll();
-      }
+    processBtn.onclick = () => {
+      openActionConfirmation({
+        tone: "success",
+        title: "Konfirmasi Pembayaran Payroll",
+        message: "Payroll yang diproses akan masuk riwayat dan laporan kerja terkait ditandai sudah dibayar.",
+        details: [
+          ["Periode", `${lcPayrollStartDate || "-"} s/d ${lcPayrollEndDate || "-"}`],
+          ["Jumlah LC", `${lcPayrollPendingReports.length} LC`],
+          ["Total Sesi", `${lcPayrollPendingReports.reduce((sum, report) => sum + (Number(report.total_sessions) || 0), 0)} sesi`],
+          ["Net Payout", formatCurrency(totalAmount)],
+        ],
+        confirmLabel: "Proses Pembayaran",
+        cancelLabel: "Periksa Lagi",
+        onConfirm: () => executeProcessLcPayroll(),
+      });
     };
     pendingSection.appendChild(processBtn);
   }
@@ -20442,10 +21047,6 @@ function renderDashboardGlobal() {
     fragment.appendChild(createStateMessage(errorMessage, "error"));
   }
 
-  if (noticeMessage) {
-    fragment.appendChild(createStateMessage(noticeMessage, noticeType));
-  }
-
   if (stockWarningMessages.length > 0) {
     fragment.appendChild(createStockWarningListElement(stockWarningMessages));
   }
@@ -20478,6 +21079,10 @@ function renderDashboardGlobal() {
 
   if (lcDurationEditor) {
     fragment.appendChild(createLcDurationEditorElement());
+  }
+
+  if (actionConfirmationModal) {
+    fragment.appendChild(createActionConfirmationElement());
   }
 
   dashboardGlobal.replaceChildren(fragment);
@@ -21056,7 +21661,7 @@ function createSelectLcModalOverlay(room) {
   return panel;
 }
 
-async function saveSessionLcSelection(roomId) {
+function saveSessionLcSelection(roomId) {
   const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
   const selectedIds = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]);
 
@@ -21065,6 +21670,34 @@ async function saveSessionLcSelection(roomId) {
     return;
   }
 
+  const lcDetails = selectedIds.map((lcId) => {
+    const lc = lcs.find((item) => item.lc_id === lcId);
+    const durationMinutes = normalizeLcDurationMinutesForRoom(room, pendingLcDurations[lcId]);
+    const charge = calculateLcCharge(durationMinutes, Number(lc?.rate_per_room) || 0);
+    return {
+      name: lc?.lc_name || lcId,
+      durationMinutes,
+      charge,
+    };
+  });
+  openActionConfirmation({
+    tone: "warning",
+    title: "Konfirmasi Pilihan LC",
+    message: "Durasi dan biaya LC berikut akan ditambahkan ke sesi room.",
+    details: [
+      ["Room", room.room_name || roomId],
+      ["LC", lcDetails.map((item) => item.name).join(", ")],
+      ["Durasi", lcDetails.map((item) => `${item.name}: ${formatDurationMinutes(item.durationMinutes)}`).join(", ")],
+      ["Total LC", formatCurrency(lcDetails.reduce((sum, item) => sum + item.charge, 0))],
+    ],
+    confirmLabel: "Simpan Pilihan LC",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executeSaveSessionLcSelection(roomId, selectedIds),
+  });
+}
+
+async function executeSaveSessionLcSelection(roomId, selectedIds) {
+  const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
   isSavingSessionLcs = true;
   renderRooms();
 
@@ -21413,7 +22046,36 @@ function getExtendSuccessMessage(roomName, addMinutes) {
   return `Waktu ${roomName} berhasil ditambah ${formatDurationMinutes(minutes)}.`;
 }
 
-async function extendSession(roomId, addMinutes) {
+function extendSession(roomId, addMinutes) {
+  const room = rooms.find((item) => item.room_id === roomId);
+  const selectedMinutes = Number(addMinutes);
+
+  if (!room) {
+    showInlineNotice("Ruangan tidak ditemukan.", "error");
+    return;
+  }
+
+  const estimatedCharge = Math.ceil(
+    selectedMinutes / 60 * (Number(room.rate_per_hour) || 0)
+  );
+  openActionConfirmation({
+    tone: "warning",
+    title: "Konfirmasi Tambah Waktu",
+    message: "Tambahan waktu akan masuk ke tagihan transaksi room yang sedang berjalan.",
+    details: [
+      ["Room", room.room_name || roomId],
+      ["Tambahan", formatDurationMinutes(selectedMinutes)],
+      ["Biaya Tambahan", formatCurrency(estimatedCharge)],
+      ["Status Bayar", "Belum dibayar"],
+      ["Catatan", extendSessionNote.trim() || "-"],
+    ],
+    confirmLabel: "Tambah Waktu",
+    cancelLabel: "Kembali",
+    onConfirm: () => executeExtendSession(roomId, selectedMinutes),
+  });
+}
+
+async function executeExtendSession(roomId, addMinutes) {
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan menambah waktu sesi.", "error");
     return;
@@ -21602,7 +22264,75 @@ async function loadPackages() {
   }
 }
 
-async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
+function getPreparedRoomPaymentSummary(room) {
+  let roomCharge = 0;
+  if (room?.package_id) {
+    const selectedPackage = packages.find((pkg) => pkg.package_id === room.package_id);
+    roomCharge = Number(selectedPackage?.selling_price) || 0;
+  } else {
+    roomCharge = Math.ceil(
+      (Number(room?.booked_duration_minutes) || 0) / 60
+      * (Number(room?.rate_per_hour) || 0)
+    );
+  }
+
+  ensureLcSelectionStateForRoom(room);
+  const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
+  const activeLcRates = lcs
+    .filter((lc) => lc.status === "active")
+    .map((lc) => Number(lc.rate_per_room) || 0)
+    .filter((rate) => rate > 0);
+  const averageLcRate = activeLcRates.length
+    ? activeLcRates.reduce((sum, rate) => sum + rate, 0) / activeLcRates.length
+    : 0;
+  const lcCharge = activeLcIds.reduce((total, lcId) => {
+    const lc = lcs.find((item) => item.lc_id === lcId);
+    const rate = Number(lc?.rate_per_room) || averageLcRate;
+    return total + calculateLcCharge(getLcDurationForRoom(room, lcId), rate);
+  }, 0);
+  const fnbCharge = prepayCartItems.reduce(
+    (total, item) => total + (Number(item.price) || 0) * (Number(item.quantity) || 0),
+    0
+  );
+
+  return {
+    roomCharge,
+    lcCharge,
+    fnbCharge,
+    lcCount: activeLcIds.length,
+    total: roomCharge + lcCharge + fnbCharge,
+  };
+}
+
+function payAndStartSession(roomId, paymentMethod, promoCode = "") {
+  const room = rooms.find((item) => item.room_id === roomId);
+  if (!room) {
+    showInlineNotice("Ruangan tidak ditemukan.", "error");
+    return;
+  }
+
+  const summary = getPreparedRoomPaymentSummary(room);
+  openActionConfirmation({
+    tone: "success",
+    title: "Terima Pembayaran & Mulai",
+    message: "Pastikan uang atau transfer sudah diterima. Setelah dikonfirmasi, sesi dan countdown akan dimulai.",
+    details: [
+      ["Room", room.room_name || roomId],
+      ["Durasi", formatDurationMinutes(room.booked_duration_minutes)],
+      ["Sewa Room", formatCurrency(summary.roomCharge)],
+      ["LC", `${summary.lcCount} LC - ${formatCurrency(summary.lcCharge)}`],
+      ["F&B", formatCurrency(summary.fnbCharge)],
+      ["Metode", paymentMethod === "transfer" ? "Transfer / QRIS" : "Cash"],
+      ["Promo", promoCode || "-"],
+      [promoCode ? "Subtotal Sebelum Promo" : "Total", formatCurrency(summary.total)],
+    ],
+    confirmLabel: "Konfirmasi & Mulai",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executePayAndStartSession(roomId, paymentMethod, promoCode),
+  });
+}
+
+async function executePayAndStartSession(roomId, paymentMethod, promoCode = "") {
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan memulai sesi.", "error");
     return;
@@ -21664,6 +22394,23 @@ async function payAndStartSession(roomId, paymentMethod, promoCode = "") {
   }
 }
 
+function requestCancelBooking(roomId) {
+  const room = rooms.find((item) => item.room_id === roomId);
+  openActionConfirmation({
+    tone: "danger",
+    title: "Batalkan Booking Room",
+    message: "Booking dan data persiapan sesi akan dibatalkan. Pastikan pelanggan memang tidak melanjutkan.",
+    details: [
+      ["Room", room?.room_name || roomId],
+      ["Pelanggan", room?.customer_name || "-"],
+      ["Durasi", formatDurationMinutes(room?.booked_duration_minutes)],
+    ],
+    confirmLabel: "Ya, Batalkan Booking",
+    cancelLabel: "Kembali",
+    onConfirm: () => cancelBooking(roomId),
+  });
+}
+
 async function cancelBooking(roomId) {
   if (!API_BASE_URL.trim()) return;
   if (isCancellingBooking) return;
@@ -21677,7 +22424,7 @@ async function cancelBooking(roomId) {
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal membatalkan booking.");
     }
-    showInlineNotice("Pemesanan berhasil dibatalkan.");
+    showInlineNotice("Pemesanan berhasil dibatalkan.", "success");
     paymentSelectionRoomId = "";
     await loadRooms();
   } catch (error) {
@@ -22187,6 +22934,38 @@ async function submitRoomRecovery() {
   }
 }
 
+function requestMarkTransactionPaid(transactionId, paymentMethod, promoCode = "", options = {}) {
+  const transaction = getTransactionById(transactionId)
+    || todayTransactions.find((item) => item.transaction_id === transactionId)
+    || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null);
+
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan.", "error");
+    return;
+  }
+
+  if (!paymentMethod) {
+    showInlineNotice("Pilih metode pembayaran terlebih dahulu.", "error");
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "success",
+    title: "Konfirmasi Pembayaran",
+    message: "Pastikan uang telah diterima atau transfer sudah diverifikasi sebelum transaksi ditandai lunas.",
+    details: [
+      ["ID Transaksi", transaction.transaction_id || transactionId],
+      ["Room", transaction.room_name || transaction.room_id || "-"],
+      ["Metode", paymentMethod === "transfer" ? "Transfer / QRIS" : "Cash"],
+      ["Promo", promoCode || "-"],
+      ["Total", formatCurrency(getTransactionFinalTotal(transaction))],
+    ],
+    confirmLabel: "Ya, Tandai Lunas",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => markTransactionPaid(transactionId, paymentMethod, promoCode, options),
+  });
+}
+
 async function markTransactionPaid(transactionId, paymentMethod, promoCode = "", options = {}) {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
@@ -22222,7 +23001,7 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
       }
     }
 
-    showInlineNotice("Pembayaran berhasil ditandai lunas.");
+    showInlineNotice("Pembayaran berhasil ditandai lunas.", "success");
     await loadTodayTransactions();
   } catch (error) {
     showInlineNotice(error.message || "Gagal menandai pembayaran lunas.", "error");
@@ -22853,7 +23632,7 @@ async function handleRoomAction(event) {
       promoCode = promoInput.value.trim().toUpperCase();
     }
 
-    await markTransactionPaid(transactionId, paymentMethod, promoCode, { updateBillingSummary: true });
+    requestMarkTransactionPaid(transactionId, paymentMethod, promoCode, { updateBillingSummary: true });
     return;
   }
 
@@ -23041,7 +23820,7 @@ async function handleRoomAction(event) {
     const transactionId = button.dataset.transactionId || row?.dataset.transactionId || "";
     const paymentMethod = row?.querySelector(".transaction-pay-select")?.value || "";
 
-    await markTransactionPaid(transactionId, paymentMethod);
+    requestMarkTransactionPaid(transactionId, paymentMethod);
     return;
   }
 
@@ -23082,9 +23861,7 @@ async function handleRoomAction(event) {
 
   if (action === "cancel-booking") {
     const bookingRoomId = button.dataset.roomId || roomId || "";
-    if (confirm("Batalkan booking room ini?")) {
-      await cancelBooking(bookingRoomId);
-    }
+    requestCancelBooking(bookingRoomId);
     return;
   }
 
@@ -23702,4 +24479,40 @@ async function initializeDashboard() {
   }
 
   await Promise.all(initialLoads);
+}
+
+if (["127.0.0.1", "localhost"].includes(window.location.hostname)) {
+  Object.defineProperty(window, "__karaokeUiTest", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: Object.freeze({
+      showFloatingToast,
+      openActionConfirmation,
+      openActionResult,
+      closeActionConfirmation,
+      updateActionConfirmationField,
+      openFnbOrderPreview() {
+        rooms = [{
+          room_id: "ROOM-TEST",
+          room_name: "Ruangan Simulasi",
+          status: "occupied",
+        }];
+        selectedFbRoomId = "ROOM-TEST";
+        fnbOrderMode = "room";
+        fnbOrderPaymentMethod = "room_bill";
+        fnbOrderNote = "Tanpa es";
+        fbCartItems = [
+          {
+            menu_id: "MENU-TEST-1",
+            menu_name: "Minuman Simulasi",
+            quantity: 2,
+            price: 25000,
+            subtotal: 50000,
+          },
+        ];
+        return saveFnbOrder();
+      },
+    }),
+  });
 }
