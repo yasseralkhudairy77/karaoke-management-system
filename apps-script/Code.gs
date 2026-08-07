@@ -10375,27 +10375,6 @@ function getPostpaidPackageContext_(packageId) {
   };
 }
 
-function calculatePackageIncludedLcCredit_(workLogs, packageContext) {
-  var includedCount = Number(packageContext && packageContext.included_talent_count) || 0;
-  var includedDuration = Number(packageContext && packageContext.duration_minutes) || 0;
-
-  if (includedCount <= 0 || includedDuration <= 0) {
-    return 0;
-  }
-
-  return (workLogs || []).filter(function (log) {
-    var lcId = String(log.lc_id || "").trim();
-    return lcId && lcId !== "PENDING";
-  }).slice(0, includedCount).reduce(function (credit, log) {
-    var hourlyRate = Number(log.rate_per_hour) || 0;
-    var loggedDuration = inferLcWorkLogDurationMinutes_(log) || includedDuration;
-    var coveredDuration = Math.min(loggedDuration, includedDuration);
-    var coveredAmount = calculateLcRateForDuration_(coveredDuration, hourlyRate);
-
-    return credit + Math.min(Number(log.rate) || 0, coveredAmount);
-  }, 0);
-}
-
 function calculatePostpaidPackageRoomTotal_(durationMinutes, packageContext, ratePerHour) {
   var includedDuration = Number(packageContext && packageContext.duration_minutes) || 0;
   var packagePrice = Number(packageContext && packageContext.selling_price) || 0;
@@ -11101,7 +11080,6 @@ function closeSession_(roomId, cashierName, requestPayload) {
     var prepayTxId = "";
     var initialPaidMinutes = 0;
     var prepaidRoomTotal = 0;
-    var prepaidLcTotal = 0;
     var postpaidPackageContext = null;
     
     if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.prepayment_transaction_id) {
@@ -11119,7 +11097,6 @@ function closeSession_(roomId, cashierName, requestPayload) {
         }
         if (prepayTx) {
           prepaidRoomTotal = Number(prepayTx.room_total) || 0;
-          prepaidLcTotal = Number(prepayTx.lc_total) || 0;
         }
       } catch (err) {
         Logger.log("Error finding prepayment transaction: " + err.message);
@@ -11218,10 +11195,10 @@ function closeSession_(roomId, cashierName, requestPayload) {
           totalLcCost += Number(uniqueLcLogsMap[selId].rate) || 0;
         });
         
-        var includedLcCredit = postpaidPackageContext
-          ? calculatePackageIncludedLcCredit_(workLogRowsForLc, postpaidPackageContext)
-          : 0;
-        lcFeeTotal = Math.max(0, totalLcCost - prepaidLcTotal - includedLcCredit);
+        // Hak LC selalu dibayar penuh berdasarkan work log. Komponen Talent
+        // dalam paket adalah benefit paket dan tidak boleh mengurangi tagihan
+        // maupun hak pembayaran LC.
+        lcFeeTotal = Math.max(0, totalLcCost);
       } catch (lcErr) {
         Logger.log("Error calculating LC checkout fee: " + lcErr.message);
         throw lcErr;
@@ -11956,7 +11933,6 @@ function serializeTransactionLcEditContext_(context) {
   var currentLogTotal = context.lc_logs.reduce(function (total, entry) {
     return total + (Number(entry.log.rate) || 0);
   }, 0);
-
   return {
     ok: true,
     success: true,
@@ -11968,7 +11944,9 @@ function serializeTransactionLcEditContext_(context) {
     current_lc_total: Number(context.transaction.lc_total) || 0,
     current_grand_total: Number(context.transaction.grand_total) || 0,
     current_work_log_total: currentLogTotal,
-    billing_adjustment: (Number(context.transaction.lc_total) || 0) - currentLogTotal,
+    // Sistem post-payment membayar hak LC penuh. Selisih historis dan komponen
+    // Talent paket tidak boleh menjadi potongan tagihan LC.
+    billing_adjustment: 0,
     can_edit: context.can_edit,
     requires_admin_pin: context.requires_admin_pin,
     blocked_reason: context.blocked_reason || "",
@@ -12205,7 +12183,6 @@ function updateTransactionLcDurations_(payload) {
       return { ok: false, success: false, error: normalizedResult.error };
     }
 
-    var oldLogTotal = 0;
     var newLogTotal = 0;
     var changes = [];
 
@@ -12220,7 +12197,6 @@ function updateTransactionLcDurations_(payload) {
       var oldRate = Number(log.rate) || 0;
       var newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
 
-      oldLogTotal += oldRate;
       newLogTotal += newRate;
       changes.push({
         lc_id: assignment.lc_id,
@@ -12236,8 +12212,7 @@ function updateTransactionLcDurations_(payload) {
 
     var oldLcTotal = Number(context.transaction.lc_total) || 0;
     var oldGrandTotal = Number(context.transaction.grand_total) || 0;
-    var billingAdjustment = oldLcTotal - oldLogTotal;
-    var newLcTotal = Math.max(0, newLogTotal + billingAdjustment);
+    var newLcTotal = Math.max(0, newLogTotal);
     var newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
     var hasChanges = changes.some(function (change) {
       return change.old_duration_minutes !== change.new_duration_minutes

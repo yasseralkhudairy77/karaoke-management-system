@@ -5033,7 +5033,7 @@ function findFnbOrderById(orderId) {
 }
 
 function getFnbOrderCanCancel(order) {
-  return order?.order_status === "open";
+  return order?.order_status === "open" || order?.order_status === "paid";
 }
 
 function getFnbOrderCancelButtonLabel(order) {
@@ -5043,6 +5043,10 @@ function getFnbOrderCancelButtonLabel(order) {
 
   if (order?.order_status === "cancelled") {
     return "Sudah Dibatalkan";
+  }
+
+  if (order?.order_status === "paid") {
+    return "Batalkan & Refund";
   }
 
   return "Batalkan";
@@ -5057,17 +5061,21 @@ function requestCancelFnbOrder(orderId) {
   }
 
   if (!getFnbOrderCanCancel(order)) {
-    showInlineNotice("Hanya order F&B open yang bisa dibatalkan.", "error");
+    showInlineNotice("Order F&B yang sudah masuk tagihan room tidak bisa dibatalkan dari menu ini.", "error");
     return;
   }
 
+  const isPaidOrder = order.order_status === "paid";
   openActionConfirmation({
     tone: "danger",
     title: "Batalkan Order F&B",
-    message: "Order akan dibatalkan dan stok terkait dikembalikan. Tindakan ini tidak dapat dibatalkan kembali.",
+    message: isPaidOrder
+      ? "Order lunas akan dibatalkan, transaksi refund dibuat, dan stok dikembalikan. Tindakan ini tercatat dalam audit."
+      : "Order akan dibatalkan dan stok terkait dikembalikan. Tindakan ini tercatat dalam audit.",
     details: [
       ["ID Order", order.order_id || orderId],
       ["Room / Pelanggan", order.room_name || order.customer_name || "-"],
+      ["Status", isPaidOrder ? "Lunas — perlu refund" : "Open / belum ditagihkan"],
       ["Total", formatCurrency(order.order_total || 0)],
     ],
     field: {
@@ -5102,7 +5110,7 @@ async function cancelFnbOrder(orderId, reason) {
       action: "cancelFnbOrder",
       order_id: orderId,
       cancel_reason: reason,
-      cancelled_by: "Kasir",
+      cancelled_by: getLoggedInOperatorName(),
     });
 
     if (!data || data.ok !== true) {
@@ -7052,7 +7060,9 @@ function getLcDurationEditorPreview() {
     return total + calculateLcCharge(duration, log.rate_per_hour);
   }, 0);
   const oldLcTotal = Number(details.current_lc_total) || 0;
-  const newLcTotal = Math.max(0, newWorkLogTotal + (Number(details.billing_adjustment) || 0));
+  // Hak LC dibayar penuh dari seluruh work log. Promo/paket dan selisih
+  // historis tidak boleh menjadi potongan tersembunyi pada total LC.
+  const newLcTotal = Math.max(0, newWorkLogTotal);
   const oldGrandTotal = Number(details.current_grand_total) || 0;
   const newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
   const changed = (details.lc_logs || []).some((log) => (
