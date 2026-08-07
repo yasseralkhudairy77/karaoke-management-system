@@ -21829,69 +21829,75 @@ async function activatePreparedSession(roomId) {
 
 function showLcWarningModal(roomId) {
   const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId, room_name: roomId };
+  document.querySelectorAll('[data-modal="lc-warning"]').forEach((element) => element.remove());
+
   const modalOverlay = document.createElement("div");
-  modalOverlay.className = "erp-modal-overlay active";
-  modalOverlay.style.zIndex = "10000";
+  modalOverlay.className = "lc-warning-modal-overlay";
+  modalOverlay.dataset.modal = "lc-warning";
+  modalOverlay.setAttribute("role", "dialog");
+  modalOverlay.setAttribute("aria-modal", "true");
+  modalOverlay.setAttribute("aria-labelledby", "lc-warning-modal-title");
 
   const modalBox = document.createElement("div");
-  modalBox.className = "erp-modal-box";
-  modalBox.style.maxWidth = "440px";
+  modalBox.className = "lc-warning-modal-dialog";
 
   const header = document.createElement("div");
-  header.style.display = "flex";
-  header.style.alignItems = "center";
-  header.style.gap = "10px";
-  header.style.marginBottom = "14px";
+  header.className = "lc-warning-modal-header";
 
   const icon = document.createElement("span");
-  icon.style.fontSize = "24px";
-  icon.textContent = "⚠️";
+  icon.className = "lc-warning-modal-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "!";
 
   const title = document.createElement("h3");
-  title.style.margin = "0";
-  title.style.fontSize = "16px";
-  title.style.fontWeight = "800";
-  title.style.color = "var(--warning, #f59e0b)";
+  title.id = "lc-warning-modal-title";
+  title.className = "lc-warning-modal-title";
   title.textContent = "Peringatan Pilihan LC";
 
   header.append(icon, title);
 
   const bodyText = document.createElement("p");
-  bodyText.style.fontSize = "13px";
-  bodyText.style.lineHeight = "1.5";
-  bodyText.style.color = "var(--text)";
-  bodyText.style.marginBottom = "20px";
+  bodyText.className = "lc-warning-modal-body";
   bodyText.innerHTML = `Ruangan <strong>${escapeHtml(room.room_name || roomId)}</strong> belum memiliki LC yang diinput.<br><br>Apakah transaksi ini memang <strong>TANPA LC</strong>, atau Anda belum/lupa menginput LC?`;
 
   const btnContainer = document.createElement("div");
-  btnContainer.style.display = "flex";
-  btnContainer.style.gap = "10px";
-  btnContainer.style.justifyContent = "flex-end";
+  btnContainer.className = "lc-warning-modal-actions";
 
   const btnInputNow = document.createElement("button");
-  btnInputNow.className = "erp-btn erp-btn-primary";
-  btnInputNow.style.padding = "8px 14px";
-  btnInputNow.style.fontWeight = "700";
-  btnInputNow.textContent = "+ Input LC Sekarang";
+  btnInputNow.className = "lc-warning-modal-button lc-warning-modal-button--secondary";
+  btnInputNow.type = "button";
+  btnInputNow.textContent = "Input LC Sekarang";
+
+  const cleanupModal = () => {
+    modalOverlay.remove();
+  };
+
   btnInputNow.onclick = () => {
-    document.body.removeChild(modalOverlay);
+    cleanupModal();
     lcSelectionRoomId = roomId;
     renderRooms();
   };
 
   const btnProceedNoLc = document.createElement("button");
-  btnProceedNoLc.className = "erp-btn erp-btn-secondary";
-  btnProceedNoLc.style.padding = "8px 14px";
+  btnProceedNoLc.className = "lc-warning-modal-button lc-warning-modal-button--primary";
+  btnProceedNoLc.type = "button";
   btnProceedNoLc.textContent = "Lanjutkan Tanpa LC";
   btnProceedNoLc.onclick = async () => {
-    document.body.removeChild(modalOverlay);
-    await closeSession(roomId, { skipLcWarning: true });
+    btnProceedNoLc.disabled = true;
+    btnInputNow.disabled = true;
+    btnProceedNoLc.textContent = "Memproses...";
+    try {
+      await closeSession(roomId, { skipLcWarning: true });
+    } finally {
+      cleanupModal();
+    }
   };
 
   btnContainer.append(btnProceedNoLc, btnInputNow);
   modalBox.append(header, bodyText, btnContainer);
   modalOverlay.appendChild(modalBox);
   document.body.appendChild(modalOverlay);
+  btnProceedNoLc.focus();
 }
 
 async function closeSession(roomId, options = {}) {
