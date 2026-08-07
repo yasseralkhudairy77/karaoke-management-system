@@ -229,6 +229,10 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "promo_discount",
   "customer_name",
   "general_bill_id",
+  "entry_source",
+  "source_note",
+  "entered_by",
+  "idempotency_key",
 ];
 var PROMO_MASTER_HEADERS = [
   "code",
@@ -1100,6 +1104,10 @@ function doPost(e) {
 
     if (action === "settleGeneralFnbBill") {
       return jsonResponse(settleGeneralFnbBill_(payload));
+    }
+
+    if (action === "createManualOutageTransaction") {
+      return jsonResponse(createManualOutageTransaction_(payload));
     }
 
     if (action === "previewSessionPricing") {
@@ -8651,6 +8659,9 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
         payment_status: transaction.payment_status || "",
         cashier_name: transaction.cashier_name || "",
         created_at: transaction.created_at || "",
+        entry_source: transaction.entry_source || "",
+        source_note: transaction.source_note || "",
+        entered_by: transaction.entered_by || "",
       };
     })
     .sort(function (first, second) {
@@ -13461,6 +13472,391 @@ function buildFnbOrderDuplicateFingerprint_(order, items) {
 
 function generateGeneralFnbBillId_() {
   return "GBILL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function createManualOutageTransaction_(payload) {
+  var request = payload || {};
+  var mode = String(request.mode || "").trim().toLowerCase();
+  var idempotencyKey = String(request.idempotency_key || "").trim();
+  var sourceNote = String(request.source_note || "").trim();
+  var customerName = String(request.customer_name || "").trim();
+  var sourceCashierName = String(request.cashier_name || "").trim() || "Kasir Manual";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var paymentStatus = String(request.payment_status || "paid").trim().toLowerCase();
+  var durationMinutes = Math.round(Number(request.duration_minutes) || 0);
+  var lcAssignments = Array.isArray(request.lc_assignments) ? request.lc_assignments : [];
+  var requestedItems = Array.isArray(request.fnb_items) ? request.fnb_items : [];
+
+  if (mode !== "room" && mode !== "general_fnb") {
+    return { ok: false, success: false, error: "Mode transaksi manual tidak valid." };
+  }
+  if (!idempotencyKey || idempotencyKey.length > 160) {
+    return { ok: false, success: false, error: "Kunci penyimpanan transaksi tidak valid." };
+  }
+  if (sourceNote.length < 3) {
+    return { ok: false, success: false, error: "Catatan sumber nota minimal 3 karakter." };
+  }
+  if (!getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib cash atau transfer." };
+  }
+  if (paymentStatus !== "paid" && paymentStatus !== "unpaid") {
+    return { ok: false, success: false, error: "Status pembayaran tidak valid." };
+  }
+  if (mode === "general_fnb" && !customerName) {
+    return { ok: false, success: false, error: "Nama pelanggan F&B umum wajib diisi." };
+  }
+
+  var auth = validateAdminPinPayload_(
+    request.owner_pin,
+    "owner",
+    "create_manual_outage_transaction",
+    request.entered_by || "Owner",
+    true
+  );
+  if (!auth.success) {
+    return {
+      ok: false,
+      success: false,
+      error: auth.message,
+      block_reason: auth.block_reason,
+    };
+  }
+
+  var enteredBy = auth.employee && auth.employee.employee_name
+    ? auth.employee.employee_name
+    : String(request.entered_by || "Owner").trim();
+  var startTime = String(request.start_time || "").trim();
+  var startDate = parseJakartaDateTimeValue_(startTime);
+
+  if (!startDate) {
+    return { ok: false, success: false, error: "Tanggal dan jam transaksi tidak valid." };
+  }
+
+  var now = new Date();
+  var ageMs = now.getTime() - startDate.getTime();
+  if (ageMs < -5 * 60000) {
+    return { ok: false, success: false, error: "Waktu transaksi tidak boleh berada di masa depan." };
+  }
+  if (ageMs > 90 * 86400000) {
+    return { ok: false, success: false, error: "Backdate transaksi maksimal 90 hari." };
+  }
+
+  if (mode === "room") {
+    if (durationMinutes < 30 || durationMinutes > 720 || durationMinutes % 30 !== 0) {
+      return {
+        ok: false,
+        success: false,
+        error: "Durasi room wajib 30 menit sampai 12 jam dengan kelipatan 30 menit.",
+      };
+    }
+  } else {
+    durationMinutes = 0;
+    lcAssignments = [];
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getHeaderMap_(transactionsSheet);
+    var existingRow = findRowByValue_(
+      transactionsSheet,
+      transactionHeaders,
+      "idempotency_key",
+      idempotencyKey
+    );
+    if (existingRow) {
+      return {
+        ok: true,
+        success: true,
+        idempotent_replay: true,
+        message: "Transaksi manual ini sudah pernah disimpan.",
+        transaction: getRowObject_(transactionsSheet, transactionHeaders, existingRow),
+      };
+    }
+
+    var room = {
+      room_id: FNB_GENERAL_ROOM_ID,
+      room_name: customerName
+        ? FNB_GENERAL_ROOM_NAME + " - " + customerName
+        : FNB_GENERAL_ROOM_NAME,
+      rate_per_hour: 0,
+    };
+
+    if (mode === "room") {
+      var roomId = String(request.room_id || "").trim();
+      var roomsSheet = getSheet_("Rooms");
+      var roomsHeaders = getHeaderMap_(roomsSheet);
+      var roomRow = findRowByValue_(roomsSheet, roomsHeaders, "room_id", roomId);
+      if (!roomRow) {
+        return { ok: false, success: false, error: "Ruangan tidak ditemukan di master." };
+      }
+      room = getRowObject_(roomsSheet, roomsHeaders, roomRow);
+    }
+
+    var normalizedLcs = [];
+    var seenLcIds = {};
+    if (mode === "room" && lcAssignments.length > 0) {
+      var lcRows = readSheetAsObjects_("LcMaster");
+      var lcMap = {};
+      lcRows.forEach(function (lc) {
+        lcMap[String(lc.lc_id || "").trim()] = lc;
+      });
+
+      for (var lcIndex = 0; lcIndex < lcAssignments.length; lcIndex++) {
+        var requestedLc = lcAssignments[lcIndex] || {};
+        var lcId = String(requestedLc.lc_id || "").trim();
+        var lcDuration = Math.round(Number(requestedLc.duration_minutes) || durationMinutes);
+        var masterLc = lcMap[lcId];
+
+        if (!lcId || !masterLc || String(masterLc.status || "").trim().toLowerCase() !== "active") {
+          return { ok: false, success: false, error: "LC pada nota tidak ditemukan atau tidak aktif." };
+        }
+        if (seenLcIds[lcId]) {
+          return { ok: false, success: false, error: "LC yang sama tidak boleh dipilih dua kali." };
+        }
+        if (lcDuration < 30 || lcDuration > 720 || lcDuration % 30 !== 0) {
+          return {
+            ok: false,
+            success: false,
+            error: "Durasi setiap LC wajib 30 menit sampai 12 jam dengan kelipatan 30 menit.",
+          };
+        }
+
+        seenLcIds[lcId] = true;
+        var lcHourlyRate = Number(masterLc.rate_per_room) || 0;
+        normalizedLcs.push({
+          lc_id: lcId,
+          lc_name: masterLc.lc_name || lcId,
+          duration_minutes: lcDuration,
+          rate_per_hour: lcHourlyRate,
+          rate: calculateLcRateForDuration_(lcDuration, lcHourlyRate),
+        });
+      }
+    }
+
+    var menuMap = getMenuItemsMap_();
+    var normalizedItems = requestedItems.length > 0
+      ? normalizeFnbOrderItems_(requestedItems, menuMap)
+      : [];
+    if (mode === "general_fnb" && normalizedItems.length === 0) {
+      return { ok: false, success: false, error: "Minimal satu item F&B wajib dipilih." };
+    }
+
+    var endDate = new Date(startDate.getTime() + durationMinutes * 60000);
+    var normalizedStartTime = toJakartaIsoString_(startDate);
+    var normalizedEndTime = toJakartaIsoString_(mode === "room" ? endDate : startDate);
+    var transactionId = generateTransactionId_();
+    var sessionId = mode === "room" ? generateRoomSessionId_(room.room_id) : "";
+    var fnbTotal = normalizedItems.reduce(function (sum, item) {
+      return sum + Number(item.subtotal || 0);
+    }, 0);
+    var roomTotal = mode === "room"
+      ? calculateRoomTotal_(durationMinutes, Number(room.rate_per_hour) || 0)
+      : 0;
+    var lcTotal = normalizedLcs.reduce(function (sum, lc) {
+      return sum + Number(lc.rate || 0);
+    }, 0);
+    var fnbOrderIds = [];
+    var detailedOrders = [];
+
+    if (normalizedItems.length > 0) {
+      var orderId = generateFnbOrderId_();
+      var order = {
+        order_id: orderId,
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        room_start_time: normalizedStartTime,
+        order_status: "billed",
+        order_total: fnbTotal,
+        cashier_name: sourceCashierName,
+        note: "Input manual mati listrik | " + sourceNote,
+        customer_name: customerName,
+        general_bill_id: mode === "general_fnb" ? generateGeneralFnbBillId_() : "",
+        billed_transaction_id: transactionId,
+        idempotency_key: idempotencyKey + ":fnb",
+        created_at: normalizedStartTime,
+        updated_at: normalizedEndTime,
+      };
+      var orderItems = normalizedItems.map(function (item) {
+        return {
+          order_id: orderId,
+          menu_id: item.menu_id,
+          menu_name: item.menu_name,
+          category: item.category,
+          price: item.price,
+          quantity: item.quantity,
+          subtotal: item.subtotal,
+          bonus_sales_lc: item.bonus_sales_lc,
+          created_at: normalizedStartTime,
+        };
+      });
+
+      appendFnbOrder_(order);
+      appendFnbOrderItems_(orderItems);
+      fnbOrderIds.push(orderId);
+      detailedOrders.push(Object.assign({}, order, { items: orderItems }));
+    }
+
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      start_time: normalizedStartTime,
+      end_time: normalizedEndTime,
+      duration_minutes: durationMinutes,
+      rate_per_hour: Number(room.rate_per_hour) || 0,
+      room_total: roomTotal,
+      fnb_total: fnbTotal,
+      lc_total: lcTotal,
+      grand_total: roomTotal + fnbTotal + lcTotal,
+      fnb_order_ids: fnbOrderIds.join(","),
+      transaction_type: mode === "room" ? "session_checkout" : "fnb_general",
+      payment_method: paymentMethod,
+      payment_status: paymentStatus,
+      cashier_name: sourceCashierName,
+      customer_name: customerName,
+      general_bill_id: mode === "general_fnb" && detailedOrders[0]
+        ? detailedOrders[0].general_bill_id
+        : "",
+      created_at: normalizedEndTime,
+      entry_source: "manual_power_outage",
+      source_note: sourceNote,
+      entered_by: enteredBy,
+      idempotency_key: idempotencyKey,
+    };
+    appendTransaction_(transaction);
+
+    if (mode === "room") {
+      appendRoomSession_({
+        session_id: sessionId,
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        booking_mode: "manual_power_outage",
+        status: "closed",
+        start_time: normalizedStartTime,
+        scheduled_end_time: normalizedEndTime,
+        end_time: normalizedEndTime,
+        booked_duration_minutes: durationMinutes,
+        package_included_minutes: 0,
+        promotion_free_minutes: 0,
+        billable_room_minutes: durationMinutes,
+        rate_per_hour: Number(room.rate_per_hour) || 0,
+        cashier_name: sourceCashierName,
+        created_at: normalizedStartTime,
+        updated_at: normalizedEndTime,
+        closed_transaction_id: transactionId,
+        idempotency_key: idempotencyKey,
+        legacy_room_start_time: normalizedStartTime,
+        note: "Input manual mati listrik | " + sourceNote,
+        customer_name: customerName,
+        package_id: "",
+        prepayment_transaction_id: "",
+        lc_ids: normalizedLcs.map(function (lc) { return lc.lc_id; }).join(","),
+        lc_assignments: serializeLcAssignments_(normalizedLcs),
+      });
+
+      normalizedLcs.forEach(function (lc) {
+        appendLcWorkLog_({
+          log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + lc.lc_id + "-" + Math.floor(Math.random() * 1000),
+          session_id: sessionId,
+          lc_id: lc.lc_id,
+          lc_name: lc.lc_name,
+          rate: lc.rate,
+          duration_minutes: lc.duration_minutes,
+          rate_per_hour: lc.rate_per_hour,
+          status: "done",
+          created_at: normalizedStartTime,
+          closed_at: toJakartaIsoString_(new Date(startDate.getTime() + lc.duration_minutes * 60000)),
+          payroll_id: "",
+        });
+      });
+    }
+
+    var stockResult = deductStockForFnbOrders_(
+      detailedOrders,
+      transactionId,
+      sourceCashierName,
+      normalizedEndTime
+    );
+
+    if (normalizedLcs.length > 0 && detailedOrders.length > 0) {
+      detailedOrders.forEach(function (order) {
+        (order.items || []).forEach(function (item) {
+          var totalBonus = Number(item.bonus_sales_lc || 0) * Number(item.quantity || 0);
+          if (totalBonus <= 0) {
+            return;
+          }
+          var baseShare = Math.floor(totalBonus / normalizedLcs.length);
+          var remainder = totalBonus - baseShare * normalizedLcs.length;
+          normalizedLcs.forEach(function (lc, index) {
+            var bonusTotal = baseShare + (index < remainder ? 1 : 0);
+            if (bonusTotal <= 0) {
+              return;
+            }
+            appendObjectRow_(ensureLcSalesBonusLogsSheet_(), {
+              bonus_log_id: generateLcFinanceId_("LCBONUS"),
+              operational_date: getOperationalDateString_(normalizedStartTime),
+              transaction_id: transactionId,
+              order_id: order.order_id,
+              menu_id: item.menu_id,
+              menu_name: item.menu_name,
+              category: item.category,
+              lc_id: lc.lc_id,
+              lc_name: lc.lc_name,
+              quantity: Number(item.quantity || 0) / normalizedLcs.length,
+              bonus_per_item: Number(item.bonus_sales_lc || 0),
+              bonus_total: bonusTotal,
+              source_status: "manual_power_outage",
+              payroll_id: "",
+              created_at: normalizedEndTime,
+              created_by: enteredBy,
+              voided_at: "",
+              void_reason: "",
+            });
+          });
+        });
+      });
+    }
+
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: room.room_name || customerName || transactionId,
+      action_type: "create_manual_power_outage",
+      old_value: "",
+      new_value: transaction,
+      changed_by: enteredBy,
+      note: sourceNote,
+      result: "success",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi manual berhasil disimpan dan siap dicetak.",
+      transaction: transaction,
+      fnb_orders: detailedOrders,
+      lc_details: {
+        detail_available: normalizedLcs.length > 0,
+        lc_logs: normalizedLcs,
+        lc_total: lcTotal,
+        work_log_total: lcTotal,
+        billing_adjustment: 0,
+      },
+      stock_movements: stockResult.movements,
+      stock_warnings: stockResult.warnings,
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function settleGeneralFnbBill_(payload) {

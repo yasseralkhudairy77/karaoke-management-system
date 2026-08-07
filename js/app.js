@@ -891,6 +891,9 @@ let generalFnbBillPaymentMethods = {};
 let isSettlingGeneralFnbBill = false;
 let activeFnbSubTab = "order";
 let activeTransactionsSubTab = "history";
+let manualTransactionDraft = null;
+let isSavingManualTransaction = false;
+let manualTransactionIdempotencyKey = "";
 let openFnbOrders = [];
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
@@ -18069,6 +18072,9 @@ function refreshActiveTabData() {
     case "transactions":
       if (activeTransactionsSubTab === "closing") {
         loadTodayCashierClosings();
+      } else if (activeTransactionsSubTab === "manual" && getCurrentOperatorRole() === "owner") {
+        loadMenuItems();
+        loadLcs();
       } else {
         loadTodayTransactions();
       }
@@ -18562,7 +18568,7 @@ async function loadLcs(force = false) {
 
   isLoadingLcs = true;
   lcLoadError = "";
-  if (activeDashboardTab === "lc") {
+  if (activeDashboardTab === "lc" || (activeDashboardTab === "transactions" && activeTransactionsSubTab === "manual")) {
     renderRooms();
   }
   try {
@@ -18599,7 +18605,7 @@ async function loadLcs(force = false) {
     lcLoadError = error.message || "Daftar LC gagal dimuat.";
   } finally {
     isLoadingLcs = false;
-    if (activeDashboardTab === "lc") {
+    if (activeDashboardTab === "lc" || (activeDashboardTab === "transactions" && activeTransactionsSubTab === "manual")) {
       renderRooms();
     }
   }
@@ -21170,10 +21176,16 @@ function createTransactionsSubNavElement() {
   wrapper.className = "transactions-subnav";
   wrapper.setAttribute("aria-label", "Sub menu Transaksi");
 
-  [
+  const transactionTabs = [
     ["history", "📑 Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
     ["closing", "💵 Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
-  ].forEach(([key, label, description]) => {
+  ];
+
+  if (getCurrentOperatorRole() === "owner") {
+    transactionTabs.push(["manual", "Input Manual", "Masukkan transaksi backdate saat operasional mati listrik"]);
+  }
+
+  transactionTabs.forEach(([key, label, description]) => {
     const button = document.createElement("button");
     button.className = activeTransactionsSubTab === key
       ? "transactions-subnav-button active"
@@ -21193,6 +21205,259 @@ function createTransactionsSubNavElement() {
   });
 
   return wrapper;
+}
+
+function getManualTransactionDefaults() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date()).reduce((result, part) => {
+    result[part.type] = part.value;
+    return result;
+  }, {});
+
+  return {
+    mode: "room",
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+    room_id: rooms[0]?.room_id || "",
+    duration_minutes: 120,
+    customer_name: "",
+    cashier_name: "",
+    payment_method: "transfer",
+    payment_status: "paid",
+    source_note: "Nota manual saat mati listrik",
+    selected_menu_id: "",
+    fnb_items: [],
+    selected_lc_id: "",
+    lc_assignments: [],
+  };
+}
+
+function ensureManualTransactionDraft() {
+  if (!manualTransactionDraft) {
+    manualTransactionDraft = getManualTransactionDefaults();
+  }
+  if (!manualTransactionDraft.room_id && rooms[0]) {
+    manualTransactionDraft.room_id = rooms[0].room_id;
+  }
+  return manualTransactionDraft;
+}
+
+function resetManualTransactionDraft() {
+  manualTransactionDraft = getManualTransactionDefaults();
+  manualTransactionIdempotencyKey = "";
+}
+
+function getManualTransactionTotals() {
+  const draft = ensureManualTransactionDraft();
+  const room = rooms.find((item) => item.room_id === draft.room_id);
+  const roomTotal = draft.mode === "room"
+    ? Math.ceil(((Number(draft.duration_minutes) || 0) / 60) * (Number(room?.rate_per_hour) || 0))
+    : 0;
+  const fnbTotal = draft.fnb_items.reduce((sum, item) => {
+    const menu = menuItems.find((entry) => entry.menu_id === item.menu_id);
+    return sum + (Number(menu?.price) || 0) * (Number(item.quantity) || 0);
+  }, 0);
+  const lcTotal = draft.mode === "room"
+    ? draft.lc_assignments.reduce((sum, assignment) => {
+      const lc = lcs.find((entry) => entry.lc_id === assignment.lc_id);
+      return sum + Math.ceil((Number(assignment.duration_minutes) || 0) / 60)
+        * (Number(lc?.rate_per_room) || 0);
+    }, 0)
+    : 0;
+
+  return { roomTotal, fnbTotal, lcTotal, grandTotal: roomTotal + fnbTotal + lcTotal };
+}
+
+function createManualOption(value, label, selectedValue) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  option.selected = String(value) === String(selectedValue);
+  return option;
+}
+
+function fillManualSelect(select, options, selectedValue) {
+  options.forEach(([value, label]) => {
+    select.appendChild(createManualOption(value, label, selectedValue));
+  });
+}
+
+function createManualTransactionPanelElement() {
+  const draft = ensureManualTransactionDraft();
+  const totals = getManualTransactionTotals();
+  const panel = document.createElement("section");
+  panel.className = "manual-transaction-panel";
+  panel.innerHTML = `
+    <header class="manual-transaction-heading">
+      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus owner. Semua harga diambil dari data master.</p></div>
+      <span class="manual-transaction-owner-badge">OWNER</span>
+    </header>
+    <div class="manual-transaction-mode">
+      <button type="button" data-action="set-manual-transaction-mode" data-mode="room">Room + F&amp;B + LC</button>
+      <button type="button" data-action="set-manual-transaction-mode" data-mode="general_fnb">F&amp;B Umum</button>
+    </div>
+    <div class="manual-transaction-fields">
+      <label><span>Tanggal Nota</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
+      <label><span>Jam Mulai</span><input type="time" data-action="update-manual-transaction" data-field="time"></label>
+      <label><span>Metode Bayar</span><select data-action="update-manual-transaction" data-field="payment_method"></select></label>
+      <label><span>Status</span><select data-action="update-manual-transaction" data-field="payment_status"></select></label>
+    </div>
+    <div class="manual-transaction-room-fields manual-transaction-fields"></div>
+    <div class="manual-transaction-fields">
+      <label><span class="manual-customer-label"></span><input type="text" data-action="update-manual-transaction" data-field="customer_name"></label>
+      <label><span>Kasir pada Nota</span><input type="text" data-action="update-manual-transaction" data-field="cashier_name" placeholder="Contoh: Alfin"></label>
+      <label class="manual-note-field"><span>Catatan Nota</span><input type="text" data-action="update-manual-transaction" data-field="source_note" placeholder="Contoh: Nota kasir Alfin saat listrik padam"></label>
+    </div>
+    <div class="manual-transaction-detail-grid">
+      <section class="manual-transaction-detail manual-fnb-detail">
+        <h4>F&amp;B</h4>
+        <div class="manual-transaction-picker"><select data-action="update-manual-transaction" data-field="selected_menu_id"></select><button type="button" data-action="add-manual-fnb-item">Tambah</button></div>
+        <div class="manual-transaction-lines"></div>
+      </section>
+      <section class="manual-transaction-detail manual-lc-detail">
+        <h4>Lady Companion</h4>
+        <div class="manual-transaction-picker"><select data-action="update-manual-transaction" data-field="selected_lc_id"></select><button type="button" data-action="add-manual-lc">Tambah</button></div>
+        <div class="manual-transaction-lines"></div>
+      </section>
+    </div>
+    <div class="manual-transaction-summary"></div>
+    <div class="manual-transaction-actions">
+      <button type="button" class="secondary" data-action="reset-manual-transaction">Kosongkan</button>
+      <button type="button" data-action="review-manual-transaction">Review &amp; Simpan</button>
+    </div>
+  `;
+
+  panel.querySelectorAll("[data-action='set-manual-transaction-mode']").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === draft.mode);
+  });
+  const setValue = (field, value) => {
+    const control = panel.querySelector(`[data-field='${field}']`);
+    if (control) control.value = value ?? "";
+  };
+  setValue("date", draft.date);
+  setValue("time", draft.time);
+  setValue("customer_name", draft.customer_name);
+  setValue("cashier_name", draft.cashier_name);
+  setValue("source_note", draft.source_note);
+  fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Cash"], ["transfer", "Transfer"]], draft.payment_method);
+  fillManualSelect(panel.querySelector("[data-field='payment_status']"), [["paid", "Lunas"], ["unpaid", "Belum Dibayar"]], draft.payment_status);
+
+  const roomFields = panel.querySelector(".manual-transaction-room-fields");
+  const lcDetail = panel.querySelector(".manual-lc-detail");
+  if (draft.mode === "room") {
+    roomFields.innerHTML = `
+      <label><span>Ruangan</span><select data-action="update-manual-transaction" data-field="room_id"></select></label>
+      <label><span>Durasi Room</span><select data-action="update-manual-transaction" data-field="duration_minutes"></select></label>
+    `;
+    fillManualSelect(
+      roomFields.querySelector("[data-field='room_id']"),
+      rooms.map((room) => [room.room_id, `${room.room_name || room.room_id} - ${formatCurrency(room.rate_per_hour)}/jam`]),
+      draft.room_id
+    );
+    fillManualSelect(
+      roomFields.querySelector("[data-field='duration_minutes']"),
+      Array.from({ length: 24 }, (_, index) => [(index + 1) * 30, formatDurationMinutes((index + 1) * 30)]),
+      draft.duration_minutes
+    );
+  } else {
+    roomFields.remove();
+    lcDetail.remove();
+  }
+  panel.querySelector(".manual-customer-label").textContent = draft.mode === "room" ? "Nama Tamu / Tuan" : "Nama Pelanggan";
+
+  const menuSelect = panel.querySelector("[data-field='selected_menu_id']");
+  fillManualSelect(
+    menuSelect,
+    [["", "Pilih menu..."], ...menuItems.filter((item) => item.status === "active").map((item) => [item.menu_id, `${item.menu_name} - ${formatCurrency(item.price)}`])],
+    draft.selected_menu_id
+  );
+  panel.querySelector("[data-action='add-manual-fnb-item']").disabled = !draft.selected_menu_id;
+  const fnbLines = panel.querySelector(".manual-fnb-detail .manual-transaction-lines");
+  draft.fnb_items.forEach((item) => {
+    const menu = menuItems.find((entry) => entry.menu_id === item.menu_id);
+    const row = document.createElement("div");
+    row.className = "manual-transaction-line";
+    const name = document.createElement("span");
+    name.textContent = `${menu?.menu_name || item.menu_id} - ${formatCurrency(menu?.price)}`;
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.max = "99";
+    qty.value = item.quantity;
+    qty.dataset.action = "update-manual-fnb-quantity";
+    qty.dataset.menuId = item.menu_id;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.action = "remove-manual-fnb-item";
+    remove.dataset.menuId = item.menu_id;
+    remove.title = "Hapus item";
+    remove.textContent = "\u00d7";
+    row.append(name, qty, remove);
+    fnbLines.appendChild(row);
+  });
+  if (!draft.fnb_items.length) {
+    fnbLines.textContent = "Tidak ada F&B pada nota.";
+    fnbLines.classList.add("manual-transaction-empty");
+  }
+
+  if (draft.mode === "room") {
+    const lcSelect = panel.querySelector("[data-field='selected_lc_id']");
+    fillManualSelect(
+      lcSelect,
+      [["", "Pilih LC..."], ...lcs.filter((lc) => String(lc.status || "").toLowerCase() === "active"
+        && !draft.lc_assignments.some((entry) => entry.lc_id === lc.lc_id))
+        .map((lc) => [lc.lc_id, `${lc.lc_name} - ${formatCurrency(lc.rate_per_room)}/jam`])],
+      draft.selected_lc_id
+    );
+    panel.querySelector("[data-action='add-manual-lc']").disabled = !draft.selected_lc_id;
+    const lcLines = panel.querySelector(".manual-lc-detail .manual-transaction-lines");
+    draft.lc_assignments.forEach((assignment) => {
+      const lc = lcs.find((entry) => entry.lc_id === assignment.lc_id);
+      const row = document.createElement("div");
+      row.className = "manual-transaction-line";
+      const name = document.createElement("span");
+      name.textContent = `${lc?.lc_name || assignment.lc_id} - ${formatCurrency(lc?.rate_per_room)}/jam`;
+      const duration = document.createElement("select");
+      duration.dataset.action = "update-manual-lc-duration";
+      duration.dataset.lcId = assignment.lc_id;
+      fillManualSelect(duration, Array.from({ length: 24 }, (_, index) => [(index + 1) * 30, formatDurationMinutes((index + 1) * 30)]), assignment.duration_minutes);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.action = "remove-manual-lc";
+      remove.dataset.lcId = assignment.lc_id;
+      remove.title = "Hapus LC";
+      remove.textContent = "\u00d7";
+      row.append(name, duration, remove);
+      lcLines.appendChild(row);
+    });
+    if (!draft.lc_assignments.length) {
+      lcLines.textContent = "Tanpa LC.";
+      lcLines.classList.add("manual-transaction-empty");
+    }
+  }
+
+  const summary = panel.querySelector(".manual-transaction-summary");
+  [["Room", totals.roomTotal], ["F&B", totals.fnbTotal], ["LC", totals.lcTotal], ["Total", totals.grandTotal]].forEach(([label, amount], index) => {
+    const item = document.createElement("div");
+    if (index === 3) item.className = "manual-transaction-grand-total";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const value = document.createElement("strong");
+    value.textContent = formatCurrency(amount);
+    item.append(name, value);
+    summary.appendChild(item);
+  });
+  const saveButton = panel.querySelector("[data-action='review-manual-transaction']");
+  saveButton.disabled = isSavingManualTransaction;
+  saveButton.textContent = isSavingManualTransaction ? "Menyimpan..." : "Review & Simpan";
+  return panel;
 }
 
 function createReportsSubNavElement() {
@@ -21314,6 +21579,8 @@ function appendDashboardTabContent(panel, tabKey) {
         } else if (activeTransactionsSubTab === "closing") {
           // Shift Kasir UI – reuse the same transaction history which already includes closing components
           panel.appendChild(renderTransactionHistory());
+        } else if (activeTransactionsSubTab === "manual" && getCurrentOperatorRole() === "owner") {
+          panel.appendChild(createManualTransactionPanelElement());
         }
         break;
       }
@@ -23295,6 +23562,126 @@ function setActionButtonsDisabled(isDisabled) {
     });
 }
 
+function updateManualTransactionField(field, value) {
+  const draft = ensureManualTransactionDraft();
+  if (field === "duration_minutes") {
+    draft[field] = Number(value) || 0;
+  } else {
+    draft[field] = value;
+  }
+  manualTransactionIdempotencyKey = "";
+}
+
+function validateManualTransactionDraft() {
+  const draft = ensureManualTransactionDraft();
+  if (!draft.date || !draft.time) return "Tanggal dan jam nota wajib diisi.";
+  if (draft.mode === "room" && !draft.room_id) return "Ruangan wajib dipilih.";
+  if (draft.mode === "general_fnb" && !draft.customer_name.trim()) return "Nama pelanggan F&B umum wajib diisi.";
+  if (draft.mode === "general_fnb" && !draft.fnb_items.length) return "Minimal satu item F&B wajib dipilih.";
+  if (String(draft.source_note || "").trim().length < 3) return "Catatan sumber nota minimal 3 karakter.";
+  const transactionTime = new Date(`${draft.date}T${draft.time}:00+07:00`);
+  if (Number.isNaN(transactionTime.getTime())) return "Tanggal dan jam nota tidak valid.";
+  if (transactionTime.getTime() > Date.now() + 5 * 60000) return "Waktu nota tidak boleh berada di masa depan.";
+  if (Date.now() - transactionTime.getTime() > 90 * 86400000) return "Backdate transaksi maksimal 90 hari.";
+  return "";
+}
+
+function reviewManualTransaction() {
+  const error = validateManualTransactionDraft();
+  if (error) {
+    showFloatingToast(error, "error");
+    return;
+  }
+
+  const draft = ensureManualTransactionDraft();
+  const room = rooms.find((item) => item.room_id === draft.room_id);
+  const totals = getManualTransactionTotals();
+  openActionConfirmation({
+    tone: "warning",
+    title: "Simpan Transaksi Backdate?",
+    message: "Periksa kembali nota. Setelah disimpan, transaksi masuk laporan, stok, work log LC, dan siap dicetak.",
+    details: [
+      ["Jenis", draft.mode === "room" ? "Room + F&B + LC" : "F&B Umum"],
+      ["Waktu", `${draft.date} ${draft.time}`],
+      ["Ruangan", draft.mode === "room" ? (room?.room_name || room?.room_id || "-") : "Tanpa room"],
+      ["Kasir Nota", draft.cashier_name.trim() || "Kasir Manual"],
+      ["Durasi", draft.mode === "room" ? formatDurationMinutes(draft.duration_minutes) : "-"],
+      ["F&B", `${draft.fnb_items.length} jenis - ${formatCurrency(totals.fnbTotal)}`],
+      ["LC", `${draft.lc_assignments.length} orang - ${formatCurrency(totals.lcTotal)}`],
+      ["Total", formatCurrency(totals.grandTotal)],
+      ["Pembayaran", `${formatPaymentMethodLabel(draft.payment_method)} / ${formatPaymentStatusLabel(draft.payment_status)}`],
+    ],
+    confirmLabel: "Simpan Transaksi",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: saveManualTransaction,
+  });
+}
+
+async function saveManualTransaction() {
+  if (isSavingManualTransaction) return;
+  const draft = ensureManualTransactionDraft();
+  const error = validateManualTransactionDraft();
+  if (error) throw new Error(error);
+
+  if (!manualTransactionIdempotencyKey) {
+    manualTransactionIdempotencyKey = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  isSavingManualTransaction = true;
+  try {
+    const data = await postApiAction({
+      action: "createManualOutageTransaction",
+      mode: draft.mode,
+      start_time: `${draft.date}T${draft.time}:00+07:00`,
+      room_id: draft.mode === "room" ? draft.room_id : "",
+      duration_minutes: draft.mode === "room" ? Number(draft.duration_minutes) : 0,
+      customer_name: draft.customer_name.trim(),
+      cashier_name: draft.cashier_name.trim(),
+      payment_method: draft.payment_method,
+      payment_status: draft.payment_status,
+      source_note: draft.source_note.trim(),
+      fnb_items: draft.fnb_items.map((item) => ({ menu_id: item.menu_id, quantity: Number(item.quantity) || 1 })),
+      lc_assignments: draft.mode === "room"
+        ? draft.lc_assignments.map((item) => ({
+          lc_id: item.lc_id,
+          duration_minutes: Number(item.duration_minutes) || Number(draft.duration_minutes),
+        }))
+        : [],
+      entered_by: getLoggedInOperatorName(),
+      owner_pin: getLoggedInOperatorPin(),
+      idempotency_key: manualTransactionIdempotencyKey,
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.error || data?.message || "Transaksi manual gagal disimpan.");
+    }
+
+    const transaction = {
+      ...(data.transaction || {}),
+      fnb_orders: Array.isArray(data.fnb_orders) ? data.fnb_orders : [],
+      lc_details: data.lc_details || null,
+    };
+    if (transaction.transaction_id) {
+      transactionFnbDetails[transaction.transaction_id] = transaction.fnb_orders;
+      if (transaction.lc_details) {
+        transactionLcReceiptDetails[transaction.transaction_id] = transaction.lc_details;
+      }
+    }
+    stockWarningMessages = Array.isArray(data.stock_warnings) ? data.stock_warnings : [];
+    actionConfirmationModal = null;
+    resetManualTransactionDraft();
+    await loadTodayTransactions();
+    showFloatingToast(
+      data.idempotent_replay ? "Transaksi sebelumnya ditemukan, tidak dibuat ganda." : "Transaksi manual berhasil disimpan.",
+      "success"
+    );
+    showReceiptPrint(transaction);
+  } finally {
+    isSavingManualTransaction = false;
+    renderRooms();
+  }
+}
+
 async function handleRoomAction(event) {
   const button = event.target.closest("[data-action]");
 
@@ -23440,11 +23827,74 @@ async function handleRoomAction(event) {
 
   if (action === "switch-transactions-subtab") {
     const subtab = button.dataset.transactionsSubtab;
-    if (subtab && ["history", "closing"].includes(subtab)) {
+    const allowedSubtabs = getCurrentOperatorRole() === "owner"
+      ? ["history", "closing", "manual"]
+      : ["history", "closing"];
+    if (subtab && allowedSubtabs.includes(subtab)) {
       activeTransactionsSubTab = subtab;
       renderDashboardTabPanels();
       refreshActiveTabData();
     }
+    return;
+  }
+
+  if (action === "set-manual-transaction-mode") {
+    const draft = ensureManualTransactionDraft();
+    draft.mode = button.dataset.mode === "general_fnb" ? "general_fnb" : "room";
+    draft.selected_lc_id = "";
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "add-manual-fnb-item") {
+    const draft = ensureManualTransactionDraft();
+    const menuId = String(draft.selected_menu_id || "");
+    if (menuId && !draft.fnb_items.some((item) => item.menu_id === menuId)) {
+      draft.fnb_items.push({ menu_id: menuId, quantity: 1 });
+    }
+    draft.selected_menu_id = "";
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "remove-manual-fnb-item") {
+    const draft = ensureManualTransactionDraft();
+    draft.fnb_items = draft.fnb_items.filter((item) => item.menu_id !== button.dataset.menuId);
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "add-manual-lc") {
+    const draft = ensureManualTransactionDraft();
+    const lcId = String(draft.selected_lc_id || "");
+    if (lcId && !draft.lc_assignments.some((item) => item.lc_id === lcId)) {
+      draft.lc_assignments.push({ lc_id: lcId, duration_minutes: Number(draft.duration_minutes) || 60 });
+    }
+    draft.selected_lc_id = "";
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "remove-manual-lc") {
+    const draft = ensureManualTransactionDraft();
+    draft.lc_assignments = draft.lc_assignments.filter((item) => item.lc_id !== button.dataset.lcId);
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "reset-manual-transaction") {
+    resetManualTransactionDraft();
+    renderRooms();
+    return;
+  }
+
+  if (action === "review-manual-transaction") {
+    reviewManualTransaction();
     return;
   }
 
@@ -23984,6 +24434,19 @@ function handleDashboardInput(event) {
 
   const action = field.dataset.action;
 
+  if (action === "update-manual-transaction") {
+    updateManualTransactionField(field.dataset.field || "", field.value);
+    return;
+  }
+
+  if (action === "update-manual-fnb-quantity") {
+    const draft = ensureManualTransactionDraft();
+    const item = draft.fnb_items.find((entry) => entry.menu_id === field.dataset.menuId);
+    if (item) item.quantity = Math.max(1, Math.min(99, Number(field.value) || 1));
+    manualTransactionIdempotencyKey = "";
+    return;
+  }
+
   if (action === "update-cash-actual") {
     updateCashierClosingCashActual(field.value);
     return;
@@ -24203,6 +24666,33 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const manualField = event.target.closest("[data-action='update-manual-transaction']");
+  if (manualField) {
+    updateManualTransactionField(manualField.dataset.field || "", manualField.value);
+    renderRooms();
+    return;
+  }
+
+  const manualQuantity = event.target.closest("[data-action='update-manual-fnb-quantity']");
+  if (manualQuantity) {
+    const draft = ensureManualTransactionDraft();
+    const item = draft.fnb_items.find((entry) => entry.menu_id === manualQuantity.dataset.menuId);
+    if (item) item.quantity = Math.max(1, Math.min(99, Number(manualQuantity.value) || 1));
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
+  const manualLcDuration = event.target.closest("[data-action='update-manual-lc-duration']");
+  if (manualLcDuration) {
+    const draft = ensureManualTransactionDraft();
+    const assignment = draft.lc_assignments.find((entry) => entry.lc_id === manualLcDuration.dataset.lcId);
+    if (assignment) assignment.duration_minutes = Number(manualLcDuration.value) || 60;
+    manualTransactionIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+
   const durationPaymentField = event.target.closest("[data-action='update-duration-payment-method']");
 
   if (durationPaymentField) {

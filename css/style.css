@@ -9327,3 +9327,213 @@ textarea.action-confirmation-input {
   color: #ff6b6b !important;
 }
 
+/* Owner-only backdate entry used after offline operations. */
+.manual-transaction-panel {
+  border: 1px solid var(--border);
+  background: rgba(28, 24, 19, 0.92);
+  padding: 18px;
+  border-radius: 6px;
+}
+
+.manual-transaction-heading,
+.manual-transaction-actions,
+.manual-transaction-picker,
+.manual-transaction-line,
+.manual-transaction-summary > div {
+  display: flex;
+  align-items: center;
+}
+
+.manual-transaction-heading {
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+}
+
+.manual-transaction-heading h3,
+.manual-transaction-heading p,
+.manual-transaction-detail h4 {
+  margin: 0;
+}
+
+.manual-transaction-heading p,
+.manual-transaction-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 4px;
+}
+
+.manual-transaction-owner-badge {
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.manual-transaction-mode {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.manual-transaction-mode button,
+.manual-transaction-picker button,
+.manual-transaction-actions button {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-transaction-mode button.active,
+.manual-transaction-actions button:not(.secondary) {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #17120b;
+}
+
+.manual-transaction-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.manual-transaction-fields label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.manual-transaction-fields label > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.manual-note-field {
+  grid-column: span 2;
+}
+
+.manual-transaction-fields input,
+.manual-transaction-fields select,
+.manual-transaction-picker select,
+.manual-transaction-line input,
+.manual-transaction-line select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  background: #f5f5f5;
+  color: #182238;
+  padding: 8px 10px;
+  border-radius: 5px;
+}
+
+.manual-transaction-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.manual-transaction-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.manual-transaction-picker {
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.manual-transaction-picker button:disabled,
+.manual-transaction-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.manual-transaction-lines {
+  display: grid;
+  gap: 6px;
+}
+
+.manual-transaction-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 105px 38px;
+  gap: 8px;
+  min-height: 42px;
+}
+
+.manual-transaction-line > span {
+  overflow-wrap: anywhere;
+}
+
+.manual-transaction-line > button {
+  min-height: 38px;
+  border: 1px solid rgba(255, 107, 107, 0.55);
+  background: rgba(255, 107, 107, 0.1);
+  color: #ff9b9b;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+
+.manual-transaction-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 18px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.manual-transaction-summary > div {
+  justify-content: space-between;
+  gap: 8px;
+  background: #18140f;
+  padding: 12px;
+}
+
+.manual-transaction-grand-total strong {
+  color: #78f7c6;
+}
+
+.manual-transaction-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (max-width: 820px) {
+  .manual-transaction-fields,
+  .manual-transaction-detail-grid,
+  .manual-transaction-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .manual-note-field {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 540px) {
+  .manual-transaction-fields,
+  .manual-transaction-detail-grid,
+  .manual-transaction-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-transaction-mode,
+  .manual-transaction-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
