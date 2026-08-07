@@ -21276,27 +21276,12 @@ function getManualTransactionTotals() {
   return { roomTotal, fnbTotal, lcTotal, grandTotal: roomTotal + fnbTotal + lcTotal };
 }
 
-function addDaysToDateInput(dateString, dayOffset) {
-  const match = String(dateString || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return "";
-  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + dayOffset));
-  return date.toISOString().slice(0, 10);
-}
-
 function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDraft()) {
   const date = String(draft?.date || "").trim();
-  const timeMatch = String(draft?.time || "").trim().match(/^(\d{2}):(\d{2})$/);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !timeMatch) return null;
-
-  const hour = Number(timeMatch[1]);
-  const operationalDate = hour < OPERATIONAL_CUTOFF_HOUR ? addDaysToDateInput(date, -1) : date;
-  if (!operationalDate) return null;
-
-  const nextDate = addDaysToDateInput(operationalDate, 1);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   return {
-    operationalDate,
-    label: formatClosingDate(operationalDate),
-    range: `${formatClosingDate(operationalDate)} 10:00 - ${formatClosingDate(nextDate)} 09:59`,
+    operationalDate: date,
+    label: formatClosingDate(date),
   };
 }
 
@@ -21329,7 +21314,7 @@ function createManualTransactionPanelElement() {
       <button type="button" data-action="set-manual-transaction-mode" data-mode="general_fnb">F&amp;B Umum</button>
     </div>
     <div class="manual-transaction-fields">
-      <label><span>Tanggal Nota</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
+      <label><span>Tanggal Nota / Periode</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
       <label><span>Jam Mulai</span><input type="time" data-action="update-manual-transaction" data-field="time"></label>
       <label><span>Metode Bayar</span><select data-action="update-manual-transaction" data-field="payment_method"></select></label>
       <label><span>Status</span><select data-action="update-manual-transaction" data-field="payment_status"></select></label>
@@ -21380,7 +21365,7 @@ function createManualTransactionPanelElement() {
     const title = document.createElement("strong");
     title.textContent = `Masuk periode operasional ${operationalPeriod.label}`;
     const detail = document.createElement("span");
-    detail.textContent = `Rentang shift ${operationalPeriod.range}. Acuan transaksi manual adalah Jam Mulai.`;
+    detail.textContent = "Khusus input manual, Tanggal Nota menjadi periode tujuan owner. Cutoff tetap berlaku untuk transaksi otomatis.";
     operationalPeriodBox.append(title, detail);
   } else {
     operationalPeriodBox.textContent = "Isi tanggal nota dan jam mulai untuk melihat periode operasional.";
@@ -23643,7 +23628,6 @@ function reviewManualTransaction() {
       ["Jenis", draft.mode === "room" ? "Room + F&B + LC" : "F&B Umum"],
       ["Waktu", `${draft.date} ${draft.time}`],
       ["Periode Operasional", operationalPeriod?.label || "-"],
-      ["Rentang Shift", operationalPeriod?.range || "-"],
       ["Ruangan", draft.mode === "room" ? (room?.room_name || room?.room_id || "-") : "Tanpa room"],
       ["Kasir Nota", draft.cashier_name.trim() || "Kasir Manual"],
       ["Durasi", draft.mode === "room" ? formatDurationMinutes(draft.duration_minutes) : "-"],
@@ -23675,6 +23659,7 @@ async function saveManualTransaction() {
       action: "createManualOutageTransaction",
       mode: draft.mode,
       start_time: `${draft.date}T${draft.time}:00+07:00`,
+      operational_date: operationalPeriod?.operationalDate || draft.date,
       room_id: draft.mode === "room" ? draft.room_id : "",
       duration_minutes: draft.mode === "room" ? Number(draft.duration_minutes) : 0,
       customer_name: draft.customer_name.trim(),

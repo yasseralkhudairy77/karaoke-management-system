@@ -131,6 +131,7 @@ var FNB_ORDERS_HEADERS = [
   "general_bill_id",
   "billed_transaction_id",
   "idempotency_key",
+  "operational_date",
 ];
 var FNB_ORDER_ITEMS_HEADERS = [
   "order_id",
@@ -233,6 +234,7 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "source_note",
   "entered_by",
   "idempotency_key",
+  "operational_date",
 ];
 var PROMO_MASTER_HEADERS = [
   "code",
@@ -264,6 +266,7 @@ var LC_WORK_LOG_HEADERS = [
   "created_at",
   "closed_at",
   "payroll_id",
+  "operational_date",
 ];
 var LC_PAYROLL_HISTORY_HEADERS = [
   "payroll_id",
@@ -365,6 +368,7 @@ var STOCK_MOVEMENTS_HEADERS = [
   "stock_after",
   "note",
   "cashier_name",
+  "operational_date",
 ];
 var INVENTORY_AUDIT_HEADERS = [
   "audit_id",
@@ -7609,7 +7613,7 @@ function getLcWorkReports_(period, startDate, endDate) {
       return;
     }
 
-    var logOperationalDate = getOperationalDateString_(createdTime);
+    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
 
     if (!matchesOperationalPeriod_(logOperationalDate, range)) {
       return;
@@ -8036,7 +8040,7 @@ function getPendingLcPayroll_(startDate, endDate) {
     if (!effectiveTime) {
       return false;
     }
-    var logOperationalDate = getOperationalDateString_(effectiveTime);
+    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
     return matchesOperationalPeriod_(logOperationalDate, range);
   });
 
@@ -8201,7 +8205,7 @@ function processLcPayroll_(payload) {
       var effectiveTime = log.closed_at || log.created_at || "";
 
       if (status === "done" && isUnpaid && effectiveTime) {
-        var logOperationalDate = getOperationalDateString_(effectiveTime);
+        var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
         if (matchesOperationalPeriod_(logOperationalDate, range)) {
           matchingLogIndices.push(i);
           matchedLogs.push(log);
@@ -8904,6 +8908,7 @@ function getTodayTransactions_() {
 }
 
 function getTransactionsByPeriod_(period, startDate, endDate) {
+  applyManualOperationalDateCorrectionMigration_();
   var periodResult = parseTransactionPeriod_(period, startDate, endDate);
 
   if (!periodResult.ok) {
@@ -9494,6 +9499,11 @@ function matchesOperationalPeriod_(operationalDate, periodResult) {
 }
 
 function resolveTransactionOperationalDateString_(transaction) {
+  var explicitOperationalDate = normalizeJakartaDateString_(transaction.operational_date);
+  if (explicitOperationalDate) {
+    return explicitOperationalDate;
+  }
+
   if (String(transaction.entry_source || "").trim().toLowerCase() === "manual_power_outage") {
     return getOperationalDateString_(transaction.start_time)
       || getOperationalDateString_(transaction.created_at)
@@ -9524,9 +9534,117 @@ function resolveClosingOperationalDateString_(closing) {
 }
 
 function resolveFnbOrderOperationalDateString_(order) {
-  return getOperationalDateString_(order.created_at)
+  return normalizeJakartaDateString_(order.operational_date)
+    || getOperationalDateString_(order.created_at)
     || getOperationalDateString_(order.updated_at)
     || "";
+}
+
+function resolveLcWorkLogOperationalDateString_(log) {
+  return normalizeJakartaDateString_(log.operational_date)
+    || getOperationalDateString_(log.created_at || log.closed_at)
+    || "";
+}
+
+function resolveStockMovementOperationalDateString_(movement) {
+  return normalizeJakartaDateString_(movement.operational_date)
+    || getOperationalDateString_(movement.created_at)
+    || "";
+}
+
+function applyManualOperationalDateCorrectionMigration_() {
+  var migrationKey = "manual-operational-date-correction-20260807-v1";
+  var properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(migrationKey) === "done") {
+    return;
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return;
+  }
+
+  try {
+    if (properties.getProperty(migrationKey) === "done") {
+      return;
+    }
+
+    var transactionId = "TRX-20260807135359039-99CBEF85";
+    var operationalDate = "2026-08-06";
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getHeaderMap_(transactionsSheet);
+    var transactionRow = findRowByValue_(
+      transactionsSheet,
+      transactionHeaders,
+      "transaction_id",
+      transactionId
+    );
+
+    if (!transactionRow || !transactionHeaders.operational_date) {
+      return;
+    }
+
+    var transaction = getRowObject_(
+      transactionsSheet,
+      transactionHeaders,
+      transactionRow
+    );
+    if (String(transaction.entry_source || "").trim().toLowerCase() !== "manual_power_outage") {
+      return;
+    }
+
+    transactionsSheet
+      .getRange(transactionRow, transactionHeaders.operational_date)
+      .setValue(operationalDate);
+
+    var ordersSheet = ensureFnbOrdersSheetColumns_();
+    var orderHeaders = getHeaderMap_(ordersSheet);
+    readSheetAsObjects_("FnbOrders").forEach(function (order, index) {
+      if (String(order.billed_transaction_id || "").trim() !== transactionId) {
+        return;
+      }
+      if (orderHeaders.operational_date) {
+        ordersSheet.getRange(index + 2, orderHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var stockSheet = ensureStockMovementsSheet_();
+    var stockHeaders = getHeaderMap_(stockSheet);
+    readSheetAsObjectsOrEmpty_("StockMovements").forEach(function (movement, index) {
+      if (String(movement.reference_id || "").trim() === transactionId && stockHeaders.operational_date) {
+        stockSheet.getRange(index + 2, stockHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var sessionIds = {};
+    if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+      readSheetAsObjects_(ROOM_SESSIONS_SHEET).forEach(function (session) {
+        if (String(session.closed_transaction_id || "").trim() === transactionId) {
+          sessionIds[String(session.session_id || "").trim()] = true;
+        }
+      });
+    }
+
+    var workLogsSheet = ensureLcWorkLogsSheet_();
+    var workLogHeaders = getHeaderMap_(workLogsSheet);
+    readSheetAsObjects_("LcWorkLogs").forEach(function (workLog, index) {
+      if (sessionIds[String(workLog.session_id || "").trim()] && workLogHeaders.operational_date) {
+        workLogsSheet.getRange(index + 2, workLogHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var bonusSheet = ensureLcSalesBonusLogsSheet_();
+    var bonusHeaders = getHeaderMap_(bonusSheet);
+    readSheetAsObjects_("LcSalesBonusLogs").forEach(function (bonus, index) {
+      if (String(bonus.transaction_id || "").trim() === transactionId && bonusHeaders.operational_date) {
+        bonusSheet.getRange(index + 2, bonusHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    properties.setProperty(migrationKey, "done");
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function isDateWithinInclusiveRange_(dateString, startDateString, endDateString) {
@@ -13848,9 +13966,17 @@ function createManualOutageTransaction_(payload) {
     : String(request.entered_by || "Owner").trim();
   var startTime = String(request.start_time || "").trim();
   var startDate = parseJakartaDateTimeValue_(startTime);
+  var requestedOperationalDate = String(request.operational_date || "").trim();
 
   if (!startDate) {
     return { ok: false, success: false, error: "Tanggal dan jam transaksi tidak valid." };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedOperationalDate)) {
+    return { ok: false, success: false, error: "Periode operasional transaksi manual wajib diisi." };
+  }
+  var operationalDate = normalizeJakartaDateString_(requestedOperationalDate);
+  if (!operationalDate) {
+    return { ok: false, success: false, error: "Periode operasional transaksi manual tidak valid." };
   }
 
   var now = new Date();
@@ -13976,7 +14102,6 @@ function createManualOutageTransaction_(payload) {
     var endDate = new Date(startDate.getTime() + durationMinutes * 60000);
     var normalizedStartTime = toJakartaIsoString_(startDate);
     var normalizedEndTime = toJakartaIsoString_(mode === "room" ? endDate : startDate);
-    var operationalDate = getOperationalDateString_(normalizedStartTime);
     var transactionId = generateTransactionId_();
     var sessionId = mode === "room" ? generateRoomSessionId_(room.room_id) : "";
     var fnbTotal = normalizedItems.reduce(function (sum, item) {
@@ -14008,6 +14133,7 @@ function createManualOutageTransaction_(payload) {
         idempotency_key: idempotencyKey + ":fnb",
         created_at: normalizedStartTime,
         updated_at: normalizedEndTime,
+        operational_date: operationalDate,
       };
       var orderItems = normalizedItems.map(function (item) {
         return {
@@ -14055,6 +14181,7 @@ function createManualOutageTransaction_(payload) {
       source_note: sourceNote,
       entered_by: enteredBy,
       idempotency_key: idempotencyKey,
+      operational_date: operationalDate,
     };
     appendTransaction_(transaction);
 
@@ -14100,6 +14227,7 @@ function createManualOutageTransaction_(payload) {
           created_at: normalizedStartTime,
           closed_at: toJakartaIsoString_(new Date(startDate.getTime() + lc.duration_minutes * 60000)),
           payroll_id: "",
+          operational_date: operationalDate,
         });
       });
     }
@@ -14108,7 +14236,8 @@ function createManualOutageTransaction_(payload) {
       detailedOrders,
       transactionId,
       sourceCashierName,
-      normalizedStartTime
+      normalizedStartTime,
+      operationalDate
     );
 
     if (normalizedLcs.length > 0 && detailedOrders.length > 0) {
@@ -14127,7 +14256,7 @@ function createManualOutageTransaction_(payload) {
             }
             appendObjectRow_(ensureLcSalesBonusLogsSheet_(), {
               bonus_log_id: generateLcFinanceId_("LCBONUS"),
-              operational_date: getOperationalDateString_(normalizedStartTime),
+              operational_date: operationalDate,
               transaction_id: transactionId,
               order_id: order.order_id,
               menu_id: item.menu_id,
@@ -14619,7 +14748,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
     .filter(function (movement) {
       var movementTypeValue = String(movement.movement_type || "").trim().toLowerCase();
       var referenceTypeValue = String(movement.reference_type || "").trim().toLowerCase();
-      var operationalDate = getOperationalDateString_(movement.created_at);
+      var operationalDate = resolveStockMovementOperationalDateString_(movement);
 
       return (
         matchesOperationalPeriod_(operationalDate, periodResult) &&
@@ -14642,6 +14771,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
         stock_after: Number(movement.stock_after) || 0,
         note: movement.note || "",
         cashier_name: movement.cashier_name || "",
+        operational_date: resolveStockMovementOperationalDateString_(movement),
       };
     })
     .sort(function (first, second) {
@@ -15093,7 +15223,7 @@ function calculateFnbTotal_(orders) {
   }, 0);
 }
 
-function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
+function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now, operationalDate) {
   if (!fnbOrders || fnbOrders.length === 0) {
     return {
       movements: [],
@@ -15140,6 +15270,7 @@ function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
       stock_after: stockAfter,
       note: "F&B billed dari transaksi " + transactionId,
       cashier_name: cashierName || "Kasir",
+      operational_date: normalizeJakartaDateString_(operationalDate),
     };
 
     appendStockMovement_(movement);
@@ -17347,7 +17478,7 @@ function buildCashierClosingSnapshot_(closing, snapshotAt) {
   var lcDetailRows = [];
   if (sheetExists_("LcWorkLogs")) {
     readSheetAsObjects_("LcWorkLogs").filter(function (workLog) {
-      return normalizeLcFinanceOperationalDate_(workLog.created_at) === operationalDate;
+      return resolveLcWorkLogOperationalDateString_(workLog) === operationalDate;
     }).forEach(function (workLog) {
       var sessionId = String(workLog.session_id || "").trim();
       var session = sessionsById[sessionId] || {};
