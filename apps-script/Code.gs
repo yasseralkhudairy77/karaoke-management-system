@@ -1240,6 +1240,10 @@ function doPost(e) {
       return jsonResponse(updateInventoryMaster_(payload));
     }
 
+    if (action === "savePackageMaster") {
+      return jsonResponse(savePackageMaster_(payload));
+    }
+
     if (action === "deleteRoomMaster") {
       return jsonResponse(deleteRoomMaster_(payload));
     }
@@ -8619,6 +8623,128 @@ function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) 
   });
 
   return rows;
+}
+
+function validatePackageMasterPayload_(payload) {
+  var packageName = String(payload.package_name || "").trim();
+  var packageCategory = String(payload.package_category || "").trim();
+  var sellingPrice = Number(payload.selling_price);
+  var durationMinutes = Math.round(Number(payload.duration_minutes));
+  var validDayType = normalizeMasterStatus_(payload.valid_day_type, ["all", "weekday", "weekend"], "all");
+  var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
+  var details = Array.isArray(payload.package_details) ? payload.package_details : [];
+
+  if (!packageName) masterError_("Nama paket wajib diisi.");
+  if (!packageCategory) masterError_("Kategori paket wajib diisi.");
+  if (!isFinite(sellingPrice) || sellingPrice < 0) masterError_("Harga paket wajib angka 0 atau lebih.");
+  if (!isFinite(durationMinutes) || durationMinutes < 30 || durationMinutes > 720 || durationMinutes % 30 !== 0) {
+    masterError_("Durasi paket wajib 30 menit sampai 12 jam dengan kelipatan 30 menit.");
+  }
+  if (!details.length) masterError_("Minimal satu komponen paket wajib diisi.");
+
+  var normalizedDetails = details.map(function (detail, index) {
+    var componentType = String(detail.component_type || "").trim().toLowerCase();
+    var componentRefId = String(detail.component_ref_id || "").trim();
+    var componentName = String(detail.component_name || "").trim();
+    var qty = Number(detail.qty);
+    var unit = String(detail.unit || "").trim();
+    var hpp = Number(detail.hpp || 0);
+
+    if (["menu", "service", "inventory", "room"].indexOf(componentType) === -1) {
+      masterError_("Tipe komponen baris " + (index + 1) + " tidak valid.");
+    }
+    if (!componentRefId || !componentName) masterError_("Referensi dan nama komponen baris " + (index + 1) + " wajib diisi.");
+    if (!isFinite(qty) || qty <= 0) masterError_("Qty komponen baris " + (index + 1) + " wajib lebih dari 0.");
+    if (!unit) masterError_("Unit komponen baris " + (index + 1) + " wajib diisi.");
+    if (!isFinite(hpp) || hpp < 0) masterError_("HPP komponen baris " + (index + 1) + " tidak valid.");
+
+    return {
+      line_no: index + 1,
+      component_type: componentType,
+      component_ref_id: componentRefId,
+      component_name: componentName,
+      qty: qty,
+      unit: unit,
+      hpp: hpp,
+      additional_price: 0,
+      cost_amount: hpp * qty,
+      is_choice: false,
+      choice_group: "",
+      note: String(detail.note || "").trim(),
+    };
+  });
+
+  return {
+    package_name: packageName,
+    package_category: packageCategory,
+    package_type: FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE,
+    selling_price: sellingPrice,
+    status: status,
+    valid_day_type: validDayType,
+    duration_minutes: durationMinutes,
+    note: String(payload.note || "").trim(),
+    details: normalizedDetails,
+  };
+}
+
+function savePackageMaster_(payload) {
+  var auth = validateAdminPinPayload_(payload.admin_pin, "manager", "create_package", payload.changed_by, true);
+  if (!auth.success) return auth;
+
+  var data = validatePackageMasterPayload_(payload);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+
+  try {
+    var masterSheet = ensurePackageMasterSheet_();
+    var detailSheet = ensurePackageDetailSheet_();
+    var masterHeaders = getHeaderMap_(masterSheet);
+    var detailHeaders = getHeaderMap_(detailSheet);
+    var duplicate = readSheetAsObjects_("PackageMaster").some(function (pkg) {
+      return String(pkg.package_name || "").trim().toLowerCase() === data.package_name.toLowerCase();
+    });
+    if (duplicate) masterError_("Nama paket sudah digunakan. Gunakan nama lain.");
+
+    var now = toJakartaIsoString_(new Date());
+    var packageId = generateSequentialId_(masterSheet, masterHeaders, "package_id", "PKG");
+    var savedPackage = {
+      package_id: packageId,
+      menu_id: "",
+      package_name: data.package_name,
+      package_category: data.package_category,
+      package_type: data.package_type,
+      selling_price: data.selling_price,
+      status: data.status,
+      valid_day_type: data.valid_day_type,
+      duration_minutes: data.duration_minutes,
+      updated_at: now,
+      note: data.note,
+    };
+    appendObjectRow_(masterSheet, savedPackage);
+
+    data.details.forEach(function (detail) {
+      detail.package_detail_id = generateSequentialId_(detailSheet, detailHeaders, "package_detail_id", "PKD");
+      detail.package_id = packageId;
+      detail.updated_at = now;
+      appendObjectRow_(detailSheet, detail);
+    });
+
+    appendMasterDataAuditLog_({
+      entity_type: "package",
+      entity_id: packageId,
+      entity_name: data.package_name,
+      action_type: "create",
+      old_value: "",
+      new_value: { package_master: savedPackage, package_details: data.details },
+      changed_by: auth.employee && auth.employee.employee_name || getMasterChangedBy_(payload),
+      note: data.note,
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Paket baru berhasil disimpan.", savedPackage);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function buildLcFnbBonusReconciliationContext_() {

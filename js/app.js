@@ -15850,6 +15850,16 @@ function openMasterDataForm(type, mode, item = null) {
       min_stock: "",
       status: "active",
     },
+    package: {
+      package_name: "",
+      package_category: "",
+      selling_price: "",
+      duration_minutes: "120",
+      valid_day_type: "all",
+      status: "active",
+      note: "",
+      package_details: [{ component_type: "menu", component_ref_id: "", component_name: "", qty: "1", unit: "pcs", hpp: "0", note: "" }],
+    },
   };
 
   masterDataForm = {
@@ -15896,6 +15906,7 @@ function getMasterDataFormTitle() {
     room: "Ruangan",
     menu: "Menu F&B",
     inventory: "Inventory",
+    package: "Paket",
   };
 
   return `${masterDataForm.mode === "edit" ? "Edit" : "Tambah"} ${labels[masterDataForm.type]}`;
@@ -16057,9 +16068,96 @@ function createMasterDataFormElement() {
   saveButton.textContent = isSavingMasterData ? "Menyimpan..." : "Simpan";
 
   actions.append(cancelButton, saveButton);
-  form.append(title, grid, actions);
+  form.append(title, grid);
+  if (masterDataForm.type === "package") {
+    form.appendChild(createPackageDetailEditorElement());
+  }
+  form.appendChild(actions);
 
   return form;
+}
+
+function updatePackageDetailForm(index, field, value) {
+  const details = [...(masterDataForm?.values?.package_details || [])];
+  if (!details[index]) return;
+  details[index] = { ...details[index], [field]: value };
+  updateMasterDataForm("package_details", details);
+}
+
+function addPackageDetailForm() {
+  const details = [...(masterDataForm?.values?.package_details || [])];
+  details.push({ component_type: "menu", component_ref_id: "", component_name: "", qty: "1", unit: "pcs", hpp: "0", note: "" });
+  updateMasterDataForm("package_details", details);
+  renderRooms();
+}
+
+function removePackageDetailForm(index) {
+  const details = [...(masterDataForm?.values?.package_details || [])];
+  if (details.length <= 1) return;
+  details.splice(index, 1);
+  updateMasterDataForm("package_details", details);
+  renderRooms();
+}
+
+function createPackageDetailEditorElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "settings-package-detail";
+  const title = document.createElement("h4");
+  title.className = "master-form-title";
+  title.textContent = "Komponen Paket";
+  const note = document.createElement("p");
+  note.className = "master-form-helper";
+  note.textContent = "Minimal satu komponen. Ref ID harus sesuai master Menu, Service, Inventory, atau Room.";
+  wrapper.append(title, note);
+
+  (masterDataForm?.values?.package_details || []).forEach((detail, index) => {
+    const row = document.createElement("div");
+    row.className = "master-form-grid settings-package-detail-editor";
+    [["Tipe", "component_type", "select"], ["Ref ID", "component_ref_id", "text"], ["Nama Komponen", "component_name", "text"], ["Qty", "qty", "number"], ["Unit", "unit", "text"], ["HPP / Unit", "hpp", "number"], ["Catatan", "note", "text"]].forEach(([labelText, field, type]) => {
+      const label = document.createElement("label");
+      label.className = "master-form-field";
+      const caption = document.createElement("span");
+      caption.className = "master-form-label";
+      caption.textContent = labelText;
+      let input;
+      if (type === "select") {
+        input = document.createElement("select");
+        [["menu", "Menu F&B"], ["service", "Service"], ["inventory", "Inventory"], ["room", "Room"]].forEach(([value, text]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          input.appendChild(option);
+        });
+      } else {
+        input = document.createElement("input");
+        input.type = type;
+      }
+      input.className = "master-form-input";
+      input.dataset.action = "update-package-detail-form";
+      input.dataset.detailIndex = String(index);
+      input.dataset.field = field;
+      input.value = detail[field] ?? "";
+      label.append(caption, input);
+      row.appendChild(label);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "master-button danger";
+    remove.dataset.action = "remove-package-detail-form";
+    remove.dataset.detailIndex = String(index);
+    remove.disabled = (masterDataForm.values.package_details || []).length <= 1;
+    remove.textContent = "Hapus Komponen";
+    row.appendChild(remove);
+    wrapper.appendChild(row);
+  });
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "master-button";
+  add.dataset.action = "add-package-detail-form";
+  add.textContent = "+ Tambah Komponen";
+  wrapper.appendChild(add);
+  return wrapper;
 }
 
 function getMasterStatusBadge(status) {
@@ -16589,8 +16687,8 @@ function createPackageSettingsSection() {
 
   return createSettingsSection(
     "Pengaturan Paket",
-    "Lihat master paket dan komponen included sebelum tahap tambah/edit paket diaktifkan.",
-    "",
+    "Manager dapat membuat paket baru beserta komponen included-nya.",
+    "package",
     content,
     createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
   );
@@ -17838,6 +17936,25 @@ function buildMasterPayload(authData = null, adminPin = "") {
     };
   }
 
+  if (masterDataForm.type === "package") {
+    return {
+      ...accessPayload,
+      action: "savePackageMaster",
+      package_name: values.package_name || "",
+      package_category: values.package_category || "",
+      selling_price: Number(values.selling_price),
+      duration_minutes: Number(values.duration_minutes),
+      valid_day_type: values.valid_day_type || "all",
+      status: values.status || "active",
+      note: values.note || "",
+      package_details: (values.package_details || []).map((detail) => ({
+        ...detail,
+        qty: Number(detail.qty),
+        hpp: Number(detail.hpp || 0),
+      })),
+    };
+  }
+
   return {
     ...accessPayload,
     action: isEdit ? "updateInventoryMaster" : "saveInventoryMaster",
@@ -17875,9 +17992,15 @@ async function submitMasterDataForm() {
 }
 
 function isSensitiveMasterDataChange() {
-  if (!masterDataForm || masterDataForm.mode !== "edit") {
+  if (!masterDataForm) {
     return false;
   }
+
+  if (masterDataForm.type === "package") {
+    return true;
+  }
+
+  if (masterDataForm.mode !== "edit") return false;
 
   const values = masterDataForm.values || {};
   const original = masterDataForm.originalValues || {};
@@ -17902,6 +18025,10 @@ function isSensitiveMasterDataChange() {
 function getSensitiveMasterDataAction() {
   if (!masterDataForm) {
     return "update_master_data";
+  }
+
+  if (masterDataForm.type === "package") {
+    return "create_package";
   }
 
   const values = masterDataForm.values || {};
@@ -18281,6 +18408,7 @@ async function togglePromoStatus(code, currentStatus) {
     console.error("Error updating status:", error);
     showInlineNotice(error.message || "Terjadi kesalahan koneksi.", "error");
   }
+
 }
 
 function createPromosiPanelElement() {
@@ -22576,6 +22704,18 @@ function getPreparedRoomPaymentSummary(room) {
     );
   }
 
+  if (masterDataForm.type === "package") {
+    grid.append(
+      createMasterField({ label: "Nama Paket", field: "package_name" }),
+      createMasterField({ label: "Kategori", field: "package_category" }),
+      createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" }),
+      createMasterField({ label: "Durasi (menit)", field: "duration_minutes", type: "number", helper: "Kelipatan 30 menit." }),
+      createMasterField({ label: "Hari Berlaku", field: "valid_day_type", options: [["all", "Semua Hari"], ["weekday", "Weekday"], ["weekend", "Weekend"]] }),
+      createMasterField({ label: "Status", field: "status", options: [["active", "Active"], ["inactive", "Inactive"]] }),
+      createMasterField({ label: "Catatan", field: "note" })
+    );
+  }
+
   ensureLcSelectionStateForRoom(room);
   const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
   const activeLcRates = lcs
@@ -23884,6 +24024,16 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "add-package-detail-form") {
+    addPackageDetailForm();
+    return;
+  }
+
+  if (action === "remove-package-detail-form") {
+    removePackageDetailForm(Number(button.dataset.detailIndex));
+    return;
+  }
+
   if (action === "set-manual-transaction-mode") {
     const draft = ensureManualTransactionDraft();
     draft.mode = button.dataset.mode === "general_fnb" ? "general_fnb" : "room";
@@ -24596,6 +24746,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-master-form") {
     updateMasterDataForm(field.dataset.field, field.value);
+    return;
+  }
+
+  if (action === "update-package-detail-form") {
+    updatePackageDetailForm(Number(field.dataset.detailIndex), field.dataset.field, field.value);
     return;
   }
 
