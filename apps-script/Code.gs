@@ -235,6 +235,10 @@ var TRANSACTIONS_EXTRA_HEADERS = [
   "entered_by",
   "idempotency_key",
   "operational_date",
+  "booking_mode",
+  "package_id",
+  "package_name",
+  "package_total",
 ];
 var PROMO_MASTER_HEADERS = [
   "code",
@@ -14024,6 +14028,7 @@ function createManualOutageTransaction_(payload) {
   var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
   var paymentStatus = String(request.payment_status || "paid").trim().toLowerCase();
   var durationMinutes = Math.round(Number(request.duration_minutes) || 0);
+  var packageId = String(request.package_id || "").trim();
   var lcAssignments = Array.isArray(request.lc_assignments) ? request.lc_assignments : [];
   var requestedItems = Array.isArray(request.fnb_items) ? request.fnb_items : [];
 
@@ -14149,6 +14154,38 @@ function createManualOutageTransaction_(payload) {
         return { ok: false, success: false, error: "Ruangan tidak ditemukan di master." };
       }
       room = getRowObject_(roomsSheet, roomsHeaders, roomRow);
+    } else {
+      packageId = "";
+    }
+
+    var selectedPackage = null;
+    if (mode === "room" && packageId) {
+      var packageRows = readSheetAsObjects_("PackageMaster");
+      for (var packageIndex = 0; packageIndex < packageRows.length; packageIndex++) {
+        if (String(packageRows[packageIndex].package_id || "").trim() === packageId) {
+          selectedPackage = packageRows[packageIndex];
+          break;
+        }
+      }
+
+      if (!selectedPackage) {
+        return { ok: false, success: false, error: "Paket tidak ditemukan di master." };
+      }
+
+      var packageStatus = String(selectedPackage.status || "").trim().toLowerCase();
+      var packagePrice = Number(selectedPackage.selling_price);
+      var validDayType = String(selectedPackage.valid_day_type || FNB_V25A_VALID_DAY_ALL).trim().toLowerCase();
+      var requestDayType = resolvePricingDayTypeFromParts_(operationalDate);
+
+      if (packageStatus !== "active") {
+        return { ok: false, success: false, error: "Paket tidak aktif." };
+      }
+      if (!isFinite(packagePrice) || packagePrice < 0) {
+        return { ok: false, success: false, error: "Harga paket tidak valid." };
+      }
+      if (!isValidPackageDayForPricing_(validDayType || FNB_V25A_VALID_DAY_ALL, requestDayType)) {
+        return { ok: false, success: false, error: "Paket tidak berlaku pada periode nota ini." };
+      }
     }
 
     var normalizedLcs = [];
@@ -14208,8 +14245,12 @@ function createManualOutageTransaction_(payload) {
     var fnbTotal = normalizedItems.reduce(function (sum, item) {
       return sum + Number(item.subtotal || 0);
     }, 0);
+    var packageTotal = selectedPackage ? Number(selectedPackage.selling_price) || 0 : 0;
+    var packageDurationMinutes = selectedPackage ? Math.round(Number(selectedPackage.duration_minutes) || 0) : 0;
     var roomTotal = mode === "room"
-      ? calculateRoomTotal_(durationMinutes, Number(room.rate_per_hour) || 0)
+      ? selectedPackage
+        ? packageTotal
+        : calculateRoomTotal_(durationMinutes, Number(room.rate_per_hour) || 0)
       : 0;
     var lcTotal = normalizedLcs.reduce(function (sum, lc) {
       return sum + Number(lc.rate || 0);
@@ -14283,6 +14324,10 @@ function createManualOutageTransaction_(payload) {
       entered_by: enteredBy,
       idempotency_key: idempotencyKey,
       operational_date: operationalDate,
+      booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : "manual_power_outage",
+      package_id: selectedPackage ? packageId : "",
+      package_name: selectedPackage ? String(selectedPackage.package_name || packageId).trim() : "",
+      package_total: packageTotal,
     };
     appendTransaction_(transaction);
 
@@ -14291,15 +14336,15 @@ function createManualOutageTransaction_(payload) {
         session_id: sessionId,
         room_id: room.room_id || "",
         room_name: room.room_name || "",
-        booking_mode: "manual_power_outage",
+        booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : "manual_power_outage",
         status: "closed",
         start_time: normalizedStartTime,
         scheduled_end_time: normalizedEndTime,
         end_time: normalizedEndTime,
         booked_duration_minutes: durationMinutes,
-        package_included_minutes: 0,
+        package_included_minutes: selectedPackage ? packageDurationMinutes : 0,
         promotion_free_minutes: 0,
-        billable_room_minutes: durationMinutes,
+        billable_room_minutes: selectedPackage ? 0 : durationMinutes,
         rate_per_hour: Number(room.rate_per_hour) || 0,
         cashier_name: sourceCashierName,
         created_at: normalizedStartTime,
@@ -14307,9 +14352,9 @@ function createManualOutageTransaction_(payload) {
         closed_transaction_id: transactionId,
         idempotency_key: idempotencyKey,
         legacy_room_start_time: normalizedStartTime,
-        note: "Input manual mati listrik | " + sourceNote,
+        note: "Input manual mati listrik | " + (selectedPackage ? ("Paket " + (selectedPackage.package_name || packageId) + " | ") : "") + sourceNote,
         customer_name: customerName,
-        package_id: "",
+        package_id: selectedPackage ? packageId : "",
         prepayment_transaction_id: "",
         lc_ids: normalizedLcs.map(function (lc) { return lc.lc_id; }).join(","),
         lc_assignments: serializeLcAssignments_(normalizedLcs),

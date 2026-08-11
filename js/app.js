@@ -5641,6 +5641,12 @@ function getTransactionRoomTotal(transaction) {
   return Number(transaction?.room_total) || 0;
 }
 
+function getTransactionRoomChargeLabel(transaction) {
+  const packageName = String(transaction?.package_name || "").trim();
+  const packageId = String(transaction?.package_id || "").trim();
+  return packageName || packageId ? "Paket" : "Biaya Room";
+}
+
 function getTransactionFnbTotal(transaction) {
   return Number(transaction?.fnb_total) || 0;
 }
@@ -7511,7 +7517,7 @@ function createBillingBreakdownElement(transaction) {
   const originalRoomTotal = roomTotal + promoDiscount;
 
   const rows = [
-    ["Biaya Room", formatCurrency(originalRoomTotal)],
+    [getTransactionRoomChargeLabel(transaction), formatCurrency(originalRoomTotal)],
   ];
 
   if (promoDiscount > 0) {
@@ -7691,7 +7697,7 @@ function createReceiptPrintElement(transaction) {
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
   const billingRows = [
-    ["Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
+    [getTransactionRoomChargeLabel(transaction), formatCurrency(receiptData.totals.roomTotal)],
   ];
 
   const lcTotal = Number(transaction?.lc_total || 0);
@@ -14915,7 +14921,7 @@ function createTransactionRowElement(transaction) {
     ["ID Transaksi", transaction?.transaction_id || "-", "transaction-id-cell"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
-    ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
+    [getTransactionRoomChargeLabel(transaction), formatCurrency(getTransactionRoomTotal(transaction))],
     ["F&B", formatCurrency(getTransactionFnbTotal(transaction))],
     ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction)), getTransactionFnbTotal(transaction) > 0 ? "transaction-has-fnb" : ""],
     ["Status", formatPaymentStatusLabel(transaction?.payment_status), statusClass],
@@ -21369,6 +21375,7 @@ function getManualTransactionDefaults() {
     date: `${parts.year}-${parts.month}-${parts.day}`,
     time: `${parts.hour}:${parts.minute}`,
     room_id: rooms[0]?.room_id || "",
+    package_id: "",
     duration_minutes: 120,
     customer_name: "",
     cashier_name: "",
@@ -21400,8 +21407,11 @@ function resetManualTransactionDraft() {
 function getManualTransactionTotals() {
   const draft = ensureManualTransactionDraft();
   const room = rooms.find((item) => item.room_id === draft.room_id);
+  const selectedPackage = getManualTransactionSelectedPackage(draft);
   const roomTotal = draft.mode === "room"
-    ? Math.ceil(((Number(draft.duration_minutes) || 0) / 60) * (Number(room?.rate_per_hour) || 0))
+    ? selectedPackage
+      ? Number(selectedPackage.selling_price) || 0
+      : Math.ceil(((Number(draft.duration_minutes) || 0) / 60) * (Number(room?.rate_per_hour) || 0))
     : 0;
   const fnbTotal = draft.fnb_items.reduce((sum, item) => {
     const menu = menuItems.find((entry) => entry.menu_id === item.menu_id);
@@ -21416,6 +21426,21 @@ function getManualTransactionTotals() {
     : 0;
 
   return { roomTotal, fnbTotal, lcTotal, grandTotal: roomTotal + fnbTotal + lcTotal };
+}
+
+function getManualTransactionSelectedPackage(draft = ensureManualTransactionDraft()) {
+  const packageId = String(draft?.package_id || "").trim();
+  if (!packageId) return null;
+  return packages.find((pkg) => String(pkg.package_id || "").trim() === packageId) || null;
+}
+
+function getManualTransactionPackageOptions() {
+  return packages
+    .filter((pkg) => String(pkg.status || "").trim().toLowerCase() === "active")
+    .map((pkg) => [
+      pkg.package_id,
+      `${pkg.package_name || pkg.package_id} - ${formatCurrency(pkg.selling_price)} (${formatDurationMinutes(pkg.duration_minutes)})`,
+    ]);
 }
 
 function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDraft()) {
@@ -21519,12 +21544,18 @@ function createManualTransactionPanelElement() {
   if (draft.mode === "room") {
     roomFields.innerHTML = `
       <label><span>Ruangan</span><select data-action="update-manual-transaction" data-field="room_id"></select></label>
+      <label class="manual-package-field"><span>Paket</span><select data-action="update-manual-transaction" data-field="package_id"></select></label>
       <label><span>Durasi Room</span><select data-action="update-manual-transaction" data-field="duration_minutes"></select></label>
     `;
     fillManualSelect(
       roomFields.querySelector("[data-field='room_id']"),
       rooms.map((room) => [room.room_id, `${room.room_name || room.room_id} - ${formatCurrency(room.rate_per_hour)}/jam`]),
       draft.room_id
+    );
+    fillManualSelect(
+      roomFields.querySelector("[data-field='package_id']"),
+      [["", "Tanpa paket - pakai harga room"], ...getManualTransactionPackageOptions()],
+      draft.package_id
     );
     fillManualSelect(
       roomFields.querySelector("[data-field='duration_minutes']"),
@@ -21609,7 +21640,13 @@ function createManualTransactionPanelElement() {
   }
 
   const summary = panel.querySelector(".manual-transaction-summary");
-  [["Room", totals.roomTotal], ["F&B", totals.fnbTotal], ["LC", totals.lcTotal], ["Total", totals.grandTotal]].forEach(([label, amount], index) => {
+  const selectedPackage = getManualTransactionSelectedPackage(draft);
+  [
+    [selectedPackage ? "Paket" : "Room", totals.roomTotal],
+    ["F&B", totals.fnbTotal],
+    ["LC", totals.lcTotal],
+    ["Total", totals.grandTotal],
+  ].forEach(([label, amount], index) => {
     const item = document.createElement("div");
     if (index === 3) item.className = "manual-transaction-grand-total";
     const name = document.createElement("span");
@@ -23743,6 +23780,8 @@ function updateManualTransactionField(field, value) {
   const draft = ensureManualTransactionDraft();
   if (field === "duration_minutes") {
     draft[field] = Number(value) || 0;
+  } else if (field === "package_id") {
+    draft[field] = String(value || "").trim();
   } else {
     draft[field] = value;
   }
@@ -23772,6 +23811,7 @@ function reviewManualTransaction() {
 
   const draft = ensureManualTransactionDraft();
   const room = rooms.find((item) => item.room_id === draft.room_id);
+  const selectedPackage = getManualTransactionSelectedPackage(draft);
   const totals = getManualTransactionTotals();
   const operationalPeriod = getManualTransactionOperationalPeriod(draft);
   openActionConfirmation({
@@ -23783,6 +23823,7 @@ function reviewManualTransaction() {
       ["Waktu", `${draft.date} ${draft.time}`],
       ["Periode Operasional", operationalPeriod?.label || "-"],
       ["Ruangan", draft.mode === "room" ? (room?.room_name || room?.room_id || "-") : "Tanpa room"],
+      ["Paket", draft.mode === "room" ? (selectedPackage?.package_name || "Tanpa paket") : "-"],
       ["Kasir Nota", draft.cashier_name.trim() || "Kasir Manual"],
       ["Durasi", draft.mode === "room" ? formatDurationMinutes(draft.duration_minutes) : "-"],
       ["F&B", `${draft.fnb_items.length} jenis - ${formatCurrency(totals.fnbTotal)}`],
@@ -23815,6 +23856,7 @@ async function saveManualTransaction() {
       start_time: `${draft.date}T${draft.time}:00+07:00`,
       operational_date: operationalPeriod?.operationalDate || draft.date,
       room_id: draft.mode === "room" ? draft.room_id : "",
+      package_id: draft.mode === "room" ? draft.package_id : "",
       duration_minutes: draft.mode === "room" ? Number(draft.duration_minutes) : 0,
       customer_name: draft.customer_name.trim(),
       cashier_name: draft.cashier_name.trim(),
@@ -24042,6 +24084,9 @@ async function handleRoomAction(event) {
     const draft = ensureManualTransactionDraft();
     draft.mode = button.dataset.mode === "general_fnb" ? "general_fnb" : "room";
     draft.selected_lc_id = "";
+    if (draft.mode !== "room") {
+      draft.package_id = "";
+    }
     manualTransactionIdempotencyKey = "";
     renderRooms();
     return;
