@@ -5033,12 +5033,12 @@ function findFnbOrderById(orderId) {
 }
 
 function getFnbOrderCanCancel(order) {
-  return order?.order_status === "open" || order?.order_status === "paid";
+  return ["open", "paid", "billed"].includes(order?.order_status);
 }
 
 function getFnbOrderCancelButtonLabel(order) {
   if (order?.order_status === "billed") {
-    return "Sudah Ditagihkan";
+    return "Batalkan dari Tagihan";
   }
 
   if (order?.order_status === "cancelled") {
@@ -5061,21 +5061,24 @@ function requestCancelFnbOrder(orderId) {
   }
 
   if (!getFnbOrderCanCancel(order)) {
-    showInlineNotice("Order F&B yang sudah masuk tagihan room tidak bisa dibatalkan dari menu ini.", "error");
+    showInlineNotice("Status order F&B ini tidak bisa dibatalkan.", "error");
     return;
   }
 
   const isPaidOrder = order.order_status === "paid";
+  const isBilledOrder = order.order_status === "billed";
   openActionConfirmation({
     tone: "danger",
     title: "Batalkan Order F&B",
     message: isPaidOrder
       ? "Order lunas akan dibatalkan, transaksi refund dibuat, dan stok dikembalikan. Tindakan ini tercatat dalam audit."
+      : isBilledOrder
+        ? "Order akan dikeluarkan dari tagihan, total transaksi dikoreksi, dan stok dikembalikan. Jika transaksi sudah lunas, sistem membuat refund."
       : "Order akan dibatalkan dan stok terkait dikembalikan. Tindakan ini tercatat dalam audit.",
     details: [
       ["ID Order", order.order_id || orderId],
       ["Room / Pelanggan", order.room_name || order.customer_name || "-"],
-      ["Status", isPaidOrder ? "Lunas — perlu refund" : "Open / belum ditagihkan"],
+      ["Status", isPaidOrder ? "Lunas — perlu refund" : isBilledOrder ? "Sudah masuk tagihan" : "Open / belum ditagihkan"],
       ["Total", formatCurrency(order.order_total || 0)],
     ],
     field: {
@@ -5121,6 +5124,7 @@ async function cancelFnbOrder(orderId, reason) {
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
+    await loadTodayTransactions();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan order F&B.", "error");
   } finally {

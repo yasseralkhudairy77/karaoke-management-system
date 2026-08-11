@@ -14613,13 +14613,6 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
 
     var currentStatus = String(sheet.getRange(rowNumber, headerMap.order_status).getValue() || "").trim().toLowerCase();
 
-    if (currentStatus === "billed") {
-      return {
-        ok: false,
-        error: "Order F&B sudah masuk tagihan dan tidak bisa dibatalkan.",
-      };
-    }
-
     if (currentStatus === "cancelled") {
       return {
         ok: false,
@@ -14627,7 +14620,7 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
       };
     }
 
-    if (currentStatus !== "open" && currentStatus !== "paid") {
+    if (currentStatus !== "open" && currentStatus !== "paid" && currentStatus !== "billed") {
       return {
         ok: false,
         error: "Status order F&B tidak bisa dibatalkan.",
@@ -14639,8 +14632,62 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
     var user = String(cancelledBy || "").trim() || "Kasir";
 
     var order = getFnbOrderObjectFromRow_(sheet, rowNumber);
+    var billedParentTransaction = null;
+    var billedParentTransactionSheet = null;
+    var billedParentTransactionHeaders = null;
+    var billedParentTransactionRow = 0;
 
-    if (currentStatus === "paid") {
+    if (currentStatus === "billed") {
+      billedParentTransactionSheet = ensureTransactionsSheetColumns_();
+      billedParentTransactionHeaders = getHeaderMap_(billedParentTransactionSheet);
+      var transactionRows = readSheetAsObjects_("Transactions");
+      billedParentTransaction = transactionRows.find(function (transaction) {
+        return parseCommaSeparatedIds_(transaction.fnb_order_ids).indexOf(normalizedOrderId) !== -1;
+      }) || null;
+
+      if (!billedParentTransaction) {
+        return { ok: false, error: "Transaksi yang menampung order billed tidak ditemukan." };
+      }
+
+      billedParentTransactionRow = findRowByValue_(
+        billedParentTransactionSheet,
+        billedParentTransactionHeaders,
+        "transaction_id",
+        billedParentTransaction.transaction_id
+      );
+      if (!billedParentTransactionRow) {
+        return { ok: false, error: "Baris transaksi order billed tidak ditemukan." };
+      }
+
+      if (String(billedParentTransaction.payment_status || "").trim().toLowerCase() === "unpaid") {
+        var remainingOrderIds = parseCommaSeparatedIds_(billedParentTransaction.fnb_order_ids).filter(function (id) {
+          return id !== normalizedOrderId;
+        });
+        var nextFnbTotal = Math.max(0, (Number(billedParentTransaction.fnb_total) || 0) - (Number(order.order_total) || 0));
+        var nextGrandTotal = Math.max(0, (Number(billedParentTransaction.grand_total) || 0) - (Number(order.order_total) || 0));
+        setRowValues_(billedParentTransactionSheet, billedParentTransactionHeaders, billedParentTransactionRow, {
+          fnb_total: nextFnbTotal,
+          grand_total: nextGrandTotal,
+          fnb_order_ids: remainingOrderIds.join(","),
+        });
+
+        restoreStockForFnbOrders_(
+          getFnbOrdersWithItemsByIds_([normalizedOrderId]),
+          "FNB-CANCEL-" + normalizedOrderId,
+          user,
+          now
+        );
+      }
+    }
+
+    if (
+      currentStatus === "paid"
+      || (
+        currentStatus === "billed"
+        && billedParentTransaction
+        && String(billedParentTransaction.payment_status || "").trim().toLowerCase() === "paid"
+      )
+    ) {
       var detailedOrders = getFnbOrdersWithItemsByIds_([normalizedOrderId]);
       var orderTotal = Number(order.order_total) || 0;
 
