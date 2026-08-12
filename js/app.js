@@ -22,7 +22,7 @@ import {
   saveOfflineSnapshot,
   saveOfflineTransaction,
   updateOfflineTransaction,
-} from "./offline-store.js?v=offline-mode-v2";
+} from "./offline-store.js?v=offline-mode-v3";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -1611,7 +1611,7 @@ async function fetchMenuItemsFromApi() {
   let response = null;
   let lastError = null;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 1; attempt += 1) {
     try {
       response = await fetchApiGet(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`);
       lastError = response.ok
@@ -1626,9 +1626,6 @@ async function fetchMenuItemsFromApi() {
       break;
     }
 
-    if (attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-    }
   }
 
   if (!response?.ok) {
@@ -18915,7 +18912,7 @@ async function loadLcs(force = false) {
     let data = null;
     let lastError = null;
 
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const response = await fetchApiGet(`${API_BASE_URL}?action=getLcMasterList&_=${Date.now()}`);
         if (!response.ok) {
@@ -18928,9 +18925,6 @@ async function loadLcs(force = false) {
         break;
       } catch (error) {
         lastError = error;
-        if (attempt < 3) {
-          await new Promise((resolve) => setTimeout(resolve, attempt * 500));
-        }
       }
     }
 
@@ -25705,7 +25699,7 @@ setInterval(updateRunningTimers, 1000);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v2")
+    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v3")
       .catch((error) => console.warn("Service worker Offline Mode gagal didaftarkan.", error));
   });
 }
