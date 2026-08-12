@@ -745,8 +745,21 @@ var RECIPE_BOM_HEADERS = [
   "note",
 ];
 
+var REQUEST_DIAGNOSTIC_CONTEXT_ = null;
+
+function beginRequestDiagnostic_(method, action, requestId) {
+  REQUEST_DIAGNOSTIC_CONTEXT_ = {
+    method: String(method || "GET").toUpperCase(),
+    action: String(action || "unknown").trim().substring(0, 80),
+    request_id: String(requestId || "").trim().substring(0, 120),
+    started_at_ms: new Date().getTime(),
+    received_at: new Date().toISOString(),
+  };
+}
+
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : "";
+  beginRequestDiagnostic_("GET", action, e && e.parameter ? e.parameter.request_id : "");
 
   try {
     if (action === "health") {
@@ -1012,9 +1025,15 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  beginRequestDiagnostic_(
+    "POST",
+    e && e.parameter ? e.parameter.action : "unknown",
+    e && e.parameter ? e.parameter.request_id : ""
+  );
   try {
     var payload = parsePostBody_(e);
     var action = payload.action || "";
+    beginRequestDiagnostic_("POST", action, payload.request_id || "");
 
     if (action === "startSession") {
       return jsonResponse(startSession_(payload.room_id, payload.duration_minutes, payload));
@@ -1330,8 +1349,29 @@ function doPost(e) {
 }
 
 function jsonResponse(data) {
+  var responseData = data && typeof data === "object" ? data : { data: data };
+  if (REQUEST_DIAGNOSTIC_CONTEXT_) {
+    var durationMs = Math.max(0, new Date().getTime() - REQUEST_DIAGNOSTIC_CONTEXT_.started_at_ms);
+    var diagnostic = {
+      request_id: REQUEST_DIAGNOSTIC_CONTEXT_.request_id,
+      action: REQUEST_DIAGNOSTIC_CONTEXT_.action,
+      method: REQUEST_DIAGNOSTIC_CONTEXT_.method,
+      received_at: REQUEST_DIAGNOSTIC_CONTEXT_.received_at,
+      server_duration_ms: durationMs,
+    };
+    responseData._diagnostic = diagnostic;
+    console.log(JSON.stringify({
+      event: "api_request_complete",
+      request_id: diagnostic.request_id,
+      action: diagnostic.action,
+      method: diagnostic.method,
+      server_duration_ms: durationMs,
+      success: responseData.ok === true || responseData.success === true,
+      error: responseData.error ? String(responseData.error).substring(0, 200) : "",
+    }));
+  }
   return ContentService
-    .createTextOutput(JSON.stringify(data))
+    .createTextOutput(JSON.stringify(responseData))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

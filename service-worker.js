@@ -1,15 +1,16 @@
-const CACHE_NAME = "happy-song-shell-offline-v3";
+const CACHE_NAME = "happy-song-shell-api-observability-v1";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./manifest.webmanifest?v=offline-mode-v3",
-  "./css/style.css?v=offline-mode-v3",
-  "./js/app.js?v=offline-mode-v3",
+  "./manifest.webmanifest?v=api-observability-v1",
+  "./css/style.css?v=api-observability-v1",
+  "./js/app.js?v=api-observability-v1",
   "./js/config.js?v=stable-api-v229",
   "./js/mock-data.js",
   "./js/receipt.js?v=lc-receipt-breakdown-v1",
   "./js/printer-adapter.js?v=lc-receipt-breakdown-v1",
-  "./js/offline-store.js?v=offline-mode-v3"
+  "./js/offline-store.js?v=offline-mode-v3",
+  "./js/api-diagnostics.js?v=api-observability-v1"
 ];
 
 self.addEventListener("install", (event) => {

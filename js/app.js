@@ -23,6 +23,13 @@ import {
   saveOfflineTransaction,
   updateOfflineTransaction,
 } from "./offline-store.js?v=offline-mode-v3";
+import {
+  buildApiDiagnosticsReport,
+  createApiRequestId,
+  getApiDiagnosticsSummary,
+  getRecentApiDiagnostics,
+  recordApiDiagnostic,
+} from "./api-diagnostics.js?v=api-observability-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -41,6 +48,7 @@ const DASHBOARD_TABS = [
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
   { key: "offline", label: "Offline Mode" },
+  { key: "diagnostics", label: "Diagnostik" },
   { key: "audit", label: "Audit" },
   { key: "promosi", label: "Promosi" },
   { key: "settings", label: "Pengaturan" },
@@ -56,8 +64,8 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "audit", "promosi", "settings"],
-  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "audit", "promosi", "settings"],
+  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "diagnostics", "audit", "promosi", "settings"],
+  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "diagnostics", "audit", "promosi", "settings"],
   cashier: ["rooms", "fnb", "lc", "reports", "transactions", "offline"],
   receptionist: ["rooms"],
 };
@@ -131,6 +139,8 @@ const API_GET_MAX_CONCURRENCY = 2;
 const API_GET_TIMEOUT_MS = 20000;
 const ROOM_AUTO_REFRESH_INTERVAL_MS = 30000;
 const ROOM_RECOVERY_REFRESH_INTERVAL_MS = 60000;
+const SERVER_FAILURE_THRESHOLD = 2;
+const SERVER_RECOVERY_PROBE_DELAY_MS = 7000;
 let activeApiGetCount = 0;
 const pendingApiGetTasks = [];
 const inFlightApiGetRequests = new Map();
@@ -139,6 +149,7 @@ function buildApiUrl(action, params = null) {
   const url = new URL(API_BASE_URL);
   url.searchParams.set("action", action);
   url.searchParams.set("_cb", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  url.searchParams.set("request_id", createApiRequestId("GET"));
 
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
@@ -944,6 +955,11 @@ let isSavingOfflineTransaction = false;
 let syncingOfflineTransactionId = "";
 let serverConnectionState = "unknown";
 let lastSuccessfulServerAt = "";
+let consecutiveServerFailures = 0;
+let lastServerFailure = null;
+let roomRecoveryProbeTimer = null;
+let isRunningApiDiagnostic = false;
+let lastApiDiagnosticResult = null;
 let openFnbOrders = [];
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
@@ -1095,10 +1111,44 @@ function isUserBusy() {
 function markServerOnline() {
   serverConnectionState = "online";
   lastSuccessfulServerAt = new Date().toISOString();
+  consecutiveServerFailures = 0;
+  lastServerFailure = null;
+  if (roomRecoveryProbeTimer !== null) {
+    window.clearTimeout(roomRecoveryProbeTimer);
+    roomRecoveryProbeTimer = null;
+  }
 }
 
-function markServerDegraded() {
-  serverConnectionState = "degraded";
+function markServerDegraded(error = null) {
+  consecutiveServerFailures += 1;
+  lastServerFailure = {
+    message: String(error?.message || "Server tidak merespons."),
+    at: new Date().toISOString(),
+  };
+  serverConnectionState = consecutiveServerFailures >= SERVER_FAILURE_THRESHOLD ? "degraded" : "unstable";
+  scheduleRoomRecoveryProbe();
+  return serverConnectionState;
+}
+
+function scheduleRoomRecoveryProbe() {
+  if (roomRecoveryProbeTimer !== null || document.visibilityState !== "visible") return;
+  roomRecoveryProbeTimer = window.setTimeout(async () => {
+    roomRecoveryProbeTimer = null;
+    if (!isOperatorLoggedIn() || silentRoomsReloadInFlight || document.visibilityState !== "visible") return;
+    await silentReloadRooms({ recoveryProbe: true });
+  }, SERVER_RECOVERY_PROBE_DELAY_MS);
+}
+
+function applyServerFailureUi(snapshot, error) {
+  const isOutage = serverConnectionState === "degraded";
+  setDataSourceBadge(isOutage ? "Server Bermasalah" : "Koneksi Tidak Stabil", isOutage ? "error" : "warning");
+  const snapshotText = snapshot
+    ? `Menampilkan snapshot produksi terakhir ${formatSnapshotTime(snapshot.updated_at)}.`
+    : "Belum ada snapshot produksi di perangkat ini.";
+  showErrorState(isOutage
+    ? `Server gagal dihubungi berulang kali. ${snapshotText} Aksi online dikunci; gunakan Offline Mode untuk transaksi baru.`
+    : `Koneksi server gagal satu kali dan sedang diperiksa ulang otomatis. ${snapshotText} Aksi online sementara dikunci.`);
+  console.warn("Status koneksi server berubah.", { state: serverConnectionState, error });
 }
 
 async function cacheProductionSnapshot(key, data) {
@@ -1141,7 +1191,7 @@ async function reloadOfflineTransactions() {
   }
 }
 
-async function silentReloadRooms() {
+async function silentReloadRooms({ recoveryProbe = false } = {}) {
   if (!API_BASE_URL.trim() || silentRoomsReloadInFlight || document.visibilityState !== "visible") {
     return;
   }
@@ -1175,7 +1225,14 @@ async function silentReloadRooms() {
     renderRooms();
     console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
   } catch (error) {
-    markServerDegraded();
+    markServerDegraded(error);
+    if (recoveryProbe || serverConnectionState === "degraded") {
+      const snapshot = await restoreProductionSnapshot("rooms");
+      applyServerFailureUi(snapshot, error);
+      if (!isUserBusy() && activeDashboardTab === "rooms") renderRooms();
+    } else {
+      setDataSourceBadge("Koneksi Tidak Stabil", "warning");
+    }
     console.warn("Silent refresh gagal:", error);
   } finally {
     silentRoomsReloadInFlight = false;
@@ -1218,13 +1275,10 @@ async function loadRooms() {
   } catch (error) {
     console.warn("Gagal memuat data ruangan dari API.", error);
     roomsLoading = false;
-    markServerDegraded();
-    setDataSourceBadge("Server Bermasalah", "error");
+    markServerDegraded(error);
     const snapshot = await restoreProductionSnapshot("rooms");
     rooms = normalizeRooms(Array.isArray(snapshot?.data) ? snapshot.data : []);
-    showErrorState(snapshot
-      ? `Server tidak dapat dijangkau. Menampilkan snapshot produksi terakhir ${formatSnapshotTime(snapshot.updated_at)}. Aksi online dikunci; gunakan Offline Mode untuk transaksi baru.`
-      : "Server tidak dapat dijangkau dan belum ada snapshot produksi. Gunakan Offline Mode setelah data master pernah dimuat saat online.");
+    applyServerFailureUi(snapshot, error);
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
@@ -2025,7 +2079,7 @@ function submitStockAdjustment() {
 
 function getApiRequestKey(url) {
   const requestUrl = new URL(url);
-  ["_", "_cb", "_retry"].forEach((key) => requestUrl.searchParams.delete(key));
+  ["_", "_cb", "_retry", "request_id"].forEach((key) => requestUrl.searchParams.delete(key));
   requestUrl.searchParams.sort();
   return requestUrl.toString();
 }
@@ -2051,14 +2105,21 @@ function scheduleApiGet(run) {
 }
 
 async function executeApiGet(url) {
+  const preparedUrl = new URL(url);
+  if (!preparedUrl.searchParams.get("request_id")) {
+    preparedUrl.searchParams.set("request_id", createApiRequestId("GET"));
+  }
+  const requestId = preparedUrl.searchParams.get("request_id");
+  const action = preparedUrl.searchParams.get("action") || "unknown";
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const requestUrl = new URL(url);
+    const requestUrl = new URL(preparedUrl);
     if (attempt > 0) {
       requestUrl.searchParams.set("_retry", `${Date.now()}-${attempt}`);
     }
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS);
+    const startedAt = performance.now();
     let response;
     try {
       response = await fetch(requestUrl.toString(), {
@@ -2066,14 +2127,43 @@ async function executeApiGet(url) {
         signal: controller.signal,
       });
     } catch (error) {
+      recordApiDiagnostic({
+        request_id: requestId,
+        action,
+        method: "GET",
+        attempt: attempt + 1,
+        outcome: "transport_error",
+        duration_ms: performance.now() - startedAt,
+        error_type: error?.name === "AbortError" ? "timeout" : "network",
+      });
       if (error?.name === "AbortError") {
-        const action = requestUrl.searchParams.get("action") || "API";
         throw new Error(`${action} timeout setelah ${API_GET_TIMEOUT_MS / 1000} detik.`);
       }
       throw error;
     } finally {
       window.clearTimeout(timeoutId);
     }
+
+    let responseDiagnostic = null;
+    if (response.ok) {
+      try {
+        responseDiagnostic = (await response.clone().json())?._diagnostic || null;
+      } catch (_) {
+        responseDiagnostic = null;
+      }
+    }
+    recordApiDiagnostic({
+      request_id: requestId,
+      action,
+      method: "GET",
+      attempt: attempt + 1,
+      outcome: response.ok ? "success" : "http_error",
+      http_status: response.status,
+      duration_ms: performance.now() - startedAt,
+      server_duration_ms: Number(responseDiagnostic?.server_duration_ms) || 0,
+      reached_backend: Boolean(responseDiagnostic?.request_id && responseDiagnostic.request_id === requestId),
+      error_type: response.ok ? "" : `http_${response.status}`,
+    });
 
     if (response.status !== 404 || attempt === 1) {
       return response;
@@ -21925,6 +22015,147 @@ function createOfflineQueuePanelElement() {
   return section;
 }
 
+function createApiDiagnosticsPanelElement() {
+  const section = document.createElement("section");
+  section.className = "api-diagnostics-panel";
+  const summary = getApiDiagnosticsSummary(30);
+  const stateLabels = {
+    online: "Terhubung",
+    unstable: "Tidak stabil - verifikasi otomatis",
+    degraded: "Bermasalah - aksi online dikunci",
+    unknown: "Belum diperiksa",
+  };
+  const heading = document.createElement("header");
+  heading.className = "manual-transaction-heading";
+  const headingText = document.createElement("div");
+  const title = document.createElement("h3");
+  title.textContent = "Diagnostik API Produksi";
+  const subtitle = document.createElement("p");
+  subtitle.textContent = "Hanya metadata teknis. PIN dan isi transaksi tidak pernah dicatat.";
+  headingText.append(title, subtitle);
+  const state = document.createElement("span");
+  state.className = `api-diagnostics-state api-diagnostics-state--${serverConnectionState}`;
+  state.textContent = stateLabels[serverConnectionState] || serverConnectionState;
+  heading.append(headingText, state);
+
+  const metrics = document.createElement("div");
+  metrics.className = "api-diagnostics-metrics";
+  [
+    ["Request 30 menit", summary.total],
+    ["Berhasil", `${summary.success_rate}%`],
+    ["HTTP 404", summary.http_404],
+    ["Timeout", summary.timeout],
+    ["Tak sampai backend", summary.backend_unconfirmed],
+    ["Median", `${summary.p50_ms} ms`],
+    ["P95", `${summary.p95_ms} ms`],
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    const strong = document.createElement("strong");
+    strong.textContent = String(value);
+    card.append(caption, strong);
+    metrics.appendChild(card);
+  });
+
+  const connectionInfo = document.createElement("div");
+  connectionInfo.className = "api-diagnostics-info";
+  connectionInfo.textContent = `Sukses terakhir: ${formatSnapshotTime(lastSuccessfulServerAt)} · Kegagalan berturut-turut: ${consecutiveServerFailures}${lastServerFailure ? ` · Terakhir: ${lastServerFailure.message}` : ""}`;
+
+  const actions = document.createElement("div");
+  actions.className = "manual-transaction-actions";
+  const testButton = document.createElement("button");
+  testButton.type = "button";
+  testButton.dataset.action = "run-api-diagnostic";
+  testButton.disabled = isRunningApiDiagnostic;
+  testButton.textContent = isRunningApiDiagnostic ? "Menguji..." : "Tes Server Sekarang";
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "secondary";
+  copyButton.dataset.action = "copy-api-diagnostic";
+  copyButton.textContent = "Salin Laporan Diagnostik";
+  actions.append(testButton, copyButton);
+
+  const result = document.createElement("p");
+  result.className = "api-diagnostics-result";
+  result.textContent = lastApiDiagnosticResult || "Tes manual menjalankan dua health check dan satu getRooms secara berurutan.";
+
+  const table = document.createElement("div");
+  table.className = "api-diagnostics-events";
+  getRecentApiDiagnostics(20).forEach((event) => {
+    const row = document.createElement("div");
+    const time = document.createElement("time");
+    time.textContent = new Intl.DateTimeFormat("id-ID", { timeStyle: "medium" }).format(new Date(event.recorded_at));
+    const action = document.createElement("strong");
+    action.textContent = `${event.method} ${event.action}`;
+    const status = document.createElement("span");
+    status.textContent = event.outcome === "success" ? `HTTP ${event.http_status}` : (event.http_status ? `HTTP ${event.http_status}` : event.error_type);
+    const duration = document.createElement("span");
+    duration.textContent = event.reached_backend
+      ? `${event.duration_ms} ms / server ${event.server_duration_ms} ms`
+      : `${event.duration_ms} ms / backend tidak terkonfirmasi`;
+    const requestId = document.createElement("code");
+    requestId.textContent = event.request_id || "-";
+    row.append(time, action, status, duration, requestId);
+    table.appendChild(row);
+  });
+  if (!getRecentApiDiagnostics(1).length) {
+    table.appendChild(createStateMessage("Belum ada histori request pada perangkat ini."));
+  }
+
+  section.append(heading, metrics, connectionInfo, actions, result, table);
+  return section;
+}
+
+async function runApiDiagnosticTest() {
+  if (isRunningApiDiagnostic) return;
+  isRunningApiDiagnostic = true;
+  lastApiDiagnosticResult = "Tes sedang berjalan...";
+  renderRooms();
+  const tests = ["health", "health", "getRooms"];
+  const results = [];
+  try {
+    for (const action of tests) {
+      const startedAt = performance.now();
+      try {
+        const response = await fetchApiGet(buildApiUrl(action));
+        const data = await response.json();
+        if (!response.ok || (data.ok !== true && data.success !== true)) {
+          throw new Error(data?.error || `HTTP ${response.status}`);
+        }
+        results.push(`${action}: OK ${Math.round(performance.now() - startedAt)} ms`);
+      } catch (error) {
+        results.push(`${action}: GAGAL ${Math.round(performance.now() - startedAt)} ms (${error.message})`);
+      }
+    }
+    const failed = results.filter((item) => item.includes("GAGAL")).length;
+    if (failed === 0) {
+      markServerOnline();
+      setDataSourceBadge("Terhubung ke Server", "live");
+    } else {
+      markServerDegraded(new Error(`${failed} dari ${results.length} tes gagal.`));
+    }
+    lastApiDiagnosticResult = results.join(" · ");
+  } finally {
+    isRunningApiDiagnostic = false;
+    renderRooms();
+  }
+}
+
+async function copyApiDiagnosticReport() {
+  const report = buildApiDiagnosticsReport({
+    app_commit: "api-observability-v1",
+    connection_state: serverConnectionState,
+    consecutive_failures: consecutiveServerFailures,
+    last_successful_server_at: lastSuccessfulServerAt,
+    last_failure: lastServerFailure,
+    operator_role: getCurrentOperatorRole(),
+    user_agent: navigator.userAgent,
+  });
+  await navigator.clipboard.writeText(report);
+  showFloatingToast("Laporan diagnostik berhasil disalin tanpa PIN atau isi transaksi.", "success");
+}
+
 function createReportsSubNavElement() {
   const wrapper = document.createElement("section");
   wrapper.className = "reports-subnav";
@@ -22054,6 +22285,9 @@ function appendDashboardTabContent(panel, tabKey) {
         createManualTransactionPanelElement({ offlineMode: true }),
         createOfflineQueuePanelElement()
       );
+      break;
+    case "diagnostics":
+      panel.appendChild(createApiDiagnosticsPanelElement());
       break;
     case "stock":
       panel.appendChild(createStockSubNavElement());
@@ -23815,7 +24049,7 @@ async function saveCashierClosing() {
 async function postApiAction(payload, options = {}) {
   const actionName = String(payload?.action || "").trim();
   const recoveryActions = new Set(["validateAdminPin", "syncOfflineTransaction"]);
-  if (serverConnectionState === "degraded" && !recoveryActions.has(actionName)) {
+  if (["unstable", "degraded"].includes(serverConnectionState) && !recoveryActions.has(actionName)) {
     throw new Error("Aksi online dikunci karena data server tidak terverifikasi. Gunakan Offline Mode atau tunggu status Terhubung ke Server.");
   }
   const actionParam = payload && payload.action
@@ -23827,22 +24061,57 @@ async function postApiAction(payload, options = {}) {
     ? window.setTimeout(() => controller.abort(), timeoutMs)
     : null;
   let response;
+  const requestId = createApiRequestId("POST");
+  const startedAt = performance.now();
+  const requestPayload = { ...payload, request_id: requestId };
 
   try {
-    response = await fetch(`${API_BASE_URL}${actionParam}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/plain;charset=utf-8",
-      },
-      cache: "no-store",
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
+    try {
+      response = await fetch(`${API_BASE_URL}${actionParam}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+        },
+        cache: "no-store",
+        body: JSON.stringify(requestPayload),
+        signal: controller?.signal,
+      });
+    } catch (error) {
+      recordApiDiagnostic({
+        request_id: requestId,
+        action: actionName,
+        method: "POST",
+        outcome: "transport_error",
+        duration_ms: performance.now() - startedAt,
+        error_type: error?.name === "AbortError" ? "timeout" : "network",
+      });
+      throw error;
+    }
   } finally {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);
     }
   }
+
+  let responseDiagnostic = null;
+  if (response.ok) {
+    try {
+      responseDiagnostic = (await response.clone().json())?._diagnostic || null;
+    } catch (_) {
+      responseDiagnostic = null;
+    }
+  }
+  recordApiDiagnostic({
+    request_id: requestId,
+    action: actionName,
+    method: "POST",
+    outcome: response.ok ? "success" : "http_error",
+    http_status: response.status,
+    duration_ms: performance.now() - startedAt,
+    server_duration_ms: Number(responseDiagnostic?.server_duration_ms) || 0,
+    reached_backend: Boolean(responseDiagnostic?.request_id && responseDiagnostic.request_id === requestId),
+    error_type: response.ok ? "" : `http_${response.status}`,
+  });
 
   if (!response.ok) {
     throw new Error(`Permintaan gagal dengan status ${response.status}.`);
@@ -24712,6 +24981,20 @@ async function handleRoomAction(event) {
 
   if (action === "sync-all-offline-transactions") {
     await syncAllOfflineTransactions();
+    return;
+  }
+
+  if (action === "run-api-diagnostic") {
+    await runApiDiagnosticTest();
+    return;
+  }
+
+  if (action === "copy-api-diagnostic") {
+    try {
+      await copyApiDiagnosticReport();
+    } catch (error) {
+      showFloatingToast("Laporan diagnostik gagal disalin.", "error");
+    }
     return;
   }
 
@@ -25699,7 +25982,7 @@ setInterval(updateRunningTimers, 1000);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v3")
+    navigator.serviceWorker.register("./service-worker.js?v=api-observability-v1")
       .catch((error) => console.warn("Service worker Offline Mode gagal didaftarkan.", error));
   });
 }

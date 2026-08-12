@@ -2581,6 +2581,12 @@ body::after {
   background: rgba(4, 7, 12, 0.82);
 }
 
+.app-badge.warning {
+  border-color: #d9a52e;
+  background: rgba(217, 165, 46, 0.14);
+  color: #ffe39a;
+}
+
 .lc-warning-modal-overlay {
   position: fixed;
   z-index: 13000;
@@ -9393,6 +9399,81 @@ textarea.action-confirmation-input {
   border-radius: 5px;
   padding: 7px 10px;
   cursor: pointer;
+}
+
+.api-diagnostics-panel {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: rgba(28, 24, 19, 0.92);
+  padding: 18px;
+  border-radius: 6px;
+}
+
+.api-diagnostics-state {
+  border: 1px solid var(--border);
+  padding: 6px 9px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.api-diagnostics-state--online { color: #78f7c6; border-color: rgba(79, 209, 154, 0.6); }
+.api-diagnostics-state--unstable { color: #ffe39a; border-color: rgba(217, 165, 46, 0.65); }
+.api-diagnostics-state--degraded { color: #ff9b9b; border-color: rgba(255, 107, 107, 0.65); }
+
+.api-diagnostics-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.api-diagnostics-metrics > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px;
+}
+
+.api-diagnostics-metrics span,
+.api-diagnostics-info,
+.api-diagnostics-result {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.api-diagnostics-metrics strong { font-size: 1.05rem; }
+.api-diagnostics-info { overflow-wrap: anywhere; }
+.api-diagnostics-result { margin: 12px 0; }
+
+.api-diagnostics-events {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.api-diagnostics-events > div {
+  display: grid;
+  grid-template-columns: 90px minmax(130px, 1fr) 95px 90px minmax(190px, 1.4fr);
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 9px 2px;
+  font-size: 0.76rem;
+}
+
+.api-diagnostics-events code {
+  color: #c7d4ec;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .api-diagnostics-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .api-diagnostics-events > div { grid-template-columns: 76px minmax(120px, 1fr) 80px; }
+  .api-diagnostics-events code,
+  .api-diagnostics-events > div > span:last-of-type { display: none; }
 }
 
 .manual-transaction-heading,
