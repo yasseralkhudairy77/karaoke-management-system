@@ -23616,18 +23616,32 @@ async function saveCashierClosing() {
   }
 }
 
-async function postApiAction(payload) {
+async function postApiAction(payload, options = {}) {
   const actionParam = payload && payload.action
     ? `?action=${encodeURIComponent(payload.action)}`
     : "";
-  const response = await fetch(`${API_BASE_URL}${actionParam}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/plain;charset=utf-8",
-    },
-    cache: "no-store",
-    body: JSON.stringify(payload),
-  });
+  const timeoutMs = Number(options.timeoutMs) || 0;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${actionParam}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      cache: "no-store",
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    });
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 
   if (!response.ok) {
     throw new Error(`Permintaan gagal dengan status ${response.status}.`);
@@ -23800,12 +23814,14 @@ async function handleOperatorLogin() {
       required_role: "staff",
       requested_action: "login",
       changed_by: "login_screen",
-    });
+    }, { timeoutMs: 35000 });
 
     const employee = data?.employee || data?.data;
 
     if (data?.success !== true || !employee?.employee_id || !employee?.employee_name || !employee?.role) {
-      throw new Error("PIN tidak valid");
+      loginErrorMessage = data?.message || "PIN tidak valid";
+      renderLoginScreen();
+      return;
     }
 
     saveOperatorSession(employee, pin);
@@ -23814,7 +23830,9 @@ async function handleOperatorLogin() {
     renderOperatorHeader();
     renderLoginScreen();
   } catch (error) {
-    loginErrorMessage = "PIN tidak valid";
+    loginErrorMessage = error?.name === "AbortError"
+      ? "Server login terlalu lama merespons. Tunggu sebentar lalu coba lagi."
+      : error?.message || "Server login sedang bermasalah. Silakan coba lagi.";
     renderLoginScreen();
     return;
   } finally {

@@ -6153,12 +6153,13 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
 }
 
 function validateAdminPin_(payload) {
+  var requestedAction = payload.requested_action || "manager_pin";
   var result = validateAdminPinPayload_(
     payload.pin,
     payload.required_role || "manager",
-    payload.requested_action || "manager_pin",
+    requestedAction,
     payload.changed_by || "Manager",
-    true
+    requestedAction !== "login"
   );
 
   if (result.success) {
