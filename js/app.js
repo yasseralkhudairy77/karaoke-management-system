@@ -22,7 +22,7 @@ import {
   saveOfflineSnapshot,
   saveOfflineTransaction,
   updateOfflineTransaction,
-} from "./offline-store.js?v=offline-mode-v1";
+} from "./offline-store.js?v=offline-mode-v2";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -21637,12 +21637,21 @@ function getManualTransactionPackageOptions() {
     ]);
 }
 
-function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDraft()) {
+function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDraft(), deriveFromShift = false) {
   const date = String(draft?.date || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  let operationalDate = date;
+  if (deriveFromShift) {
+    const hour = Number(String(draft?.time || "").split(":")[0]);
+    if (Number.isFinite(hour) && hour < OPERATIONAL_CLOSE_HOUR) {
+      const previousDate = new Date(`${date}T00:00:00Z`);
+      previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+      operationalDate = previousDate.toISOString().slice(0, 10);
+    }
+  }
   return {
-    operationalDate: date,
-    label: formatClosingDate(date),
+    operationalDate,
+    label: formatClosingDate(operationalDate),
   };
 }
 
@@ -21720,7 +21729,7 @@ function createManualTransactionPanelElement({ offlineMode = false } = {}) {
   setValue("source_note", draft.source_note);
   fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Cash"], ["transfer", "Transfer"]], draft.payment_method);
   fillManualSelect(panel.querySelector("[data-field='payment_status']"), [["paid", "Lunas"], ["unpaid", "Belum Dibayar"]], draft.payment_status);
-  const operationalPeriod = getManualTransactionOperationalPeriod(draft);
+  const operationalPeriod = getManualTransactionOperationalPeriod(draft, offlineMode);
   const operationalPeriodBox = panel.querySelector(".manual-operational-period");
   if (operationalPeriod) {
     const title = document.createElement("strong");
@@ -24225,6 +24234,7 @@ function buildOfflineTransactionRecord() {
   const room = rooms.find((item) => item.room_id === draft.room_id) || {};
   const selectedPackage = getManualTransactionSelectedPackage(draft);
   const totals = getManualTransactionTotals();
+  const operationalPeriod = getManualTransactionOperationalPeriod(draft, true);
   const startTime = `${draft.date}T${draft.time}:00+07:00`;
   const startDate = new Date(startTime);
   const durationMinutes = draft.mode === "room" ? Number(draft.duration_minutes) || 0 : 0;
@@ -24274,7 +24284,7 @@ function buildOfflineTransactionRecord() {
     cashier_name: draft.cashier_name.trim() || getLoggedInOperatorName(),
     customer_name: draft.customer_name.trim(),
     created_at: startTime,
-    operational_date: draft.date,
+    operational_date: operationalPeriod?.operationalDate || draft.date,
     entry_source: "offline_mode",
     package_id: selectedPackage?.package_id || "",
     package_name: selectedPackage?.package_name || "",
@@ -24305,7 +24315,7 @@ function buildOfflineTransactionRecord() {
     sync_payload: {
       mode: draft.mode,
       start_time: startTime,
-      operational_date: draft.date,
+      operational_date: operationalPeriod?.operationalDate || draft.date,
       room_id: draft.mode === "room" ? draft.room_id : "",
       room_snapshot: draft.mode === "room" ? {
         room_id: draft.room_id,
@@ -24356,6 +24366,10 @@ function reviewOfflineTransaction() {
   }
   if (ensureManualTransactionDraft().payment_status !== "paid") {
     showFloatingToast("Offline Mode hanya boleh disimpan setelah pembayaran diterima.", "error");
+    return;
+  }
+  if (!ensureManualTransactionDraft().customer_name.trim()) {
+    showFloatingToast("Nama tamu/pelanggan wajib diisi pada Offline Mode.", "error");
     return;
   }
   const totals = getManualTransactionTotals();
@@ -24420,8 +24434,10 @@ async function syncOfflineTransaction(record) {
       server_transaction_id: data.transaction?.transaction_id || "",
     });
   } catch (error) {
+    const isTransportFailure = error?.name === "AbortError"
+      || /status\s+\d+|fetch|network|jaringan|aborted|timeout|timed out/i.test(String(error?.message || ""));
     await updateOfflineTransaction(record.offline_transaction_id, {
-      sync_status: "conflict",
+      sync_status: isTransportFailure ? "pending" : "conflict",
       sync_error: error.message || "Sinkronisasi gagal.",
     });
     throw error;
@@ -25689,7 +25705,7 @@ setInterval(updateRunningTimers, 1000);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v1")
+    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v2")
       .catch((error) => console.warn("Service worker Offline Mode gagal didaftarkan.", error));
   });
 }
