@@ -1,0 +1,10 @@
+{
+  "name": "Happy Song Karaoke Operasional",
+  "short_name": "Happy Song",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f0b07",
+  "theme_color": "#17100a",
+  "lang": "id-ID"
+}

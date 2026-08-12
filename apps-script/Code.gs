@@ -1118,6 +1118,11 @@ function doPost(e) {
       return jsonResponse(createManualOutageTransaction_(payload));
     }
 
+    if (action === "syncOfflineTransaction") {
+      payload.entry_source = "offline_mode";
+      return jsonResponse(createManualOutageTransaction_(payload));
+    }
+
     if (action === "previewSessionPricing") {
       return jsonResponse(previewSessionPricing_(payload));
     }
@@ -1390,10 +1395,6 @@ function readSheetAsObjects_(sheetName) {
 }
 
 function getRooms_() {
-  ensureRoomsBookingColumns_();
-  ensureTvDevicesSheet_();
-  ensureTvControlLogsSheet_();
-
   var tvDevicesByRoom = getTvDevicesByRoomMap_();
   var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_();
   var latestActiveSessionByRoom = getLatestRoomSessionsByRoom_([
@@ -1412,22 +1413,11 @@ function getRooms_() {
     // Get LC IDs from active session - IMPORTANT: Must check all relevant statuses
     var lcIds = "";
     var lcAssignments = "";
-    var debugInfo = {
-      room_id: room.room_id,
-      lcIds_initial: lcIds,
-      activeSession_found: false,
-      lcIds_from_session: null,
-      lcIds_final: ""
-    };
-
     try {
       // RoomSessions sudah dibaca sekali dan dipetakan per room untuk seluruh respons.
       var activeSession = latestActiveSessionByRoom[String(room.room_id || "").trim()] || null;
-      debugInfo.activeSession_found = !!activeSession;
-      
       if (activeSession && activeSession.session) {
         var sessionLcIds = activeSession.session.lc_ids;
-        debugInfo.lcIds_from_session = sessionLcIds;
         lcIds = String(sessionLcIds || "").trim();
         lcAssignments = String(activeSession.session.lc_assignments || "").trim();
       }
@@ -1436,8 +1426,6 @@ function getRooms_() {
       // Safe fallback - use lc_ids from room sheet if available
       lcIds = String(room.lc_ids || "").trim();
     }
-
-    debugInfo.lcIds_final = lcIds;
 
     var roomObj = {
       room_id: room.room_id || "",
@@ -1455,7 +1443,6 @@ function getRooms_() {
       lc_ids: lcIds,
       lc_assignments: lcAssignments,
       lc_companion_ids: lcIds,
-      _debug_lc_info: debugInfo,
     };
 
     return roomObj;
@@ -1511,7 +1498,26 @@ function getTvDevicesByRoomMap_() {
 }
 
 function getLatestTvControlLogByDeviceMap_() {
-  return readSheetAsObjectsOrEmpty_("TVControlLogs").reduce(function (map, log) {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spreadsheet.getSheetByName("TVControlLogs");
+  if (!sheet || sheet.getLastRow() <= 1 || sheet.getLastColumn() === 0) {
+    return {};
+  }
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+  var firstDataRow = Math.max(2, lastRow - 199);
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (header) {
+    return String(header || "").trim();
+  });
+  var rows = sheet.getRange(firstDataRow, 1, lastRow - firstDataRow + 1, lastColumn).getValues();
+  var logs = rows.map(function (row) {
+    return headers.reduce(function (objectRow, header, index) {
+      if (header) objectRow[header] = normalizeCellValue_(header, row[index]);
+      return objectRow;
+    }, {});
+  });
+
+  return logs.reduce(function (map, log) {
     var tvDeviceId = String(log.tv_device_id || "").trim();
 
     if (!tvDeviceId) {
@@ -14045,6 +14051,7 @@ function createManualOutageTransaction_(payload) {
   var packageId = String(request.package_id || "").trim();
   var lcAssignments = Array.isArray(request.lc_assignments) ? request.lc_assignments : [];
   var requestedItems = Array.isArray(request.fnb_items) ? request.fnb_items : [];
+  var isOfflineSync = String(request.entry_source || "").trim().toLowerCase() === "offline_mode";
 
   if (mode !== "room" && mode !== "general_fnb") {
     return { ok: false, success: false, error: "Mode transaksi manual tidak valid." };
@@ -14061,15 +14068,18 @@ function createManualOutageTransaction_(payload) {
   if (paymentStatus !== "paid" && paymentStatus !== "unpaid") {
     return { ok: false, success: false, error: "Status pembayaran tidak valid." };
   }
+  if (isOfflineSync && paymentStatus !== "paid") {
+    return { ok: false, success: false, error: "Transaksi Offline Mode wajib sudah lunas." };
+  }
   if (mode === "general_fnb" && !customerName) {
     return { ok: false, success: false, error: "Nama pelanggan F&B umum wajib diisi." };
   }
 
   var auth = validateAdminPinPayload_(
-    request.owner_pin,
-    "owner",
-    "create_manual_outage_transaction",
-    request.entered_by || "Owner",
+    isOfflineSync ? request.operator_pin : request.owner_pin,
+    isOfflineSync ? "cashier" : "owner",
+    isOfflineSync ? "sync_offline_transaction" : "create_manual_outage_transaction",
+    request.entered_by || (isOfflineSync ? "Kasir" : "Owner"),
     true
   );
   if (!auth.success) {
@@ -14168,6 +14178,15 @@ function createManualOutageTransaction_(payload) {
         return { ok: false, success: false, error: "Ruangan tidak ditemukan di master." };
       }
       room = getRowObject_(roomsSheet, roomsHeaders, roomRow);
+      if (isOfflineSync && request.room_snapshot) {
+        var roomSnapshot = request.room_snapshot;
+        var snapshotRoomRate = Number(roomSnapshot.rate_per_hour);
+        if (!isFinite(snapshotRoomRate) || snapshotRoomRate < 0) {
+          return { ok: false, success: false, error: "Snapshot tarif room tidak valid." };
+        }
+        room.room_name = String(roomSnapshot.room_name || room.room_name || roomId).trim();
+        room.rate_per_hour = snapshotRoomRate;
+      }
     } else {
       packageId = "";
     }
@@ -14184,6 +14203,22 @@ function createManualOutageTransaction_(payload) {
 
       if (!selectedPackage) {
         return { ok: false, success: false, error: "Paket tidak ditemukan di master." };
+      }
+
+      if (isOfflineSync && request.package_snapshot) {
+        var packageSnapshot = request.package_snapshot;
+        var snapshotPackagePrice = Number(packageSnapshot.selling_price);
+        var snapshotPackageDuration = Math.round(Number(packageSnapshot.duration_minutes) || 0);
+        if (!isFinite(snapshotPackagePrice) || snapshotPackagePrice < 0 || snapshotPackageDuration < 30) {
+          return { ok: false, success: false, error: "Snapshot paket tidak valid." };
+        }
+        selectedPackage = Object.assign({}, selectedPackage, {
+          package_name: String(packageSnapshot.package_name || selectedPackage.package_name || packageId).trim(),
+          selling_price: snapshotPackagePrice,
+          duration_minutes: snapshotPackageDuration,
+          status: "active",
+          valid_day_type: FNB_V25A_VALID_DAY_ALL,
+        });
       }
 
       var packageStatus = String(selectedPackage.status || "").trim().toLowerCase();
@@ -14217,7 +14252,7 @@ function createManualOutageTransaction_(payload) {
         var lcDuration = Math.round(Number(requestedLc.duration_minutes) || durationMinutes);
         var masterLc = lcMap[lcId];
 
-        if (!lcId || !masterLc || String(masterLc.status || "").trim().toLowerCase() !== "active") {
+        if (!lcId || !masterLc || (!isOfflineSync && String(masterLc.status || "").trim().toLowerCase() !== "active")) {
           return { ok: false, success: false, error: "LC pada nota tidak ditemukan atau tidak aktif." };
         }
         if (seenLcIds[lcId]) {
@@ -14232,10 +14267,13 @@ function createManualOutageTransaction_(payload) {
         }
 
         seenLcIds[lcId] = true;
-        var lcHourlyRate = Number(masterLc.rate_per_room) || 0;
+        var lcHourlyRate = isOfflineSync ? Number(requestedLc.rate_per_hour) : Number(masterLc.rate_per_room);
+        if (!isFinite(lcHourlyRate) || lcHourlyRate < 0) {
+          return { ok: false, success: false, error: "Snapshot tarif LC tidak valid." };
+        }
         normalizedLcs.push({
           lc_id: lcId,
-          lc_name: masterLc.lc_name || lcId,
+          lc_name: isOfflineSync ? String(requestedLc.lc_name || masterLc.lc_name || lcId).trim() : (masterLc.lc_name || lcId),
           duration_minutes: lcDuration,
           rate_per_hour: lcHourlyRate,
           rate: calculateLcRateForDuration_(lcDuration, lcHourlyRate),
@@ -14245,7 +14283,30 @@ function createManualOutageTransaction_(payload) {
 
     var menuMap = getMenuItemsMap_();
     var normalizedItems = requestedItems.length > 0
-      ? normalizeFnbOrderItems_(requestedItems, menuMap)
+      ? isOfflineSync
+        ? requestedItems.map(function (item) {
+          var menuId = String(item && item.menu_id || "").trim();
+          var quantity = toPositiveInteger_(item ? item.quantity : null);
+          var masterMenu = menuMap[menuId];
+          var snapshotPrice = Number(item && item.price);
+          var snapshotBonus = Number(item && item.bonus_sales_lc) || 0;
+          if (!menuId || !quantity || !masterMenu) {
+            throw new Error("Menu snapshot tidak ditemukan di master atau quantity tidak valid.");
+          }
+          if (!isFinite(snapshotPrice) || snapshotPrice < 0 || snapshotBonus < 0) {
+            throw new Error("Harga atau bonus menu snapshot tidak valid.");
+          }
+          return {
+            menu_id: menuId,
+            menu_name: String(item.menu_name || masterMenu.menu_name || menuId).trim(),
+            category: String(item.category || masterMenu.category || "").trim(),
+            price: snapshotPrice,
+            quantity: quantity,
+            subtotal: snapshotPrice * quantity,
+            bonus_sales_lc: snapshotBonus,
+          };
+        })
+        : normalizeFnbOrderItems_(requestedItems, menuMap)
       : [];
     if (mode === "general_fnb" && normalizedItems.length === 0) {
       return { ok: false, success: false, error: "Minimal satu item F&B wajib dipilih." };
@@ -14282,7 +14343,7 @@ function createManualOutageTransaction_(payload) {
         order_status: "billed",
         order_total: fnbTotal,
         cashier_name: sourceCashierName,
-        note: "Input manual mati listrik | " + sourceNote,
+        note: (isOfflineSync ? "Offline Mode | " : "Input manual mati listrik | ") + sourceNote,
         customer_name: customerName,
         general_bill_id: mode === "general_fnb" ? generateGeneralFnbBillId_() : "",
         billed_transaction_id: transactionId,
@@ -14333,12 +14394,12 @@ function createManualOutageTransaction_(payload) {
         ? detailedOrders[0].general_bill_id
         : "",
       created_at: normalizedStartTime,
-      entry_source: "manual_power_outage",
+      entry_source: isOfflineSync ? "offline_mode" : "manual_power_outage",
       source_note: sourceNote,
       entered_by: enteredBy,
       idempotency_key: idempotencyKey,
       operational_date: operationalDate,
-      booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : "manual_power_outage",
+      booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : (isOfflineSync ? "offline_mode" : "manual_power_outage"),
       package_id: selectedPackage ? packageId : "",
       package_name: selectedPackage ? String(selectedPackage.package_name || packageId).trim() : "",
       package_total: packageTotal,
@@ -14350,7 +14411,7 @@ function createManualOutageTransaction_(payload) {
         session_id: sessionId,
         room_id: room.room_id || "",
         room_name: room.room_name || "",
-        booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : "manual_power_outage",
+        booking_mode: selectedPackage ? FNB_V25A_BOOKING_MODE_PACKAGE : (isOfflineSync ? "offline_mode" : "manual_power_outage"),
         status: "closed",
         start_time: normalizedStartTime,
         scheduled_end_time: normalizedEndTime,
@@ -14366,7 +14427,7 @@ function createManualOutageTransaction_(payload) {
         closed_transaction_id: transactionId,
         idempotency_key: idempotencyKey,
         legacy_room_start_time: normalizedStartTime,
-        note: "Input manual mati listrik | " + (selectedPackage ? ("Paket " + (selectedPackage.package_name || packageId) + " | ") : "") + sourceNote,
+        note: (isOfflineSync ? "Offline Mode | " : "Input manual mati listrik | ") + (selectedPackage ? ("Paket " + (selectedPackage.package_name || packageId) + " | ") : "") + sourceNote,
         customer_name: customerName,
         package_id: selectedPackage ? packageId : "",
         prepayment_transaction_id: "",
@@ -14427,7 +14488,7 @@ function createManualOutageTransaction_(payload) {
               quantity: Number(item.quantity || 0) / normalizedLcs.length,
               bonus_per_item: Number(item.bonus_sales_lc || 0),
               bonus_total: bonusTotal,
-              source_status: "manual_power_outage",
+              source_status: isOfflineSync ? "offline_mode" : "manual_power_outage",
               payroll_id: "",
               created_at: normalizedEndTime,
               created_by: enteredBy,
@@ -14443,7 +14504,7 @@ function createManualOutageTransaction_(payload) {
       entity_type: "transaction",
       entity_id: transactionId,
       entity_name: room.room_name || customerName || transactionId,
-      action_type: "create_manual_power_outage",
+      action_type: isOfflineSync ? "sync_offline_transaction" : "create_manual_power_outage",
       old_value: "",
       new_value: transaction,
       changed_by: enteredBy,
@@ -14454,7 +14515,7 @@ function createManualOutageTransaction_(payload) {
     return {
       ok: true,
       success: true,
-      message: "Transaksi manual berhasil disimpan dan siap dicetak.",
+      message: isOfflineSync ? "Transaksi Offline Mode berhasil disinkronkan." : "Transaksi manual berhasil disimpan dan siap dicetak.",
       operational_date: operationalDate,
       transaction: transaction,
       fnb_orders: detailedOrders,

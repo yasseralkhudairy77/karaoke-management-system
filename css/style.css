@@ -9338,6 +9338,63 @@ textarea.action-confirmation-input {
   border-radius: 6px;
 }
 
+.offline-mode-panel {
+  border-color: rgba(79, 209, 154, 0.65);
+  box-shadow: inset 0 3px 0 rgba(79, 209, 154, 0.75);
+}
+
+.offline-queue-panel {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  background: rgba(28, 24, 19, 0.92);
+  padding: 18px;
+  border-radius: 6px;
+}
+
+.offline-queue-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.offline-queue-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--gold);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px 12px;
+}
+
+.offline-queue-item--synced { border-left-color: #4fd19a; }
+.offline-queue-item--conflict { border-left-color: #ff6b6b; }
+
+.offline-queue-item > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.offline-queue-item span,
+.offline-queue-item small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.offline-queue-item button {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
 .manual-transaction-heading,
 .manual-transaction-actions,
 .manual-transaction-picker,

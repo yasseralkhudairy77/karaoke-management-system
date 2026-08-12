@@ -16,6 +16,13 @@ import {
 import { rooms as mockRooms } from "./mock-data.js";
 import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=lc-receipt-breakdown-v1";
 import { printThermalReceipt } from "./printer-adapter.js?v=lc-receipt-breakdown-v1";
+import {
+  getOfflineSnapshot,
+  listOfflineTransactions,
+  saveOfflineSnapshot,
+  saveOfflineTransaction,
+  updateOfflineTransaction,
+} from "./offline-store.js?v=offline-mode-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -24,6 +31,8 @@ const dashboardPanels = document.querySelector("#dashboardPanels");
 const appHeader = document.querySelector(".app-header");
 const DASHBOARD_TAB_STORAGE_KEY = "karaoke_active_dashboard_tab";
 const OPERATOR_SESSION_STORAGE_KEY = "karaoke_operator_session";
+const OFFLINE_OPERATOR_SESSION_KEY = "karaoke_offline_operator_session";
+const OFFLINE_OPERATOR_SESSION_TTL_MS = 18 * 60 * 60 * 1000;
 const DASHBOARD_TABS = [
   { key: "rooms", label: "Ruangan" },
   { key: "fnb", label: "F&B" },
@@ -31,6 +40,7 @@ const DASHBOARD_TABS = [
   { key: "lc", label: "LC" },
   { key: "reports", label: "Laporan" },
   { key: "transactions", label: "Transaksi" },
+  { key: "offline", label: "Offline Mode" },
   { key: "audit", label: "Audit" },
   { key: "promosi", label: "Promosi" },
   { key: "settings", label: "Pengaturan" },
@@ -46,9 +56,9 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
-  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
-  cashier: ["rooms", "fnb", "lc", "reports", "transactions"],
+  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "audit", "promosi", "settings"],
+  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "offline", "audit", "promosi", "settings"],
+  cashier: ["rooms", "fnb", "lc", "reports", "transactions", "offline"],
   receptionist: ["rooms"],
 };
 const ROLE_REPORT_SUB_TABS = {
@@ -597,7 +607,21 @@ function loadOperatorSession() {
     const savedOperator = sessionStorage.getItem(OPERATOR_SESSION_STORAGE_KEY);
 
     if (!savedOperator) {
-      return null;
+      const offlineSession = JSON.parse(localStorage.getItem(OFFLINE_OPERATOR_SESSION_KEY) || "null");
+      if (!offlineSession || Number(offlineSession.expires_at) <= Date.now()) {
+        localStorage.removeItem(OFFLINE_OPERATOR_SESSION_KEY);
+        return null;
+      }
+      if (!offlineSession.employee_id || !offlineSession.employee_name || !offlineSession.role) {
+        localStorage.removeItem(OFFLINE_OPERATOR_SESSION_KEY);
+        return null;
+      }
+      return {
+        employee_id: String(offlineSession.employee_id || ""),
+        employee_name: String(offlineSession.employee_name || ""),
+        role: normalizeOperatorRole(offlineSession.role),
+        offline_restored: true,
+      };
     }
 
     const parsedOperator = JSON.parse(savedOperator);
@@ -634,6 +658,14 @@ function saveOperatorSession(operator, pin = "") {
   };
 
   sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(safeOperator));
+  try {
+    localStorage.setItem(OFFLINE_OPERATOR_SESSION_KEY, JSON.stringify({
+      ...safeOperator,
+      expires_at: Date.now() + OFFLINE_OPERATOR_SESSION_TTL_MS,
+    }));
+  } catch (error) {
+    console.warn("Sesi perangkat untuk Offline Mode gagal disimpan.", error);
+  }
   if (pin) {
     try {
       sessionStorage.setItem("karaoke_operator_pin", pin);
@@ -646,6 +678,11 @@ function saveOperatorSession(operator, pin = "") {
 
 function clearOperatorSession() {
   sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+  try {
+    localStorage.removeItem(OFFLINE_OPERATOR_SESSION_KEY);
+  } catch (error) {
+    console.warn("Sesi Offline Mode gagal dibersihkan.", error);
+  }
   try {
     sessionStorage.removeItem("karaoke_operator_pin");
   } catch (e) {}
@@ -902,6 +939,11 @@ let activeTransactionsSubTab = "history";
 let manualTransactionDraft = null;
 let isSavingManualTransaction = false;
 let manualTransactionIdempotencyKey = "";
+let offlineTransactions = [];
+let isSavingOfflineTransaction = false;
+let syncingOfflineTransactionId = "";
+let serverConnectionState = "unknown";
+let lastSuccessfulServerAt = "";
 let openFnbOrders = [];
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
@@ -1050,6 +1092,55 @@ function isUserBusy() {
   return false;
 }
 
+function markServerOnline() {
+  serverConnectionState = "online";
+  lastSuccessfulServerAt = new Date().toISOString();
+}
+
+function markServerDegraded() {
+  serverConnectionState = "degraded";
+}
+
+async function cacheProductionSnapshot(key, data) {
+  try {
+    await saveOfflineSnapshot(key, data);
+  } catch (error) {
+    console.warn(`Snapshot offline ${key} gagal disimpan.`, error);
+  }
+}
+
+async function restoreProductionSnapshot(key, fallback = null) {
+  try {
+    const record = await getOfflineSnapshot(key);
+    return record && record.data !== undefined ? record : fallback;
+  } catch (error) {
+    console.warn(`Snapshot offline ${key} gagal dibaca.`, error);
+    return fallback;
+  }
+}
+
+function formatSnapshotTime(value) {
+  if (!value) return "waktu tidak diketahui";
+  try {
+    return new Intl.DateTimeFormat("id-ID", {
+      timeZone: "Asia/Jakarta",
+      dateStyle: "short",
+      timeStyle: "medium",
+    }).format(new Date(value));
+  } catch (_) {
+    return String(value);
+  }
+}
+
+async function reloadOfflineTransactions() {
+  try {
+    offlineTransactions = await listOfflineTransactions();
+  } catch (error) {
+    console.error("Antrean transaksi offline gagal dimuat.", error);
+    offlineTransactions = [];
+  }
+}
+
 async function silentReloadRooms() {
   if (!API_BASE_URL.trim() || silentRoomsReloadInFlight || document.visibilityState !== "visible") {
     return;
@@ -1061,8 +1152,10 @@ async function silentReloadRooms() {
     const isReceptionist = getCurrentOperatorRole() === "receptionist";
 
     rooms = normalizeRooms(roomsData);
+    await cacheProductionSnapshot("rooms", roomsData);
     syncSelectedFbRoomWithRooms();
 
+    markServerOnline();
     setDataSourceBadge("Terhubung ke Server", "live");
     errorMessage = "";
 
@@ -1082,6 +1175,7 @@ async function silentReloadRooms() {
     renderRooms();
     console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
   } catch (error) {
+    markServerDegraded();
     console.warn("Silent refresh gagal:", error);
   } finally {
     silentRoomsReloadInFlight = false;
@@ -1113,18 +1207,24 @@ async function loadRooms() {
       loadLcs()
     ]);
     rooms = normalizeRooms(roomsData);
+    await cacheProductionSnapshot("rooms", roomsData);
     syncSelectedFbRoomWithRooms();
     roomsLoading = false;
+    markServerOnline();
     setDataSourceBadge("Terhubung ke Server", "live");
     console.info("Data ruangan berhasil dimuat dari Google Apps Script API.");
     renderRooms();
     await loadRoomRecoveryCandidates();
   } catch (error) {
-    console.warn("Gagal memuat data ruangan dari API. Memakai data contoh sementara.", error);
+    console.warn("Gagal memuat data ruangan dari API.", error);
     roomsLoading = false;
+    markServerDegraded();
     setDataSourceBadge("Server Bermasalah", "error");
-    showErrorState("Gagal memuat data dari server, sementara memakai data contoh.");
-    rooms = normalizeRooms(mockRooms);
+    const snapshot = await restoreProductionSnapshot("rooms");
+    rooms = normalizeRooms(Array.isArray(snapshot?.data) ? snapshot.data : []);
+    showErrorState(snapshot
+      ? `Server tidak dapat dijangkau. Menampilkan snapshot produksi terakhir ${formatSnapshotTime(snapshot.updated_at)}. Aksi online dikunci; gunakan Offline Mode untuk transaksi baru.`
+      : "Server tidak dapat dijangkau dan belum ada snapshot produksi. Gunakan Offline Mode setelah data master pernah dimuat saat online.");
     roomRecoveryCandidates = [];
     roomRecoverySummary = null;
     syncSelectedFbRoomWithRooms();
@@ -1491,11 +1591,16 @@ async function loadMenuItems() {
     const data = await fetchMenuItemsFromApi();
 
     menuItems = Array.isArray(data.menu_items) ? data.menu_items : [];
+    await cacheProductionSnapshot("menu_items", menuItems);
     console.log("Menu F&B dimuat:", menuItems.length);
     menuLoading = false;
     renderRooms();
   } catch (error) {
     console.warn("Gagal memuat Menu F&B.", error);
+    if (menuItems.length === 0) {
+      const snapshot = await restoreProductionSnapshot("menu_items");
+      menuItems = Array.isArray(snapshot?.data) ? snapshot.data : [];
+    }
     menuErrorMessage = menuItems.length === 0 ? "Gagal memuat menu F&B." : "";
     menuLoading = false;
     renderRooms();
@@ -1551,6 +1656,7 @@ async function fetchMenuItemsFromApi() {
       stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
       stock_qty: menuItem.stock_qty !== null && menuItem.stock_qty !== undefined ? Number(menuItem.stock_qty) : null,
       unit: menuItem.unit || "",
+      bonus_sales_lc: Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0,
     })),
   };
 }
@@ -1571,10 +1677,12 @@ async function loadInventoryItems() {
 
     inventoryItems = Array.isArray(data.items) ? data.items : [];
     inventorySummary = data.summary || null;
+    await cacheProductionSnapshot("inventory", { items: inventoryItems, summary: inventorySummary });
   } catch (error) {
     console.warn("Gagal memuat stok F&B.", error);
-    inventoryItems = [];
-    inventorySummary = null;
+    const snapshot = await restoreProductionSnapshot("inventory");
+    inventoryItems = Array.isArray(snapshot?.data?.items) ? snapshot.data.items : [];
+    inventorySummary = snapshot?.data?.summary || null;
   } finally {
     isLoadingInventory = false;
     renderRooms();
@@ -18307,6 +18415,9 @@ function refreshActiveTabData() {
         loadTodayTransactions();
       }
       break;
+    case "offline":
+      reloadOfflineTransactions().then(renderRooms);
+      break;
     case "audit":
       loadTodayRoomTimeLogs();
       break;
@@ -18827,8 +18938,13 @@ async function loadLcs(force = false) {
       throw lastError || new Error("Daftar LC gagal dimuat.");
     }
     lcs = data.lcs;
+    await cacheProductionSnapshot("lcs", lcs);
   } catch (error) {
     console.error("Error loading LCs:", error);
+    if (lcs.length === 0) {
+      const snapshot = await restoreProductionSnapshot("lcs");
+      lcs = Array.isArray(snapshot?.data) ? snapshot.data : [];
+    }
     lcLoadError = error.message || "Daftar LC gagal dimuat.";
   } finally {
     isLoadingLcs = false;
@@ -21544,15 +21660,15 @@ function fillManualSelect(select, options, selectedValue) {
   });
 }
 
-function createManualTransactionPanelElement() {
+function createManualTransactionPanelElement({ offlineMode = false } = {}) {
   const draft = ensureManualTransactionDraft();
   const totals = getManualTransactionTotals();
   const panel = document.createElement("section");
-  panel.className = "manual-transaction-panel";
+  panel.className = offlineMode ? "manual-transaction-panel offline-mode-panel" : "manual-transaction-panel";
   panel.innerHTML = `
     <header class="manual-transaction-heading">
-      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus owner. Semua harga diambil dari data master.</p></div>
-      <span class="manual-transaction-owner-badge">OWNER</span>
+      <div><h3>${offlineMode ? "Transaksi Offline" : "Pemulihan Transaksi Mati Listrik"}</h3><p>${offlineMode ? "Data disimpan di perangkat ini dahulu. Harga yang tampil akan dibekukan untuk sinkronisasi." : "Khusus owner. Semua harga diambil dari data master."}</p></div>
+      <span class="manual-transaction-owner-badge">${offlineMode ? "OFFLINE MODE" : "OWNER"}</span>
     </header>
     <div class="manual-transaction-mode">
       <button type="button" data-action="set-manual-transaction-mode" data-mode="room">Room + F&amp;B + LC</button>
@@ -21586,7 +21702,7 @@ function createManualTransactionPanelElement() {
     <div class="manual-transaction-summary"></div>
     <div class="manual-transaction-actions">
       <button type="button" class="secondary" data-action="reset-manual-transaction">Kosongkan</button>
-      <button type="button" data-action="review-manual-transaction">Review &amp; Simpan</button>
+      <button type="button" data-action="${offlineMode ? "review-offline-transaction" : "review-manual-transaction"}">${offlineMode ? "Simpan Lokal & Cetak" : "Review &amp; Simpan"}</button>
     </div>
   `;
 
@@ -21610,7 +21726,9 @@ function createManualTransactionPanelElement() {
     const title = document.createElement("strong");
     title.textContent = `Masuk periode operasional ${operationalPeriod.label}`;
     const detail = document.createElement("span");
-    detail.textContent = "Khusus input manual, Tanggal Nota menjadi periode tujuan owner. Cutoff tetap berlaku untuk transaksi otomatis.";
+    detail.textContent = offlineMode
+      ? "Waktu dan periode ini dipertahankan saat transaksi disinkronkan ke server."
+      : "Khusus input manual, Tanggal Nota menjadi periode tujuan owner. Cutoff tetap berlaku untuk transaksi otomatis.";
     operationalPeriodBox.append(title, detail);
   } else {
     operationalPeriodBox.textContent = "Isi tanggal nota dan jam mulai untuk melihat periode operasional.";
@@ -21734,10 +21852,74 @@ function createManualTransactionPanelElement() {
     item.append(name, value);
     summary.appendChild(item);
   });
-  const saveButton = panel.querySelector("[data-action='review-manual-transaction']");
-  saveButton.disabled = isSavingManualTransaction;
-  saveButton.textContent = isSavingManualTransaction ? "Menyimpan..." : "Review & Simpan";
+  const saveButton = panel.querySelector(`[data-action='${offlineMode ? "review-offline-transaction" : "review-manual-transaction"}']`);
+  saveButton.disabled = offlineMode ? isSavingOfflineTransaction : isSavingManualTransaction;
+  saveButton.textContent = offlineMode
+    ? (isSavingOfflineTransaction ? "Menyimpan Lokal..." : "Simpan Lokal & Cetak")
+    : (isSavingManualTransaction ? "Menyimpan..." : "Review & Simpan");
   return panel;
+}
+
+function createOfflineQueuePanelElement() {
+  const section = document.createElement("section");
+  section.className = "offline-queue-panel";
+  const pending = offlineTransactions.filter((item) => item.sync_status !== "synced");
+  const heading = document.createElement("header");
+  heading.className = "manual-transaction-heading";
+  heading.innerHTML = `<div><h3>Antrean Sinkronisasi</h3><p>${pending.length} transaksi menunggu atau perlu diperiksa.</p></div>`;
+  const actions = document.createElement("div");
+  actions.className = "manual-transaction-actions";
+  const syncAll = document.createElement("button");
+  syncAll.type = "button";
+  syncAll.dataset.action = "sync-all-offline-transactions";
+  syncAll.textContent = syncingOfflineTransactionId ? "Sinkronisasi..." : "Sinkronkan Semua";
+  syncAll.disabled = !pending.length || Boolean(syncingOfflineTransactionId) || !getLoggedInOperatorPin();
+  actions.appendChild(syncAll);
+  section.append(heading, actions);
+
+  const list = document.createElement("div");
+  list.className = "offline-queue-list";
+  offlineTransactions.forEach((item) => {
+    const row = document.createElement("article");
+    row.className = `offline-queue-item offline-queue-item--${item.sync_status || "pending"}`;
+    const total = Number(item.transaction?.grand_total) || 0;
+    const statusLabels = {
+      pending: "Menunggu sinkronisasi",
+      syncing: "Sedang disinkronkan",
+      synced: "Sudah masuk server",
+      conflict: "Perlu diperiksa",
+    };
+    const summary = document.createElement("div");
+    const id = document.createElement("strong");
+    id.textContent = item.offline_transaction_id;
+    const detail = document.createElement("span");
+    detail.textContent = `${item.transaction?.room_name || "F&B Umum"} · ${formatCurrency(total)}`;
+    const status = document.createElement("small");
+    status.textContent = `${statusLabels[item.sync_status] || item.sync_status}${item.sync_error ? ` · ${item.sync_error}` : ""}`;
+    summary.append(id, detail, status);
+    row.appendChild(summary);
+    const printButton = document.createElement("button");
+    printButton.type = "button";
+    printButton.dataset.action = "print-offline-transaction";
+    printButton.dataset.offlineTransactionId = item.offline_transaction_id;
+    printButton.textContent = "Cetak";
+    row.appendChild(printButton);
+    if (item.sync_status !== "synced") {
+      const syncButton = document.createElement("button");
+      syncButton.type = "button";
+      syncButton.dataset.action = "sync-offline-transaction";
+      syncButton.dataset.offlineTransactionId = item.offline_transaction_id;
+      syncButton.textContent = "Sinkronkan";
+      syncButton.disabled = Boolean(syncingOfflineTransactionId) || !getLoggedInOperatorPin();
+      row.appendChild(syncButton);
+    }
+    list.appendChild(row);
+  });
+  if (!offlineTransactions.length) {
+    list.appendChild(createStateMessage("Belum ada transaksi Offline Mode di perangkat ini."));
+  }
+  section.appendChild(list);
+  return section;
 }
 
 function createReportsSubNavElement() {
@@ -21864,6 +22046,12 @@ function appendDashboardTabContent(panel, tabKey) {
         }
         break;
       }
+    case "offline":
+      panel.append(
+        createManualTransactionPanelElement({ offlineMode: true }),
+        createOfflineQueuePanelElement()
+      );
+      break;
     case "stock":
       panel.appendChild(createStockSubNavElement());
       if (activeStockSubTab === "position") {
@@ -22806,8 +22994,13 @@ async function loadPackages() {
   if (!API_BASE_URL.trim()) return;
   try {
     packages = await fetchPackagesFromApi();
+    await cacheProductionSnapshot("packages", packages);
   } catch (error) {
     console.error("Gagal memuat paket:", error);
+    if (packages.length === 0) {
+      const snapshot = await restoreProductionSnapshot("packages");
+      packages = Array.isArray(snapshot?.data) ? snapshot.data : [];
+    }
   }
 }
 
@@ -23617,6 +23810,11 @@ async function saveCashierClosing() {
 }
 
 async function postApiAction(payload, options = {}) {
+  const actionName = String(payload?.action || "").trim();
+  const recoveryActions = new Set(["validateAdminPin", "syncOfflineTransaction"]);
+  if (serverConnectionState === "degraded" && !recoveryActions.has(actionName)) {
+    throw new Error("Aksi online dikunci karena data server tidak terverifikasi. Gunakan Offline Mode atau tunggu status Terhubung ke Server.");
+  }
   const actionParam = payload && payload.action
     ? `?action=${encodeURIComponent(payload.action)}`
     : "";
@@ -23647,7 +23845,9 @@ async function postApiAction(payload, options = {}) {
     throw new Error(`Permintaan gagal dengan status ${response.status}.`);
   }
 
-  return response.json();
+  const data = await response.json();
+  markServerOnline();
+  return data;
 }
 
 function ensureOperatorHeader() {
@@ -24010,6 +24210,243 @@ async function saveManualTransaction() {
   }
 }
 
+function getOfflineDeviceId() {
+  const key = "karaoke_offline_device_id";
+  let value = localStorage.getItem(key);
+  if (!value) {
+    value = `DEV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+    localStorage.setItem(key, value);
+  }
+  return value;
+}
+
+function buildOfflineTransactionRecord() {
+  const draft = ensureManualTransactionDraft();
+  const room = rooms.find((item) => item.room_id === draft.room_id) || {};
+  const selectedPackage = getManualTransactionSelectedPackage(draft);
+  const totals = getManualTransactionTotals();
+  const startTime = `${draft.date}T${draft.time}:00+07:00`;
+  const startDate = new Date(startTime);
+  const durationMinutes = draft.mode === "room" ? Number(draft.duration_minutes) || 0 : 0;
+  const endTime = new Date(startDate.getTime() + durationMinutes * 60000).toISOString();
+  const deviceId = getOfflineDeviceId();
+  const offlineId = `OFF-${deviceId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
+  const fnbItems = draft.fnb_items.map((item) => {
+    const menu = menuItems.find((entry) => entry.menu_id === item.menu_id) || {};
+    const quantity = Number(item.quantity) || 1;
+    const price = Number(menu.price) || 0;
+    return {
+      menu_id: item.menu_id,
+      menu_name: menu.menu_name || item.menu_id,
+      category: menu.category || "",
+      price,
+      quantity,
+      subtotal: price * quantity,
+      bonus_sales_lc: Number(menu.bonus_sales_lc) || 0,
+    };
+  });
+  const lcLogs = draft.mode === "room" ? draft.lc_assignments.map((assignment) => {
+    const lc = lcs.find((entry) => entry.lc_id === assignment.lc_id) || {};
+    const lcDuration = Number(assignment.duration_minutes) || durationMinutes;
+    const hourlyRate = Number(lc.rate_per_room) || 0;
+    return {
+      lc_id: assignment.lc_id,
+      lc_name: lc.lc_name || assignment.lc_id,
+      duration_minutes: lcDuration,
+      rate_per_hour: hourlyRate,
+      rate: Math.ceil(lcDuration / 60) * hourlyRate,
+    };
+  }) : [];
+  const transaction = {
+    transaction_id: offlineId,
+    room_id: draft.mode === "room" ? draft.room_id : "FNB-GENERAL",
+    room_name: draft.mode === "room" ? (room.room_name || draft.room_id) : (draft.customer_name.trim() || "F&B Umum"),
+    start_time: startTime,
+    end_time: endTime,
+    duration_minutes: durationMinutes,
+    rate_per_hour: draft.mode === "room" ? Number(room.rate_per_hour) || 0 : 0,
+    room_total: totals.roomTotal,
+    fnb_total: totals.fnbTotal,
+    lc_total: totals.lcTotal,
+    grand_total: totals.grandTotal,
+    payment_method: draft.payment_method,
+    payment_status: draft.payment_status,
+    cashier_name: draft.cashier_name.trim() || getLoggedInOperatorName(),
+    customer_name: draft.customer_name.trim(),
+    created_at: startTime,
+    operational_date: draft.date,
+    entry_source: "offline_mode",
+    package_id: selectedPackage?.package_id || "",
+    package_name: selectedPackage?.package_name || "",
+    package_total: selectedPackage ? Number(selectedPackage.selling_price) || 0 : 0,
+    fnb_orders: fnbItems.length ? [{ order_id: `${offlineId}-FNB`, items: fnbItems }] : [],
+    lc_details: {
+      detail_available: lcLogs.length > 0,
+      lc_logs: lcLogs,
+      lc_total: totals.lcTotal,
+      work_log_total: totals.lcTotal,
+      billing_adjustment: 0,
+    },
+  };
+  return {
+    offline_transaction_id: offlineId,
+    schema_version: 1,
+    sync_status: "pending",
+    sync_attempts: 0,
+    sync_error: "",
+    created_at: new Date().toISOString(),
+    device_id: deviceId,
+    operator: {
+      employee_id: currentOperator?.employee_id || "",
+      employee_name: getLoggedInOperatorName(),
+      role: getCurrentOperatorRole(),
+    },
+    transaction,
+    sync_payload: {
+      mode: draft.mode,
+      start_time: startTime,
+      operational_date: draft.date,
+      room_id: draft.mode === "room" ? draft.room_id : "",
+      room_snapshot: draft.mode === "room" ? {
+        room_id: draft.room_id,
+        room_name: room.room_name || draft.room_id,
+        rate_per_hour: Number(room.rate_per_hour) || 0,
+      } : null,
+      package_id: selectedPackage?.package_id || "",
+      package_snapshot: selectedPackage ? {
+        package_id: selectedPackage.package_id,
+        package_name: selectedPackage.package_name,
+        selling_price: Number(selectedPackage.selling_price) || 0,
+        duration_minutes: Number(selectedPackage.duration_minutes) || durationMinutes,
+      } : null,
+      duration_minutes: durationMinutes,
+      customer_name: draft.customer_name.trim(),
+      cashier_name: transaction.cashier_name,
+      payment_method: draft.payment_method,
+      payment_status: draft.payment_status,
+      source_note: "Transaksi dari Offline Mode",
+      fnb_items: fnbItems,
+      lc_assignments: lcLogs,
+      entered_by: getLoggedInOperatorName(),
+      idempotency_key: offlineId,
+      offline_transaction_id: offlineId,
+      device_id: deviceId,
+    },
+  };
+}
+
+function printOfflineTransaction(record) {
+  const transaction = record?.transaction;
+  if (!transaction) return false;
+  const receiptData = buildReceiptData(transaction, {
+    fnbOrders: transaction.fnb_orders || [],
+    lcDetails: transaction.lc_details || null,
+    business: {
+      footer: "OFFLINE MODE\nPembayaran telah diterima.\nTerima kasih.",
+    },
+  });
+  return printThermalReceipt(receiptData);
+}
+
+function reviewOfflineTransaction() {
+  const error = validateManualTransactionDraft();
+  if (error) {
+    showFloatingToast(error, "error");
+    return;
+  }
+  if (ensureManualTransactionDraft().payment_status !== "paid") {
+    showFloatingToast("Offline Mode hanya boleh disimpan setelah pembayaran diterima.", "error");
+    return;
+  }
+  const totals = getManualTransactionTotals();
+  openActionConfirmation({
+    tone: "warning",
+    title: "Simpan Transaksi Offline?",
+    message: "Data akan disimpan permanen di perangkat ini dan dapat langsung dicetak. Jangan hapus data browser sebelum status sinkron.",
+    details: [
+      ["Waktu", `${manualTransactionDraft.date} ${manualTransactionDraft.time}`],
+      ["Kasir", manualTransactionDraft.cashier_name.trim() || getLoggedInOperatorName()],
+      ["Total", formatCurrency(totals.grandTotal)],
+      ["Pembayaran", formatPaymentMethodLabel(manualTransactionDraft.payment_method)],
+    ],
+    confirmLabel: "Simpan Lokal & Cetak",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: saveTransactionOffline,
+  });
+}
+
+async function saveTransactionOffline() {
+  if (isSavingOfflineTransaction) return;
+  isSavingOfflineTransaction = true;
+  try {
+    const record = buildOfflineTransactionRecord();
+    await saveOfflineTransaction(record);
+    actionConfirmationModal = null;
+    await reloadOfflineTransactions();
+    resetManualTransactionDraft();
+    const printed = printOfflineTransaction(record);
+    showFloatingToast(printed
+      ? "Transaksi tersimpan di perangkat dan struk Offline Mode dikirim ke printer."
+      : "Transaksi tersimpan di perangkat. Printer thermal belum dapat dibuka.", printed ? "success" : "warning");
+  } finally {
+    isSavingOfflineTransaction = false;
+    renderRooms();
+  }
+}
+
+async function syncOfflineTransaction(record) {
+  if (!record || syncingOfflineTransactionId) return;
+  const pin = getLoggedInOperatorPin();
+  if (!pin) throw new Error("Login ulang saat online diperlukan sebelum sinkronisasi.");
+  syncingOfflineTransactionId = record.offline_transaction_id;
+  await updateOfflineTransaction(record.offline_transaction_id, {
+    sync_status: "syncing",
+    sync_attempts: Number(record.sync_attempts || 0) + 1,
+    sync_error: "",
+  });
+  try {
+    const data = await postApiAction({
+      action: "syncOfflineTransaction",
+      ...record.sync_payload,
+      operator_pin: pin,
+    }, { timeoutMs: 45000 });
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.error || data?.message || "Sinkronisasi ditolak server.");
+    }
+    await updateOfflineTransaction(record.offline_transaction_id, {
+      sync_status: "synced",
+      sync_error: "",
+      synced_at: new Date().toISOString(),
+      server_transaction_id: data.transaction?.transaction_id || "",
+    });
+  } catch (error) {
+    await updateOfflineTransaction(record.offline_transaction_id, {
+      sync_status: "conflict",
+      sync_error: error.message || "Sinkronisasi gagal.",
+    });
+    throw error;
+  } finally {
+    syncingOfflineTransactionId = "";
+    await reloadOfflineTransactions();
+    renderRooms();
+  }
+}
+
+async function syncAllOfflineTransactions() {
+  const pending = offlineTransactions.filter((item) => item.sync_status !== "synced");
+  for (const record of pending) {
+    try {
+      await syncOfflineTransaction(record);
+    } catch (error) {
+      showFloatingToast(`${record.offline_transaction_id}: ${error.message}`, "error");
+      break;
+    }
+  }
+  if (pending.length && offlineTransactions.every((item) => item.sync_status === "synced")) {
+    showFloatingToast("Semua transaksi Offline Mode sudah masuk ke server.", "success");
+  }
+}
+
 async function handleRoomAction(event) {
   const button = event.target.closest("[data-action]");
 
@@ -24236,6 +24673,35 @@ async function handleRoomAction(event) {
 
   if (action === "review-manual-transaction") {
     reviewManualTransaction();
+    return;
+  }
+
+  if (action === "review-offline-transaction") {
+    reviewOfflineTransaction();
+    return;
+  }
+
+  if (action === "print-offline-transaction") {
+    const record = offlineTransactions.find((item) => item.offline_transaction_id === button.dataset.offlineTransactionId);
+    if (!printOfflineTransaction(record)) {
+      showFloatingToast("Printer thermal belum dapat dibuka.", "error");
+    }
+    return;
+  }
+
+  if (action === "sync-offline-transaction") {
+    const record = offlineTransactions.find((item) => item.offline_transaction_id === button.dataset.offlineTransactionId);
+    try {
+      await syncOfflineTransaction(record);
+      showFloatingToast("Transaksi Offline Mode berhasil disinkronkan.", "success");
+    } catch (error) {
+      showFloatingToast(error.message || "Sinkronisasi gagal.", "error");
+    }
+    return;
+  }
+
+  if (action === "sync-all-offline-transactions") {
+    await syncAllOfflineTransactions();
     return;
   }
 
@@ -25221,6 +25687,13 @@ if (dashboardShell) {
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js?v=offline-mode-v1")
+      .catch((error) => console.warn("Service worker Offline Mode gagal didaftarkan.", error));
+  });
+}
+
 // Refresh ringan hanya dari tab Ruangan yang sedang terlihat dan tidak bertumpuk.
 setInterval(async () => {
   if (document.visibilityState !== "visible" || !isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
@@ -25247,6 +25720,7 @@ async function initializeDashboard() {
   }
 
   dashboardDataInitialized = true;
+  await reloadOfflineTransactions();
   renderRooms();
   await loadRooms();
   await loadPackages();
