@@ -1348,7 +1348,14 @@ function getSheet_(sheetName) {
 
 function readSheetAsObjects_(sheetName) {
   var sheet = getSheet_(sheetName);
-  var values = sheet.getDataRange().getValues();
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+
+  if (lastRow < 2 || lastColumn < 1) {
+    return [];
+  }
+
+  var values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
 
   if (values.length < 2) {
     return [];
@@ -1389,6 +1396,12 @@ function getRooms_() {
 
   var tvDevicesByRoom = getTvDevicesByRoomMap_();
   var latestTvLogByDevice = getLatestTvControlLogByDeviceMap_();
+  var latestActiveSessionByRoom = getLatestRoomSessionsByRoom_([
+    "starting",
+    "active",
+    "closing",
+    "paid_waiting_start",
+  ]);
 
   return readSheetAsObjects_("Rooms").map(function (room) {
     var tvDevice = tvDevicesByRoom[String(room.room_id || "").trim()] || null;
@@ -1408,8 +1421,8 @@ function getRooms_() {
     };
 
     try {
-      // Try to find session with any of these statuses
-      var activeSession = findLatestRoomSessionForRoom_(room.room_id || "", ["starting", "active", "closing", "paid_waiting_start"]);
+      // RoomSessions sudah dibaca sekali dan dipetakan per room untuk seluruh respons.
+      var activeSession = latestActiveSessionByRoom[String(room.room_id || "").trim()] || null;
       debugInfo.activeSession_found = !!activeSession;
       
       if (activeSession && activeSession.session) {
@@ -18269,6 +18282,39 @@ function findLatestRoomSessionForRoom_(roomId, statuses) {
   latest.sheet = sheet;
   latest.headerMap = headerMap;
   return latest;
+}
+
+function getLatestRoomSessionsByRoom_(statuses) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return {};
+  }
+
+  var allowedStatuses = {};
+  (statuses || []).forEach(function (status) {
+    allowedStatuses[String(status || "").trim().toLowerCase()] = true;
+  });
+
+  return readSheetAsObjects_(ROOM_SESSIONS_SHEET).reduce(function (latestByRoom, session, index) {
+    var roomId = String(session.room_id || "").trim();
+    var normalizedStatus = String(session.status || "").trim().toLowerCase();
+    if (!roomId || !allowedStatuses[normalizedStatus]) {
+      return latestByRoom;
+    }
+
+    var updatedAt = session.updated_at || session.created_at || "";
+    var parsedTime = new Date(updatedAt).getTime();
+    var updatedTime = isNaN(parsedTime) ? 0 : parsedTime;
+    var current = latestByRoom[roomId];
+
+    if (!current || updatedTime >= current.updatedTime) {
+      latestByRoom[roomId] = {
+        session: session,
+        rowNumber: index + 2,
+        updatedTime: updatedTime,
+      };
+    }
+    return latestByRoom;
+  }, {});
 }
 
 function ensureTransactionsSheetColumns_() {

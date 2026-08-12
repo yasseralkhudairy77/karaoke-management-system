@@ -117,6 +117,13 @@ const currencyFormatter = new Intl.NumberFormat("id-ID", {
 });
 const ROOM_WARNING_SOUND_DURATION_MS = 180;
 const ROOM_WARNING_SOUND_FREQUENCY_HZ = 880;
+const API_GET_MAX_CONCURRENCY = 2;
+const API_GET_TIMEOUT_MS = 20000;
+const ROOM_AUTO_REFRESH_INTERVAL_MS = 30000;
+const ROOM_RECOVERY_REFRESH_INTERVAL_MS = 60000;
+let activeApiGetCount = 0;
+const pendingApiGetTasks = [];
+const inFlightApiGetRequests = new Map();
 
 function buildApiUrl(action, params = null) {
   const url = new URL(API_BASE_URL);
@@ -943,6 +950,8 @@ let isLoadingRoomRecovery = false;
 let isRecoveringRoom = false;
 let roomRecoveryConfirmation = null;
 let roomRecoveryLoadStarted = false;
+let silentRoomsReloadInFlight = false;
+let lastRoomRecoveryRefreshAt = 0;
 let activeDashboardTab = loadActiveDashboardTab();
 let activeReportSubTab = "owner";
 let currentOperator = loadOperatorSession();
@@ -1042,38 +1051,27 @@ function isUserBusy() {
 }
 
 async function silentReloadRooms() {
-  if (!API_BASE_URL.trim()) {
+  if (!API_BASE_URL.trim() || silentRoomsReloadInFlight || document.visibilityState !== "visible") {
     return;
   }
 
+  silentRoomsReloadInFlight = true;
   try {
-    const promises = [fetchRoomsFromApi()];
+    const roomsData = await fetchRoomsFromApi();
     const isReceptionist = getCurrentOperatorRole() === "receptionist";
-    if (!isReceptionist) {
-      promises.push(
-        postApiAction({
-          action: "getExpiredRoomRecoveryList",
-          grace_minutes: 5,
-          include_invalid_end_time: true,
-        }).catch((err) => {
-          console.warn("Gagal memuat kandidat recovery di background", err);
-          return null;
-        })
-      );
-    }
-
-    const [roomsData, recoveryData] = await Promise.all(promises);
 
     rooms = normalizeRooms(roomsData);
     syncSelectedFbRoomWithRooms();
 
-    if (recoveryData && recoveryData.ok === true) {
-      roomRecoveryCandidates = Array.isArray(recoveryData.candidates) ? recoveryData.candidates : [];
-      roomRecoverySummary = {
-        expired_count: Number(recoveryData.expired_count) || 0,
-        invalid_count: Number(recoveryData.invalid_count) || 0,
-        total_rooms_checked: Number(recoveryData.total_rooms_checked) || 0,
-      };
+    setDataSourceBadge("Terhubung ke Server", "live");
+    errorMessage = "";
+
+    if (
+      !isReceptionist
+      && activeDashboardTab === "rooms"
+      && Date.now() - lastRoomRecoveryRefreshAt >= ROOM_RECOVERY_REFRESH_INTERVAL_MS
+    ) {
+      await loadRoomRecoveryCandidates();
     }
 
     if (isUserBusy() || activeDashboardTab !== "rooms") {
@@ -1085,6 +1083,8 @@ async function silentReloadRooms() {
     console.info("Silent refresh: Tampilan ruangan berhasil diperbarui.");
   } catch (error) {
     console.warn("Silent refresh gagal:", error);
+  } finally {
+    silentRoomsReloadInFlight = false;
   }
 }
 
@@ -1133,9 +1133,7 @@ async function loadRooms() {
 }
 
 async function fetchRoomsFromApi() {
-  const response = await fetch(buildApiUrl("getRooms"), {
-    cache: "no-store",
-  });
+  const response = await fetchApiGet(buildApiUrl("getRooms"));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1164,14 +1162,18 @@ async function loadRoomRecoveryCandidates() {
 
   roomRecoveryLoadStarted = true;
   isLoadingRoomRecovery = true;
+  lastRoomRecoveryRefreshAt = Date.now();
   renderRooms();
 
   try {
-    const data = await postApiAction({
-      action: "getExpiredRoomRecoveryList",
+    const response = await fetchApiGet(buildApiUrl("getExpiredRoomRecoveryList", {
       grace_minutes: 5,
       include_invalid_end_time: true,
-    });
+    }));
+    if (!response.ok) {
+      throw new Error(`getExpiredRoomRecoveryList gagal dengan status ${response.status}.`);
+    }
+    const data = await response.json();
 
     const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
 
@@ -1262,7 +1264,7 @@ async function loadTodayTransactions() {
 
 async function fetchTodayTransactionsFromApi() {
   const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getTodayTransactions&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1369,9 +1371,7 @@ async function applyOwnerReportCustomPeriod() {
 
 async function fetchOwnerReportEndpoint(action) {
   const params = buildOwnerReportPeriodQueryParams();
-  const response = await fetch(buildApiUrl(action, Object.fromEntries(params.entries())), {
-    cache: "no-store",
-  });
+  const response = await fetchApiGet(buildApiUrl(action, Object.fromEntries(params.entries())));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1457,7 +1457,7 @@ async function loadTodayCashierClosings() {
 
 async function fetchTodayCashierClosingsFromApi() {
   const params = buildTransactionPeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getTodayCashierClosings&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1508,9 +1508,7 @@ async function fetchMenuItemsFromApi() {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      response = await fetch(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`, {
-        cache: "no-store",
-      });
+      response = await fetchApiGet(`${API_BASE_URL}?action=getMenuItems&_=${Date.now()}`);
       lastError = response.ok
         ? null
         : new Error(`API request failed with status ${response.status}`);
@@ -1584,7 +1582,7 @@ async function loadInventoryItems() {
 }
 
 async function fetchInventoryItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getInventoryItems`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1603,7 +1601,7 @@ async function fetchInventoryItemsFromApi() {
 }
 
 async function fetchEmployeesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getEmployees`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getEmployees`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1619,7 +1617,7 @@ async function fetchEmployeesFromApi() {
 }
 
 async function fetchPackagesFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getPackages`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getPackages`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1639,7 +1637,7 @@ async function fetchPackageDetailsFromApi(packageId) {
   params.set("action", "getPackageDetails");
   params.set("package_id", packageId);
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -1734,7 +1732,7 @@ async function loadMasterDataAuditLogs(options = {}) {
 
   try {
     const params = buildMasterAuditQueryParams();
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error(`API request failed with status ${response.status}`);
@@ -1918,6 +1916,92 @@ function submitStockAdjustment() {
     cancelLabel: "Periksa Lagi",
     onConfirm: () => executeStockAdjustment(),
   });
+}
+
+function getApiRequestKey(url) {
+  const requestUrl = new URL(url);
+  ["_", "_cb", "_retry"].forEach((key) => requestUrl.searchParams.delete(key));
+  requestUrl.searchParams.sort();
+  return requestUrl.toString();
+}
+
+function drainApiGetQueue() {
+  while (activeApiGetCount < API_GET_MAX_CONCURRENCY && pendingApiGetTasks.length > 0) {
+    const task = pendingApiGetTasks.shift();
+    activeApiGetCount += 1;
+    task.run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeApiGetCount -= 1;
+        drainApiGetQueue();
+      });
+  }
+}
+
+function scheduleApiGet(run) {
+  return new Promise((resolve, reject) => {
+    pendingApiGetTasks.push({ run, resolve, reject });
+    drainApiGetQueue();
+  });
+}
+
+async function executeApiGet(url) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const requestUrl = new URL(url);
+    if (attempt > 0) {
+      requestUrl.searchParams.set("_retry", `${Date.now()}-${attempt}`);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(requestUrl.toString(), {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const action = requestUrl.searchParams.get("action") || "API";
+        throw new Error(`${action} timeout setelah ${API_GET_TIMEOUT_MS / 1000} detik.`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+
+    if (response.status !== 404 || attempt === 1) {
+      return response;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 650));
+  }
+
+  throw new Error("Permintaan GET gagal.");
+}
+
+function executeCoordinatedApiGet(url) {
+  if (globalThis.navigator?.locks?.request) {
+    return globalThis.navigator.locks.request(
+      "karaoke-management-api-get",
+      { mode: "exclusive" },
+      () => executeApiGet(url)
+    );
+  }
+  return executeApiGet(url);
+}
+
+function fetchApiGet(url) {
+  const requestKey = getApiRequestKey(url);
+  let pendingRequest = inFlightApiGetRequests.get(requestKey);
+  if (!pendingRequest) {
+    pendingRequest = scheduleApiGet(() => executeCoordinatedApiGet(url));
+    inFlightApiGetRequests.set(requestKey, pendingRequest);
+    pendingRequest.then(
+      () => inFlightApiGetRequests.delete(requestKey),
+      () => inFlightApiGetRequests.delete(requestKey)
+    );
+  }
+  return pendingRequest.then((response) => response.clone());
 }
 
 async function executeStockAdjustment() {
@@ -2365,7 +2449,7 @@ async function fetchRoomUsageReportFromApi() {
   }
 
   const params = buildRoomUsagePeriodQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2394,7 +2478,7 @@ async function fetchActiveShiftRoomUsageReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getRoomUsageReport&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2494,7 +2578,7 @@ async function fetchTodayFnbSalesReportFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getTodayFnbSalesReport&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2565,7 +2649,7 @@ async function fetchTodayStockMovementsFromApi() {
     params.set("reference_type", stockMovementReferenceFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2649,9 +2733,7 @@ async function loadInventoryAudits({ selectLatest = false } = {}) {
 }
 
 async function fetchInventoryAuditsFromApi() {
-  const response = await fetch(buildApiUrl("getInventoryAudits", { status: "all", limit: 20 }), {
-    cache: "no-store",
-  });
+  const response = await fetchApiGet(buildApiUrl("getInventoryAudits", { status: "all", limit: 20 }));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2697,9 +2779,7 @@ async function selectInventoryAudit(auditId, { renderAfter = true } = {}) {
 }
 
 async function fetchInventoryAuditDetailsFromApi(auditId) {
-  const response = await fetch(buildApiUrl("getInventoryAuditDetails", { audit_id: auditId }), {
-    cache: "no-store",
-  });
+  const response = await fetchApiGet(buildApiUrl("getInventoryAuditDetails", { audit_id: auditId }));
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -3144,7 +3224,7 @@ async function fetchOpenFnbOrdersFromApi(roomId = "", roomStartTime = "") {
     params.set("room_start_time", roomStartTime);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -3198,7 +3278,7 @@ async function fetchTodayFnbOrdersFromApi() {
   }
 
   const params = buildActiveShiftQueryParams();
-  const response = await fetch(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?action=getTodayFnbOrders&${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -3225,7 +3305,7 @@ async function fetchFnbOrdersByIds(orderIds) {
     action: "getFnbOrdersByIds",
     order_ids: orderIds.join(","),
   });
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -3249,7 +3329,7 @@ async function fetchTransactionLcReceiptDetails(transactionId) {
     action: "getTransactionLcReceiptDetails",
     transaction_id: transactionId,
   });
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -4112,7 +4192,7 @@ async function showClosingPrintPreview(closingId) {
       closing_id: closingId,
       _: Date.now().toString(),
     });
-    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || data?.ok !== true) {
       throw new Error(data?.error || "Rincian closing tidak dapat dimuat.");
@@ -6805,7 +6885,7 @@ function createPaymentControlElement(transaction) {
       }
 
       const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomTotal}`;
-      const res = await fetch(url);
+      const res = await fetchApiGet(url);
       const data = await res.json();
       if (data && data.success) {
         appliedPromoCode = data.code;
@@ -6978,7 +7058,7 @@ async function openLcDurationEditor(transactionId) {
     const url = `${API_BASE_URL}?action=getTransactionLcEditDetails`
       + `&transaction_id=${encodeURIComponent(normalizedTransactionId)}`
       + `&cb=${Date.now()}`;
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetchApiGet(url);
     if (!response.ok) {
       throw new Error(`Permintaan gagal dengan status ${response.status}.`);
     }
@@ -9780,7 +9860,7 @@ function createPaymentSelectionElement(room) {
         }
 
         const url = `${API_BASE_URL}?action=validatePromoCode&code=${code}&room_total=${roomPrepayCharge}`;
-        const res = await fetch(url);
+        const res = await fetchApiGet(url);
         const data = await res.json();
         if (data && data.success) {
           appliedPromoCode = data.code;
@@ -18288,7 +18368,7 @@ async function loadPromos() {
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}?action=getPromos`);
+    const res = await fetchApiGet(`${API_BASE_URL}?action=getPromos`);
     const data = await res.json();
     if (data && data.success) {
       promosList = data.promos || [];
@@ -18726,9 +18806,7 @@ async function loadLcs(force = false) {
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const response = await fetch(`${API_BASE_URL}?action=getLcMasterList&_=${Date.now()}`, {
-          cache: "no-store",
-        });
+        const response = await fetchApiGet(`${API_BASE_URL}?action=getLcMasterList&_=${Date.now()}`);
         if (!response.ok) {
           throw new Error(`Server LC merespons status ${response.status}.`);
         }
@@ -18915,7 +18993,7 @@ async function loadLcFinanceSummary(period = lcFinancePeriod) {
     }
 
     const url = `${API_BASE_URL}?action=getLcFinanceSummary&period=${encodeURIComponent(lcFinancePeriod)}`;
-    const res = await fetch(url);
+    const res = await fetchApiGet(url);
     const data = await res.json();
 
     if (data && data.success) {
@@ -19110,7 +19188,7 @@ async function loadLcPayrollDetail(payrollId) {
 
   try {
     const url = `${API_BASE_URL}?action=getLcPayrollDetails&payroll_id=${payrollId}`;
-    const res = await fetch(url);
+    const res = await fetchApiGet(url);
     const data = await res.json();
     if (data && data.success) {
       selectedLcPayrollDetail = data;
@@ -19183,7 +19261,7 @@ async function loadLcPayrollData(startDate = "", endDate = "") {
 
   try {
     const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${startDate}&end_date=${endDate}`;
-    const pendingRes = await fetch(pendingUrl);
+    const pendingRes = await fetchApiGet(pendingUrl);
     const pendingData = await pendingRes.json();
     if (pendingData && pendingData.success) {
       lcPayrollPendingReports = pendingData.reports || [];
@@ -19192,7 +19270,7 @@ async function loadLcPayrollData(startDate = "", endDate = "") {
     }
 
     const historyUrl = `${API_BASE_URL}?action=getLcPayrollHistory`;
-    const historyRes = await fetch(historyUrl);
+    const historyRes = await fetchApiGet(historyUrl);
     const historyData = await historyRes.json();
     if (historyData && historyData.success) {
       lcPayrollHistory = historyData.history || [];
@@ -22247,7 +22325,7 @@ async function fetchTodayRoomTimeLogsFromApi() {
     params.set("room_id", roomTimeLogRoomFilter);
   }
 
-  const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+  const response = await fetchApiGet(`${API_BASE_URL}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -25125,9 +25203,9 @@ if (dashboardShell) {
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
-// Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
+// Refresh ringan hanya dari tab Ruangan yang sedang terlihat dan tidak bertumpuk.
 setInterval(async () => {
-  if (!isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
+  if (document.visibilityState !== "visible" || !isOperatorLoggedIn() || activeDashboardTab !== "rooms") {
     return;
   }
   if (isUserBusy()) {
@@ -25135,7 +25213,7 @@ setInterval(async () => {
     return;
   }
   await silentReloadRooms();
-}, 10000);
+}, ROOM_AUTO_REFRESH_INTERVAL_MS);
 
 async function initializeDashboard() {
   renderOperatorHeader();
