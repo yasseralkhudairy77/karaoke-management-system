@@ -6188,6 +6188,14 @@ textarea.action-confirmation-input {
   line-height: 1.2;
 }
 
+.transaction-loading-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: right;
+}
+
 .transaction-filter {
   display: flex;
   flex-wrap: wrap;

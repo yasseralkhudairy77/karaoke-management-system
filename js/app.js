@@ -449,6 +449,10 @@ const floatingToastTimers = new Map();
 let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
+let todayTransactionsDataKey = "";
+let todayTransactionsSnapshotAt = "";
+let isLoadingTodayTransactions = false;
+let todayTransactionsLoadSequence = 0;
 let transactionHistoryFilter = "all";
 let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
@@ -1401,18 +1405,50 @@ async function loadTodayTransactions() {
     return;
   }
 
+  const dataKey = `transactions:${buildTransactionPeriodQueryParams().toString()}`;
+  const loadSequence = ++todayTransactionsLoadSequence;
+  isLoadingTodayTransactions = true;
+
+  if (todayTransactionsDataKey !== dataKey) {
+    const snapshot = await restoreProductionSnapshot(dataKey);
+    if (loadSequence !== todayTransactionsLoadSequence) return;
+
+    todayTransactions = Array.isArray(snapshot?.data?.transactions)
+      ? snapshot.data.transactions
+      : [];
+    todayTransactionSummary = snapshot?.data?.summary || null;
+    todayTransactionsDataKey = dataKey;
+    todayTransactionsSnapshotAt = snapshot?.updated_at || "";
+  }
+
+  if (activeDashboardTab === "transactions") {
+    renderRooms();
+  }
+
   try {
     const data = await fetchTodayTransactionsFromApi();
+    if (loadSequence !== todayTransactionsLoadSequence) return;
 
     todayTransactions = data.transactions;
     todayTransactionSummary = data.summary;
+    todayTransactionsDataKey = dataKey;
+    todayTransactionsSnapshotAt = "";
+    await cacheProductionSnapshot(dataKey, {
+      transactions: data.transactions,
+      summary: data.summary,
+    });
     renderRooms();
   } catch (error) {
+    if (loadSequence !== todayTransactionsLoadSequence) return;
     console.warn("Gagal memuat riwayat transaksi.", error);
     showInlineNotice(error.message || "Gagal memuat riwayat transaksi.", "error");
-    todayTransactions = [];
-    todayTransactionSummary = null;
-    renderRooms();
+  } finally {
+    if (loadSequence === todayTransactionsLoadSequence) {
+      isLoadingTodayTransactions = false;
+      if (activeDashboardTab === "transactions") {
+        renderRooms();
+      }
+    }
   }
 }
 
@@ -14193,6 +14229,17 @@ function createTransactionHistoryElement() {
   title.textContent = `Riwayat Transaksi - ${getTransactionPeriodTitleSuffix()}`;
 
   header.appendChild(title);
+
+  if (isLoadingTodayTransactions || todayTransactionsSnapshotAt) {
+    const loadStatus = document.createElement("p");
+    loadStatus.className = "transaction-loading-status";
+    loadStatus.textContent = isLoadingTodayTransactions
+      ? todayTransactions.length > 0
+        ? "Menampilkan data tersimpan sambil memperbarui dari server..."
+        : "Memuat transaksi dari server..."
+      : `Menampilkan data tersimpan ${formatSnapshotTime(todayTransactionsSnapshotAt)}.`;
+    header.appendChild(loadStatus);
+  }
 
   const summary = todayTransactionSummary || {
     total_transactions: 0,

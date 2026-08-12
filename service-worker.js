@@ -1,10 +1,10 @@
-const CACHE_NAME = "happy-song-shell-api-observability-v1";
+const CACHE_NAME = "happy-song-shell-transaction-snapshot-v1";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./manifest.webmanifest?v=api-observability-v1",
-  "./css/style.css?v=api-observability-v1",
-  "./js/app.js?v=api-observability-v1",
+  "./manifest.webmanifest?v=transaction-snapshot-v1",
+  "./css/style.css?v=transaction-snapshot-v1",
+  "./js/app.js?v=transaction-snapshot-v1",
   "./js/config.js?v=stable-api-v229",
   "./js/mock-data.js",
   "./js/receipt.js?v=lc-receipt-breakdown-v1",

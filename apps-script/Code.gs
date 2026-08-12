@@ -18435,6 +18435,207 @@ function ensureTransactionsSheetColumns_() {
   return sheet;
 }
 
+/**
+ * One-off, operator-approved correction for transactions that were recorded in
+ * the 2026-08-12 operational period but belong to the 2026-08-11 shift.
+ *
+ * Run with "dry_run" first, then "APPLY". The operation is idempotent and only
+ * changes operational_date on the transaction and its period-based children.
+ */
+function runOperationalDateCorrection20260812(mode) {
+  var migrationKey = "operational-date-correction-20260812-v2";
+  var properties = PropertiesService.getScriptProperties();
+  var transactionIds = [
+    "TRX-20260812160242769-A41EEF69",
+    "TRX-20260812160010301-92C34838",
+    "TRX-20260812155836492-C0AA2317",
+    "TRX-20260812155637582-5AA5FE2F",
+    "TRX-20260812154739880-76D7EFBE",
+    "TRX-20260812154508032-ABAF768A",
+    "TRX-20260812154234816-BEC44CDC",
+  ];
+  var targetOperationalDates = {};
+  transactionIds.forEach(function (transactionId) {
+    targetOperationalDates[transactionId] = "2026-08-11";
+  });
+  targetOperationalDates["TRX-20260812160242769-A41EEF69"] = "2026-08-12";
+  var shouldApply = String(mode || "").trim() === "APPLY";
+  if (shouldApply && properties.getProperty(migrationKey) === "done") {
+    return {
+      ok: true,
+      applied: false,
+      already_applied: true,
+      target_operational_dates: targetOperationalDates,
+    };
+  }
+  var transactionIdSet = {};
+  transactionIds.forEach(function (transactionId) {
+    transactionIdSet[transactionId] = true;
+  });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw new Error("Tidak dapat memperoleh lock koreksi periode.");
+  }
+
+  try {
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getHeaderMap_(transactionsSheet);
+    var transactions = readSheetAsObjects_("Transactions");
+    var matchedTransactions = [];
+
+    transactions.forEach(function (transaction, index) {
+      var transactionId = String(transaction.transaction_id || "").trim();
+      if (transactionIdSet[transactionId]) {
+        matchedTransactions.push({
+          row_number: index + 2,
+          transaction_id: transactionId,
+          room_name: transaction.room_name || "",
+          grand_total: getTransactionAmount_(transaction),
+          payment_status: transaction.payment_status || "",
+          old_operational_date: resolveTransactionOperationalDateString_(transaction),
+          explicit_operational_date: transaction.operational_date || "",
+        });
+      }
+    });
+
+    var foundIdSet = {};
+    matchedTransactions.forEach(function (transaction) {
+      foundIdSet[transaction.transaction_id] = true;
+    });
+    var missingIds = transactionIds.filter(function (transactionId) {
+      return !foundIdSet[transactionId];
+    });
+    if (missingIds.length > 0) {
+      return {
+        ok: false,
+        applied: false,
+        error: "Sebagian transaksi target tidak ditemukan; koreksi dibatalkan.",
+        missing_transaction_ids: missingIds,
+        transactions: matchedTransactions,
+      };
+    }
+
+    var relatedSessionIds = {};
+    if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+      readSheetAsObjects_(ROOM_SESSIONS_SHEET).forEach(function (session) {
+        var closedTransactionId = String(session.closed_transaction_id || "").trim();
+        if (transactionIdSet[closedTransactionId]) {
+          relatedSessionIds[String(session.session_id || "").trim()] = closedTransactionId;
+        }
+      });
+    }
+
+    var counts = {
+      transactions: matchedTransactions.length,
+      fnb_orders: 0,
+      stock_movements: 0,
+      lc_work_logs: 0,
+      lc_sales_bonus_logs: 0,
+    };
+
+    var fnbOrdersSheet = ensureFnbOrdersSheetColumns_();
+    var fnbOrderHeaders = getHeaderMap_(fnbOrdersSheet);
+    var fnbOrders = readSheetAsObjects_("FnbOrders");
+    var matchedFnbOrderRows = [];
+    fnbOrders.forEach(function (order, index) {
+      var billedTransactionId = String(order.billed_transaction_id || "").trim();
+      if (transactionIdSet[billedTransactionId]) {
+        matchedFnbOrderRows.push({ row_number: index + 2, transaction_id: billedTransactionId });
+      }
+    });
+    counts.fnb_orders = matchedFnbOrderRows.length;
+
+    var stockSheet = ensureStockMovementsSheet_();
+    var stockHeaders = getHeaderMap_(stockSheet);
+    var matchedStockRows = [];
+    readSheetAsObjectsOrEmpty_("StockMovements").forEach(function (movement, index) {
+      var referenceId = String(movement.reference_id || "").trim();
+      if (transactionIdSet[referenceId]) {
+        matchedStockRows.push({ row_number: index + 2, transaction_id: referenceId });
+      }
+    });
+    counts.stock_movements = matchedStockRows.length;
+
+    var workLogsSheet = ensureLcWorkLogsSheet_();
+    var workLogHeaders = getHeaderMap_(workLogsSheet);
+    var matchedWorkLogRows = [];
+    readSheetAsObjects_("LcWorkLogs").forEach(function (workLog, index) {
+      var relatedTransactionId = relatedSessionIds[String(workLog.session_id || "").trim()];
+      if (relatedTransactionId) {
+        matchedWorkLogRows.push({ row_number: index + 2, transaction_id: relatedTransactionId });
+      }
+    });
+    counts.lc_work_logs = matchedWorkLogRows.length;
+
+    var bonusSheet = ensureLcSalesBonusLogsSheet_();
+    var bonusHeaders = getHeaderMap_(bonusSheet);
+    var matchedBonusRows = [];
+    readSheetAsObjects_("LcSalesBonusLogs").forEach(function (bonus, index) {
+      var bonusTransactionId = String(bonus.transaction_id || "").trim();
+      if (transactionIdSet[bonusTransactionId]) {
+        matchedBonusRows.push({ row_number: index + 2, transaction_id: bonusTransactionId });
+      }
+    });
+    counts.lc_sales_bonus_logs = matchedBonusRows.length;
+
+    if (!shouldApply) {
+      return {
+        ok: true,
+        applied: false,
+        mode: "dry_run",
+        target_operational_dates: targetOperationalDates,
+        counts: counts,
+        transactions: matchedTransactions,
+      };
+    }
+
+    matchedTransactions.forEach(function (transaction) {
+      transactionsSheet.getRange(transaction.row_number, transactionHeaders.operational_date).setValue(targetOperationalDates[transaction.transaction_id]);
+    });
+    matchedFnbOrderRows.forEach(function (item) {
+      fnbOrdersSheet.getRange(item.row_number, fnbOrderHeaders.operational_date).setValue(targetOperationalDates[item.transaction_id]);
+    });
+    matchedStockRows.forEach(function (item) {
+      stockSheet.getRange(item.row_number, stockHeaders.operational_date).setValue(targetOperationalDates[item.transaction_id]);
+    });
+    matchedWorkLogRows.forEach(function (item) {
+      workLogsSheet.getRange(item.row_number, workLogHeaders.operational_date).setValue(targetOperationalDates[item.transaction_id]);
+    });
+    matchedBonusRows.forEach(function (item) {
+      bonusSheet.getRange(item.row_number, bonusHeaders.operational_date).setValue(targetOperationalDates[item.transaction_id]);
+    });
+
+    matchedTransactions.forEach(function (transaction) {
+      appendMasterDataAuditLog_({
+        entity_type: "transaction",
+        entity_id: transaction.transaction_id,
+        entity_name: transaction.room_name || transaction.transaction_id,
+        action_type: "operational_date_correction",
+        old_value: { operational_date: transaction.old_operational_date },
+        new_value: { operational_date: targetOperationalDates[transaction.transaction_id] },
+        changed_by: "Owner",
+        note: transaction.transaction_id === "TRX-20260812160242769-A41EEF69"
+          ? "Koreksi final: transaksi Executive tetap pada shift 2026-08-12 atas instruksi owner."
+          : "Koreksi final: transaksi error dipindahkan ke shift 2026-08-11 atas instruksi owner.",
+        result: "success",
+      });
+    });
+
+    SpreadsheetApp.flush();
+    properties.setProperty(migrationKey, "done");
+    return {
+      ok: true,
+      applied: true,
+      target_operational_dates: targetOperationalDates,
+      counts: counts,
+      transaction_ids: transactionIds,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getTransactionAmount_(transaction) {
   var rawGrandTotal = transaction ? transaction.grand_total : "";
   if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
