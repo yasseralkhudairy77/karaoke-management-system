@@ -160,7 +160,33 @@ async function getTransactionLcDetails(req, res) {
       ORDER BY created_at DESC
       LIMIT 20
     `, [trx.room_id, trx.end_time]);
-    return res.json({ ok: true, success: true, transaction: trx, lc_details: logsRes.rows, details: logsRes.rows });
+    const logs = logsRes.rows.map(row => ({
+      ...row,
+      duration_minutes: Number(row.duration_minutes || 0),
+      rate_per_hour: Number(row.rate_per_hour || 0),
+      rate_per_room: Number(row.rate_per_hour || 0),
+      rate: Number(row.rate || 0),
+      created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
+      closed_at: row.closed_at ? new Date(row.closed_at).toISOString() : ''
+    }));
+    const itemTotal = logs.reduce((total, row) => total + Number(row.rate || 0), 0);
+    const lcTotal = Number(trx.lc_total || 0);
+    const lcDetails = {
+      detail_available: logs.length > 0,
+      lc_logs: logs,
+      items: logs,
+      item_total: itemTotal,
+      billing_adjustment: lcTotal - itemTotal,
+      total: lcTotal
+    };
+    return res.json({
+      ok: true,
+      success: true,
+      transaction: trx,
+      ...lcDetails,
+      lc_details: lcDetails,
+      details: logs
+    });
   } catch (err) {
     return errorResponse(res, err.message);
   }

@@ -570,10 +570,29 @@ async function closeSession(req, res, payload) {
     }
 
     const lcRes = await client.query(`
-      SELECT rate FROM lc_work_logs WHERE room_id = $1 AND closed_at IS NULL AND status != 'cancelled'
+      SELECT log_id, session_id, room_id, room_name, lc_id, lc_name, duration_minutes, rate_per_hour, rate, status, created_at
+      FROM lc_work_logs
+      WHERE room_id = $1 AND closed_at IS NULL AND status != 'cancelled'
+      ORDER BY created_at ASC
     `, [roomId]);
     let lcTotal = 0;
     lcRes.rows.forEach(r => { lcTotal += Number(r.rate || 0); });
+    const lcLogsForReceipt = lcRes.rows.map(row => ({
+      ...row,
+      duration_minutes: Number(row.duration_minutes || 0),
+      rate_per_hour: Number(row.rate_per_hour || 0),
+      rate_per_room: Number(row.rate_per_hour || 0),
+      rate: Number(row.rate || 0),
+      created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+    }));
+    const lcDetails = {
+      detail_available: lcLogsForReceipt.length > 0,
+      lc_logs: lcLogsForReceipt,
+      items: lcLogsForReceipt,
+      item_total: lcLogsForReceipt.reduce((total, row) => total + Number(row.rate || 0), 0),
+      billing_adjustment: 0,
+      total: lcTotal
+    };
 
     await client.query(`
       UPDATE lc_work_logs SET closed_at = CURRENT_TIMESTAMP, status = 'closed' 
@@ -620,8 +639,10 @@ async function closeSession(req, res, payload) {
         lc_total: lcTotal,
         grand_total: grandTotal,
         payment_status: 'unpaid',
-        payment_method: ''
-      }
+        payment_method: '',
+        lc_details: lcDetails
+      },
+      lc_details: lcDetails
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
