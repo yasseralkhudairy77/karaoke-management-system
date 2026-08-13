@@ -5,6 +5,7 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const apiRoutes = require('./routes/api');
 const { startSyncWorker, getSyncStatus } = require('./services/railwaySyncWorker');
+const { getServerTimeFields } = require('./utils/response');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,7 +45,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'online',
     server: 'Happy Song POS Local Server (Node.js)',
-    timestamp: new Date().toISOString()
+    ...getServerTimeFields()
   });
 });
 
