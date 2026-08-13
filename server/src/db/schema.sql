@@ -545,8 +545,23 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
     CONSTRAINT unq_sync_outbox_entity_action UNIQUE (entity_type, entity_id, action)
 );
 
+-- 16. Temporary Owner Mirror Snapshot Inbox (Local PC -> Railway Cloud)
+CREATE TABLE IF NOT EXISTS owner_mirror_snapshots (
+    snapshot_id BIGSERIAL PRIMARY KEY,
+    source_id VARCHAR(100) NOT NULL DEFAULT 'happy-song-local',
+    mirror_version VARCHAR(100),
+    generated_at TIMESTAMPTZ,
+    generated_at_wib VARCHAR(40),
+    period VARCHAR(30),
+    operational_date_start DATE,
+    operational_date_end DATE,
+    payload_json JSONB NOT NULL,
+    received_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for performance & reporting
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_pending ON sync_outbox(status, created_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_transactions_opdate ON transactions(operational_date);
 CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, room_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_item_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);

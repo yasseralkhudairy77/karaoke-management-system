@@ -196,6 +196,68 @@ async function buildOwnerMirrorSnapshot(options = {}) {
   };
 }
 
+async function saveOwnerMirrorSnapshot(snapshot, sourceId = 'happy-song-local') {
+  if (!snapshot || typeof snapshot !== 'object') {
+    throw new Error('Payload snapshot mirror tidak valid.');
+  }
+
+  const result = await db.query(`
+    INSERT INTO owner_mirror_snapshots (
+      source_id, mirror_version, generated_at, generated_at_wib, period,
+      operational_date_start, operational_date_end, payload_json
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING snapshot_id, source_id, received_at
+  `, [
+    sourceId,
+    snapshot.mirror_version || '',
+    snapshot.generated_at || null,
+    snapshot.generated_at_wib || '',
+    snapshot.period || '',
+    snapshot.operational_date_start || null,
+    snapshot.operational_date_end || null,
+    JSON.stringify(snapshot)
+  ]);
+
+  return {
+    snapshot_id: result.rows[0].snapshot_id,
+    source_id: result.rows[0].source_id,
+    received_at: iso(result.rows[0].received_at)
+  };
+}
+
+async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local') {
+  const result = await db.query(`
+    SELECT *
+    FROM owner_mirror_snapshots
+    WHERE source_id = $1
+    ORDER BY received_at DESC
+    LIMIT 1
+  `, [sourceId]);
+
+  if (result.rowCount === 0) {
+    return {
+      mirror_version: 'owner-mirror-cloud-empty-v1',
+      mode: 'cloud_latest_snapshot',
+      source_id: sourceId,
+      has_snapshot: false,
+      message: 'Belum ada snapshot dari PC kasir.'
+    };
+  }
+
+  const row = result.rows[0];
+  return {
+    ...row.payload_json,
+    mode: 'cloud_latest_snapshot',
+    source_id: row.source_id,
+    has_snapshot: true,
+    cloud_snapshot_id: row.snapshot_id,
+    cloud_received_at: iso(row.received_at),
+    cloud_received_at_wib: toJakartaIsoString(row.received_at)
+  };
+}
+
 module.exports = {
-  buildOwnerMirrorSnapshot
+  buildOwnerMirrorSnapshot,
+  saveOwnerMirrorSnapshot,
+  getLatestOwnerMirrorSnapshot
 };

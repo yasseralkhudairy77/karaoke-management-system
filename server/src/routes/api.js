@@ -94,7 +94,7 @@ async function handleGetAction(action, req, res) {
     case 'validatePromoCode':
       return masterDataController.validatePromoCode(req, res);
     case 'getApiCapabilities':
-      return successResponse(res, { local_first: true, postgresql: true, outbox_sync: true });
+      return successResponse(res, { local_first: true, postgresql: true, outbox_sync: true, owner_mirror_snapshot: true });
     case 'getOwnerMirrorSnapshot':
       return mirrorController.getOwnerMirrorSnapshot(req, res);
     default:
@@ -201,6 +201,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.logReceiptPrint(req, res, payload);
     case 'saveCashierClosing':
       return closingsController.saveCashierClosing(req, res, payload);
+    case 'pushOwnerMirrorSnapshot':
+      return mirrorController.pushOwnerMirrorSnapshot(req, res, payload);
     case 'validateCashierClosingSnapshot':
       return closingsController.validateCashierClosingSnapshot(req, res, payload);
     case 'assignSessionLcs':

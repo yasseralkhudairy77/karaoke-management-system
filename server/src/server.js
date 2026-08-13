@@ -5,6 +5,7 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const apiRoutes = require('./routes/api');
 const { startSyncWorker, getSyncStatus } = require('./services/railwaySyncWorker');
+const { startOwnerMirrorPushWorker, getOwnerMirrorPushStatus } = require('./services/ownerMirrorPushWorker');
 const { getServerTimeFields } = require('./utils/response');
 
 const app = express();
@@ -52,7 +53,7 @@ app.get('/health', (req, res) => {
 app.get('/sync/status', async (req, res) => {
   try {
     const status = await getSyncStatus();
-    res.json({ ok: true, success: true, ...status });
+    res.json({ ok: true, success: true, ...status, owner_mirror_push: getOwnerMirrorPushStatus() });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -61,6 +62,9 @@ app.get('/sync/status', async (req, res) => {
 function startServer(port = PORT, bindHost = BIND_HOST) {
   if (process.env.DISABLE_SYNC_WORKER !== '1') {
     startSyncWorker(parseInt(process.env.SYNC_INTERVAL_MS || '30000', 10));
+  }
+  if (process.env.DISABLE_OWNER_MIRROR_PUSH_WORKER !== '1') {
+    startOwnerMirrorPushWorker(parseInt(process.env.OWNER_MIRROR_PUSH_INTERVAL_MS || '60000', 10));
   }
 
   return app.listen(port, bindHost, () => {

@@ -3,8 +3,35 @@ const path = require('path');
 const { Client } = require('pg');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
+function shouldUseSsl() {
+  const sslMode = String(process.env.PGSSLMODE || process.env.PGSSL || '').toLowerCase();
+  return ['1', 'true', 'require', 'required'].includes(sslMode);
+}
+
 async function initDatabase() {
   const targetDb = process.env.PGDATABASE || 'happy_song_pos';
+  const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+
+  if (process.env.DATABASE_URL) {
+    console.log('DATABASE_URL detected. Executing DDL schema directly on configured database...');
+    const railwayClient = new Client({
+      connectionString: process.env.DATABASE_URL,
+      ssl: shouldUseSsl() ? { rejectUnauthorized: false } : undefined
+    });
+
+    try {
+      await railwayClient.connect();
+      await railwayClient.query(schemaSql);
+      console.log('Schema initialization completed successfully for DATABASE_URL.');
+      return;
+    } catch (err) {
+      console.error('Error executing schema DDL on DATABASE_URL:', err.message);
+      throw err;
+    } finally {
+      await railwayClient.end();
+    }
+  }
+
   const config = {
     host: process.env.PGHOST || 'localhost',
     port: parseInt(process.env.PGPORT || '5432', 10),
@@ -42,7 +69,6 @@ async function initDatabase() {
   try {
     await dbClient.connect();
     console.log(`Executing DDL schema on '${targetDb}'...`);
-    const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     await dbClient.query(schemaSql);
     console.log(`Schema initialization completed successfully for '${targetDb}'.`);
   } catch (err) {
