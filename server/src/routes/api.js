@@ -9,6 +9,7 @@ const closingsController = require('../controllers/closingsController');
 const lcController = require('../controllers/lcController');
 const tvController = require('../controllers/tvController');
 const masterDataController = require('../controllers/masterDataController');
+const mirrorController = require('../controllers/mirrorController');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // Helper to handle Apps Script GET actions
@@ -94,6 +95,8 @@ async function handleGetAction(action, req, res) {
       return masterDataController.validatePromoCode(req, res);
     case 'getApiCapabilities':
       return successResponse(res, { local_first: true, postgresql: true, outbox_sync: true });
+    case 'getOwnerMirrorSnapshot':
+      return mirrorController.getOwnerMirrorSnapshot(req, res);
     default:
       return errorResponse(res, `Aksi GET tidak dikenal: ${action}`, 'UNKNOWN_ACTION');
   }
@@ -143,6 +146,7 @@ async function handlePostAction(action, req, res, payload) {
     case 'getPromos':
     case 'validatePromoCode':
     case 'getApiCapabilities':
+    case 'getOwnerMirrorSnapshot':
       req.query = { ...payload, ...req.query, action };
       return handleGetAction(action, req, res);
     case 'prepareRoomSession':

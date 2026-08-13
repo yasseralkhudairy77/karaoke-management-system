@@ -10,6 +10,7 @@
     "db:migrate": "node scripts/migrate-sheets-to-postgres.js",
     "db:import-master-xlsx": "node scripts/import-master-xlsx.js",
     "db:validate": "node scripts/validate-migration-integrity.js",
+    "mirror:snapshot": "node scripts/export-owner-mirror-snapshot.js",
     "test": "npm run test:timezone && npm run test:coverage && npm run test:contract",
     "test:timezone": "node tests/timezone-boundary.test.js",
     "test:contract": "node tests/contract-tests.js",
