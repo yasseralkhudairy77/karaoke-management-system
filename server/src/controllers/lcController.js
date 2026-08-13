@@ -9,6 +9,7 @@ async function getLcMasterList(req, res) {
       lc_id: row.lc_id,
       lc_name: row.lc_name,
       rate_per_hour: Number(row.rate_per_hour || 0),
+      rate_per_room: Number(row.rate_per_hour || 0),
       status: row.status,
       phone: row.phone || '',
       joined_date: row.joined_date ? row.joined_date.toISOString().split('T')[0] : ''
