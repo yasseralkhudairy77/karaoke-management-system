@@ -38,7 +38,7 @@ async function getMenuItems(req, res) {
       variable_cost_rate: Number(row.variable_cost_rate || 0)
     }));
 
-    return res.json({ ok: true, success: true, items });
+    return res.json({ ok: true, success: true, items, menu_items: items });
   } catch (err) {
     return errorResponse(res, err.message);
   }

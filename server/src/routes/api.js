@@ -102,6 +102,49 @@ async function handleGetAction(action, req, res) {
 // Helper to handle Apps Script POST actions
 async function handlePostAction(action, req, res, payload) {
   switch (action) {
+    case 'health':
+    case 'getRooms':
+    case 'getRoomUsageReport':
+    case 'getExpiredRoomRecoveryList':
+    case 'getTodayRoomTimeLogs':
+    case 'getMenuItems':
+    case 'getOpenFnbOrders':
+    case 'getTodayFnbOrders':
+    case 'getTodayFnbSalesReport':
+    case 'getFnbOrdersByIds':
+    case 'getInventoryItems':
+    case 'getTodayStockMovements':
+    case 'getRecipeBom':
+    case 'getInventoryAudits':
+    case 'getInventoryAuditDetails':
+    case 'getTodayTransactions':
+    case 'getTransactionLcEditDetails':
+    case 'getTransactionLcReceiptDetails':
+    case 'getTodayCashierClosings':
+    case 'getCashierClosingDetails':
+    case 'getLcMasterList':
+    case 'getLcWorkReports':
+    case 'getLcFinanceSummary':
+    case 'getPendingLcPayroll':
+    case 'getLcPayrollHistory':
+    case 'getLcPayrollDetails':
+    case 'getTvDevices':
+    case 'getTvControlLogs':
+    case 'getTvDisplaySetupList':
+    case 'getCustomerDisplayState':
+    case 'getEmployees':
+    case 'getServiceItems':
+    case 'getRecipeBomStatus':
+    case 'getCosting':
+    case 'getMasterDataAuditLogs':
+    case 'getPackages':
+    case 'getPackageDetails':
+    case 'getEligiblePackages':
+    case 'getPromos':
+    case 'validatePromoCode':
+    case 'getApiCapabilities':
+      req.query = { ...payload, ...req.query, action };
+      return handleGetAction(action, req, res);
     case 'prepareRoomSession':
       return roomsController.prepareRoomSession(req, res, payload);
     case 'previewSessionPricing':
