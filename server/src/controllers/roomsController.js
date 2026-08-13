@@ -742,12 +742,14 @@ async function activatePreparedSession(req, res, payload) {
 async function getExpiredRoomRecoveryList(req, res) {
   try {
     const now = new Date();
+    const graceMinutes = Math.max(0, Number(req.query.grace_minutes || req.query.graceMinutes || 0));
+    const cutoff = new Date(now.getTime() - graceMinutes * 60 * 1000);
     const result = await db.query(`
       SELECT room_id, room_name, status, start_time, scheduled_end_time, booked_duration_minutes
       FROM rooms
       WHERE status = 'occupied' AND scheduled_end_time IS NOT NULL AND scheduled_end_time < $1
       ORDER BY scheduled_end_time ASC
-    `, [now]);
+    `, [cutoff]);
 
     const rooms = result.rows.map(row => ({
       ...row,
@@ -756,7 +758,20 @@ async function getExpiredRoomRecoveryList(req, res) {
       scheduled_end_time: row.scheduled_end_time ? row.scheduled_end_time.toISOString() : ''
     }));
 
-    return res.json({ ok: true, success: true, rooms, recovery_list: rooms });
+    const totalRes = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM rooms
+      WHERE room_id <> 'FNB-GENERAL'
+    `);
+
+    return successResponse(res, {
+      candidates: rooms,
+      rooms,
+      recovery_list: rooms,
+      expired_count: rooms.length,
+      invalid_count: 0,
+      total_rooms_checked: Number(totalRes.rows[0]?.total || 0)
+    });
   } catch (err) {
     return errorResponse(res, err.message);
   }
