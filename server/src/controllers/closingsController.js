@@ -40,17 +40,16 @@ async function getTodayCashierClosings(req, res) {
 }
 
 async function saveCashierClosing(req, res, payload) {
-  const client = await db.pool.connect();
+  let client;
   try {
+    client = await db.pool.connect();
     await client.query('BEGIN');
     const { cash_actual = 0, note = '', cashier_name = 'Kasir' } = payload;
     const todayOpDate = getOperationalDate();
 
-    // Check existing closing today
     const existing = await client.query('SELECT * FROM cashier_closings WHERE closing_date = $1', [todayOpDate]);
     if (existing.rowCount > 0) throw new Error(`Closing kasir untuk tanggal operasional ${todayOpDate} sudah dilakukan sebelumnya.`);
 
-    // Aggregate today's transactions
     const trxRes = await client.query('SELECT * FROM transactions WHERE operational_date = $1', [todayOpDate]);
     const trxs = trxRes.rows;
 
@@ -88,7 +87,6 @@ async function saveCashierClosing(req, res, payload) {
     const cashDiff = cashActualNum - cashExpected;
     const closingId = `CLS-${Date.now()}`;
 
-    // Insert closing record
     await client.query(`
       INSERT INTO cashier_closings (
         closing_id, closing_date, cashier_name, total_transactions, paid_transactions,
@@ -98,7 +96,6 @@ async function saveCashierClosing(req, res, payload) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     `, [closingId, todayOpDate, cashier_name, totalTrx, paidTrx, unpaidTrx, cashTrx, transferTrx, paidRevenue, cashExpected, cashActualNum, cashDiff, transferRevenue, unpaidRevenue, totalRevenue, note]);
 
-    // Freeze closing transactions snapshot
     for (const t of trxs) {
       await client.query(`
         INSERT INTO cashier_closing_transactions (
@@ -108,10 +105,10 @@ async function saveCashierClosing(req, res, payload) {
       `, [closingId, t.transaction_id, t.room_id, t.room_name, t.duration_minutes, t.room_total, t.fnb_total, t.lc_total, t.grand_total, t.payment_method, t.payment_status, t.created_at]);
     }
 
-    // Add to sync outbox
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
       VALUES ('cashier_closings', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
     `, [closingId, JSON.stringify({ closing_id: closingId, closing_date: todayOpDate, total_revenue: totalRevenue })]);
 
     await client.query('COMMIT');
@@ -125,10 +122,10 @@ async function saveCashierClosing(req, res, payload) {
       total_revenue: totalRevenue
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 }
 

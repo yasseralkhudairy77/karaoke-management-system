@@ -1,8 +1,9 @@
 -- =============================================================================
--- HAPPY SONG KARAOKE MANAGEMENT SYSTEM - POSTGRESQL LOCAL SCHEMA DDL
+-- HAPPY SONG KARAOKE MANAGEMENT SYSTEM - POSTGRESQL PRODUCTION-READY SCHEMA DDL
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 1. Settings & Configurations
 CREATE TABLE IF NOT EXISTS settings (
@@ -12,12 +13,13 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Staff, Access Roles & Security PINs
+-- 2. Staff, Access Roles & Security PINs (Supports plain & hashed PIN migration)
 CREATE TABLE IF NOT EXISTS employees (
     employee_id VARCHAR(50) PRIMARY KEY,
     employee_name VARCHAR(100) NOT NULL,
     role VARCHAR(30) NOT NULL CHECK (role IN ('owner', 'manager', 'cashier', 'receptionist')),
     pin VARCHAR(255),
+    pin_hash VARCHAR(255),
     salary_type VARCHAR(30) DEFAULT 'monthly',
     base_salary NUMERIC(12,2) DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
@@ -173,13 +175,13 @@ CREATE TABLE IF NOT EXISTS room_sessions (
     rate_per_hour NUMERIC(12,2) NOT NULL,
     cashier_name VARCHAR(100) NOT NULL,
     closed_transaction_id VARCHAR(50),
-    idempotency_key VARCHAR(100),
+    idempotency_key VARCHAR(100) UNIQUE,
     note TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 9. Transactions & Billing Breakdown
+-- 9. Transactions & Billing Breakdown (Postpaid Room Billing Default)
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id VARCHAR(50) PRIMARY KEY,
     room_id VARCHAR(50) REFERENCES rooms(room_id),
@@ -193,10 +195,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     lc_total NUMERIC(12,2) NOT NULL DEFAULT 0,
     grand_total NUMERIC(12,2) NOT NULL DEFAULT 0,
     fnb_order_ids TEXT,
-    payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'qris', 'transfer')),
+    payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'qris', 'transfer', '')),
     payment_status VARCHAR(30) DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid', 'paid', 'cancelled')),
     cashier_name VARCHAR(100) NOT NULL,
     operational_date DATE NOT NULL,
+    idempotency_key VARCHAR(100) UNIQUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -220,7 +223,7 @@ CREATE TABLE IF NOT EXISTS transaction_lines (
     snapshot_json JSONB
 );
 
--- 10. F&B Orders & Order Items
+-- 10. F&B Orders & Order Items (Strict Server-Calculated Price & Idempotency)
 CREATE TABLE IF NOT EXISTS fnb_orders (
     order_id VARCHAR(50) PRIMARY KEY,
     room_id VARCHAR(50) REFERENCES rooms(room_id),
@@ -233,7 +236,7 @@ CREATE TABLE IF NOT EXISTS fnb_orders (
     cancel_reason TEXT,
     cancelled_by VARCHAR(100),
     cancelled_at TIMESTAMPTZ,
-    idempotency_key VARCHAR(100),
+    idempotency_key VARCHAR(100) UNIQUE,
     customer_name VARCHAR(100),
     general_bill_id VARCHAR(50),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -259,13 +262,14 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     stock_item_id VARCHAR(50) REFERENCES inventory(stock_item_id),
     stock_item_name VARCHAR(100) NOT NULL,
     movement_type VARCHAR(20) CHECK (movement_type IN ('in', 'out', 'adjustment')),
-    reference_type VARCHAR(30) CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit')),
+    reference_type VARCHAR(30) CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'fnb_order')),
     reference_id VARCHAR(50),
     qty_change NUMERIC(12,2) NOT NULL,
     stock_before NUMERIC(12,2) NOT NULL,
     stock_after NUMERIC(12,2) NOT NULL,
     note TEXT,
-    cashier_name VARCHAR(100) NOT NULL
+    cashier_name VARCHAR(100) NOT NULL,
+    idempotency_key VARCHAR(100) UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS inventory_audits (
@@ -307,6 +311,7 @@ CREATE TABLE IF NOT EXISTS lc_work_logs (
     duration_minutes INT NOT NULL,
     rate_per_hour NUMERIC(12,2) NOT NULL,
     rate NUMERIC(12,2) NOT NULL,
+    status VARCHAR(30) DEFAULT 'active' CHECK (status IN ('active', 'done', 'closed', 'paid', 'cancelled')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     closed_at TIMESTAMPTZ,
     cashier_name VARCHAR(100) NOT NULL,
@@ -389,10 +394,10 @@ CREATE TABLE IF NOT EXISTS lc_payroll_history (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 13. Cashier Closings & Frozen Snapshots
+-- 13. Cashier Closings & Frozen Snapshots (Strict UNIQUE per closing_date)
 CREATE TABLE IF NOT EXISTS cashier_closings (
     closing_id VARCHAR(50) PRIMARY KEY,
-    closing_date DATE NOT NULL,
+    closing_date DATE NOT NULL UNIQUE,
     cashier_name VARCHAR(100) NOT NULL,
     total_transactions INT DEFAULT 0,
     paid_transactions INT DEFAULT 0,
@@ -524,21 +529,23 @@ CREATE TABLE IF NOT EXISTS master_data_audit_logs (
     block_reason TEXT
 );
 
--- 15. Local -> Cloud Synchronization Outbox Queue
+-- 15. Local -> Cloud Synchronization Outbox Queue (Railway Worker Queue)
 CREATE TABLE IF NOT EXISTS sync_outbox (
     sync_id BIGSERIAL PRIMARY KEY,
     entity_type VARCHAR(50) NOT NULL,
     entity_id VARCHAR(50) NOT NULL,
     action VARCHAR(20) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
     payload_json JSONB NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed', 'dead_letter')),
     attempts INT DEFAULT 0,
+    max_attempts INT DEFAULT 5,
     last_attempt_at TIMESTAMPTZ,
     error_message TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_sync_outbox_entity_action UNIQUE (entity_type, entity_id, action)
 );
 
--- Performance & Reporting Indexes
+-- Indexes for performance & reporting
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_pending ON sync_outbox(status, created_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_transactions_opdate ON transactions(operational_date);
 CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, room_id);
