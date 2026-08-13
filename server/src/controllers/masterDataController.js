@@ -248,12 +248,19 @@ async function validateAdminPin(req, res, payload) {
     const { pin, required_role } = payload;
     if (!pin) throw new Error('PIN wajib diisi.');
 
+    const requestedRole = String(required_role || 'admin').trim().toLowerCase();
+    const allowedRoles = requestedRole === 'staff'
+      ? ['owner', 'manager', 'cashier', 'receptionist']
+      : requestedRole === 'owner'
+        ? ['owner']
+        : ['owner', 'manager'];
+
     const result = await db.query(`
       SELECT employee_id, employee_name, role, pin, pin_hash
       FROM employees
-      WHERE role IN ('owner', 'manager') AND is_active = TRUE
+      WHERE role = ANY($1::text[]) AND is_active = TRUE
       ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END
-    `);
+    `, [allowedRoles]);
 
     let matchedEmp = null;
     for (const emp of result.rows) {
@@ -265,18 +272,27 @@ async function validateAdminPin(req, res, payload) {
     }
 
     if (!matchedEmp) {
-      return errorResponse(res, 'PIN Manager/Owner tidak valid.', 'INVALID_ADMIN_PIN');
+      const message = requestedRole === 'staff'
+        ? 'PIN operator tidak valid.'
+        : requestedRole === 'owner'
+          ? 'PIN Owner tidak valid.'
+          : 'PIN Manager/Owner tidak valid.';
+      return errorResponse(res, message, 'INVALID_ADMIN_PIN');
     }
 
-    if (required_role === 'owner' && matchedEmp.role !== 'owner') {
-      return errorResponse(res, 'Aksi ini membutuhkan PIN Owner.', 'OWNER_PIN_REQUIRED');
-    }
+    const employee = {
+      employee_id: matchedEmp.employee_id,
+      employee_name: matchedEmp.employee_name,
+      role: matchedEmp.role
+    };
 
     return successResponse(res, {
       message: 'PIN terverifikasi.',
       validated: true,
-      employee_name: matchedEmp.employee_name,
-      role: matchedEmp.role
+      employee,
+      employee_id: employee.employee_id,
+      employee_name: employee.employee_name,
+      role: employee.role
     });
   } catch (err) {
     return errorResponse(res, err.message);
