@@ -28,6 +28,24 @@ function Test-LocalHealth {
   }
 }
 
+function Open-Dashboard {
+  $chromeCandidates = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+  )
+
+  foreach ($chromePath in $chromeCandidates) {
+    if ($chromePath -and (Test-Path $chromePath)) {
+      Start-Process $chromePath -ArgumentList @($dashboardUrl)
+      return
+    }
+  }
+
+  Write-Host "Google Chrome tidak ditemukan. Membuka dengan browser default Windows..."
+  Start-Process $dashboardUrl
+}
+
 $health = Test-LocalHealth
 if ($health -and $health.ok -eq $true) {
   Write-Host "Server sudah menyala."
@@ -36,7 +54,7 @@ if ($health -and $health.ok -eq $true) {
   Write-Host "Waktu WIB: $($health.server_time_wib)"
   Write-Host ""
   Write-Host "Membuka dashboard..."
-  Start-Process $dashboardUrl
+  Open-Dashboard
   exit 0
 }
 
@@ -70,4 +88,4 @@ Write-Host "Timezone : $($health.server_timezone)"
 Write-Host "Waktu WIB: $($health.server_time_wib)"
 Write-Host ""
 Write-Host "Membuka dashboard..."
-Start-Process $dashboardUrl
+Open-Dashboard
