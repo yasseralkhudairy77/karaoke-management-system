@@ -14,17 +14,46 @@ async function getRooms(req, res) {
       ORDER BY room_id ASC
     `);
 
-    const rooms = result.rows.map(r => ({
-      room_id: r.room_id,
-      room_name: r.room_name,
-      status: r.status,
-      start_time: r.start_time ? new Date(r.start_time).toISOString() : "",
-      booked_duration_minutes: r.booked_duration_minutes || 0,
-      scheduled_end_time: r.scheduled_end_time ? new Date(r.scheduled_end_time).toISOString() : "",
-      rate_per_hour: Number(r.rate_per_hour || 0),
-      tv_device_id: r.tv_device_id || "",
-      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ""
-    }));
+    const activeLcRes = await db.query(`
+      SELECT room_id, lc_id, lc_name, duration_minutes, rate_per_hour, rate
+      FROM lc_work_logs
+      WHERE status = 'active' AND closed_at IS NULL
+      ORDER BY created_at ASC
+    `);
+
+    const activeLcsByRoom = new Map();
+    for (const row of activeLcRes.rows) {
+      const roomId = row.room_id;
+      if (!activeLcsByRoom.has(roomId)) activeLcsByRoom.set(roomId, []);
+      activeLcsByRoom.get(roomId).push({
+        lc_id: row.lc_id,
+        lc_name: row.lc_name,
+        duration_minutes: Number(row.duration_minutes || 0),
+        rate_per_hour: Number(row.rate_per_hour || 0),
+        rate_per_room: Number(row.rate_per_hour || 0),
+        rate: Number(row.rate || 0)
+      });
+    }
+
+    const rooms = result.rows.map(r => {
+      const lcAssignments = activeLcsByRoom.get(r.room_id) || [];
+      const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
+
+      return {
+        room_id: r.room_id,
+        room_name: r.room_name,
+        status: r.status,
+        start_time: r.start_time ? new Date(r.start_time).toISOString() : "",
+        booked_duration_minutes: r.booked_duration_minutes || 0,
+        scheduled_end_time: r.scheduled_end_time ? new Date(r.scheduled_end_time).toISOString() : "",
+        rate_per_hour: Number(r.rate_per_hour || 0),
+        tv_device_id: r.tv_device_id || "",
+        updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : "",
+        lc_ids: lcIds,
+        lc_companion_ids: lcIds,
+        lc_assignments: JSON.stringify(lcAssignments)
+      };
+    });
 
     return res.json({ ok: true, success: true, rooms });
   } catch (err) {
