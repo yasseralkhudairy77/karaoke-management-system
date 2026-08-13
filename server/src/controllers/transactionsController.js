@@ -35,13 +35,32 @@ async function getTodayTransactions(req, res) {
 
     let cashRevenue = 0;
     let transferRevenue = 0;
-    let totalRevenue = 0;
+    let totalRevenuePaid = 0;
+    let totalRevenueAll = 0;
+    let unpaidRevenue = 0;
+    let paidTransactions = 0;
+    let unpaidTransactions = 0;
+    let cashTransactions = 0;
+    let transferTransactions = 0;
 
     transactions.forEach(t => {
+      const transactionTotal = Number(t.grand_total) || 0;
+      totalRevenueAll += transactionTotal;
+
       if (t.payment_status === 'paid') {
-        totalRevenue += t.grand_total;
-        if (t.payment_method === 'cash') cashRevenue += t.grand_total;
-        else transferRevenue += t.grand_total;
+        paidTransactions += 1;
+        totalRevenuePaid += transactionTotal;
+
+        if (t.payment_method === 'cash') {
+          cashTransactions += 1;
+          cashRevenue += transactionTotal;
+        } else {
+          transferTransactions += 1;
+          transferRevenue += transactionTotal;
+        }
+      } else {
+        unpaidTransactions += 1;
+        unpaidRevenue += transactionTotal;
       }
     });
 
@@ -51,9 +70,18 @@ async function getTodayTransactions(req, res) {
       transactions,
       summary: {
         total_transactions: transactions.length,
+        paid_transactions: paidTransactions,
+        unpaid_transactions: unpaidTransactions,
+        cash_transactions: cashTransactions,
+        transfer_transactions: transferTransactions,
         cash_revenue: cashRevenue,
         transfer_revenue: transferRevenue,
-        total_revenue: totalRevenue
+        unpaid_revenue: unpaidRevenue,
+        paid_revenue: totalRevenuePaid,
+        total_revenue_paid: totalRevenuePaid,
+        total_revenue_unpaid: unpaidRevenue,
+        total_revenue_all: totalRevenueAll,
+        total_revenue: totalRevenuePaid
       },
       operational_date_start: startDate,
       operational_date_end: endDate
