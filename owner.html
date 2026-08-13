@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happy Song Owner Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080604;
+      --panel: rgba(35, 27, 19, 0.92);
+      --panel-soft: rgba(255, 255, 255, 0.055);
+      --border: rgba(242, 196, 91, 0.25);
+      --gold: #f2c45b;
+      --green: #34d399;
+      --red: #fb7185;
+      --amber: #f59e0b;
+      --text: #fff7df;
+      --muted: rgba(255, 247, 223, 0.68);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(242, 196, 91, 0.12), transparent 32rem),
+        radial-gradient(circle at bottom left, rgba(139, 92, 246, 0.11), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 28px 0 42px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      color: var(--gold);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 0 0 6px;
+    }
+
+    h1 {
+      font-size: clamp(1.8rem, 4vw, 3.2rem);
+      line-height: 1;
+      margin: 0;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin: 10px 0 0;
+      max-width: 720px;
+    }
+
+    .status-card,
+    .metric,
+    .panel,
+    .room-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+    }
+
+    .status-card {
+      padding: 14px 16px;
+      min-width: 245px;
+      text-align: right;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      color: var(--green);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 18px currentColor;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.86rem;
+      margin-top: 5px;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 18px 0;
+    }
+
+    button {
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      background: rgba(242, 196, 91, 0.14);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    button:hover { background: rgba(242, 196, 91, 0.22); }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 16px 0;
+    }
+
+    .metric {
+      padding: 16px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin: 0 0 8px;
+    }
+
+    .metric-value {
+      font-size: clamp(1.45rem, 3vw, 2.25rem);
+      font-weight: 900;
+      margin: 0;
+    }
+
+    .metric-note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin: 8px 0 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.3fr 0.7fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .panel {
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1.1rem;
+    }
+
+    .rooms {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .room-card {
+      padding: 14px;
+      background: var(--panel-soft);
+    }
+
+    .room-name {
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .available { color: var(--green); }
+    .occupied { color: var(--red); }
+    .cleaning { color: var(--amber); }
+
+    .room-meta {
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--gold);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .right { text-align: right; }
+    .empty { color: var(--muted); padding: 18px 0; }
+    .error { color: var(--red); }
+
+    @media (max-width: 920px) {
+      .header, .toolbar { flex-direction: column; align-items: stretch; }
+      .status-card { text-align: left; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+      .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 560px) {
+      .metrics, .rooms { grid-template-columns: 1fr; }
+      table { font-size: 0.82rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div>
+        <p class="eyebrow">Happy Song Karaoke</p>
+        <h1>Owner Monitor</h1>
+        <p class="subtitle">Pantauan read-only dari snapshot PC kasir. Halaman ini tidak mengubah data operasional.</p>
+      </div>
+      <section class="status-card">
+        <div class="status" id="connectionStatus"><span class="dot"></span><span>Memuat snapshot...</span></div>
+        <div class="small" id="lastUpdate">-</div>
+      </section>
+    </header>
+
+    <div class="toolbar">
+      <div class="small" id="periodInfo">Periode: -</div>
+      <button type="button" id="refreshButton">Refresh Sekarang</button>
+    </div>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>Status Ruangan</h2>
+        <div class="rooms" id="rooms"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Ringkasan Shift</h2>
+        <table>
+          <tbody id="shiftSummary"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2>Transaksi Terbaru</h2>
+      <div id="transactions"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_URL = "/exec?action=getOwnerMirrorSnapshot";
+    const REFRESH_MS = 60000;
+
+    const formatCurrency = (value) => new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(Number(value) || 0);
+
+    const formatNumber = (value) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
+
+    function setStatus(text, tone = "available") {
+      const status = document.getElementById("connectionStatus");
+      status.className = `status ${tone}`;
+      status.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+    }
+
+    function metric(label, value, note = "") {
+      return `
+        <article class="metric">
+          <p class="metric-label">${label}</p>
+          <p class="metric-value">${value}</p>
+          ${note ? `<p class="metric-note">${note}</p>` : ""}
+        </article>
+      `;
+    }
+
+    function row(label, value) {
+      return `<tr><th>${label}</th><td class="right">${value}</td></tr>`;
+    }
+
+    function render(snapshot) {
+      if (!snapshot?.has_snapshot && snapshot?.mode === "cloud_latest_snapshot") {
+        setStatus("Belum ada snapshot", "cleaning");
+      } else {
+        setStatus("Cloud Mirror Aktif", "available");
+      }
+
+      document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
+        ? `Update cloud: ${snapshot.cloud_received_at_wib}`
+        : `Update lokal: ${snapshot.generated_at_wib || "-"}`;
+      document.getElementById("periodInfo").textContent =
+        `Periode: ${snapshot.operational_date_start || "-"} s/d ${snapshot.operational_date_end || "-"} · Source: ${snapshot.source_id || "local"}`;
+
+      const summary = snapshot.summary || {};
+      document.getElementById("metrics").innerHTML = [
+        metric("Omzet Lunas", formatCurrency(summary.paid_revenue), `${formatNumber(summary.paid_transactions)} transaksi lunas`),
+        metric("Total Tagihan", formatCurrency(summary.total_revenue_all), `${formatNumber(summary.total_transactions)} transaksi tercatat`),
+        metric("Room Aktif", formatNumber(summary.occupied_rooms), `${formatNumber(summary.available_rooms)} room kosong`),
+        metric("Open F&B", formatCurrency(summary.open_fnb_revenue), "Pesanan berjalan belum checkout"),
+      ].join("");
+
+      document.getElementById("shiftSummary").innerHTML = [
+        row("Cash", formatCurrency(summary.cash_revenue)),
+        row("Transfer/QRIS", formatCurrency(summary.transfer_revenue)),
+        row("Belum Dibayar", formatCurrency(summary.unpaid_revenue)),
+        row("Omzet Room", formatCurrency(summary.total_room_revenue)),
+        row("Omzet F&B", formatCurrency(summary.total_fnb_revenue)),
+        row("Omzet LC", formatCurrency(summary.total_lc_revenue)),
+      ].join("");
+
+      const rooms = Array.isArray(snapshot.rooms) ? snapshot.rooms : [];
+      document.getElementById("rooms").innerHTML = rooms.map((room) => {
+        const tone = room.status === "occupied" ? "occupied" : room.status === "cleaning" ? "cleaning" : "available";
+        return `
+          <article class="room-card">
+            <div class="room-name">${room.room_name || room.room_id}</div>
+            <span class="badge ${tone}">${room.status || "-"}</span>
+            <div class="room-meta">
+              <div>Tarif: ${formatCurrency(room.rate_per_hour)} / jam</div>
+              ${room.start_time_wib ? `<div>Mulai: ${room.start_time_wib}</div>` : ""}
+              ${room.scheduled_end_time_wib ? `<div>Selesai: ${room.scheduled_end_time_wib}</div>` : ""}
+              ${Number(room.open_fnb_total) > 0 ? `<div>Open F&B: ${formatCurrency(room.open_fnb_total)}</div>` : ""}
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      if (transactions.length === 0) {
+        document.getElementById("transactions").innerHTML = `<div class="empty">Belum ada transaksi pada periode ini.</div>`;
+        return;
+      }
+
+      document.getElementById("transactions").innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Room</th>
+              <th>Status</th>
+              <th>Metode</th>
+              <th class="right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${transactions.slice(0, 12).map((trx) => `
+              <tr>
+                <td>${trx.room_name || trx.room_id}<div class="small">${trx.end_time_wib || trx.created_at || ""}</div></td>
+                <td>${trx.payment_status || "-"}</td>
+                <td>${trx.payment_method || "-"}</td>
+                <td class="right">${formatCurrency(trx.grand_total)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function loadSnapshot() {
+      try {
+        const response = await fetch(`${API_URL}&_=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || `HTTP ${response.status}`);
+        }
+        render(data);
+      } catch (error) {
+        setStatus("Gagal memuat mirror", "occupied");
+        document.getElementById("lastUpdate").innerHTML = `<span class="error">${error.message}</span>`;
+      }
+    }
+
+    document.getElementById("refreshButton").addEventListener("click", loadSnapshot);
+    loadSnapshot();
+    setInterval(loadSnapshot, REFRESH_MS);
+  </script>
+</body>
+</html>
