@@ -21,6 +21,49 @@ async function getRooms(req, res) {
       ORDER BY created_at ASC
     `);
 
+    const openFnbOrdersRes = await db.query(`
+      SELECT *
+      FROM fnb_orders
+      WHERE order_status = 'open'
+      ORDER BY created_at ASC
+    `);
+
+    const openFnbOrders = [];
+    for (const order of openFnbOrdersRes.rows) {
+      const itemsRes = await db.query(`
+        SELECT *
+        FROM fnb_order_items
+        WHERE order_id = $1
+        ORDER BY created_at ASC
+      `, [order.order_id]);
+
+      openFnbOrders.push({
+        order_id: order.order_id,
+        room_id: order.room_id,
+        room_name: order.room_name,
+        room_start_time: order.room_start_time ? new Date(order.room_start_time).toISOString() : "",
+        order_status: order.order_status,
+        order_total: Number(order.order_total || 0),
+        cashier_name: order.cashier_name || "",
+        note: order.note || "",
+        customer_name: order.customer_name || "",
+        general_bill_id: order.general_bill_id || "",
+        created_at: order.created_at ? new Date(order.created_at).toISOString() : "",
+        updated_at: order.updated_at ? new Date(order.updated_at).toISOString() : "",
+        items: itemsRes.rows.map(item => ({
+          order_item_id: item.order_item_id,
+          order_id: item.order_id,
+          menu_id: item.menu_id,
+          menu_name: item.menu_name,
+          category: item.category,
+          price: Number(item.price || 0),
+          quantity: Number(item.quantity || 0),
+          subtotal: Number(item.subtotal || 0),
+          created_at: item.created_at ? new Date(item.created_at).toISOString() : ""
+        }))
+      });
+    }
+
     const activeLcsByRoom = new Map();
     for (const row of activeLcRes.rows) {
       const roomId = row.room_id;
@@ -38,6 +81,13 @@ async function getRooms(req, res) {
     const rooms = result.rows.map(r => {
       const lcAssignments = Array.from((activeLcsByRoom.get(r.room_id) || new Map()).values());
       const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
+      const roomStartTimeMs = r.start_time ? new Date(r.start_time).getTime() : 0;
+      const roomOpenFnbOrders = openFnbOrders.filter(order => {
+        if (order.room_id !== r.room_id || order.order_status !== 'open') return false;
+        if (!roomStartTimeMs || !order.room_start_time) return true;
+        const orderStartTimeMs = new Date(order.room_start_time).getTime();
+        return orderStartTimeMs === roomStartTimeMs;
+      });
 
       return {
         room_id: r.room_id,
@@ -49,6 +99,8 @@ async function getRooms(req, res) {
         rate_per_hour: Number(r.rate_per_hour || 0),
         tv_device_id: r.tv_device_id || "",
         updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : "",
+        open_fnb_orders: roomOpenFnbOrders,
+        open_fnb_total: roomOpenFnbOrders.reduce((total, order) => total + Number(order.order_total || 0), 0),
         lc_ids: lcIds,
         lc_companion_ids: lcIds,
         lc_assignments: JSON.stringify(lcAssignments)

@@ -4599,10 +4599,55 @@ function getSelectedRoomOpenFnbOrders() {
   return openFnbOrders.filter((order) => {
     return (
       order.room_id === selectedRoom.room_id &&
-      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
+      isFnbOrderForActiveRoomSession(order, selectedRoom, roomStartTime) &&
       order.order_status === "open"
     );
   });
+}
+
+function parseRoomOpenFnbOrders(room) {
+  if (Array.isArray(room?.open_fnb_orders)) {
+    return room.open_fnb_orders;
+  }
+
+  if (typeof room?.open_fnb_orders === "string" && room.open_fnb_orders.trim()) {
+    try {
+      const parsed = JSON.parse(room.open_fnb_orders);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn("Gagal membaca open_fnb_orders dari room.", error);
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function isFnbOrderForActiveRoomSession(order, room, roomStartTime = "") {
+  if (!order || !room || order.room_id !== room.room_id || order.order_status !== "open") {
+    return false;
+  }
+
+  const normalizedRoomStartTime = roomStartTime || formatJakartaIsoString(room.start_time);
+  const normalizedOrderStartTime = formatJakartaIsoString(order.room_start_time);
+
+  if (!normalizedRoomStartTime || !normalizedOrderStartTime) {
+    return true;
+  }
+
+  return normalizedOrderStartTime === normalizedRoomStartTime;
+}
+
+function mergeOpenFnbOrdersForRoom(room, roomStartTime = "") {
+  const merged = new Map();
+  [...openFnbOrders, ...parseRoomOpenFnbOrders(room)].forEach((order) => {
+    if (!isFnbOrderForActiveRoomSession(order, room, roomStartTime)) {
+      return;
+    }
+    merged.set(order.order_id || `${order.room_id}-${order.created_at}-${merged.size}`, order);
+  });
+
+  return Array.from(merged.values());
 }
 
 function formatJakartaIsoString(value) {
@@ -8119,13 +8164,7 @@ function getOpenFnbOrdersForRoom(room) {
     return [];
   }
   const roomStartTime = formatJakartaIsoString(room.start_time);
-  return openFnbOrders.filter((order) => {
-    return (
-      order.room_id === room.room_id &&
-      formatJakartaIsoString(order.room_start_time) === roomStartTime &&
-      order.order_status === "open"
-    );
-  });
+  return mergeOpenFnbOrdersForRoom(room, roomStartTime);
 }
 
 function createRoomOpenFnbBreakdownElement(openOrders) {
