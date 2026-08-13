@@ -34,6 +34,12 @@ app.use(express.text({ type: ['text/plain', 'application/json'] }));
 app.use('/', apiRoutes);
 app.use('/api', apiRoutes);
 
+const frontendRoot = path.join(__dirname, '../..');
+app.use(express.static(frontendRoot, {
+  index: 'index.html',
+  extensions: ['html']
+}));
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'online',
@@ -59,6 +65,7 @@ function startServer(port = PORT, bindHost = BIND_HOST) {
   return app.listen(port, bindHost, () => {
     console.log('===========================================================');
     console.log(`HAPPY SONG POS LOCAL SERVER LISTENING ON http://${bindHost}:${port}`);
+    console.log(`- Local Dashboard: http://localhost:${port}/`);
     console.log(`- Web App API Endpoint: http://localhost:${port}/exec`);
     console.log(`- Observability Endpoint: http://localhost:${port}/sync/status`);
     console.log('===========================================================');

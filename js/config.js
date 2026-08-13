@@ -6,9 +6,32 @@
   "https://script.google.com/macros/s/AKfycbzYoO2LkCAG0fUBKMjAv7uI9RkANiW795Dj_DdlFO4omvW3Btt3MEEI7kW8bOgg1ve1/exec"
 
   If this value is empty, the dashboard automatically uses mock data.
+  When the dashboard is served from the local Node.js server
+  (localhost / 127.0.0.1 / LAN IP), it automatically uses the local API
+  on the same origin. GitHub Pages keeps using the Google Apps Script URL.
 */
 
-export const API_BASE_URL = "https://script.google.com/macros/s/AKfycbzjBoz2FvaRqTdsmdR-eYQBRvzPVqGV0lf-FPJlDgfFDQ0bxSWr8JVpgxICBwIkI7CK/exec";
+const GOOGLE_APPS_SCRIPT_API_BASE_URL = "https://script.google.com/macros/s/AKfycbzjBoz2FvaRqTdsmdR-eYQBRvzPVqGV0lf-FPJlDgfFDQ0bxSWr8JVpgxICBwIkI7CK/exec";
+
+function isLocalBackendHost(hostname) {
+  return (
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "::1"
+    || /^192\.168\.\d+\.\d+$/.test(hostname)
+    || /^10\.\d+\.\d+\.\d+$/.test(hostname)
+  );
+}
+
+const browserLocation = globalThis?.window?.location;
+
+export const API_BASE_URL = (
+  browserLocation
+  && browserLocation.protocol.startsWith("http")
+  && isLocalBackendHost(browserLocation.hostname)
+)
+  ? `${browserLocation.origin}/exec`
+  : GOOGLE_APPS_SCRIPT_API_BASE_URL;
 
 /*
   Local TV bridge configuration.
