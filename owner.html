@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Happy Song Owner Monitor</title>
+  <title>Happy Song Management Monitor</title>
   <style>
     :root {
       color-scheme: dark;
@@ -44,6 +44,22 @@
       align-items: flex-start;
       gap: 16px;
       margin-bottom: 22px;
+    }
+
+    .brand-heading {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand-logo {
+      width: 92px;
+      height: 92px;
+      object-fit: cover;
+      border-radius: 22px;
+      border: 1px solid rgba(242, 196, 91, 0.45);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+      background: #0d0b08;
     }
 
     .eyebrow {
@@ -235,6 +251,7 @@
 
     @media (max-width: 920px) {
       .header, .toolbar { flex-direction: column; align-items: stretch; }
+      .brand-heading { align-items: flex-start; }
       .status-card { text-align: left; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid { grid-template-columns: 1fr; }
@@ -242,6 +259,7 @@
     }
 
     @media (max-width: 560px) {
+      .brand-logo { width: 70px; height: 70px; border-radius: 18px; }
       .metrics, .rooms { grid-template-columns: 1fr; }
       table { font-size: 0.82rem; }
     }
@@ -250,10 +268,13 @@
 <body>
   <main class="page">
     <header class="header">
-      <div>
-        <p class="eyebrow">Happy Song Karaoke</p>
-        <h1>Owner Monitor</h1>
-        <p class="subtitle">Pantauan read-only dari snapshot PC kasir. Halaman ini tidak mengubah data operasional.</p>
+      <div class="brand-heading">
+        <img class="brand-logo" src="/assets/brand/happy-song-logo-bg.jpg" alt="Happy Song Karaoke">
+        <div>
+          <p class="eyebrow">Happy Song Karaoke</p>
+          <h1>Management Monitor</h1>
+          <p class="subtitle">Pantauan read-only dari snapshot PC kasir. Halaman ini tidak mengubah data operasional.</p>
+        </div>
       </div>
       <section class="status-card">
         <div class="status" id="connectionStatus"><span class="dot"></span><span>Memuat snapshot...</span></div>
@@ -300,6 +321,30 @@
 
     const formatNumber = (value) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
 
+    function formatSimpleDateTime(value) {
+      if (!value) {
+        return "-";
+      }
+
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value)
+          .replace("T", " ")
+          .replace(/\+\d{2}:\d{2}$/, "")
+          .trim();
+      }
+
+      return new Intl.DateTimeFormat("id-ID", {
+        timeZone: "Asia/Jakarta",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(date).replace(".", ":");
+    }
+
     function setStatus(text, tone = "available") {
       const status = document.getElementById("connectionStatus");
       status.className = `status ${tone}`;
@@ -328,8 +373,8 @@
       }
 
       document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
-        ? `Update cloud: ${snapshot.cloud_received_at_wib}`
-        : `Update lokal: ${snapshot.generated_at_wib || "-"}`;
+        ? `Update terakhir: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
+        : `Update terakhir: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
       document.getElementById("periodInfo").textContent =
         `Periode: ${snapshot.operational_date_start || "-"} s/d ${snapshot.operational_date_end || "-"} · Source: ${snapshot.source_id || "local"}`;
 
@@ -359,8 +404,8 @@
             <span class="badge ${tone}">${room.status || "-"}</span>
             <div class="room-meta">
               <div>Tarif: ${formatCurrency(room.rate_per_hour)} / jam</div>
-              ${room.start_time_wib ? `<div>Mulai: ${room.start_time_wib}</div>` : ""}
-              ${room.scheduled_end_time_wib ? `<div>Selesai: ${room.scheduled_end_time_wib}</div>` : ""}
+              ${room.start_time_wib ? `<div>Mulai: ${formatSimpleDateTime(room.start_time_wib)}</div>` : ""}
+              ${room.scheduled_end_time_wib ? `<div>Selesai: ${formatSimpleDateTime(room.scheduled_end_time_wib)}</div>` : ""}
               ${Number(room.open_fnb_total) > 0 ? `<div>Open F&B: ${formatCurrency(room.open_fnb_total)}</div>` : ""}
             </div>
           </article>
@@ -386,7 +431,7 @@
           <tbody>
             ${transactions.slice(0, 12).map((trx) => `
               <tr>
-                <td>${trx.room_name || trx.room_id}<div class="small">${trx.end_time_wib || trx.created_at || ""}</div></td>
+                <td>${trx.room_name || trx.room_id}<div class="small">${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div></td>
                 <td>${trx.payment_status || "-"}</td>
                 <td>${trx.payment_method || "-"}</td>
                 <td class="right">${formatCurrency(trx.grand_total)}</td>
