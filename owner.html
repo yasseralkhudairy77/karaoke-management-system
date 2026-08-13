@@ -273,7 +273,6 @@
         <div>
           <p class="eyebrow">Happy Song Karaoke</p>
           <h1>Management Monitor</h1>
-          <p class="subtitle">Pantauan read-only dari snapshot PC kasir. Halaman ini tidak mengubah data operasional.</p>
         </div>
       </div>
       <section class="status-card">
@@ -345,6 +344,24 @@
       }).format(date).replace(".", ":");
     }
 
+    function formatDisplayDate(value) {
+      if (!value) {
+        return "-";
+      }
+
+      const date = new Date(`${value}T00:00:00+07:00`);
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+      const day = String(date.getDate()).padStart(2, "0");
+      const month = monthNames[date.getMonth()];
+      const year = date.getFullYear();
+
+      return `${day}-${month}-${year}`;
+    }
+
     function setStatus(text, tone = "available") {
       const status = document.getElementById("connectionStatus");
       status.className = `status ${tone}`;
@@ -376,7 +393,7 @@
         ? `Update terakhir: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
         : `Update terakhir: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
       document.getElementById("periodInfo").textContent =
-        `Periode: ${snapshot.operational_date_start || "-"} s/d ${snapshot.operational_date_end || "-"} · Source: ${snapshot.source_id || "local"}`;
+        `Periode: ${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}`;
 
       const summary = snapshot.summary || {};
       document.getElementById("metrics").innerHTML = [
