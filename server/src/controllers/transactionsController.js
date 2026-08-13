@@ -156,11 +156,18 @@ async function getTransactionLcDetails(req, res) {
     const logsRes = await db.query(`
       SELECT * FROM lc_work_logs
       WHERE room_id = $1
-        AND created_at <= COALESCE($2::timestamptz, CURRENT_TIMESTAMP)
+        AND created_at >= $2::timestamptz
+        AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
+        AND status != 'cancelled'
       ORDER BY created_at DESC
       LIMIT 20
-    `, [trx.room_id, trx.end_time]);
-    const logs = logsRes.rows.map(row => ({
+    `, [trx.room_id, trx.start_time, trx.end_time]);
+    const uniqueRows = Array.from(logsRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, row);
+      return map;
+    }, new Map()).values());
+    const logs = uniqueRows.map(row => ({
       ...row,
       duration_minutes: Number(row.duration_minutes || 0),
       rate_per_hour: Number(row.rate_per_hour || 0),

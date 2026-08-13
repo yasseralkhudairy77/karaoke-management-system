@@ -52,7 +52,20 @@ async function assignSessionLcs(req, res, payload) {
       lcAssignments = idsArray.map(lcId => ({ lc_id: lcId, duration_minutes: 60 }));
     }
 
-    const roomRes = await client.query('SELECT room_name, start_time FROM rooms WHERE room_id = $1', [roomId]);
+    lcAssignments = Array.from(
+      lcAssignments.reduce((map, item) => {
+        const lcId = String(item?.lc_id || '').trim();
+        if (!lcId || lcId === 'PENDING') return map;
+        map.set(lcId, {
+          ...item,
+          lc_id: lcId,
+          duration_minutes: Number(item.duration_minutes || 60)
+        });
+        return map;
+      }, new Map()).values()
+    );
+
+    const roomRes = await client.query('SELECT room_name, start_time FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
     const roomName = roomRes.rowCount > 0 ? roomRes.rows[0].room_name : roomId;
 
     const sessRes = await client.query(`

@@ -24,8 +24,8 @@ async function getRooms(req, res) {
     const activeLcsByRoom = new Map();
     for (const row of activeLcRes.rows) {
       const roomId = row.room_id;
-      if (!activeLcsByRoom.has(roomId)) activeLcsByRoom.set(roomId, []);
-      activeLcsByRoom.get(roomId).push({
+      if (!activeLcsByRoom.has(roomId)) activeLcsByRoom.set(roomId, new Map());
+      activeLcsByRoom.get(roomId).set(row.lc_id, {
         lc_id: row.lc_id,
         lc_name: row.lc_name,
         duration_minutes: Number(row.duration_minutes || 0),
@@ -36,7 +36,7 @@ async function getRooms(req, res) {
     }
 
     const rooms = result.rows.map(r => {
-      const lcAssignments = activeLcsByRoom.get(r.room_id) || [];
+      const lcAssignments = Array.from((activeLcsByRoom.get(r.room_id) || new Map()).values());
       const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
 
       return {
@@ -575,9 +575,14 @@ async function closeSession(req, res, payload) {
       WHERE room_id = $1 AND closed_at IS NULL AND status != 'cancelled'
       ORDER BY created_at ASC
     `, [roomId]);
+    const uniqueLcRows = Array.from(lcRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, row);
+      return map;
+    }, new Map()).values());
     let lcTotal = 0;
-    lcRes.rows.forEach(r => { lcTotal += Number(r.rate || 0); });
-    const lcLogsForReceipt = lcRes.rows.map(row => ({
+    uniqueLcRows.forEach(r => { lcTotal += Number(r.rate || 0); });
+    const lcLogsForReceipt = uniqueLcRows.map(row => ({
       ...row,
       duration_minutes: Number(row.duration_minutes || 0),
       rate_per_hour: Number(row.rate_per_hour || 0),
