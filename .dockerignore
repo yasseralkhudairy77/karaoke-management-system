@@ -1,0 +1,12 @@
+.git
+.github
+.netlify
+node_modules
+server/node_modules
+server/.env
+server/mirror
+backups
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
