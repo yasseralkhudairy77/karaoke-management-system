@@ -10,7 +10,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 
-// Restricted CORS whitelist for Local/LAN subnets and localhost
 const allowedOrigins = [
   /^http:\/\/localhost(:\d+)?$/,
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,
@@ -20,7 +19,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // Allow non-browser / local curl requests
+    if (!origin) return callback(null, true);
     const isAllowed = allowedOrigins.some(regex => regex.test(origin));
     if (isAllowed) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
@@ -28,16 +27,13 @@ app.use(cors({
   credentials: true
 }));
 
-// Body parser middlewares
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.text({ type: ['text/plain', 'application/json'] }));
 
-// Legacy Web App and REST API Routes
 app.use('/', apiRoutes);
 app.use('/api', apiRoutes);
 
-// Server Health & Sync Observability Endpoints
 app.get('/health', (req, res) => {
   res.json({
     status: 'online',
@@ -55,15 +51,23 @@ app.get('/sync/status', async (req, res) => {
   }
 });
 
-// Start Railway background sync worker (polls outbox every 30s)
-startSyncWorker(parseInt(process.env.SYNC_INTERVAL_MS || '30000', 10));
+function startServer(port = PORT, bindHost = BIND_HOST) {
+  if (process.env.DISABLE_SYNC_WORKER !== '1') {
+    startSyncWorker(parseInt(process.env.SYNC_INTERVAL_MS || '30000', 10));
+  }
 
-app.listen(PORT, BIND_HOST, () => {
-  console.log('===========================================================');
-  console.log(`🎤 HAPPY SONG POS LOCAL SERVER LISTENING ON http://${BIND_HOST}:${PORT}`);
-  console.log(`- Web App API Endpoint: http://localhost:${PORT}/exec`);
-  console.log(`- Observability Endpoint: http://localhost:${PORT}/sync/status`);
-  console.log('===========================================================');
-});
+  return app.listen(port, bindHost, () => {
+    console.log('===========================================================');
+    console.log(`HAPPY SONG POS LOCAL SERVER LISTENING ON http://${bindHost}:${port}`);
+    console.log(`- Web App API Endpoint: http://localhost:${port}/exec`);
+    console.log(`- Observability Endpoint: http://localhost:${port}/sync/status`);
+    console.log('===========================================================');
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;
+module.exports.startServer = startServer;

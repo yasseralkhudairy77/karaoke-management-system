@@ -1,5 +1,17 @@
 const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
+const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
+
+const FNB_GENERAL_ROOM_ID = 'FNB-GENERAL';
+const FNB_GENERAL_ROOM_NAME = 'F&B Umum';
+
+async function ensureGeneralFnbRoom(client) {
+  await client.query(`
+    INSERT INTO rooms (room_id, room_name, status, rate_per_hour)
+    VALUES ($1, $2, 'available', 0)
+    ON CONFLICT (room_id) DO NOTHING
+  `, [FNB_GENERAL_ROOM_ID, FNB_GENERAL_ROOM_NAME]);
+}
 
 async function getMenuItems(req, res) {
   try {
@@ -58,27 +70,98 @@ async function getOpenFnbOrders(req, res, roomId) {
   }
 }
 
+async function attachOrderItems(orders) {
+  for (const order of orders) {
+    const itemsRes = await db.query('SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [order.order_id]);
+    order.items = itemsRes.rows.map(item => ({
+      ...item,
+      price: Number(item.price || 0),
+      subtotal: Number(item.subtotal || 0)
+    }));
+    order.order_total = Number(order.order_total || 0);
+  }
+  return orders;
+}
+
+async function getTodayFnbOrders(req, res) {
+  try {
+    const { status, room_id, period, start_date, end_date } = req.query;
+    const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
+
+    const params = [startDate, endDate];
+    const filters = [`DATE(created_at AT TIME ZONE 'Asia/Jakarta') >= $1`, `DATE(created_at AT TIME ZONE 'Asia/Jakarta') <= $2`];
+    if (status) {
+      params.push(status);
+      filters.push(`order_status = $${params.length}`);
+    }
+    if (room_id) {
+      params.push(room_id);
+      filters.push(`room_id = $${params.length}`);
+    }
+
+    const ordersRes = await db.query(`
+      SELECT * FROM fnb_orders
+      WHERE ${filters.join(' AND ')}
+      ORDER BY created_at DESC
+    `, params);
+
+    const orders = await attachOrderItems(ordersRes.rows);
+    return res.json({ ok: true, success: true, orders, fnb_orders: orders });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
 async function saveFnbOrder(req, res, payload) {
   let client;
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
-    const { room_id, items, cashier_name = 'Kasir', note = '', idempotency_key } = payload;
+    const {
+      room_id,
+      items,
+      cashier_name = 'Kasir',
+      note = '',
+      payment_method = '',
+      payment_status = 'unpaid',
+      customer_name = '',
+      general_bill_id = '',
+      idempotency_key
+    } = payload;
 
     if (!room_id) throw new Error('room_id wajib diisi.');
     if (!Array.isArray(items) || items.length === 0) throw new Error('Daftar item F&B wajib diisi.');
 
+    const isGeneralOrder = String(room_id).toUpperCase() === FNB_GENERAL_ROOM_ID;
+    const isPaid = String(payment_status).toLowerCase() === 'paid';
+    if (isGeneralOrder && !String(customer_name || '').trim()) {
+      throw new Error('Nama pemesan wajib diisi untuk order F&B umum.');
+    }
+
     if (idempotency_key) {
       const existing = await client.query('SELECT * FROM fnb_orders WHERE idempotency_key = $1', [idempotency_key]);
       if (existing.rowCount > 0) {
+        const itemsRes = await client.query('SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [existing.rows[0].order_id]);
         await client.query('COMMIT');
-        return successResponse(res, { message: 'Order F&B sudah diproses (idempotent).', order: existing.rows[0] });
+        return successResponse(res, { message: 'Order F&B sudah diproses (idempotent).', order: existing.rows[0], items: itemsRes.rows, idempotent_replay: true });
       }
     }
 
-    const roomRes = await client.query('SELECT room_name, start_time FROM rooms WHERE room_id = $1', [room_id]);
-    const roomName = roomRes.rowCount > 0 ? roomRes.rows[0].room_name : room_id;
-    const roomStartTime = roomRes.rowCount > 0 ? roomRes.rows[0].start_time : null;
+    if (isGeneralOrder) {
+      await ensureGeneralFnbRoom(client);
+    }
+
+    const roomRes = await client.query('SELECT room_name, start_time, status FROM rooms WHERE room_id = $1', [room_id]);
+    if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+    const roomName = isGeneralOrder ? FNB_GENERAL_ROOM_NAME : roomRes.rows[0].room_name;
+    const roomStartTime = roomRes.rows[0].start_time || null;
+
+    if (!isGeneralOrder) {
+      const status = String(roomRes.rows[0].status || '').toLowerCase();
+      if (!['occupied', 'waiting_payment', 'booked', 'paid_waiting_start'].includes(status)) {
+        throw new Error('Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau sudah dibooking.');
+      }
+    }
 
     let orderTotal = 0;
     const verifiedItems = [];
@@ -112,12 +195,17 @@ async function saveFnbOrder(req, res, payload) {
     }
 
     const orderId = `FNB-${Date.now()}`;
+    const effectiveGeneralBillId = isGeneralOrder && !isPaid
+      ? (general_bill_id || `GBILL-${Date.now()}`)
+      : '';
+    const orderStatus = isPaid ? 'billed' : 'open';
+
     await client.query(`
       INSERT INTO fnb_orders (
         order_id, room_id, room_name, room_start_time, order_status, 
-        order_total, cashier_name, note, idempotency_key
-      ) VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, $8)
-    `, [orderId, room_id, roomName, roomStartTime, orderTotal, cashier_name, note, idempotency_key || null]);
+        order_total, cashier_name, note, idempotency_key, customer_name, general_bill_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `, [orderId, room_id, roomName, roomStartTime, orderStatus, orderTotal, cashier_name, note, idempotency_key || null, customer_name || null, effectiveGeneralBillId || null]);
 
     for (const vItem of verifiedItems) {
       await client.query(`
@@ -125,6 +213,23 @@ async function saveFnbOrder(req, res, payload) {
           order_id, menu_id, menu_name, category, price, quantity, subtotal
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       `, [orderId, vItem.menu_id, vItem.menu_name, vItem.category, vItem.price, vItem.quantity, vItem.subtotal]);
+    }
+
+    let transaction = null;
+    if (isPaid) {
+      const { deductStockForFnbOrders } = require('./roomsController');
+      const now = new Date();
+      const transactionId = `TRX-${Date.now()}`;
+      const opDate = getOperationalDate(now);
+      await client.query(`
+        INSERT INTO transactions (
+          transaction_id, room_id, room_name, start_time, end_time,
+          duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
+          grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $4, 0, 0, 0, $5, 0, $5, $6, $7, 'paid', $8, $9, $10)
+      `, [transactionId, room_id, isGeneralOrder && customer_name ? `${FNB_GENERAL_ROOM_NAME} - ${customer_name}` : roomName, now, orderTotal, orderId, payment_method || 'cash', cashier_name, opDate, idempotency_key ? `${idempotency_key}:trx` : null]);
+      await deductStockForFnbOrders(client, [orderId], transactionId, cashier_name);
+      transaction = { transaction_id: transactionId, room_id, room_name: roomName, fnb_total: orderTotal, grand_total: orderTotal, payment_status: 'paid', payment_method: payment_method || 'cash' };
     }
 
     await client.query(`
@@ -137,7 +242,19 @@ async function saveFnbOrder(req, res, payload) {
     return successResponse(res, {
       message: 'Order F&B berhasil disimpan.',
       order_id: orderId,
-      order_total: orderTotal
+      order_total: orderTotal,
+      general_bill_id: effectiveGeneralBillId,
+      order: {
+        order_id: orderId,
+        room_id,
+        room_name: roomName,
+        order_status: orderStatus,
+        order_total: orderTotal,
+        customer_name,
+        general_bill_id: effectiveGeneralBillId
+      },
+      items: verifiedItems,
+      transaction
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
@@ -168,9 +285,144 @@ async function cancelFnbOrder(req, res, payload) {
   }
 }
 
+async function getFnbOrdersByIds(req, res) {
+  try {
+    const rawIds = req.query.order_ids || req.query.ids || '';
+    const ids = String(rawIds).split(',').map(id => id.trim()).filter(Boolean);
+    if (ids.length === 0) return res.json({ ok: true, success: true, orders: [] });
+
+    const ordersRes = await db.query('SELECT * FROM fnb_orders WHERE order_id = ANY($1) ORDER BY created_at ASC', [ids]);
+    const orders = ordersRes.rows;
+    await attachOrderItems(orders);
+
+    return res.json({ ok: true, success: true, orders });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function settleGeneralFnbBill(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    await ensureGeneralFnbRoom(client);
+
+    const generalBillId = payload.general_bill_id;
+    const paymentMethod = String(payload.payment_method || 'cash').toLowerCase();
+    const cashierName = payload.cashier_name || 'Kasir';
+    const idempotencyKey = payload.idempotency_key || null;
+
+    if (!generalBillId) throw new Error('general_bill_id wajib diisi.');
+    if (!['cash', 'qris', 'transfer'].includes(paymentMethod)) throw new Error('Metode pembayaran wajib cash, qris, atau transfer.');
+
+    if (idempotencyKey) {
+      const existingTx = await client.query('SELECT * FROM transactions WHERE idempotency_key = $1', [idempotencyKey]);
+      if (existingTx.rowCount > 0) {
+        await client.query('COMMIT');
+        return successResponse(res, { message: 'Open bill F&B umum sudah pernah dibayar.', transaction: existingTx.rows[0], idempotent_replay: true });
+      }
+    }
+
+    const ordersRes = await client.query(`
+      SELECT * FROM fnb_orders
+      WHERE general_bill_id = $1 AND room_id = $2 AND order_status = 'open'
+      ORDER BY created_at ASC
+      FOR UPDATE
+    `, [generalBillId, FNB_GENERAL_ROOM_ID]);
+
+    if (ordersRes.rowCount === 0) throw new Error('Open bill F&B umum tidak ditemukan atau sudah dibayar.');
+
+    const orderIds = ordersRes.rows.map(order => order.order_id);
+    const fnbTotal = ordersRes.rows.reduce((total, order) => total + Number(order.order_total || 0), 0);
+    const customerName = ordersRes.rows[0].customer_name || '';
+    const now = new Date();
+    const opDate = getOperationalDate(now);
+    const transactionId = `TRX-${Date.now()}`;
+
+    await client.query(`
+      INSERT INTO transactions (
+        transaction_id, room_id, room_name, start_time, end_time,
+        duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
+        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key
+      ) VALUES ($1, $2, $3, $4, $4, 0, 0, 0, $5, 0, $5, $6, $7, 'paid', $8, $9, $10)
+    `, [transactionId, FNB_GENERAL_ROOM_ID, customerName ? `${FNB_GENERAL_ROOM_NAME} - ${customerName}` : FNB_GENERAL_ROOM_NAME, now, fnbTotal, orderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey]);
+
+    await client.query(`UPDATE fnb_orders SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP WHERE order_id = ANY($1)`, [orderIds]);
+
+    const { deductStockForFnbOrders } = require('./roomsController');
+    await deductStockForFnbOrders(client, orderIds, transactionId, cashierName);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [transactionId, JSON.stringify({ transaction_id: transactionId, room_id: FNB_GENERAL_ROOM_ID, grand_total: fnbTotal, payment_status: 'paid', operational_date: opDate })]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Open bill F&B umum berhasil dibayar.',
+      transaction: {
+        transaction_id: transactionId,
+        room_id: FNB_GENERAL_ROOM_ID,
+        room_name: customerName ? `${FNB_GENERAL_ROOM_NAME} - ${customerName}` : FNB_GENERAL_ROOM_NAME,
+        fnb_total: fnbTotal,
+        grand_total: fnbTotal,
+        fnb_order_ids: orderIds.join(','),
+        payment_method: paymentMethod,
+        payment_status: 'paid'
+      }
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function getTodayFnbSalesReport(req, res) {
+  try {
+    const { period, start_date, end_date } = req.query;
+    const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
+
+    const itemRes = await db.query(`
+      SELECT
+        foi.menu_id,
+        foi.menu_name,
+        foi.category,
+        SUM(foi.quantity) AS quantity,
+        SUM(foi.subtotal) AS subtotal
+      FROM fnb_order_items foi
+      JOIN fnb_orders fo ON fo.order_id = foi.order_id
+      WHERE DATE(fo.created_at AT TIME ZONE 'Asia/Jakarta') >= $1
+        AND DATE(fo.created_at AT TIME ZONE 'Asia/Jakarta') <= $2
+        AND fo.order_status <> 'cancelled'
+      GROUP BY foi.menu_id, foi.menu_name, foi.category
+      ORDER BY subtotal DESC
+    `, [startDate, endDate]);
+
+    const items = itemRes.rows.map(row => ({
+      ...row,
+      quantity: Number(row.quantity || 0),
+      subtotal: Number(row.subtotal || 0)
+    }));
+    const total = items.reduce((sum, item) => sum + item.subtotal, 0);
+
+    return res.json({ ok: true, success: true, items, total_sales: total, operational_date_start: startDate, operational_date_end: endDate });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
 module.exports = {
   getMenuItems,
   getOpenFnbOrders,
+  getTodayFnbOrders,
+  getFnbOrdersByIds,
   saveFnbOrder,
   cancelFnbOrder,
+  settleGeneralFnbBill,
+  getTodayFnbSalesReport,
 };

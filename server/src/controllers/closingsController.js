@@ -129,7 +129,51 @@ async function saveCashierClosing(req, res, payload) {
   }
 }
 
+async function getCashierClosingDetails(req, res) {
+  try {
+    const closingId = req.query.closing_id || '';
+    if (!closingId) throw new Error('closing_id wajib diisi.');
+
+    const closingRes = await db.query('SELECT * FROM cashier_closings WHERE closing_id = $1', [closingId]);
+    if (closingRes.rowCount === 0) return errorResponse(res, 'Data closing tidak ditemukan.', 'CLOSING_NOT_FOUND');
+
+    const trxRes = await db.query('SELECT * FROM cashier_closing_transactions WHERE closing_id = $1 ORDER BY created_at DESC', [closingId]);
+    const fnbRes = await db.query('SELECT * FROM cashier_closing_fnb_items WHERE closing_id = $1 ORDER BY created_at DESC', [closingId]);
+    const lcRes = await db.query('SELECT * FROM cashier_closing_lc_details WHERE closing_id = $1 ORDER BY created_at DESC', [closingId]);
+
+    return res.json({
+      ok: true,
+      success: true,
+      closing: closingRes.rows[0],
+      transactions: trxRes.rows,
+      fnb_items: fnbRes.rows,
+      lc_details: lcRes.rows
+    });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function validateCashierClosingSnapshot(req, res, payload) {
+  try {
+    const closingDate = payload.closing_date || getOperationalDate();
+    const trxRes = await db.query('SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total FROM transactions WHERE operational_date = $1', [closingDate]);
+    const existingRes = await db.query('SELECT closing_id FROM cashier_closings WHERE closing_date = $1', [closingDate]);
+    return successResponse(res, {
+      valid: existingRes.rowCount === 0,
+      closing_date: closingDate,
+      already_closed: existingRes.rowCount > 0,
+      transaction_count: Number(trxRes.rows[0].count || 0),
+      total_revenue: Number(trxRes.rows[0].total || 0)
+    });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
 module.exports = {
   getTodayCashierClosings,
+  getCashierClosingDetails,
+  validateCashierClosingSnapshot,
   saveCashierClosing,
 };

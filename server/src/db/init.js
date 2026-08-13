@@ -32,6 +32,7 @@ async function initDatabase() {
     }
   } catch (err) {
     console.error('Error checking/creating database:', err.message);
+    throw err;
   } finally {
     await rootClient.end();
   }
@@ -46,6 +47,7 @@ async function initDatabase() {
     console.log(`Schema initialization completed successfully for '${targetDb}'.`);
   } catch (err) {
     console.error('Error executing schema DDL:', err.message);
+    throw err;
   } finally {
     await dbClient.end();
   }

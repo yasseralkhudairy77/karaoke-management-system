@@ -8,7 +8,11 @@
     "dev": "node --watch src/server.js",
     "db:init": "node src/db/init.js",
     "db:migrate": "node scripts/migrate-sheets-to-postgres.js",
-    "db:validate": "node scripts/validate-migration-integrity.js"
+    "db:validate": "node scripts/validate-migration-integrity.js",
+    "test": "npm run test:timezone && npm run test:coverage && npm run test:contract",
+    "test:timezone": "node tests/timezone-boundary.test.js",
+    "test:contract": "node tests/contract-tests.js",
+    "test:coverage": "node tests/action-coverage.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
