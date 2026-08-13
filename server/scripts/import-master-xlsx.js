@@ -18,6 +18,20 @@ const MASTER_SHEETS = [
   'TVDisplays',
 ];
 
+const ROOM_RATE_FALLBACKS = {
+  // Fallback from production Rooms sheet export 2026-08-13.
+  // Used only when XLSX parsing returns blank/zero rate_per_hour for a known room.
+  'ROOM-001': 125000,
+  'ROOM-002': 135000,
+  'ROOM-003': 125000,
+  'ROOM-004': 135000,
+  'ROOM-005': 135000,
+  'ROOM-006': 135000,
+  'ROOM-007': 125000,
+  'ROOM-008': 135000,
+  'ROOM-009': 185000,
+};
+
 function parseArgs(argv) {
   const args = { dryRun: false, preserveRoomState: false };
   for (let i = 2; i < argv.length; i += 1) {
@@ -263,13 +277,17 @@ function buildMasterData(workbook, options) {
 
   const rooms = (workbook.Rooms || [])
     .filter((row) => firstNonEmpty(row.room_id, row.room_name))
-    .map((row) => ({
-      room_id: firstNonEmpty(row.room_id),
-      room_name: firstNonEmpty(row.room_name),
-      status: safeRoomStatus(row.status, options.preserveRoomState),
-      rate_per_hour: numberValue(row.rate_per_hour, 0),
-      tv_device_id: firstNonEmpty(row.tv_device_id) || null,
-    }));
+    .map((row) => {
+      const roomId = firstNonEmpty(row.room_id);
+      const parsedRate = numberValue(row.rate_per_hour, 0);
+      return {
+        room_id: roomId,
+        room_name: firstNonEmpty(row.room_name),
+        status: safeRoomStatus(row.status, options.preserveRoomState),
+        rate_per_hour: parsedRate > 0 ? parsedRate : (ROOM_RATE_FALLBACKS[roomId] || 0),
+        tv_device_id: firstNonEmpty(row.tv_device_id) || null,
+      };
+    });
 
   const inventory = (workbook.Inventory || [])
     .filter((row) => firstNonEmpty(row.stock_item_id, row.item_id, row.stock_item_name, row.item_name))
