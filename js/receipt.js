@@ -79,14 +79,23 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Durasi", formatReceiptDuration(room.durationMinutes), width);
 
   lines.push(separator);
-  lines.push(centerReceiptText("BIAYA ROOM", width));
-  lines.push(formatReceiptLine(
-    room.ratePerHour > 0
-      ? `${formatReceiptDuration(room.durationMinutes)} x ${formatReceiptCurrency(room.ratePerHour)}`
-      : "Biaya Room",
-    formatReceiptCurrency(totals.roomTotal),
-    width
-  ));
+  if (room.packageId) {
+    lines.push(centerReceiptText("BIAYA PAKET", width));
+    lines.push(formatReceiptLine(
+      room.packageName || room.packageId || "Paket",
+      formatReceiptCurrency(totals.roomTotal),
+      width
+    ));
+  } else {
+    lines.push(centerReceiptText("BIAYA ROOM", width));
+    lines.push(formatReceiptLine(
+      room.ratePerHour > 0
+        ? `${formatReceiptDuration(room.durationMinutes)} x ${formatReceiptCurrency(room.ratePerHour)}`
+        : "Biaya Room",
+      formatReceiptCurrency(totals.roomTotal),
+      width
+    ));
+  }
 
   if (totals.promoDiscount > 0) {
     pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
@@ -418,7 +427,10 @@ function normalizeRoom(transaction) {
     endTime: getText(transaction.end_time),
     durationMinutes: getNumber(transaction.duration_minutes),
     ratePerHour: getNumber(transaction.rate_per_hour),
-    billingBasis: getText(transaction.billing_basis),
+    billingBasis: getText(transaction.billing_basis || transaction.booking_mode),
+    packageId: getText(transaction.package_id),
+    packageName: getText(transaction.package_name),
+    packageTotal: getNumber(transaction.package_total),
   };
 }
 

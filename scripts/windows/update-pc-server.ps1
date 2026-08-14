@@ -44,6 +44,10 @@ Set-Location $serverDir
 npm.cmd install
 
 Write-Host ""
+Write-Host "Menyiapkan/update schema database lokal..."
+npm.cmd run db:init
+
+Write-Host ""
 Write-Host "Menyalakan server lokal di window baru..."
 Start-Process powershell -WindowStyle Normal -ArgumentList @(
   "-NoProfile",

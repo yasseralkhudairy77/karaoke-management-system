@@ -191,6 +191,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.markTransactionPaid(req, res, payload);
     case 'updateTransactionDetails':
       return transactionsController.updateTransactionDetails(req, res, payload);
+    case 'correctTransactionPackage':
+      return transactionsController.correctTransactionPackage(req, res, payload);
     case 'updateTransactionLcDurations':
       return transactionsController.updateTransactionLcDurations(req, res, payload);
     case 'deleteTransaction':

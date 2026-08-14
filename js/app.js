@@ -819,6 +819,8 @@ let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
 let transactionDeleteConfirmation = null;
 let isDeletingTransaction = false;
+let transactionPackageCorrection = null;
+let isSavingTransactionPackageCorrection = false;
 let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
@@ -5682,6 +5684,18 @@ function getTransactionRoomTotal(transaction) {
   return Number(transaction?.room_total) || 0;
 }
 
+function transactionHasPackage(transaction) {
+  return Boolean(String(transaction?.package_id || "").trim());
+}
+
+function getTransactionPackageLabel(transaction) {
+  if (!transactionHasPackage(transaction)) {
+    return "";
+  }
+
+  return transaction?.package_name || transaction?.package_id || "Paket";
+}
+
 function getTransactionFnbTotal(transaction) {
   return Number(transaction?.fnb_total) || 0;
 }
@@ -6914,11 +6928,15 @@ function getBillingBasisLabel(basis) {
     return "Paket Postpaid + Tambahan";
   }
 
+  if (basis === "package" || basis === "package_correction") {
+    return "Paket";
+  }
+
   return "";
 }
 
 function createBillingBasisNoteElement(transaction) {
-  const basisLabel = getBillingBasisLabel(transaction?.billing_basis);
+  const basisLabel = getBillingBasisLabel(transaction?.billing_basis || transaction?.booking_mode);
 
   if (!basisLabel) {
     return document.createDocumentFragment();
@@ -7487,6 +7505,7 @@ function createBillingSummaryElement(transaction) {
   const items = [
     ["ID Transaksi", transaction?.transaction_id || "-"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
+    ...(transactionHasPackage(transaction) ? [["Paket", getTransactionPackageLabel(transaction)]] : []),
     ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
     ["Waktu Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
@@ -7552,7 +7571,7 @@ function createBillingBreakdownElement(transaction) {
   const originalRoomTotal = roomTotal + promoDiscount;
 
   const rows = [
-    ["Biaya Room", formatCurrency(originalRoomTotal)],
+    [transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room", formatCurrency(originalRoomTotal)],
   ];
 
   if (promoDiscount > 0) {
@@ -7721,7 +7740,9 @@ function createReceiptPrintElement(transaction) {
     ["Waktu Mulai", formatTransactionDateTime(receiptData.room.startTime)],
     ["Waktu Selesai", formatTransactionDateTime(receiptData.room.endTime)],
     ["Durasi", formatLcDurationShort(receiptData.room.durationMinutes)],
-    ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
+    receiptData.room.packageId
+      ? ["Paket", receiptData.room.packageName || receiptData.room.packageId || "-"]
+      : ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
   ];
   const basisLabel = getBillingBasisLabel(receiptData.room.billingBasis);
 
@@ -7732,7 +7753,7 @@ function createReceiptPrintElement(transaction) {
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
 
   const billingRows = [
-    ["Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
+    [receiptData.room.packageId ? "Biaya Paket" : "Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
   ];
 
   const lcTotal = Number(transaction?.lc_total || 0);
@@ -14015,6 +14036,9 @@ function createTransactionHistoryElement() {
     transactionDeleteConfirmation
       ? createTransactionDeleteConfirmationElement()
       : document.createDocumentFragment(),
+    transactionPackageCorrection
+      ? createTransactionPackageCorrectionElement()
+      : document.createDocumentFragment(),
     adminPinModal
       ? createAdminPinModalElement()
       : document.createDocumentFragment()
@@ -14951,7 +14975,7 @@ function createTransactionRowElement(transaction) {
     ["ID Transaksi", transaction?.transaction_id || "-", "transaction-id-cell"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
-    ["Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
+    [transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
     ["F&B", formatCurrency(getTransactionFnbTotal(transaction))],
     ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction)), getTransactionFnbTotal(transaction) > 0 ? "transaction-has-fnb" : ""],
     ["Status", formatPaymentStatusLabel(transaction?.payment_status), statusClass],
@@ -14986,6 +15010,13 @@ function createTransactionRowElement(transaction) {
         badge.textContent = "Termasuk F&B";
         item.appendChild(badge);
       }
+
+      if (labelText === "Ruangan" && transactionHasPackage(transaction)) {
+        const badge = document.createElement("span");
+        badge.className = withStatusBadge("transaction-fnb-badge", "success");
+        badge.textContent = getTransactionPackageLabel(transaction);
+        item.appendChild(badge);
+      }
     }
 
     row.appendChild(item);
@@ -15015,6 +15046,14 @@ function createTransactionActionsElement(transaction) {
   actions.appendChild(printButton);
 
   if (getCurrentOperatorRole() === "owner") {
+    const correctionButton = document.createElement("button");
+    correctionButton.className = "transaction-action-button";
+    correctionButton.type = "button";
+    correctionButton.dataset.action = "open-transaction-package-correction";
+    correctionButton.dataset.transactionId = transaction?.transaction_id || "";
+    correctionButton.textContent = "Koreksi";
+    actions.appendChild(correctionButton);
+
     const deleteButton = document.createElement("button");
     deleteButton.className = "transaction-action-button transaction-delete-button";
     deleteButton.type = "button";
@@ -15750,6 +15789,248 @@ async function executeDeleteTransaction(ownerPin) {
     return { success: false, message };
   } finally {
     isDeletingTransaction = false;
+    renderRooms();
+  }
+}
+
+function getActivePackagesForCorrection() {
+  return packages.filter((pkg) => String(pkg.status || "active").trim().toLowerCase() === "active");
+}
+
+function openTransactionPackageCorrection(transactionId) {
+  if (getCurrentOperatorRole() !== "owner") {
+    showInlineNotice("Hanya akun owner yang dapat melakukan koreksi transaksi.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+
+  const activePackages = getActivePackagesForCorrection();
+  transactionPackageCorrection = {
+    transactionId,
+    packageId: transaction.package_id || activePackages[0]?.package_id || "",
+    reason: "",
+  };
+  renderRooms();
+}
+
+function closeTransactionPackageCorrection() {
+  if (isSavingTransactionPackageCorrection || isValidatingAdminPin) {
+    return;
+  }
+
+  transactionPackageCorrection = null;
+  renderRooms();
+}
+
+function updateTransactionPackageCorrection(field, value) {
+  if (!transactionPackageCorrection || !["packageId", "reason"].includes(field)) {
+    return;
+  }
+
+  transactionPackageCorrection = {
+    ...transactionPackageCorrection,
+    [field]: value,
+  };
+}
+
+function getTransactionPackageCorrectionPackage() {
+  const packageId = transactionPackageCorrection?.packageId || "";
+  return packages.find((pkg) => pkg.package_id === packageId) || null;
+}
+
+function syncTransactionPackageCorrectionControls() {
+  const modal = queryDashboard(".transaction-package-correction-modal");
+  if (!modal || !transactionPackageCorrection) {
+    return;
+  }
+
+  const submitButton = modal.querySelector("[data-role='transaction-package-correction-submit']");
+  if (submitButton) {
+    submitButton.disabled = isSavingTransactionPackageCorrection
+      || !transactionPackageCorrection.packageId
+      || String(transactionPackageCorrection.reason || "").trim().length < 5;
+  }
+}
+
+function createTransactionPackageCorrectionElement() {
+  if (!transactionPackageCorrection) {
+    return document.createDocumentFragment();
+  }
+
+  const transaction = getTransactionById(transactionPackageCorrection.transactionId) || {};
+  const selectedPackage = getTransactionPackageCorrectionPackage();
+  const packageTotal = Number(selectedPackage?.selling_price || 0);
+  const nextGrandTotal = packageTotal + (Number(transaction.fnb_total) || 0) + (Number(transaction.lc_total) || 0);
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-package-correction-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-correction-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-correction-title";
+  title.textContent = "Koreksi Transaksi ke Paket";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Koreksi ini mengubah dasar tagihan room menjadi paket, tanpa membuat transaksi baru. F&B, LC, status bayar, dan metode bayar tetap mengikuti transaksi ini.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+  [
+    ["ID", transaction.transaction_id],
+    ["Room", transaction.room_name || transaction.room_id],
+    ["Room/Paket Lama", formatCurrency(transaction.room_total)],
+    ["Total Lama", formatCurrency(getTransactionFinalTotal(transaction))],
+    ["Paket Baru", selectedPackage ? selectedPackage.package_name : "-"],
+    ["Room/Paket Baru", formatCurrency(packageTotal)],
+    ["Total Baru", formatCurrency(nextGrandTotal)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const packageField = document.createElement("label");
+  packageField.className = "master-form-field";
+  const packageLabel = document.createElement("span");
+  packageLabel.className = "master-form-label";
+  packageLabel.textContent = "Pilih Paket";
+  const packageSelect = document.createElement("select");
+  packageSelect.className = "master-form-input";
+  packageSelect.dataset.action = "update-transaction-package-correction";
+  packageSelect.dataset.field = "packageId";
+  const activePackages = getActivePackagesForCorrection();
+  activePackages.forEach((pkg) => {
+    const option = document.createElement("option");
+    option.value = pkg.package_id;
+    option.textContent = `${pkg.package_name} - ${formatCurrency(pkg.selling_price)} (${Number(pkg.duration_minutes) || 0} menit)`;
+    option.selected = pkg.package_id === transactionPackageCorrection.packageId;
+    packageSelect.appendChild(option);
+  });
+  packageField.append(packageLabel, packageSelect);
+
+  const reasonField = document.createElement("label");
+  reasonField.className = "master-form-field";
+  const reasonLabel = document.createElement("span");
+  reasonLabel.className = "master-form-label";
+  reasonLabel.textContent = "Alasan Koreksi";
+  const reasonInput = document.createElement("input");
+  reasonInput.className = "master-form-input";
+  reasonInput.type = "text";
+  reasonInput.placeholder = "Contoh: Kasir belum bisa input Paket Batavia saat operasional";
+  reasonInput.dataset.action = "update-transaction-package-correction";
+  reasonInput.dataset.field = "reason";
+  reasonInput.value = transactionPackageCorrection.reason || "";
+  reasonField.append(reasonLabel, reasonInput);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-transaction-package-correction";
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-transaction-package-correction";
+  submitButton.dataset.role = "transaction-package-correction-submit";
+  submitButton.disabled = isSavingTransactionPackageCorrection
+    || !transactionPackageCorrection.packageId
+    || String(transactionPackageCorrection.reason || "").trim().length < 5;
+  submitButton.textContent = isSavingTransactionPackageCorrection ? "Menyimpan..." : "Simpan Koreksi";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, packageField, reasonField, actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function submitTransactionPackageCorrection() {
+  if (!transactionPackageCorrection || isSavingTransactionPackageCorrection) {
+    return;
+  }
+
+  if (!transactionPackageCorrection.packageId || String(transactionPackageCorrection.reason || "").trim().length < 5) {
+    showInlineNotice("Pilih paket dan isi alasan koreksi minimal 5 karakter.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Owner Koreksi Transaksi",
+    message: `Masukkan PIN owner untuk koreksi transaksi ${transactionPackageCorrection.transactionId}.`,
+    requestedAction: "correct_transaction_package",
+    requiredRole: "owner",
+    validatePin: false,
+    forcePrompt: true,
+    onSuccess: (authData, ownerPin) => executeTransactionPackageCorrection(ownerPin),
+  });
+}
+
+async function executeTransactionPackageCorrection(ownerPin) {
+  if (!transactionPackageCorrection || isSavingTransactionPackageCorrection) {
+    return { success: false };
+  }
+
+  isSavingTransactionPackageCorrection = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "correctTransactionPackage",
+      transaction_id: transactionPackageCorrection.transactionId,
+      package_id: transactionPackageCorrection.packageId,
+      reason: String(transactionPackageCorrection.reason || "").trim(),
+      admin_pin: ownerPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Koreksi transaksi gagal.";
+      showInlineNotice(message, "error");
+      if (adminPinModal) {
+        adminPinModal = { ...adminPinModal, pin: "", error: message };
+      }
+      return { success: false, message };
+    }
+
+    mergeUpdatedTransactionIntoState(data.transaction);
+    adminPinModal = null;
+    transactionPackageCorrection = null;
+    showInlineNotice(data.message || "Koreksi transaksi berhasil disimpan.");
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadTodayCashierClosings(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat koreksi transaksi.";
+    showInlineNotice(message, "error");
+    if (adminPinModal) {
+      adminPinModal = { ...adminPinModal, pin: "", error: message };
+    }
+    return { success: false, message };
+  } finally {
+    isSavingTransactionPackageCorrection = false;
     renderRooms();
   }
 }
@@ -24021,6 +24302,21 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-transaction-package-correction") {
+    openTransactionPackageCorrection(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "close-transaction-package-correction") {
+    closeTransactionPackageCorrection();
+    return;
+  }
+
+  if (action === "submit-transaction-package-correction") {
+    submitTransactionPackageCorrection();
+    return;
+  }
+
   if (action === "close-delete-transaction") {
     closeTransactionDeleteConfirmation();
     return;
@@ -24866,6 +25162,15 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-transaction-package-correction") {
+    updateTransactionPackageCorrection(field.dataset.field, field.value);
+    syncTransactionPackageCorrectionControls();
+    if (field.dataset.field === "packageId") {
+      renderRooms();
+    }
+    return;
+  }
+
   if (action === "update-admin-pin-modal") {
     updateAdminPinModal(field.dataset.field, field.value);
     syncAdminPinModalControls();
@@ -24968,6 +25273,15 @@ function handleDashboardChange(event) {
   if (deleteConfirmationField) {
     updateDeleteMasterConfirmation(deleteConfirmationField.dataset.field, deleteConfirmationField.value);
     syncDeleteMasterConfirmationControls();
+    return;
+  }
+
+  const packageCorrectionField = event.target.closest("[data-action='update-transaction-package-correction']");
+
+  if (packageCorrectionField) {
+    updateTransactionPackageCorrection(packageCorrectionField.dataset.field, packageCorrectionField.value);
+    syncTransactionPackageCorrectionControls();
+    renderRooms();
     return;
   }
 

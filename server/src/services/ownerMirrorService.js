@@ -126,6 +126,14 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     payment_method: transaction.payment_method || '',
     payment_status: transaction.payment_status || '',
     cashier_name: transaction.cashier_name || '',
+    booking_mode: transaction.booking_mode || '',
+    package_id: transaction.package_id || '',
+    package_name: transaction.package_name || '',
+    package_total: money(transaction.package_total),
+    corrected_at: iso(transaction.corrected_at),
+    corrected_at_wib: transaction.corrected_at ? toJakartaIsoString(transaction.corrected_at) : '',
+    corrected_by: transaction.corrected_by || '',
+    correction_note: transaction.correction_note || '',
     operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
     created_at: iso(transaction.created_at)
   }));

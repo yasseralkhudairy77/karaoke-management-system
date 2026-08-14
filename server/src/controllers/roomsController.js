@@ -2,6 +2,15 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate } = require('../utils/operationalDate');
 
+function parseSessionPackageMeta(session) {
+  const note = String(session?.note || '');
+  const packageId = (note.match(/package_id=([^|]+)/)?.[1] || '').trim();
+  const packageName = (note.match(/package_name=([^|]+)/)?.[1] || '').trim();
+  const packageTotal = Number((note.match(/package_total=([0-9.]+)/)?.[1] || '0').trim()) || 0;
+
+  return { packageId, packageName, packageTotal };
+}
+
 async function getRooms(req, res) {
   try {
     const result = await db.query(`
@@ -326,10 +335,18 @@ async function payAndStartSession(req, res, payload) {
     const scheduledEndTime = new Date(now.getTime() + durationMinutes * 60 * 1000);
     const ratePerHour = Number(session.rate_per_hour || room.rate_per_hour || 0);
     let roomTotal = Math.ceil((Number(session.billable_room_minutes || durationMinutes) / 60) * ratePerHour);
+    const packageMeta = parseSessionPackageMeta(session);
+    let bookingMode = session.booking_mode || 'regular';
+    let transactionPackageId = '';
+    let transactionPackageName = '';
+    let transactionPackageTotal = 0;
 
     if (session.booking_mode === 'package') {
-      const packageMatch = String(session.note || '').match(/package_total=([0-9.]+)/);
-      roomTotal = packageMatch ? Number(packageMatch[1] || 0) : 0;
+      roomTotal = packageMeta.packageTotal;
+      bookingMode = 'package';
+      transactionPackageId = packageMeta.packageId;
+      transactionPackageName = packageMeta.packageName;
+      transactionPackageTotal = packageMeta.packageTotal;
     }
 
     const fnbRes = await client.query(`
@@ -352,9 +369,10 @@ async function payAndStartSession(req, res, payload) {
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time,
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
-        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15)
-    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey]);
+        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15, $16, $17, $18, $19)
+    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
 
     await client.query(`
       UPDATE room_sessions
@@ -600,7 +618,26 @@ async function closeSession(req, res, payload) {
     const startTime = new Date(room.start_time);
     const durationMinutes = room.booked_duration_minutes || Math.ceil((endTime - startTime) / (60 * 1000));
     const ratePerHour = Number(room.rate_per_hour || 0);
-    const roomTotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+    let roomTotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+    let bookingMode = 'regular';
+    let transactionPackageId = '';
+    let transactionPackageName = '';
+    let transactionPackageTotal = 0;
+
+    const activeSessionRes = await client.query(`
+      SELECT * FROM room_sessions
+      WHERE room_id = $1 AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [roomId]);
+    if (activeSessionRes.rowCount > 0 && activeSessionRes.rows[0].booking_mode === 'package') {
+      const packageMeta = parseSessionPackageMeta(activeSessionRes.rows[0]);
+      roomTotal = packageMeta.packageTotal;
+      bookingMode = 'package';
+      transactionPackageId = packageMeta.packageId;
+      transactionPackageName = packageMeta.packageName;
+      transactionPackageTotal = packageMeta.packageTotal;
+    }
 
     const fnbRes = await client.query(`
       SELECT order_id, order_total FROM fnb_orders 
@@ -664,9 +701,10 @@ async function closeSession(req, res, payload) {
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time,
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
-        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15)
-    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey]);
+        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19)
+    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
 
     await client.query(`
       UPDATE rooms 

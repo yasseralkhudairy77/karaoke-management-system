@@ -203,6 +203,25 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS booking_mode VARCHAR(30) DEFAULT 'regular';
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_name VARCHAR(100);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_by VARCHAR(100);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
+
+CREATE TABLE IF NOT EXISTS transaction_correction_logs (
+    correction_id VARCHAR(80) PRIMARY KEY,
+    transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+    correction_type VARCHAR(50) NOT NULL,
+    old_value_json JSONB,
+    new_value_json JSONB,
+    reason TEXT NOT NULL,
+    corrected_by VARCHAR(100) NOT NULL,
+    corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS transaction_lines (
     transaction_line_id VARCHAR(100) PRIMARY KEY,
     transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,

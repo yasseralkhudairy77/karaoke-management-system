@@ -1,6 +1,146 @@
 const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
+const { verifyAndUpgradePin } = require('../middleware/auth');
+
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function serializeTransaction(row) {
+  if (!row) return null;
+  return {
+    transaction_id: row.transaction_id,
+    room_id: row.room_id,
+    room_name: row.room_name,
+    start_time: row.start_time ? new Date(row.start_time).toISOString() : '',
+    end_time: row.end_time ? new Date(row.end_time).toISOString() : '',
+    duration_minutes: Number(row.duration_minutes || 0),
+    rate_per_hour: Number(row.rate_per_hour || 0),
+    room_total: Number(row.room_total || 0),
+    fnb_total: Number(row.fnb_total || 0),
+    lc_total: Number(row.lc_total || 0),
+    grand_total: Number(row.grand_total || 0),
+    fnb_order_ids: row.fnb_order_ids || '',
+    payment_method: row.payment_method,
+    payment_status: row.payment_status,
+    cashier_name: row.cashier_name,
+    operational_date: row.operational_date ? row.operational_date.toISOString().split('T')[0] : '',
+    booking_mode: row.booking_mode || '',
+    package_id: row.package_id || '',
+    package_name: row.package_name || '',
+    package_total: Number(row.package_total || 0),
+    corrected_at: row.corrected_at ? new Date(row.corrected_at).toISOString() : '',
+    corrected_by: row.corrected_by || '',
+    correction_note: row.correction_note || '',
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+  };
+}
+
+async function validateOwnerPin(pin) {
+  if (!pin) throw new Error('PIN owner wajib diisi.');
+
+  const result = await db.query(`
+    SELECT employee_id, employee_name, role, pin, pin_hash
+    FROM employees
+    WHERE role = 'owner' AND is_active = TRUE
+    ORDER BY employee_name ASC
+  `);
+
+  for (const emp of result.rows) {
+    const isValid = await verifyAndUpgradePin(emp.employee_id, pin, emp.pin, emp.pin_hash);
+    if (isValid) {
+      return {
+        employee_id: emp.employee_id,
+        employee_name: emp.employee_name,
+        role: emp.role
+      };
+    }
+  }
+
+  throw new Error('PIN Owner tidak valid.');
+}
+
+async function refreshClosingSnapshotForTransaction(client, transaction) {
+  const closingRows = await client.query(
+    'SELECT DISTINCT closing_id FROM cashier_closing_transactions WHERE transaction_id = $1',
+    [transaction.transaction_id]
+  );
+
+  for (const row of closingRows.rows) {
+    const closingId = row.closing_id;
+    await client.query(`
+      UPDATE cashier_closing_transactions
+      SET room_id = $1,
+          room_name = $2,
+          duration_minutes = $3,
+          room_total = $4,
+          fnb_total = $5,
+          lc_total = $6,
+          grand_total = $7,
+          payment_method = $8,
+          payment_status = $9
+      WHERE closing_id = $10 AND transaction_id = $11
+    `, [
+      transaction.room_id,
+      transaction.room_name,
+      transaction.duration_minutes,
+      transaction.room_total,
+      transaction.fnb_total,
+      transaction.lc_total,
+      transaction.grand_total,
+      transaction.payment_method,
+      transaction.payment_status,
+      closingId,
+      transaction.transaction_id
+    ]);
+
+    const summary = await client.query(`
+      SELECT
+        COUNT(*)::int AS total_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'paid')::int AS paid_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'unpaid')::int AS unpaid_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'paid' AND payment_method = 'cash')::int AS cash_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'paid' AND payment_method <> 'cash')::int AS transfer_transactions,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid'), 0) AS paid_revenue,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid' AND payment_method = 'cash'), 0) AS cash_expected,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid' AND payment_method <> 'cash'), 0) AS transfer_revenue,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'unpaid'), 0) AS unpaid_revenue,
+        COALESCE(SUM(grand_total), 0) AS total_revenue
+      FROM cashier_closing_transactions
+      WHERE closing_id = $1
+    `, [closingId]);
+    const s = summary.rows[0] || {};
+
+    await client.query(`
+      UPDATE cashier_closings
+      SET total_transactions = $1,
+          paid_transactions = $2,
+          unpaid_transactions = $3,
+          cash_transactions = $4,
+          transfer_transactions = $5,
+          paid_revenue = $6,
+          cash_expected = $7,
+          transfer_revenue = $8,
+          unpaid_revenue = $9,
+          total_revenue = $10
+      WHERE closing_id = $11
+    `, [
+      s.total_transactions || 0,
+      s.paid_transactions || 0,
+      s.unpaid_transactions || 0,
+      s.cash_transactions || 0,
+      s.transfer_transactions || 0,
+      s.paid_revenue || 0,
+      s.cash_expected || 0,
+      s.transfer_revenue || 0,
+      s.unpaid_revenue || 0,
+      s.total_revenue || 0,
+      closingId
+    ]);
+  }
+}
 
 async function getTodayTransactions(req, res) {
   try {
@@ -13,25 +153,7 @@ async function getTodayTransactions(req, res) {
       ORDER BY created_at DESC
     `, [startDate, endDate]);
 
-    const transactions = result.rows.map(t => ({
-      transaction_id: t.transaction_id,
-      room_id: t.room_id,
-      room_name: t.room_name,
-      start_time: new Date(t.start_time).toISOString(),
-      end_time: new Date(t.end_time).toISOString(),
-      duration_minutes: t.duration_minutes,
-      rate_per_hour: Number(t.rate_per_hour),
-      room_total: Number(t.room_total),
-      fnb_total: Number(t.fnb_total),
-      lc_total: Number(t.lc_total || 0),
-      grand_total: Number(t.grand_total),
-      fnb_order_ids: t.fnb_order_ids || '',
-      payment_method: t.payment_method,
-      payment_status: t.payment_status,
-      cashier_name: t.cashier_name,
-      operational_date: t.operational_date ? t.operational_date.toISOString().split('T')[0] : '',
-      created_at: new Date(t.created_at).toISOString()
-    }));
+    const transactions = result.rows.map(serializeTransaction);
 
     let cashRevenue = 0;
     let transferRevenue = 0;
@@ -160,6 +282,127 @@ async function updateTransactionDetails(req, res, payload) {
     return successResponse(res, { message: 'Transaksi berhasil diperbarui.', transaction_id: transactionId });
   } catch (err) {
     return errorResponse(res, err.message);
+  }
+}
+
+async function correctTransactionPackage(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const packageId = String(payload.package_id || '').trim();
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Owner').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (!packageId) throw new Error('package_id wajib diisi.');
+    if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
+
+    await validateOwnerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
+    }
+
+    const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
+    if (pkgRes.rowCount === 0) throw new Error('Paket tidak ditemukan atau tidak aktif.');
+    const pkg = pkgRes.rows[0];
+
+    const packageTotal = toNumber(pkg.selling_price);
+    const fnbTotal = toNumber(oldTransaction.fnb_total);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const grandTotal = packageTotal + fnbTotal + lcTotal;
+    const durationMinutes = toNumber(pkg.duration_minutes, oldTransaction.duration_minutes);
+    const ratePerHour = durationMinutes > 0 ? Math.ceil(packageTotal / Math.ceil(durationMinutes / 60 || 1)) : 0;
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET booking_mode = 'package_correction',
+          package_id = $1,
+          package_name = $2,
+          package_total = $3,
+          duration_minutes = $4,
+          rate_per_hour = $5,
+          room_total = $3,
+          grand_total = $6,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $7,
+          correction_note = $8
+      WHERE transaction_id = $9
+      RETURNING *
+    `, [
+      packageId,
+      pkg.package_name || packageId,
+      packageTotal,
+      Math.floor(durationMinutes || oldTransaction.duration_minutes || 0),
+      ratePerHour,
+      grandTotal,
+      correctedBy,
+      reason,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'package_correction', $3, $4, $5, $6)
+    `, [
+      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      transactionId,
+      JSON.stringify({
+        booking_mode: oldTransaction.booking_mode || '',
+        package_id: oldTransaction.package_id || '',
+        package_name: oldTransaction.package_name || '',
+        package_total: toNumber(oldTransaction.package_total),
+        duration_minutes: toNumber(oldTransaction.duration_minutes),
+        rate_per_hour: toNumber(oldTransaction.rate_per_hour),
+        room_total: toNumber(oldTransaction.room_total),
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total)
+      }),
+      JSON.stringify({
+        booking_mode: 'package_correction',
+        package_id: packageId,
+        package_name: pkg.package_name || packageId,
+        package_total: packageTotal,
+        duration_minutes: Math.floor(durationMinutes || oldTransaction.duration_minutes || 0),
+        rate_per_hour: ratePerHour,
+        room_total: packageTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Koreksi paket transaksi berhasil disimpan.',
+      transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -299,6 +542,10 @@ async function createManualOutageTransaction(req, res, payload) {
     let roomName = mode === 'general_fnb' ? 'F&B Umum' : roomId;
     let ratePerHour = 0;
     let roomTotal = 0;
+    let bookingMode = mode === 'room' ? 'regular' : mode;
+    let transactionPackageId = '';
+    let transactionPackageName = '';
+    let transactionPackageTotal = 0;
 
     if (mode === 'room') {
       if (!roomId) throw new Error('room_id wajib diisi untuk transaksi room.');
@@ -312,7 +559,12 @@ async function createManualOutageTransaction(req, res, payload) {
       if (payload.package_id) {
         const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [payload.package_id, 'active']);
         if (pkgRes.rowCount === 0) throw new Error('Paket tidak ditemukan atau tidak aktif.');
-        roomTotal = Number(pkgRes.rows[0].selling_price || 0);
+        const pkg = pkgRes.rows[0];
+        roomTotal = Number(pkg.selling_price || 0);
+        bookingMode = 'package';
+        transactionPackageId = pkg.package_id;
+        transactionPackageName = pkg.package_name;
+        transactionPackageTotal = roomTotal;
       }
     }
 
@@ -340,9 +592,10 @@ async function createManualOutageTransaction(req, res, payload) {
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time, duration_minutes,
         rate_per_hour, room_total, fnb_total, lc_total, grand_total, fnb_order_ids,
-        payment_method, payment_status, cashier_name, operational_date, idempotency_key
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12, $13, $14, $15, $16)
-    `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey]);
+        payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12, $13, $14, $15, $16, $17, $18, $19, $20)
+    `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
 
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
@@ -364,7 +617,11 @@ async function createManualOutageTransaction(req, res, payload) {
         grand_total: grandTotal,
         payment_method: paymentMethod,
         payment_status: paymentStatus,
-        operational_date: opDate
+        operational_date: opDate,
+        booking_mode: bookingMode,
+        package_id: transactionPackageId,
+        package_name: transactionPackageName,
+        package_total: transactionPackageTotal
       }
     });
   } catch (err) {
@@ -380,6 +637,7 @@ module.exports = {
   markTransactionPaid,
   logReceiptPrint,
   updateTransactionDetails,
+  correctTransactionPackage,
   deleteTransaction,
   getTransactionLcEditDetails: getTransactionLcDetails,
   getTransactionLcReceiptDetails: getTransactionLcDetails,
