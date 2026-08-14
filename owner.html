@@ -15,6 +15,7 @@
       --green: #34d399;
       --red: #fb7185;
       --amber: #f59e0b;
+      --purple: #a78bfa;
       --text: #fff7df;
       --muted: rgba(255, 247, 223, 0.68);
     }
@@ -33,17 +34,21 @@
     }
 
     .page {
-      width: min(1180px, calc(100% - 28px));
+      width: min(1220px, calc(100% - 28px));
       margin: 0 auto;
       padding: 28px 0 42px;
     }
 
-    .header {
+    .header, .toolbar, .tabs, .periods {
       display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .header {
       justify-content: space-between;
       align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 22px;
+      margin-bottom: 20px;
     }
 
     .brand-heading {
@@ -77,16 +82,7 @@
       margin: 0;
     }
 
-    .subtitle {
-      color: var(--muted);
-      margin: 10px 0 0;
-      max-width: 720px;
-    }
-
-    .status-card,
-    .metric,
-    .panel,
-    .room-card {
+    .status-card, .metric, .panel, .room-card {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 18px;
@@ -95,7 +91,7 @@
 
     .status-card {
       padding: 14px 16px;
-      min-width: 245px;
+      min-width: 270px;
       text-align: right;
     }
 
@@ -122,10 +118,8 @@
     }
 
     .toolbar {
-      display: flex;
       justify-content: space-between;
-      align-items: center;
-      gap: 12px;
+      flex-wrap: wrap;
       margin: 18px 0;
     }
 
@@ -140,6 +134,19 @@
     }
 
     button:hover { background: rgba(242, 196, 91, 0.22); }
+    button.active { background: var(--gold); color: #1f1408; border-color: var(--gold); }
+
+    .tabs {
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin: 12px 0 16px;
+    }
+
+    .tab-button {
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.045);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
 
     .metrics {
       display: grid;
@@ -148,9 +155,7 @@
       margin: 16px 0;
     }
 
-    .metric {
-      padding: 16px;
-    }
+    .metric { padding: 16px; }
 
     .metric-label {
       color: var(--muted);
@@ -170,21 +175,21 @@
       margin: 8px 0 0;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: 1.3fr 0.7fr;
-      gap: 16px;
-      margin-top: 16px;
-    }
-
     .panel {
       padding: 18px;
       min-width: 0;
+      margin-top: 16px;
     }
 
     .panel h2 {
       margin: 0 0 12px;
       font-size: 1.1rem;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
     }
 
     .rooms {
@@ -216,6 +221,7 @@
     .available { color: var(--green); }
     .occupied { color: var(--red); }
     .cleaning { color: var(--amber); }
+    .info { color: var(--purple); }
 
     .room-meta {
       color: var(--muted);
@@ -248,13 +254,14 @@
     .right { text-align: right; }
     .empty { color: var(--muted); padding: 18px 0; }
     .error { color: var(--red); }
+    .muted { color: var(--muted); }
 
     @media (max-width: 920px) {
       .header, .toolbar { flex-direction: column; align-items: stretch; }
       .brand-heading { align-items: flex-start; }
       .status-card { text-align: left; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid { grid-template-columns: 1fr; }
+      .two-col { grid-template-columns: 1fr; }
       .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
@@ -282,35 +289,39 @@
     </header>
 
     <div class="toolbar">
-      <div class="small" id="periodInfo">Periode: -</div>
+      <div>
+        <div class="periods" id="periodButtons"></div>
+        <div class="small" id="periodInfo">Periode: -</div>
+      </div>
       <button type="button" id="refreshButton">Refresh Sekarang</button>
     </div>
 
-    <section class="metrics" id="metrics"></section>
+    <nav class="tabs" id="monitorTabs" aria-label="Management Monitor Tabs"></nav>
 
-    <section class="grid">
-      <div class="panel">
-        <h2>Status Ruangan</h2>
-        <div class="rooms" id="rooms"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Ringkasan Shift</h2>
-        <table>
-          <tbody id="shiftSummary"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel" style="margin-top: 16px;">
-      <h2>Transaksi Terbaru</h2>
-      <div id="transactions"></div>
-    </section>
+    <section id="content"></section>
   </main>
 
   <script>
     const API_URL = "/exec?action=getOwnerMirrorSnapshot";
     const REFRESH_MS = 60000;
+    const PERIODS = [
+      { key: "today", label: "Hari Ini" },
+      { key: "yesterday", label: "Kemarin" },
+      { key: "last7days", label: "7 Hari" },
+      { key: "thismonth", label: "Bulan Ini" },
+    ];
+    const TABS = [
+      { key: "overview", label: "Overview" },
+      { key: "rooms", label: "Room" },
+      { key: "transactions", label: "Transaksi" },
+      { key: "fnb", label: "F&B Terjual" },
+      { key: "lc", label: "LC Performance" },
+      { key: "closing", label: "Closing" },
+    ];
+
+    let activePeriod = new URLSearchParams(window.location.search).get("period") || "today";
+    let activeTab = new URLSearchParams(window.location.search).get("tab") || "overview";
+    let currentSnapshot = null;
 
     const formatCurrency = (value) => new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -320,17 +331,20 @@
 
     const formatNumber = (value) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
 
-    function formatSimpleDateTime(value) {
-      if (!value) {
-        return "-";
-      }
+    function safe(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
 
+    function formatSimpleDateTime(value) {
+      if (!value) return "-";
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) {
-        return String(value)
-          .replace("T", " ")
-          .replace(/\+\d{2}:\d{2}$/, "")
-          .trim();
+        return String(value).replace("T", " ").replace(/\+\d{2}:\d{2}$/, "").trim();
       }
 
       return new Intl.DateTimeFormat("id-ID", {
@@ -345,44 +359,306 @@
     }
 
     function formatDisplayDate(value) {
-      if (!value) {
-        return "-";
-      }
-
+      if (!value) return "-";
       const date = new Date(`${value}T00:00:00+07:00`);
-      if (Number.isNaN(date.getTime())) {
-        return String(value);
-      }
-
+      if (Number.isNaN(date.getTime())) return String(value);
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
-      const day = String(date.getDate()).padStart(2, "0");
-      const month = monthNames[date.getMonth()];
-      const year = date.getFullYear();
+      return `${String(date.getDate()).padStart(2, "0")}-${monthNames[date.getMonth()]}-${date.getFullYear()}`;
+    }
 
-      return `${day}-${month}-${year}`;
+    function formatDuration(minutes) {
+      const total = Number(minutes) || 0;
+      const hours = Math.floor(total / 60);
+      const mins = total % 60;
+      if (hours && mins) return `${hours} jam ${mins} menit`;
+      if (hours) return `${hours} jam`;
+      return `${mins} menit`;
     }
 
     function setStatus(text, tone = "available") {
       const status = document.getElementById("connectionStatus");
       status.className = `status ${tone}`;
-      status.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+      status.innerHTML = `<span class="dot"></span><span>${safe(text)}</span>`;
+    }
+
+    function setUrlState() {
+      const params = new URLSearchParams(window.location.search);
+      params.set("period", activePeriod);
+      params.set("tab", activeTab);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    }
+
+    function renderPeriodButtons() {
+      document.getElementById("periodButtons").innerHTML = PERIODS.map(period => `
+        <button type="button" class="${period.key === activePeriod ? "active" : ""}" data-period="${period.key}">
+          ${period.label}
+        </button>
+      `).join("");
+    }
+
+    function renderTabs() {
+      document.getElementById("monitorTabs").innerHTML = TABS.map(tab => `
+        <button type="button" class="tab-button ${tab.key === activeTab ? "active" : ""}" data-tab="${tab.key}">
+          ${tab.label}
+        </button>
+      `).join("");
     }
 
     function metric(label, value, note = "") {
       return `
         <article class="metric">
-          <p class="metric-label">${label}</p>
+          <p class="metric-label">${safe(label)}</p>
           <p class="metric-value">${value}</p>
-          ${note ? `<p class="metric-note">${note}</p>` : ""}
+          ${note ? `<p class="metric-note">${safe(note)}</p>` : ""}
         </article>
       `;
     }
 
-    function row(label, value) {
-      return `<tr><th>${label}</th><td class="right">${value}</td></tr>`;
+    function table(headers, rows, emptyText) {
+      if (!rows.length) return `<div class="empty">${safe(emptyText)}</div>`;
+      return `
+        <table>
+          <thead><tr>${headers.map(header => `<th class="${header.right ? "right" : ""}">${safe(header.label)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      `;
     }
 
-    function render(snapshot) {
+    function renderMetrics(snapshot) {
+      const summary = snapshot.summary || {};
+      return `
+        <section class="metrics">
+          ${metric("Omzet Lunas", formatCurrency(summary.paid_revenue), `${formatNumber(summary.paid_transactions)} transaksi lunas`)}
+          ${metric("Total Tagihan", formatCurrency(summary.total_revenue_all), `${formatNumber(summary.total_transactions)} transaksi tercatat`)}
+          ${metric("Omzet F&B", formatCurrency(summary.total_fnb_revenue), `${formatNumber(snapshot.fnb_sold_summary?.total_qty || 0)} item terjual`)}
+          ${metric("Omzet LC", formatCurrency(summary.total_lc_revenue), `${formatNumber(snapshot.lc_performance?.active_lc_count || 0)} LC perform`)}
+        </section>
+      `;
+    }
+
+    function renderOverview(snapshot) {
+      const summary = snapshot.summary || {};
+      const fnbItems = snapshot.fnb_sold_summary?.items || snapshot.fnb_sold_items || [];
+      const lcItems = snapshot.lc_performance?.items || snapshot.lc_performance_items || [];
+
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="two-col">
+          <div class="panel">
+            <h2>Ringkasan Shift</h2>
+            ${table(
+              [{ label: "Komponen" }, { label: "Nilai", right: true }],
+              [
+                ["Cash", formatCurrency(summary.cash_revenue)],
+                ["Transfer/QRIS", formatCurrency(summary.transfer_revenue)],
+                ["Belum Dibayar", formatCurrency(summary.unpaid_revenue)],
+                ["Room Terisi", formatNumber(summary.occupied_rooms)],
+                ["Room Cleaning", formatNumber(summary.cleaning_rooms)],
+                ["Open F&B", formatCurrency(summary.open_fnb_revenue)],
+              ].map(row => `<tr><td>${safe(row[0])}</td><td class="right">${row[1]}</td></tr>`),
+              "Belum ada ringkasan."
+            )}
+          </div>
+          <div class="panel">
+            <h2>Top Ringkas</h2>
+            ${table(
+              [{ label: "Kategori" }, { label: "Nama" }, { label: "Omzet", right: true }],
+              [
+                ...fnbItems.slice(0, 3).map(item => `<tr><td>F&B</td><td>${safe(item.menu_name)}</td><td class="right">${formatCurrency(item.revenue)}</td></tr>`),
+                ...lcItems.slice(0, 3).map(item => `<tr><td>LC</td><td>${safe(item.lc_name)}</td><td class="right">${formatCurrency(item.total_fee)}</td></tr>`),
+              ],
+              "Belum ada aktivitas F&B/LC di periode ini."
+            )}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderRooms(snapshot) {
+      const rooms = Array.isArray(snapshot.rooms) ? snapshot.rooms : [];
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="panel">
+          <h2>Status Ruangan</h2>
+          <div class="rooms">
+            ${rooms.map(room => {
+              const tone = room.status === "occupied" ? "occupied" : room.status === "cleaning" ? "cleaning" : "available";
+              const orders = Array.isArray(room.open_fnb_orders) ? room.open_fnb_orders : [];
+              return `
+                <article class="room-card">
+                  <div class="room-name">${safe(room.room_name || room.room_id)}</div>
+                  <span class="badge ${tone}">${safe(room.status || "-")}</span>
+                  <div class="room-meta">
+                    <div>Tarif: ${formatCurrency(room.rate_per_hour)} / jam</div>
+                    ${room.start_time_wib ? `<div>Mulai: ${formatSimpleDateTime(room.start_time_wib)}</div>` : ""}
+                    ${room.scheduled_end_time_wib ? `<div>Selesai: ${formatSimpleDateTime(room.scheduled_end_time_wib)}</div>` : ""}
+                    ${Number(room.open_fnb_total) > 0 ? `<div>Open F&B: ${formatCurrency(room.open_fnb_total)}</div>` : ""}
+                    ${orders.length ? `<div>${formatNumber(orders.length)} order F&B terbuka</div>` : ""}
+                  </div>
+                </article>
+              `;
+            }).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderTransactions(snapshot) {
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="panel">
+          <h2>Transaksi Periode Ini</h2>
+          ${table(
+            [
+              { label: "ID / Room" },
+              { label: "Status" },
+              { label: "Metode" },
+              { label: "Room", right: true },
+              { label: "F&B", right: true },
+              { label: "LC", right: true },
+              { label: "Total", right: true },
+            ],
+            transactions.map(trx => `
+              <tr>
+                <td>
+                  ${safe(trx.transaction_id || "-")}
+                  <div class="small">${safe(trx.room_name || trx.room_id || "-")} · ${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div>
+                  ${trx.package_name ? `<div class="small">Paket: ${safe(trx.package_name)}</div>` : ""}
+                  ${Number(trx.free_room_minutes || 0) > 0 ? `<div class="small">Free room: ${formatDuration(trx.free_room_minutes)}</div>` : ""}
+                </td>
+                <td>${safe(trx.payment_status || "-")}</td>
+                <td>${safe(trx.payment_method || "-")}</td>
+                <td class="right">${formatCurrency(trx.room_total)}</td>
+                <td class="right">${formatCurrency(trx.fnb_total)}</td>
+                <td class="right">${formatCurrency(trx.lc_total)}</td>
+                <td class="right">${formatCurrency(trx.grand_total)}</td>
+              </tr>
+            `),
+            "Belum ada transaksi pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderFnb(snapshot) {
+      const summary = snapshot.fnb_sold_summary || {};
+      const items = summary.items || snapshot.fnb_sold_items || [];
+      return `
+        <section class="metrics">
+          ${metric("Omzet F&B", formatCurrency(summary.total_revenue), `${formatNumber(summary.total_qty)} item terjual`)}
+          ${metric("Jenis Item", formatNumber(summary.unique_items), "Menu berbeda yang terjual")}
+          ${metric("Order Terkait", formatNumber(summary.order_count), "Order F&B masuk transaksi")}
+          ${metric("Top Item", safe(items[0]?.menu_name || "-"), items[0] ? formatCurrency(items[0].revenue) : "")}
+        </section>
+        <section class="panel">
+          <h2>F&B Terjual</h2>
+          ${table(
+            [
+              { label: "Menu" },
+              { label: "Kategori" },
+              { label: "Qty", right: true },
+              { label: "Omzet", right: true },
+            ],
+            items.map(item => `
+              <tr>
+                <td>${safe(item.menu_name || item.menu_id || "-")}</td>
+                <td>${safe(item.category || "-")}</td>
+                <td class="right">${formatNumber(item.quantity)}</td>
+                <td class="right">${formatCurrency(item.revenue)}</td>
+              </tr>
+            `),
+            "Belum ada F&B terjual pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderLc(snapshot) {
+      const summary = snapshot.lc_performance || {};
+      const items = summary.items || snapshot.lc_performance_items || [];
+      return `
+        <section class="metrics">
+          ${metric("Omzet LC", formatCurrency(summary.total_fee), `${formatNumber(summary.total_sessions)} sesi LC`)}
+          ${metric("LC Perform", formatNumber(summary.active_lc_count), "Nama LC aktif di periode ini")}
+          ${metric("Total Durasi", formatDuration(summary.total_duration_minutes), "Akumulasi durasi perform")}
+          ${metric("Top LC", safe(items[0]?.lc_name || "-"), items[0] ? formatCurrency(items[0].total_fee) : "")}
+        </section>
+        <section class="panel">
+          <h2>LC Performance</h2>
+          ${table(
+            [
+              { label: "LC" },
+              { label: "Room" },
+              { label: "Sesi", right: true },
+              { label: "Durasi", right: true },
+              { label: "Fee", right: true },
+            ],
+            items.map(item => `
+              <tr>
+                <td>${safe(item.lc_name || item.lc_id || "-")}</td>
+                <td>${safe((item.rooms || []).join(", ") || "-")}</td>
+                <td class="right">${formatNumber(item.session_count)}</td>
+                <td class="right">${formatDuration(item.total_duration_minutes)}</td>
+                <td class="right">${formatCurrency(item.total_fee)}</td>
+              </tr>
+            `),
+            "Belum ada LC perform pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderClosing(snapshot) {
+      const closings = Array.isArray(snapshot.cashier_closings) ? snapshot.cashier_closings : [];
+      return `
+        <section class="panel">
+          <h2>Closing Kasir</h2>
+          ${table(
+            [
+              { label: "Tanggal" },
+              { label: "Kasir" },
+              { label: "Omzet Lunas", right: true },
+              { label: "Cash Aktual", right: true },
+              { label: "Selisih", right: true },
+              { label: "Status" },
+            ],
+            closings.map(closing => `
+              <tr>
+                <td>${safe(formatDisplayDate(closing.closing_date))}<div class="small">${formatSimpleDateTime(closing.created_at)}</div></td>
+                <td>${safe(closing.cashier_name || closing.created_by || "-")}</td>
+                <td class="right">${formatCurrency(closing.paid_revenue)}</td>
+                <td class="right">${formatCurrency(closing.cash_actual)}</td>
+                <td class="right">${formatCurrency(closing.cash_difference)}</td>
+                <td>${safe(closing.status || "-")}</td>
+              </tr>
+            `),
+            "Belum ada closing kasir pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderContent() {
+      if (!currentSnapshot) return;
+      const content = document.getElementById("content");
+      if (!currentSnapshot.has_snapshot && currentSnapshot.mode === "cloud_latest_snapshot") {
+        content.innerHTML = `<section class="panel"><h2>Belum Ada Snapshot</h2><div class="empty">${safe(currentSnapshot.message || "Belum ada data untuk periode ini.")}</div></section>`;
+        return;
+      }
+
+      const renderers = {
+        overview: renderOverview,
+        rooms: renderRooms,
+        transactions: renderTransactions,
+        fnb: renderFnb,
+        lc: renderLc,
+        closing: renderClosing,
+      };
+      content.innerHTML = (renderers[activeTab] || renderOverview)(currentSnapshot);
+    }
+
+    function updateSnapshotHeader(snapshot) {
       if (!snapshot?.has_snapshot && snapshot?.mode === "cloud_latest_snapshot") {
         setStatus("Belum ada snapshot", "cleaning");
       } else {
@@ -390,90 +666,49 @@
       }
 
       document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
-        ? `Update terakhir: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
-        : `Update terakhir: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
+        ? `Update cloud: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
+        : `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
       document.getElementById("periodInfo").textContent =
-        `Periode: ${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}`;
-
-      const summary = snapshot.summary || {};
-      document.getElementById("metrics").innerHTML = [
-        metric("Omzet Lunas", formatCurrency(summary.paid_revenue), `${formatNumber(summary.paid_transactions)} transaksi lunas`),
-        metric("Total Tagihan", formatCurrency(summary.total_revenue_all), `${formatNumber(summary.total_transactions)} transaksi tercatat`),
-        metric("Room Aktif", formatNumber(summary.occupied_rooms), `${formatNumber(summary.available_rooms)} room kosong`),
-        metric("Open F&B", formatCurrency(summary.open_fnb_revenue), "Pesanan berjalan belum checkout"),
-      ].join("");
-
-      document.getElementById("shiftSummary").innerHTML = [
-        row("Cash", formatCurrency(summary.cash_revenue)),
-        row("Transfer/QRIS", formatCurrency(summary.transfer_revenue)),
-        row("Belum Dibayar", formatCurrency(summary.unpaid_revenue)),
-        row("Omzet Room", formatCurrency(summary.total_room_revenue)),
-        row("Omzet F&B", formatCurrency(summary.total_fnb_revenue)),
-        row("Omzet LC", formatCurrency(summary.total_lc_revenue)),
-      ].join("");
-
-      const rooms = Array.isArray(snapshot.rooms) ? snapshot.rooms : [];
-      document.getElementById("rooms").innerHTML = rooms.map((room) => {
-        const tone = room.status === "occupied" ? "occupied" : room.status === "cleaning" ? "cleaning" : "available";
-        return `
-          <article class="room-card">
-            <div class="room-name">${room.room_name || room.room_id}</div>
-            <span class="badge ${tone}">${room.status || "-"}</span>
-            <div class="room-meta">
-              <div>Tarif: ${formatCurrency(room.rate_per_hour)} / jam</div>
-              ${room.start_time_wib ? `<div>Mulai: ${formatSimpleDateTime(room.start_time_wib)}</div>` : ""}
-              ${room.scheduled_end_time_wib ? `<div>Selesai: ${formatSimpleDateTime(room.scheduled_end_time_wib)}</div>` : ""}
-              ${Number(room.open_fnb_total) > 0 ? `<div>Open F&B: ${formatCurrency(room.open_fnb_total)}</div>` : ""}
-            </div>
-          </article>
-        `;
-      }).join("");
-
-      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
-      if (transactions.length === 0) {
-        document.getElementById("transactions").innerHTML = `<div class="empty">Belum ada transaksi pada periode ini.</div>`;
-        return;
-      }
-
-      document.getElementById("transactions").innerHTML = `
-        <table>
-          <thead>
-            <tr>
-              <th>Room</th>
-              <th>Status</th>
-              <th>Metode</th>
-              <th class="right">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${transactions.slice(0, 12).map((trx) => `
-              <tr>
-                <td>${trx.room_name || trx.room_id}<div class="small">${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div></td>
-                <td>${trx.payment_status || "-"}</td>
-                <td>${trx.payment_method || "-"}</td>
-                <td class="right">${formatCurrency(trx.grand_total)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      `;
+        `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}`;
     }
 
     async function loadSnapshot() {
       try {
-        const response = await fetch(`${API_URL}&_=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch(`${API_URL}&period=${encodeURIComponent(activePeriod)}&_=${Date.now()}`, { cache: "no-store" });
         const data = await response.json();
-        if (!response.ok || !data.ok) {
-          throw new Error(data.error || `HTTP ${response.status}`);
-        }
-        render(data);
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+        currentSnapshot = data;
+        updateSnapshotHeader(data);
+        renderPeriodButtons();
+        renderTabs();
+        renderContent();
       } catch (error) {
         setStatus("Gagal memuat mirror", "occupied");
-        document.getElementById("lastUpdate").innerHTML = `<span class="error">${error.message}</span>`;
+        document.getElementById("lastUpdate").innerHTML = `<span class="error">${safe(error.message)}</span>`;
       }
     }
 
     document.getElementById("refreshButton").addEventListener("click", loadSnapshot);
+    document.getElementById("periodButtons").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-period]");
+      if (!button) return;
+      activePeriod = button.dataset.period;
+      setUrlState();
+      renderPeriodButtons();
+      loadSnapshot();
+    });
+    document.getElementById("monitorTabs").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-tab]");
+      if (!button) return;
+      activeTab = button.dataset.tab;
+      setUrlState();
+      renderTabs();
+      renderContent();
+    });
+
+    renderPeriodButtons();
+    renderTabs();
     loadSnapshot();
     setInterval(loadSnapshot, REFRESH_MS);
   </script>

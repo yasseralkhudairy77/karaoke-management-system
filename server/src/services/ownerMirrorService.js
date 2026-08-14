@@ -57,11 +57,137 @@ async function getOpenFnbOrders() {
   return orders;
 }
 
+function parseFnbOrderIds(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+async function buildFnbSoldSummary(transactions) {
+  const orderIds = Array.from(new Set(
+    transactions.flatMap(transaction => parseFnbOrderIds(transaction.fnb_order_ids))
+  ));
+
+  if (orderIds.length === 0) {
+    return {
+      total_qty: 0,
+      total_revenue: 0,
+      unique_items: 0,
+      order_count: 0,
+      items: []
+    };
+  }
+
+  const itemsRes = await db.query(`
+    SELECT
+      order_id,
+      menu_id,
+      menu_name,
+      category,
+      SUM(quantity) AS quantity,
+      SUM(subtotal) AS revenue,
+      COUNT(*) AS line_count
+    FROM fnb_order_items
+    WHERE order_id = ANY($1::text[])
+    GROUP BY order_id, menu_id, menu_name, category
+    ORDER BY revenue DESC, quantity DESC, menu_name ASC
+  `, [orderIds]);
+
+  const grouped = new Map();
+  for (const row of itemsRes.rows) {
+    const key = row.menu_id || row.menu_name;
+    const current = grouped.get(key) || {
+      menu_id: row.menu_id || '',
+      menu_name: row.menu_name || '',
+      category: row.category || '',
+      quantity: 0,
+      revenue: 0,
+      order_count: 0,
+      line_count: 0
+    };
+
+    current.quantity += Number(row.quantity || 0);
+    current.revenue += money(row.revenue);
+    current.order_count += 1;
+    current.line_count += Number(row.line_count || 0);
+    grouped.set(key, current);
+  }
+
+  const items = Array.from(grouped.values())
+    .sort((a, b) => (b.revenue - a.revenue) || (b.quantity - a.quantity) || a.menu_name.localeCompare(b.menu_name));
+
+  return {
+    total_qty: items.reduce((total, item) => total + Number(item.quantity || 0), 0),
+    total_revenue: items.reduce((total, item) => total + money(item.revenue), 0),
+    unique_items: items.length,
+    order_count: orderIds.length,
+    items
+  };
+}
+
+async function buildLcPerformanceSummary(startDate, endDate) {
+  const logsRes = await db.query(`
+    SELECT
+      lc_id,
+      lc_name,
+      room_id,
+      room_name,
+      duration_minutes,
+      rate_per_hour,
+      rate,
+      status,
+      created_at,
+      closed_at
+    FROM lc_work_logs
+    WHERE status <> 'cancelled'
+      AND (((created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
+      AND (((created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) <= $2::date
+    ORDER BY created_at DESC
+  `, [startDate, endDate]);
+
+  const grouped = new Map();
+  for (const row of logsRes.rows) {
+    const key = row.lc_id || row.lc_name;
+    const current = grouped.get(key) || {
+      lc_id: row.lc_id || '',
+      lc_name: row.lc_name || '',
+      session_count: 0,
+      total_duration_minutes: 0,
+      total_fee: 0,
+      rooms: [],
+      latest_at: ''
+    };
+
+    current.session_count += 1;
+    current.total_duration_minutes += Number(row.duration_minutes || 0);
+    current.total_fee += money(row.rate);
+    if (row.room_name && !current.rooms.includes(row.room_name)) {
+      current.rooms.push(row.room_name);
+    }
+    if (!current.latest_at || new Date(row.created_at).getTime() > new Date(current.latest_at).getTime()) {
+      current.latest_at = iso(row.created_at);
+    }
+    grouped.set(key, current);
+  }
+
+  const items = Array.from(grouped.values())
+    .sort((a, b) => (b.total_fee - a.total_fee) || (b.total_duration_minutes - a.total_duration_minutes) || a.lc_name.localeCompare(b.lc_name));
+
+  return {
+    active_lc_count: items.length,
+    total_sessions: items.reduce((total, item) => total + Number(item.session_count || 0), 0),
+    total_duration_minutes: items.reduce((total, item) => total + Number(item.total_duration_minutes || 0), 0),
+    total_fee: items.reduce((total, item) => total + money(item.total_fee), 0),
+    items
+  };
+}
+
 async function buildOwnerMirrorSnapshot(options = {}) {
   const period = options.period || 'today';
   const { startDate, endDate } = getOperationalDateRange(period, options.start_date, options.end_date);
 
-  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders] = await Promise.all([
+  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance] = await Promise.all([
     db.query(`
       SELECT room_id, room_name, status, start_time, booked_duration_minutes,
              scheduled_end_time, rate_per_hour, tv_device_id, updated_at
@@ -82,7 +208,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
       ORDER BY created_at DESC
     `, [startDate, endDate]),
     getSyncStatus().catch(err => ({ error: err.message })),
-    getOpenFnbOrders()
+    getOpenFnbOrders(),
+    buildLcPerformanceSummary(startDate, endDate)
   ]);
 
   const rooms = roomsRes.rows.map(room => {
@@ -123,6 +250,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     fnb_total: money(transaction.fnb_total),
     lc_total: money(transaction.lc_total),
     grand_total: money(transaction.grand_total),
+    fnb_order_ids: transaction.fnb_order_ids || '',
     payment_method: transaction.payment_method || '',
     payment_status: transaction.payment_status || '',
     cashier_name: transaction.cashier_name || '',
@@ -140,6 +268,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
     created_at: iso(transaction.created_at)
   }));
+
+  const fnbSoldSummary = await buildFnbSoldSummary(transactionsRes.rows);
 
   const summary = transactions.reduce((acc, transaction) => {
     const grandTotal = money(transaction.grand_total);
@@ -199,6 +329,10 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     operational_date_start: startDate,
     operational_date_end: endDate,
     summary,
+    fnb_sold_summary: fnbSoldSummary,
+    fnb_sold_items: fnbSoldSummary.items,
+    lc_performance: lcPerformance,
+    lc_performance_items: lcPerformance.items,
     rooms,
     open_fnb_orders: openFnbOrders,
     transactions,
@@ -236,14 +370,31 @@ async function saveOwnerMirrorSnapshot(snapshot, sourceId = 'happy-song-local') 
   };
 }
 
-async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local') {
-  const result = await db.query(`
-    SELECT *
-    FROM owner_mirror_snapshots
-    WHERE source_id = $1
-    ORDER BY received_at DESC
-    LIMIT 1
-  `, [sourceId]);
+async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', options = {}) {
+  const period = options.period || '';
+  const hasPeriodFilter = Boolean(period || options.start_date || options.end_date);
+  const range = hasPeriodFilter
+    ? getOperationalDateRange(period || 'today', options.start_date, options.end_date)
+    : null;
+
+  const result = hasPeriodFilter
+    ? await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND period = $2
+        AND operational_date_start = $3::date
+        AND operational_date_end = $4::date
+      ORDER BY received_at DESC
+      LIMIT 1
+    `, [sourceId, period || 'today', range.startDate, range.endDate])
+    : await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+      ORDER BY received_at DESC
+      LIMIT 1
+    `, [sourceId]);
 
   if (result.rowCount === 0) {
     return {
@@ -251,6 +402,15 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local') {
       mode: 'cloud_latest_snapshot',
       source_id: sourceId,
       has_snapshot: false,
+      period: period || 'latest',
+      operational_date_start: range?.startDate || '',
+      operational_date_end: range?.endDate || '',
+      summary: {},
+      rooms: [],
+      transactions: [],
+      cashier_closings: [],
+      fnb_sold_summary: { total_qty: 0, total_revenue: 0, unique_items: 0, order_count: 0, items: [] },
+      lc_performance: { active_lc_count: 0, total_sessions: 0, total_duration_minutes: 0, total_fee: 0, items: [] },
       message: 'Belum ada snapshot dari PC kasir.'
     };
   }

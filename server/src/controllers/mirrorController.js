@@ -29,7 +29,7 @@ async function getOwnerMirrorSnapshot(req, res) {
   try {
     const sourceId = req.query.source_id || process.env.OWNER_MIRROR_SOURCE_ID || 'happy-song-local';
     const snapshot = process.env.OWNER_MIRROR_MODE === 'cloud'
-      ? await getLatestOwnerMirrorSnapshot(sourceId)
+      ? await getLatestOwnerMirrorSnapshot(sourceId, req.query || {})
       : await buildOwnerMirrorSnapshot(req.query || {});
     return successResponse(res, snapshot);
   } catch (err) {

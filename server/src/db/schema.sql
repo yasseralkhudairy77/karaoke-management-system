@@ -587,3 +587,4 @@ CREATE INDEX IF NOT EXISTS idx_transactions_opdate ON transactions(operational_d
 CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, room_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_snapshots(source_id, period, operational_date_start, operational_date_end, received_at DESC);
