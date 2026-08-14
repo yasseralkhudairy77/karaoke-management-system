@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $serverDir = Join-Path $repoRoot "server"
 $envFile = Join-Path $serverDir ".env"
+$healthUrl = "http://localhost:3000/exec?action=health"
 
 Write-Host "============================================================"
 Write-Host " HAPPY SONG POS - UPDATE PC SERVER LOKAL"
@@ -52,11 +53,31 @@ Start-Process powershell -WindowStyle Normal -ArgumentList @(
   "cd `"$serverDir`"; npm.cmd start"
 )
 
-Start-Sleep -Seconds 3
+function Test-LocalHealth {
+  try {
+    return Invoke-RestMethod $healthUrl -TimeoutSec 5
+  } catch {
+    return $null
+  }
+}
 
 Write-Host ""
+Write-Host "Menunggu health API siap..."
+$health = $null
+for ($i = 1; $i -le 20; $i++) {
+  Start-Sleep -Seconds 1
+  $health = Test-LocalHealth
+  if ($health -and $health.ok -eq $true) {
+    break
+  }
+  Write-Host "Menunggu server... ($i/20)"
+}
+
+if (-not $health -or $health.ok -ne $true) {
+  throw "Server belum menjawab health check. Lihat window server yang baru terbuka untuk detail error, lalu jalankan START SERVER."
+}
+
 Write-Host "Cek health API..."
-$health = Invoke-RestMethod "http://localhost:3000/exec?action=health"
 Write-Host "Status   : $($health.status)"
 Write-Host "Database : $($health.database)"
 Write-Host "Timezone : $($health.server_timezone)"
