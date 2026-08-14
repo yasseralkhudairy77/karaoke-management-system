@@ -62,6 +62,29 @@ async function validateOwnerPin(pin) {
   throw new Error('PIN Owner tidak valid.');
 }
 
+async function ensureTransactionCorrectionSchema(client) {
+  await client.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS booking_mode VARCHAR(30) DEFAULT 'regular';
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_name VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_by VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
+
+    CREATE TABLE IF NOT EXISTS transaction_correction_logs (
+      correction_id VARCHAR(80) PRIMARY KEY,
+      transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+      correction_type VARCHAR(50) NOT NULL,
+      old_value_json JSONB,
+      new_value_json JSONB,
+      reason TEXT NOT NULL,
+      corrected_by VARCHAR(100) NOT NULL,
+      corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
 async function refreshClosingSnapshotForTransaction(client, transaction) {
   const closingRows = await client.query(
     'SELECT DISTINCT closing_id FROM cashier_closing_transactions WHERE transaction_id = $1',
@@ -290,6 +313,7 @@ async function correctTransactionPackage(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
 
     const transactionId = String(payload.transaction_id || '').trim();
     const packageId = String(payload.package_id || '').trim();
