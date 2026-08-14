@@ -135,6 +135,57 @@ async function saveLcMaster(req, res, payload) {
   }
 }
 
+async function savePackageMaster(req, res, payload) {
+  try {
+    const packageId = String(payload.package_id || '').trim() || `PKG-${Date.now()}`;
+    const packageName = String(payload.package_name || packageId).trim();
+    const sellingPrice = Number(payload.selling_price || 0);
+    const durationMinutes = Number(payload.duration_minutes || 60);
+    const validDayType = String(payload.valid_day_type || 'all').trim().toLowerCase();
+    const status = String(payload.status || 'active').trim().toLowerCase();
+    const packageType = String(payload.package_type || 'room_fnb_bundle').trim().toLowerCase();
+
+    if (!packageName) throw new Error('Nama paket wajib diisi.');
+    if (!Number.isFinite(sellingPrice) || sellingPrice < 0) throw new Error('Harga paket tidak valid.');
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) throw new Error('Durasi paket harus lebih dari 0 menit.');
+    if (!['all', 'weekday', 'weekend'].includes(validDayType)) throw new Error('Berlaku hari tidak valid.');
+    if (!['active', 'inactive'].includes(status)) throw new Error('Status paket tidak valid.');
+
+    const oldRes = await db.query('SELECT * FROM package_master WHERE package_id = $1', [packageId]);
+    const oldValue = oldRes.rows[0] || null;
+
+    await db.query(`
+      INSERT INTO package_master (
+        package_id, package_name, package_category, package_type,
+        selling_price, duration_minutes, valid_day_type, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (package_id) DO UPDATE SET
+        package_name = EXCLUDED.package_name,
+        package_category = EXCLUDED.package_category,
+        package_type = EXCLUDED.package_type,
+        selling_price = EXCLUDED.selling_price,
+        duration_minutes = EXCLUDED.duration_minutes,
+        valid_day_type = EXCLUDED.valid_day_type,
+        status = EXCLUDED.status,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      packageId,
+      packageName,
+      payload.package_category || '',
+      packageType,
+      sellingPrice,
+      Math.floor(durationMinutes),
+      validDayType,
+      status
+    ]);
+
+    await logMasterAudit('package', packageId, packageName, oldValue ? 'update' : 'save', oldValue, payload, payload.changed_by || payload.cashier_name, payload.note || '');
+    return successResponse(res, { message: 'Master paket berhasil disimpan.', package_id: packageId });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
 async function savePromo(req, res, payload) {
   try {
     const promoCode = String(payload.promo_code || payload.code || '').trim().toUpperCase();
@@ -324,6 +375,14 @@ async function getPackageDetails(req, res) {
 
     const detailRes = await db.query('SELECT * FROM package_details WHERE package_id = $1 ORDER BY line_no ASC', [packageId]);
     const pkg = pkgRes.rows[0];
+    const details = detailRes.rows.map(detail => ({
+      ...detail,
+      qty: Number(detail.qty || 0),
+      hpp: Number(detail.hpp || 0),
+      additional_price: Number(detail.additional_price || 0),
+      cost_amount: Number(detail.cost_amount || 0)
+    }));
+
     return res.json({
       ok: true,
       success: true,
@@ -332,13 +391,8 @@ async function getPackageDetails(req, res) {
         selling_price: Number(pkg.selling_price || 0),
         duration_minutes: Number(pkg.duration_minutes || 0)
       },
-      details: detailRes.rows.map(detail => ({
-        ...detail,
-        qty: Number(detail.qty || 0),
-        hpp: Number(detail.hpp || 0),
-        additional_price: Number(detail.additional_price || 0),
-        cost_amount: Number(detail.cost_amount || 0)
-      }))
+      details,
+      package_details: details
     });
   } catch (err) {
     return errorResponse(res, err.message);
@@ -383,6 +437,22 @@ async function getPromos(req, res) {
   try {
     const result = await db.query('SELECT * FROM promos WHERE is_active = TRUE ORDER BY promo_code ASC');
     return res.json({ ok: true, success: true, promos: result.rows });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function deletePackageMaster(req, res, payload) {
+  try {
+    const packageId = payload.package_id || payload.id;
+    if (!packageId) throw new Error('package_id wajib diisi.');
+
+    const oldRes = await db.query('SELECT * FROM package_master WHERE package_id = $1', [packageId]);
+    if (oldRes.rowCount === 0) throw new Error('Paket tidak ditemukan.');
+
+    await db.query('UPDATE package_master SET status = \'inactive\', updated_at = CURRENT_TIMESTAMP WHERE package_id = $1', [packageId]);
+    await logMasterAudit('package', packageId, oldRes.rows[0].package_name || packageId, 'deactivate', oldRes.rows[0], payload, payload.changed_by || payload.cashier_name, payload.note || 'Nonaktifkan paket');
+    return successResponse(res, { message: 'Paket berhasil dinonaktifkan.', package_id: packageId });
   } catch (err) {
     return errorResponse(res, err.message);
   }
@@ -465,6 +535,9 @@ module.exports = {
   saveLcMaster,
   updateLcMaster: saveLcMaster,
   deleteLcMaster: (req, res, payload) => softDeleteMaster(req, res, 'lc_master', 'lc_id', 'lc', payload),
+  savePackageMaster,
+  updatePackageMaster: savePackageMaster,
+  deletePackageMaster,
   savePromo,
   updatePromoStatus,
   deletePromo: (req, res, payload) => updatePromoStatus(req, res, { ...payload, is_active: false }),

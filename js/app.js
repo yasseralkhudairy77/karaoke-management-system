@@ -8718,6 +8718,7 @@ function createDurationSelectionElement(room) {
   panel.appendChild(typeField);
 
   if (bookingTypeSelection === "package") {
+    const activePackages = packages.filter((pkg) => String(pkg.status || "active").trim().toLowerCase() === "active");
     // Package selector
     const pkgField = document.createElement("div");
     pkgField.style.display = "flex";
@@ -8732,7 +8733,7 @@ function createDurationSelectionElement(room) {
     pkgSelect.className = "duration-payment-select";
     pkgSelect.style.width = "100%";
 
-    packages.forEach((pkg) => {
+    activePackages.forEach((pkg) => {
       const opt = document.createElement("option");
       opt.value = pkg.package_id;
       opt.textContent = `${pkg.package_name} (${formatCurrency(pkg.selling_price)} - ${pkg.duration_minutes}m)`;
@@ -8740,8 +8741,8 @@ function createDurationSelectionElement(room) {
       pkgSelect.appendChild(opt);
     });
 
-    if (packages.length > 0 && !bookingPackageSelection) {
-      bookingPackageSelection = packages[0].package_id;
+    if (activePackages.length > 0 && !bookingPackageSelection) {
+      bookingPackageSelection = activePackages[0].package_id;
     }
 
     pkgSelect.onchange = (e) => {
@@ -8761,7 +8762,7 @@ function createDurationSelectionElement(room) {
     savePkgButton.textContent = isPreparingRoomSession ? "Menyimpan..." : "Simpan Booking Paket";
     savePkgButton.onclick = async () => {
       const selectedPkgId = pkgSelect.value || bookingPackageSelection;
-      const selectedPkg = packages.find(p => p.package_id === selectedPkgId);
+      const selectedPkg = activePackages.find(p => p.package_id === selectedPkgId);
       if (selectedPkg) {
         await prepareRoomSession(room.room_id, selectedPkg.duration_minutes, customerNameInput, selectedPkgId);
         customerNameInput = "";
@@ -15889,6 +15890,16 @@ function openMasterDataForm(type, mode, item = null) {
       min_stock: "",
       status: "active",
     },
+    package: {
+      package_id: "",
+      package_name: "",
+      package_category: "",
+      package_type: "room_fnb_bundle",
+      selling_price: "",
+      duration_minutes: "",
+      valid_day_type: "all",
+      status: "active",
+    },
   };
 
   masterDataForm = {
@@ -15935,6 +15946,7 @@ function getMasterDataFormTitle() {
     room: "Ruangan",
     menu: "Menu F&B",
     inventory: "Inventory",
+    package: "Paket",
   };
 
   return `${masterDataForm.mode === "edit" ? "Edit" : "Tambah"} ${labels[masterDataForm.type]}`;
@@ -16079,6 +16091,49 @@ function createMasterDataFormElement() {
     );
   }
 
+  if (masterDataForm.type === "package") {
+    if (masterDataForm.mode === "edit") {
+      grid.appendChild(createMasterField({ label: "ID Paket", field: "package_id", disabled: true }));
+    } else {
+      grid.appendChild(createMasterField({
+        label: "ID Paket",
+        field: "package_id",
+        helper: "Boleh dikosongkan; sistem akan membuat ID otomatis. Untuk rapi bisa isi manual, contoh PKG-BATAVIA-3.",
+      }));
+    }
+
+    grid.append(
+      createMasterField({ label: "Nama Paket", field: "package_name" }),
+      createMasterField({ label: "Kategori", field: "package_category", helper: "Contoh: Batavia, VIP, Executive." }),
+      createMasterField({
+        label: "Tipe Paket",
+        field: "package_type",
+        options: [
+          ["room_fnb_bundle", "Room + F&B Bundle"],
+        ],
+      }),
+      createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" }),
+      createMasterField({ label: "Durasi Menit", field: "duration_minutes", type: "number" }),
+      createMasterField({
+        label: "Berlaku Hari",
+        field: "valid_day_type",
+        options: [
+          ["all", "Semua Hari"],
+          ["weekday", "Weekday"],
+          ["weekend", "Weekend"],
+        ],
+      }),
+      createMasterField({
+        label: "Status",
+        field: "status",
+        options: [
+          ["active", "Active"],
+          ["inactive", "Inactive"],
+        ],
+      })
+    );
+  }
+
   const actions = document.createElement("div");
   actions.className = "master-form-actions";
 
@@ -16179,7 +16234,7 @@ function createMasterActionButton(type, item) {
   button.type = "button";
   button.dataset.action = "edit-master-data";
   button.dataset.masterType = type;
-  button.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || "";
+  button.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || item.package_id || "";
   button.textContent = "Edit";
 
   const deleteButton = document.createElement("button");
@@ -16187,8 +16242,8 @@ function createMasterActionButton(type, item) {
   deleteButton.type = "button";
   deleteButton.dataset.action = "confirm-delete-master-data";
   deleteButton.dataset.masterType = type;
-  deleteButton.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || "";
-  deleteButton.textContent = "Delete Permanen";
+  deleteButton.dataset.masterId = item.room_id || item.menu_id || item.stock_item_id || item.package_id || "";
+  deleteButton.textContent = type === "package" ? "Nonaktifkan" : "Delete Permanen";
 
   actions.append(button, deleteButton);
 
@@ -16544,6 +16599,31 @@ function createPackageDetailButton(pkg) {
   return actions;
 }
 
+function createPackageMasterActions(pkg) {
+  const actions = createPackageDetailButton(pkg);
+
+  const editButton = document.createElement("button");
+  editButton.className = "master-button";
+  editButton.type = "button";
+  editButton.dataset.action = "edit-master-data";
+  editButton.dataset.masterType = "package";
+  editButton.dataset.masterId = pkg.package_id || "";
+  editButton.disabled = !pkg.package_id;
+  editButton.textContent = "Edit";
+
+  const deactivateButton = document.createElement("button");
+  deactivateButton.className = "master-button danger";
+  deactivateButton.type = "button";
+  deactivateButton.dataset.action = "confirm-delete-master-data";
+  deactivateButton.dataset.masterType = "package";
+  deactivateButton.dataset.masterId = pkg.package_id || "";
+  deactivateButton.disabled = !pkg.package_id || String(pkg.status || "").trim().toLowerCase() === "inactive";
+  deactivateButton.textContent = deactivateButton.disabled ? "Nonaktif" : "Nonaktifkan";
+
+  actions.append(editButton, deactivateButton);
+  return actions;
+}
+
 function createPackageDetailsElement() {
   if (!selectedSettingsPackageId) {
     return createStateMessage("Pilih Detail pada salah satu paket untuk melihat isi paket.");
@@ -16611,14 +16691,14 @@ function createPackageSettingsSection() {
     `${Number(pkg.duration_minutes) || 0} menit`,
     pkg.valid_day_type || "-",
     getMasterStatusBadge(pkg.status),
-    createPackageDetailButton(pkg),
+    createPackageMasterActions(pkg),
   ]);
 
   const content = document.createElement("div");
   content.className = "settings-package-content";
   content.append(
     createMasterTable(
-      ["ID", "Paket", "Kategori", "Harga", "Durasi", "Hari", "Status", "Detail"],
+      ["ID", "Paket", "Kategori", "Harga", "Durasi", "Hari", "Status", "Aksi"],
       rows,
       "Paket tidak ditemukan.",
       "settingsPackages"
@@ -16628,8 +16708,8 @@ function createPackageSettingsSection() {
 
   return createSettingsSection(
     "Pengaturan Paket",
-    "Lihat master paket dan komponen included sebelum tahap tambah/edit paket diaktifkan.",
-    "",
+    "Kelola master paket dasar. Isi/komponen paket masih read-only pada tahap ini.",
+    "package",
     content,
     createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
   );
@@ -17314,6 +17394,10 @@ function findMasterItem(type, id) {
     return inventoryItems.find((item) => item.stock_item_id === id) || null;
   }
 
+  if (type === "package") {
+    return packages.find((pkg) => pkg.package_id === id) || null;
+  }
+
   return null;
 }
 
@@ -17330,6 +17414,10 @@ function getMasterEntityName(type, item) {
     return item?.stock_item_name || item?.stock_item_id || "-";
   }
 
+  if (type === "package") {
+    return item?.package_name || item?.package_id || "-";
+  }
+
   return "-";
 }
 
@@ -17344,6 +17432,10 @@ function getMasterEntityId(type, item) {
 
   if (type === "inventory") {
     return item?.stock_item_id || "";
+  }
+
+  if (type === "package") {
+    return item?.package_id || "";
   }
 
   return "";
@@ -17372,7 +17464,7 @@ function updateDeleteMasterConfirmation(field, value) {
 
   deleteMasterConfirmation = {
     ...deleteMasterConfirmation,
-    [field]: value,
+    [field]: field === "typedText" ? String(value || "").trim().toUpperCase() : value,
   };
 }
 
@@ -17384,10 +17476,19 @@ function syncDeleteMasterConfirmationControls() {
   }
 
   const deleteButton = modal.querySelector("[data-action='submit-delete-master-data']");
+  const keyword = getDeleteMasterConfirmationKeyword();
 
   if (deleteButton) {
-    deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== "HAPUS";
+    deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== keyword;
   }
+}
+
+function getDeleteMasterConfirmationKeyword() {
+  return deleteMasterConfirmation?.type === "package" ? "NONAKTIF" : "HAPUS";
+}
+
+function getDeleteMasterSubmitLabel() {
+  return deleteMasterConfirmation?.type === "package" ? "Nonaktifkan" : "Delete Permanen";
 }
 
 function buildDeleteMasterPayload(adminPin = "", authData = null) {
@@ -17414,6 +17515,14 @@ function buildDeleteMasterPayload(adminPin = "", authData = null) {
     };
   }
 
+  if (confirmation.type === "package") {
+    return {
+      ...basePayload,
+      action: "deletePackageMaster",
+      package_id: confirmation.id,
+    };
+  }
+
   return {
     ...basePayload,
     action: "deleteInventoryMaster",
@@ -17426,12 +17535,17 @@ function getDeleteMasterEntityLabel(type) {
     room: "Room",
     menu: "Menu",
     inventory: "Inventory",
+    package: "Paket",
   };
 
   return labels[type] || "Data";
 }
 
 function getDeleteMasterSuccessMessage(type) {
+  if (type === "package") {
+    return "Paket berhasil dinonaktifkan.";
+  }
+
   return `${getDeleteMasterEntityLabel(type)} berhasil dihapus permanen.`;
 }
 
@@ -17457,15 +17571,20 @@ async function submitDeleteMasterData() {
     return;
   }
 
-  if (deleteMasterConfirmation.typedText !== "HAPUS") {
-    showInlineNotice("Ketik HAPUS untuk mengaktifkan delete permanen.", "error");
+  const keyword = getDeleteMasterConfirmationKeyword();
+
+  if (deleteMasterConfirmation.typedText !== keyword) {
+    showInlineNotice(`Ketik ${keyword} untuk melanjutkan.`, "error");
     return;
   }
 
+  const isPackage = deleteMasterConfirmation.type === "package";
   openAdminPinModal({
-    title: "PIN Manager Delete Permanen",
-    message: `Masukkan PIN owner/manager untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
-    requestedAction: `delete_permanent_${deleteMasterConfirmation.type}`,
+    title: isPackage ? "PIN Manager Nonaktifkan Paket" : "PIN Manager Delete Permanen",
+    message: isPackage
+      ? `Masukkan PIN owner/manager untuk menonaktifkan ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`
+      : `Masukkan PIN owner/manager untuk menghapus permanen ${deleteMasterConfirmation.name || deleteMasterConfirmation.id}.`,
+    requestedAction: isPackage ? "deactivate_package" : `delete_permanent_${deleteMasterConfirmation.type}`,
     requiredRole: "manager",
     validatePin: false,
     onSuccess: (authData, adminPin) => executeDeleteMasterData(adminPin, authData),
@@ -17540,11 +17659,13 @@ function createDeleteMasterConfirmationElement() {
   const title = document.createElement("h3");
   title.className = "master-delete-title";
   title.id = "master-delete-title";
-  title.textContent = "Konfirmasi Delete Permanen";
+  title.textContent = deleteMasterConfirmation.type === "package" ? "Konfirmasi Nonaktifkan Paket" : "Konfirmasi Delete Permanen";
 
   const warning = document.createElement("p");
   warning.className = "master-delete-warning";
-  warning.textContent = "Data akan dihapus permanen jika belum pernah dipakai transaksi. Jika sudah memiliki histori, sistem akan menolak penghapusan.";
+  warning.textContent = deleteMasterConfirmation.type === "package"
+    ? "Paket akan disembunyikan dari dropdown booking. Riwayat transaksi lama tetap aman."
+    : "Data akan dihapus permanen jika belum pernah dipakai transaksi. Jika sudah memiliki histori, sistem akan menolak penghapusan.";
 
   const details = document.createElement("div");
   details.className = "master-delete-details";
@@ -17565,7 +17686,8 @@ function createDeleteMasterConfirmationElement() {
     details.appendChild(item);
   });
 
-  const typedField = createDeleteField("Ketik HAPUS", "typedText", deleteMasterConfirmation.typedText);
+  const keyword = getDeleteMasterConfirmationKeyword();
+  const typedField = createDeleteField(`Ketik ${keyword}`, "typedText", deleteMasterConfirmation.typedText);
   const noteField = createDeleteField("Catatan", "note", deleteMasterConfirmation.note);
 
   const actions = document.createElement("div");
@@ -17582,8 +17704,8 @@ function createDeleteMasterConfirmationElement() {
   deleteButton.type = "button";
   deleteButton.dataset.action = "submit-delete-master-data";
   deleteButton.dataset.role = "delete-master-submit";
-  deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== "HAPUS";
-  deleteButton.textContent = isDeletingMasterData ? "Menghapus..." : "Delete Permanen";
+  deleteButton.disabled = isDeletingMasterData || deleteMasterConfirmation.typedText !== keyword;
+  deleteButton.textContent = isDeletingMasterData ? "Memproses..." : getDeleteMasterSubmitLabel();
 
   actions.append(cancelButton, deleteButton);
   dialog.append(title, warning, details, typedField, noteField, actions);
@@ -17877,6 +17999,21 @@ function buildMasterPayload(authData = null, adminPin = "") {
     };
   }
 
+  if (masterDataForm.type === "package") {
+    return {
+      ...accessPayload,
+      action: isEdit ? "updatePackageMaster" : "savePackageMaster",
+      package_id: values.package_id || "",
+      package_name: values.package_name || "",
+      package_category: values.package_category || "",
+      package_type: values.package_type || "room_fnb_bundle",
+      selling_price: Number(values.selling_price),
+      duration_minutes: Number(values.duration_minutes),
+      valid_day_type: values.valid_day_type || "all",
+      status: values.status || "active",
+    };
+  }
+
   return {
     ...accessPayload,
     action: isEdit ? "updateInventoryMaster" : "saveInventoryMaster",
@@ -17935,6 +18072,15 @@ function isSensitiveMasterDataChange() {
     return (Number(original.price) || 0) !== (Number(values.price) || 0);
   }
 
+  if (masterDataForm.type === "package") {
+    const originalStatus = String(original.status || "").trim().toLowerCase();
+    const nextStatus = String(values.status || "").trim().toLowerCase();
+
+    return (Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)
+      || (Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)
+      || originalStatus !== nextStatus;
+  }
+
   return false;
 }
 
@@ -17961,6 +18107,25 @@ function getSensitiveMasterDataAction() {
     return "edit_menu_price";
   }
 
+  if (masterDataForm.type === "package") {
+    const originalStatus = String(original.status || "").trim().toLowerCase();
+    const nextStatus = String(values.status || "").trim().toLowerCase();
+
+    if (originalStatus !== nextStatus && nextStatus === "inactive") {
+      return "deactivate_package";
+    }
+
+    if ((Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)) {
+      return "edit_package_price";
+    }
+
+    if ((Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)) {
+      return "edit_package_duration";
+    }
+
+    return "update_package";
+  }
+
   return "update_master_data";
 }
 
@@ -17973,6 +18138,10 @@ function getSensitiveMasterDataMessage() {
     edit_room_price: "mengubah tarif room",
     set_room_maintenance: "mengubah status maintenance room",
     edit_menu_price: "mengubah harga menu",
+    edit_package_price: "mengubah harga paket",
+    edit_package_duration: "mengubah durasi paket",
+    deactivate_package: "menonaktifkan paket",
+    update_package: "menyimpan paket",
   };
   const action = getSensitiveMasterDataAction();
 
@@ -17996,11 +18165,13 @@ async function executeMasterDataSubmit(authData = null, adminPin = "") {
 
     showInlineNotice(data.message || "Master data berhasil disimpan.");
     masterDataForm = null;
+    packageDetailsByPackageId = {};
     await loadSettingsTabData({ force: true });
     await Promise.all([
       loadMenuItems(),
       loadInventoryItems(),
       loadRooms(),
+      loadPackages(),
     ]);
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan master data.", "error");
