@@ -50,7 +50,7 @@ async function saveCashierClosing(req, res, payload) {
     const existing = await client.query('SELECT * FROM cashier_closings WHERE closing_date = $1', [todayOpDate]);
     if (existing.rowCount > 0) throw new Error(`Closing kasir untuk tanggal operasional ${todayOpDate} sudah dilakukan sebelumnya.`);
 
-    const trxRes = await client.query('SELECT * FROM transactions WHERE operational_date = $1', [todayOpDate]);
+    const trxRes = await client.query("SELECT * FROM transactions WHERE operational_date = $1 AND payment_status <> 'cancelled'", [todayOpDate]);
     const trxs = trxRes.rows;
 
     let totalTrx = trxs.length;
@@ -66,8 +66,8 @@ async function saveCashierClosing(req, res, payload) {
 
     trxs.forEach(t => {
       const gTotal = Number(t.grand_total || 0);
-      totalRevenue += gTotal;
       if (t.payment_status === 'paid') {
+        totalRevenue += gTotal;
         paidTrx++;
         paidRevenue += gTotal;
         if (t.payment_method === 'cash') {
@@ -77,7 +77,8 @@ async function saveCashierClosing(req, res, payload) {
           transferTrx++;
           transferRevenue += gTotal;
         }
-      } else {
+      } else if (t.payment_status === 'unpaid') {
+        totalRevenue += gTotal;
         unpaidTrx++;
         unpaidRevenue += gTotal;
       }
@@ -157,7 +158,7 @@ async function getCashierClosingDetails(req, res) {
 async function validateCashierClosingSnapshot(req, res, payload) {
   try {
     const closingDate = payload.closing_date || getOperationalDate();
-    const trxRes = await db.query('SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total FROM transactions WHERE operational_date = $1', [closingDate]);
+    const trxRes = await db.query("SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total FROM transactions WHERE operational_date = $1 AND payment_status <> 'cancelled'", [closingDate]);
     const existingRes = await db.query('SELECT closing_id FROM cashier_closings WHERE closing_date = $1', [closingDate]);
     return successResponse(res, {
       valid: existingRes.rowCount === 0,

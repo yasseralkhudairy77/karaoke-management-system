@@ -179,6 +179,7 @@ async function getTodayTransactions(req, res) {
     const result = await db.query(`
       SELECT * FROM transactions
       WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status <> 'cancelled'
       ORDER BY created_at DESC
     `, [startDate, endDate]);
 
@@ -196,11 +197,11 @@ async function getTodayTransactions(req, res) {
 
     transactions.forEach(t => {
       const transactionTotal = Number(t.grand_total) || 0;
-      totalRevenueAll += transactionTotal;
 
       if (t.payment_status === 'paid') {
         paidTransactions += 1;
         totalRevenuePaid += transactionTotal;
+        totalRevenueAll += transactionTotal;
 
         if (t.payment_method === 'cash') {
           cashTransactions += 1;
@@ -209,9 +210,10 @@ async function getTodayTransactions(req, res) {
           transferTransactions += 1;
           transferRevenue += transactionTotal;
         }
-      } else {
+      } else if (t.payment_status === 'unpaid') {
         unpaidTransactions += 1;
         unpaidRevenue += transactionTotal;
+        totalRevenueAll += transactionTotal;
       }
     });
 
@@ -568,6 +570,9 @@ async function deleteTransaction(req, res, payload) {
   try {
     const transactionId = payload.transaction_id;
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (payload.owner_pin) {
+      await validateOwnerPin(payload.owner_pin);
+    }
     await db.query(`UPDATE transactions SET payment_status = 'cancelled' WHERE transaction_id = $1`, [transactionId]);
     return successResponse(res, { message: 'Transaksi berhasil dibatalkan.', transaction_id: transactionId });
   } catch (err) {

@@ -703,6 +703,10 @@ function getPaymentStatusTone(status) {
     return "warning";
   }
 
+  if (status === "cancelled") {
+    return "danger";
+  }
+
   return "neutral";
 }
 
@@ -3840,11 +3844,15 @@ async function applyTransactionCustomPeriod() {
 }
 
 function getFilteredTodayTransactions() {
+  const activeTransactions = todayTransactions.filter(
+    (transaction) => transaction.payment_status !== "cancelled"
+  );
+
   if (transactionHistoryFilter === "all") {
-    return todayTransactions;
+    return activeTransactions;
   }
 
-  return todayTransactions.filter((transaction) => {
+  return activeTransactions.filter((transaction) => {
     return transaction.payment_status === transactionHistoryFilter;
   });
 }
@@ -5627,6 +5635,10 @@ function getPaymentStatusLabel(status) {
     return "Lunas";
   }
 
+  if (status === "cancelled") {
+    return "Dibatalkan";
+  }
+
   return "Tidak Dikenal";
 }
 
@@ -5649,6 +5661,10 @@ function formatPaymentStatusLabel(status) {
 
   if (status === "unpaid") {
     return "Belum Dibayar";
+  }
+
+  if (status === "cancelled") {
+    return "Dibatalkan";
   }
 
   return "Tidak Dikenal";
@@ -15006,6 +15022,8 @@ function createTransactionRowElement(transaction) {
   const statusClass =
     transaction?.payment_status === "paid"
       ? "transaction-status-paid"
+      : transaction?.payment_status === "cancelled"
+      ? "transaction-status-cancelled"
       : "transaction-status-unpaid";
 
   [
