@@ -6923,6 +6923,13 @@ function createPaymentControlElement(transaction) {
     const newGrandTotal = discountedRoomTotal + fnbTotal + lcTotal;
     activeGrandTotal = newGrandTotal;
 
+    if (transaction) {
+      transaction.promo_code = appliedPromoCode;
+      transaction.promo_discount = appliedDiscountVal;
+      transaction.room_total = discountedRoomTotal;
+      transaction.grand_total = newGrandTotal;
+    }
+
     const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
     if (breakdownEl) {
       const rows = breakdownEl.children;
@@ -16178,7 +16185,7 @@ function syncTransactionFreeRoomCorrectionControls() {
   if (submitButton) {
     submitButton.disabled = isSavingTransactionFreeRoomCorrection
       || preview.freeMinutes <= 0
-      || preview.freeMinutes >= preview.actualMinutes
+      || preview.freeMinutes > preview.actualMinutes
       || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
   }
 }
@@ -16240,7 +16247,7 @@ function createTransactionFreeRoomCorrectionElement() {
   minutesSelect.className = "master-form-input";
   minutesSelect.dataset.action = "update-transaction-free-room-correction";
   minutesSelect.dataset.field = "freeRoomMinutes";
-  for (let minutes = 30; minutes < Math.max(60, preview.actualMinutes); minutes += 30) {
+  for (let minutes = 30; minutes <= Math.max(30, preview.actualMinutes); minutes += 30) {
     const option = document.createElement("option");
     option.value = String(minutes);
     option.textContent = formatDurationMinutes(minutes);
@@ -16279,7 +16286,7 @@ function createTransactionFreeRoomCorrectionElement() {
   submitButton.dataset.role = "transaction-free-room-correction-submit";
   submitButton.disabled = isSavingTransactionFreeRoomCorrection
     || preview.freeMinutes <= 0
-    || preview.freeMinutes >= preview.actualMinutes
+    || preview.freeMinutes > preview.actualMinutes
     || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
   submitButton.textContent = isSavingTransactionFreeRoomCorrection ? "Menyimpan..." : "Simpan Free Room";
 
@@ -16295,7 +16302,7 @@ function submitTransactionFreeRoomCorrection() {
   }
 
   const preview = getTransactionFreeRoomCorrectionPreview();
-  if (preview.freeMinutes <= 0 || preview.freeMinutes >= preview.actualMinutes || String(transactionFreeRoomCorrection.reason || "").trim().length < 5) {
+  if (preview.freeMinutes <= 0 || preview.freeMinutes > preview.actualMinutes || String(transactionFreeRoomCorrection.reason || "").trim().length < 5) {
     showInlineNotice("Pilih durasi free room yang valid dan isi alasan minimal 5 karakter.", "error");
     return;
   }

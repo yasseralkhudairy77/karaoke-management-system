@@ -11690,7 +11690,7 @@ function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
 
     if (prCode) {
       var grossRoomTotal = existingDiscount > 0 ? roomTotal + existingDiscount : roomTotal;
-      var promoRes = validatePromoCode_({ code: prCode, room_total: grossRoomTotal });
+      var promoRes = validatePromoCode_({ code: prCode, room_total: grossRoomTotal, transaction_id: transactionId });
       if (!promoRes.ok || !promoRes.success) {
         return { ok: false, error: promoRes.error || "Gagal menerapkan kode promo." };
       }
@@ -18407,14 +18407,18 @@ function validatePromoCode_(payload) {
     return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" tidak terdaftar." };
   }
 
-  if (String(foundPromo.status || "").trim().toLowerCase() !== "active") {
+  var currentTxId = String(payload.transaction_id || "").trim();
+  var promoStatus = String(foundPromo.status || "").trim().toLowerCase();
+  var usedTxId = String(foundPromo.used_in_transaction_id || "").trim();
+
+  if (promoStatus !== "active" && (!currentTxId || usedTxId !== currentTxId)) {
     return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" sedang dinonaktifkan." };
   }
 
   // Cek jika tipe voucher sekali pakai dan sudah terpakai
   if (String(foundPromo.type || "").trim().toLowerCase() === "voucher") {
-    if (String(foundPromo.used_in_transaction_id || "").trim() !== "") {
-      return { ok: false, success: false, error: "Voucher \"" + code + "\" sudah digunakan di transaksi " + foundPromo.used_in_transaction_id };
+    if (usedTxId !== "" && (!currentTxId || usedTxId !== currentTxId)) {
+      return { ok: false, success: false, error: "Voucher \"" + code + "\" sudah digunakan di transaksi " + usedTxId };
     }
   }
 

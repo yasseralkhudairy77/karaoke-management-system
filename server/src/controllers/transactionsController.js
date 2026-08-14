@@ -245,19 +245,90 @@ async function getTodayTransactions(req, res) {
 }
 
 async function markTransactionPaid(req, res, payload) {
+  let client;
   try {
-    const { transaction_id, payment_method = 'cash' } = payload;
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const { transaction_id, payment_method = 'cash', promo_code = '' } = payload;
     if (!transaction_id) throw new Error('transaction_id wajib diisi.');
 
-    await db.query(`
-      UPDATE transactions
-      SET payment_status = 'paid', payment_method = $1
-      WHERE transaction_id = $2
-    `, [payment_method, transaction_id]);
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transaction_id]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const transaction = trxRes.rows[0];
 
-    return successResponse(res, { message: `Transaksi ${transaction_id} berhasil ditandai Lunas.` });
+    const prCode = String(promo_code || payload.promoCode || '').trim().toUpperCase();
+    let roomTotal = Number(transaction.room_total || 0);
+    let fnbTotal = Number(transaction.fnb_total || 0);
+    let lcTotal = Number(transaction.lc_total || 0);
+    let existingDiscount = Number(transaction.promo_discount || 0);
+    let promoDiscount = existingDiscount;
+    let appliedPromoCode = transaction.promo_code || '';
+
+    if (prCode) {
+      const grossRoomTotal = existingDiscount > 0 ? roomTotal + existingDiscount : roomTotal;
+      const promoRes = await client.query('SELECT * FROM promos WHERE UPPER(promo_code) = $1 LIMIT 1', [prCode]);
+
+      if (promoRes.rowCount > 0) {
+        const promo = promoRes.rows[0];
+        const promoType = String(promo.type || 'promo').trim().toLowerCase();
+
+        if (promoType === 'voucher' && promo.used_in_transaction_id && promo.used_in_transaction_id !== transaction_id) {
+          throw new Error(`Voucher "${prCode}" sudah digunakan di transaksi ${promo.used_in_transaction_id}.`);
+        }
+
+        if (promo.is_active === false && promo.used_in_transaction_id !== transaction_id) {
+          throw new Error(`Voucher "${prCode}" sedang tidak aktif.`);
+        }
+
+        if (promo.discount_type === 'percentage') {
+          promoDiscount = Math.floor(grossRoomTotal * (Number(promo.discount_value || 0) / 100));
+          if (promo.max_discount !== null && promo.max_discount !== undefined) {
+            promoDiscount = Math.min(promoDiscount, Number(promo.max_discount || promoDiscount));
+          }
+        } else {
+          promoDiscount = Number(promo.discount_value || 0);
+        }
+        promoDiscount = Math.max(0, Math.min(promoDiscount, grossRoomTotal));
+        roomTotal = Math.max(0, grossRoomTotal - promoDiscount);
+        appliedPromoCode = promo.promo_code;
+
+        if (promoType === 'voucher') {
+          await client.query(`
+            UPDATE promos
+            SET used_in_transaction_id = $1, used_at = CURRENT_TIMESTAMP, is_active = FALSE
+            WHERE UPPER(promo_code) = $2
+          `, [transaction_id, prCode]);
+        }
+      }
+    }
+
+    const grandTotal = roomTotal + fnbTotal + lcTotal;
+
+    await client.query(`
+      UPDATE transactions
+      SET payment_status = 'paid',
+          payment_method = $1,
+          room_total = $2,
+          promo_code = $3,
+          promo_discount = $4,
+          grand_total = $5
+      WHERE transaction_id = $6
+    `, [payment_method, roomTotal, appliedPromoCode, promoDiscount, grandTotal, transaction_id]);
+
+    await client.query('COMMIT');
+
+    const updatedTrx = await db.query('SELECT * FROM transactions WHERE transaction_id = $1', [transaction_id]);
+
+    return successResponse(res, {
+      message: `Transaksi ${transaction_id} berhasil ditandai Lunas.`,
+      transaction: updatedTrx.rows[0]
+    });
   } catch (err) {
+    if (client) await client.query('ROLLBACK');
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -470,8 +541,8 @@ async function correctTransactionFreeRoom(req, res, payload) {
 
     const actualDurationMinutes = Math.max(0, Math.floor(toNumber(oldTransaction.duration_minutes)));
     if (actualDurationMinutes <= 0) throw new Error('Durasi aktual transaksi tidak valid.');
-    if (freeRoomMinutes >= actualDurationMinutes) {
-      throw new Error('Free room tidak boleh sama atau lebih besar dari durasi aktual.');
+    if (freeRoomMinutes > actualDurationMinutes) {
+      throw new Error('Free room tidak boleh lebih besar dari durasi aktual.');
     }
 
     const ratePerHour = toNumber(oldTransaction.rate_per_hour);

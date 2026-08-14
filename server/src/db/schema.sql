@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS package_details (
 CREATE TABLE IF NOT EXISTS promos (
     promo_code VARCHAR(50) PRIMARY KEY,
     promo_name VARCHAR(100) NOT NULL,
+    type VARCHAR(20) DEFAULT 'promo',
     discount_type VARCHAR(20) CHECK (discount_type IN ('percentage', 'fixed')),
     discount_value NUMERIC(12,2) NOT NULL,
     max_discount NUMERIC(12,2),
@@ -143,6 +144,8 @@ CREATE TABLE IF NOT EXISTS promos (
     valid_from DATE,
     valid_until DATE,
     is_active BOOLEAN DEFAULT TRUE,
+    used_in_transaction_id VARCHAR(50),
+    used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -588,3 +591,7 @@ CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, roo
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_snapshots(source_id, period, operational_date_start, operational_date_end, received_at DESC);
+
+ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'promo';
+ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS used_in_transaction_id VARCHAR(50);
+ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;

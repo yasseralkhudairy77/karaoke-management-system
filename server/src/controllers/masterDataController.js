@@ -190,11 +190,12 @@ async function savePromo(req, res, payload) {
   try {
     const promoCode = String(payload.promo_code || payload.code || '').trim().toUpperCase();
     if (!promoCode) throw new Error('promo_code wajib diisi.');
+    const promoType = String(payload.type || 'promo').trim().toLowerCase();
     await db.query(`
-      INSERT INTO promos (promo_code, promo_name, discount_type, discount_value, max_discount, min_spend, valid_from, valid_until, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (promo_code) DO UPDATE SET promo_name = EXCLUDED.promo_name, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value, max_discount = EXCLUDED.max_discount, min_spend = EXCLUDED.min_spend, valid_from = EXCLUDED.valid_from, valid_until = EXCLUDED.valid_until, is_active = EXCLUDED.is_active
-    `, [promoCode, payload.promo_name || promoCode, payload.discount_type || 'fixed', Number(payload.discount_value || 0), payload.max_discount || null, Number(payload.min_spend || 0), payload.valid_from || null, payload.valid_until || null, payload.is_active !== false]);
+      INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, max_discount, min_spend, valid_from, valid_until, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (promo_code) DO UPDATE SET promo_name = EXCLUDED.promo_name, type = EXCLUDED.type, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value, max_discount = EXCLUDED.max_discount, min_spend = EXCLUDED.min_spend, valid_from = EXCLUDED.valid_from, valid_until = EXCLUDED.valid_until, is_active = EXCLUDED.is_active
+    `, [promoCode, payload.promo_name || promoCode, promoType, payload.discount_type || 'fixed', Number(payload.discount_value || 0), payload.max_discount || null, Number(payload.min_spend || 0), payload.valid_from || null, payload.valid_until || null, payload.is_active !== false]);
     await logMasterAudit('promo', promoCode, payload.promo_name || promoCode, 'save', null, payload, payload.changed_by || payload.cashier_name);
     return successResponse(res, { message: 'Promo berhasil disimpan.', promo_code: promoCode });
   } catch (err) {
@@ -475,6 +476,11 @@ async function validatePromoCode(req, res) {
     }
 
     const promo = result.rows[0];
+    const promoType = String(promo.type || 'promo').trim().toLowerCase();
+    if (promoType === 'voucher' && promo.used_in_transaction_id) {
+      return errorResponse(res, `Voucher "${code}" sudah digunakan di transaksi ${promo.used_in_transaction_id}.`, 'VOUCHER_ALREADY_USED');
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     const validFrom = promo.valid_from ? promo.valid_from.toISOString().slice(0, 10) : '';
     const validUntil = promo.valid_until ? promo.valid_until.toISOString().slice(0, 10) : '';
