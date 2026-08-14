@@ -34,6 +34,9 @@ function serializeTransaction(row) {
     corrected_at: row.corrected_at ? new Date(row.corrected_at).toISOString() : '',
     corrected_by: row.corrected_by || '',
     correction_note: row.correction_note || '',
+    billable_room_minutes: row.billable_room_minutes === null || row.billable_room_minutes === undefined ? null : Number(row.billable_room_minutes || 0),
+    free_room_minutes: Number(row.free_room_minutes || 0),
+    room_discount_amount: Number(row.room_discount_amount || 0),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
   };
 }
@@ -71,6 +74,9 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_by VARCHAR(100);
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS billable_room_minutes INT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS transaction_correction_logs (
       correction_id VARCHAR(80) PRIMARY KEY,
@@ -430,6 +436,134 @@ async function correctTransactionPackage(req, res, payload) {
   }
 }
 
+async function correctTransactionFreeRoom(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const freeRoomMinutes = Math.max(0, Math.floor(toNumber(payload.free_room_minutes)));
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Owner').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (freeRoomMinutes <= 0) throw new Error('Free room wajib lebih dari 0 menit.');
+    if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
+
+    await validateOwnerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
+    }
+    if (String(oldTransaction.package_id || '').trim()) {
+      throw new Error('Transaksi paket tidak bisa memakai koreksi free room. Gunakan koreksi paket bila perlu.');
+    }
+
+    const actualDurationMinutes = Math.max(0, Math.floor(toNumber(oldTransaction.duration_minutes)));
+    if (actualDurationMinutes <= 0) throw new Error('Durasi aktual transaksi tidak valid.');
+    if (freeRoomMinutes >= actualDurationMinutes) {
+      throw new Error('Free room tidak boleh sama atau lebih besar dari durasi aktual.');
+    }
+
+    const ratePerHour = toNumber(oldTransaction.rate_per_hour);
+    if (ratePerHour <= 0) throw new Error('Tarif per jam transaksi tidak valid.');
+
+    const grossRoomTotal = Math.ceil((actualDurationMinutes / 60) * ratePerHour);
+    const billableRoomMinutes = Math.max(0, actualDurationMinutes - freeRoomMinutes);
+    const nextRoomTotal = Math.ceil((billableRoomMinutes / 60) * ratePerHour);
+    const discountAmount = Math.max(0, grossRoomTotal - nextRoomTotal);
+    const fnbTotal = toNumber(oldTransaction.fnb_total);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const grandTotal = nextRoomTotal + fnbTotal + lcTotal;
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET booking_mode = 'free_room_correction',
+          billable_room_minutes = $1,
+          free_room_minutes = $2,
+          room_discount_amount = $3,
+          room_total = $4,
+          grand_total = $5,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $6,
+          correction_note = $7
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [
+      billableRoomMinutes,
+      freeRoomMinutes,
+      discountAmount,
+      nextRoomTotal,
+      grandTotal,
+      correctedBy,
+      reason,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'free_room_correction', $3, $4, $5, $6)
+    `, [
+      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      transactionId,
+      JSON.stringify({
+        booking_mode: oldTransaction.booking_mode || '',
+        duration_minutes: actualDurationMinutes,
+        billable_room_minutes: oldTransaction.billable_room_minutes === null || oldTransaction.billable_room_minutes === undefined ? null : toNumber(oldTransaction.billable_room_minutes),
+        free_room_minutes: toNumber(oldTransaction.free_room_minutes),
+        room_discount_amount: toNumber(oldTransaction.room_discount_amount),
+        rate_per_hour: ratePerHour,
+        room_total: toNumber(oldTransaction.room_total),
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total)
+      }),
+      JSON.stringify({
+        booking_mode: 'free_room_correction',
+        duration_minutes: actualDurationMinutes,
+        billable_room_minutes: billableRoomMinutes,
+        free_room_minutes: freeRoomMinutes,
+        room_discount_amount: discountAmount,
+        rate_per_hour: ratePerHour,
+        room_total: nextRoomTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Koreksi free room transaksi berhasil disimpan.',
+      transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function deleteTransaction(req, res, payload) {
   try {
     const transactionId = payload.transaction_id;
@@ -662,6 +796,7 @@ module.exports = {
   logReceiptPrint,
   updateTransactionDetails,
   correctTransactionPackage,
+  correctTransactionFreeRoom,
   deleteTransaction,
   getTransactionLcEditDetails: getTransactionLcDetails,
   getTransactionLcReceiptDetails: getTransactionLcDetails,

@@ -821,6 +821,8 @@ let transactionDeleteConfirmation = null;
 let isDeletingTransaction = false;
 let transactionPackageCorrection = null;
 let isSavingTransactionPackageCorrection = false;
+let transactionFreeRoomCorrection = null;
+let isSavingTransactionFreeRoomCorrection = false;
 let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
@@ -5696,6 +5698,23 @@ function getTransactionPackageLabel(transaction) {
   return transaction?.package_name || transaction?.package_id || "Paket";
 }
 
+function getTransactionBillableRoomMinutes(transaction) {
+  const explicit = transaction?.billable_room_minutes;
+  if (explicit !== null && explicit !== undefined && explicit !== "") {
+    return Number(explicit) || 0;
+  }
+
+  return Number(transaction?.duration_minutes) || 0;
+}
+
+function getTransactionFreeRoomMinutes(transaction) {
+  return Number(transaction?.free_room_minutes) || 0;
+}
+
+function getTransactionRoomDiscountAmount(transaction) {
+  return Number(transaction?.room_discount_amount) || 0;
+}
+
 function getTransactionFnbTotal(transaction) {
   return Number(transaction?.fnb_total) || 0;
 }
@@ -7509,6 +7528,10 @@ function createBillingSummaryElement(transaction) {
     ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
     ["Waktu Selesai", formatTransactionDateTime(transaction?.end_time)],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
+    ...(getTransactionFreeRoomMinutes(transaction) > 0 ? [
+      ["Free Room", formatDurationMinutes(getTransactionFreeRoomMinutes(transaction))],
+      ["Durasi Ditagihkan", formatDurationMinutes(getTransactionBillableRoomMinutes(transaction))],
+    ] : []),
     ["Tarif per Jam", formatCurrency(transaction?.rate_per_hour)],
     [
       "Status Pembayaran",
@@ -7568,7 +7591,7 @@ function createBillingBreakdownElement(transaction) {
 
   const roomTotal = Number(transaction?.room_total) || 0;
   const promoDiscount = Number(transaction?.promo_discount) || 0;
-  const originalRoomTotal = roomTotal + promoDiscount;
+  const originalRoomTotal = roomTotal + promoDiscount + getTransactionRoomDiscountAmount(transaction);
 
   const rows = [
     [transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room", formatCurrency(originalRoomTotal)],
@@ -7576,6 +7599,10 @@ function createBillingBreakdownElement(transaction) {
 
   if (promoDiscount > 0) {
     rows.push([`Diskon (${transaction.promo_code})`, `-${formatCurrency(promoDiscount)}`]);
+  }
+
+  if (getTransactionRoomDiscountAmount(transaction) > 0) {
+    rows.push(["Free Room Owner", `-${formatCurrency(getTransactionRoomDiscountAmount(transaction))}`]);
   }
 
   const lcTotal = Number(transaction?.lc_total || 0);
@@ -7740,6 +7767,10 @@ function createReceiptPrintElement(transaction) {
     ["Waktu Mulai", formatTransactionDateTime(receiptData.room.startTime)],
     ["Waktu Selesai", formatTransactionDateTime(receiptData.room.endTime)],
     ["Durasi", formatLcDurationShort(receiptData.room.durationMinutes)],
+    ...(receiptData.room.freeRoomMinutes > 0 ? [
+      ["Free Room", formatLcDurationShort(receiptData.room.freeRoomMinutes)],
+      ["Durasi Ditagihkan", formatLcDurationShort(receiptData.room.billableRoomMinutes)],
+    ] : []),
     receiptData.room.packageId
       ? ["Paket", receiptData.room.packageName || receiptData.room.packageId || "-"]
       : ["Tarif per Jam", formatCurrency(receiptData.room.ratePerHour)],
@@ -7757,6 +7788,9 @@ function createReceiptPrintElement(transaction) {
   ];
 
   const lcTotal = Number(transaction?.lc_total || 0);
+  if (Number(receiptData.totals.roomDiscountAmount || 0) > 0) {
+    billingRows.push(["Free Room Owner", `-${formatCurrency(receiptData.totals.roomDiscountAmount)}`]);
+  }
   if (lcTotal > 0) {
     billingRows.push(["Jasa LC", formatCurrency(lcTotal)]);
   }
@@ -14039,6 +14073,9 @@ function createTransactionHistoryElement() {
     transactionPackageCorrection
       ? createTransactionPackageCorrectionElement()
       : document.createDocumentFragment(),
+    transactionFreeRoomCorrection
+      ? createTransactionFreeRoomCorrectionElement()
+      : document.createDocumentFragment(),
     adminPinModal
       ? createAdminPinModalElement()
       : document.createDocumentFragment()
@@ -15051,8 +15088,18 @@ function createTransactionActionsElement(transaction) {
     correctionButton.type = "button";
     correctionButton.dataset.action = "open-transaction-package-correction";
     correctionButton.dataset.transactionId = transaction?.transaction_id || "";
-    correctionButton.textContent = "Koreksi";
+    correctionButton.textContent = "Koreksi Paket";
     actions.appendChild(correctionButton);
+
+    if (!transactionHasPackage(transaction)) {
+      const freeRoomButton = document.createElement("button");
+      freeRoomButton.className = "transaction-action-button";
+      freeRoomButton.type = "button";
+      freeRoomButton.dataset.action = "open-transaction-free-room-correction";
+      freeRoomButton.dataset.transactionId = transaction?.transaction_id || "";
+      freeRoomButton.textContent = "Free Room";
+      actions.appendChild(freeRoomButton);
+    }
 
     const deleteButton = document.createElement("button");
     deleteButton.className = "transaction-action-button transaction-delete-button";
@@ -16031,6 +16078,268 @@ async function executeTransactionPackageCorrection(ownerPin) {
     return { success: false, message };
   } finally {
     isSavingTransactionPackageCorrection = false;
+    renderRooms();
+  }
+}
+
+function openTransactionFreeRoomCorrection(transactionId) {
+  if (getCurrentOperatorRole() !== "owner") {
+    showInlineNotice("Hanya akun owner yang dapat melakukan koreksi free room.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+  if (transactionHasPackage(transaction)) {
+    showInlineNotice("Free room hanya untuk transaksi regular, bukan paket.", "error");
+    return;
+  }
+
+  transactionFreeRoomCorrection = {
+    transactionId,
+    freeRoomMinutes: transaction.free_room_minutes || 60,
+    reason: "",
+  };
+  renderRooms();
+}
+
+function closeTransactionFreeRoomCorrection() {
+  if (isSavingTransactionFreeRoomCorrection || isValidatingAdminPin) {
+    return;
+  }
+
+  transactionFreeRoomCorrection = null;
+  renderRooms();
+}
+
+function updateTransactionFreeRoomCorrection(field, value) {
+  if (!transactionFreeRoomCorrection || !["freeRoomMinutes", "reason"].includes(field)) {
+    return;
+  }
+
+  transactionFreeRoomCorrection = {
+    ...transactionFreeRoomCorrection,
+    [field]: field === "freeRoomMinutes" ? Number(value) || 0 : value,
+  };
+}
+
+function getTransactionFreeRoomCorrectionPreview() {
+  const transaction = getTransactionById(transactionFreeRoomCorrection?.transactionId) || {};
+  const actualMinutes = Number(transaction.duration_minutes) || 0;
+  const freeMinutes = Math.max(0, Number(transactionFreeRoomCorrection?.freeRoomMinutes) || 0);
+  const billableMinutes = Math.max(0, actualMinutes - freeMinutes);
+  const ratePerHour = Number(transaction.rate_per_hour) || 0;
+  const grossRoomTotal = Math.ceil((actualMinutes / 60) * ratePerHour);
+  const nextRoomTotal = Math.ceil((billableMinutes / 60) * ratePerHour);
+  const discountAmount = Math.max(0, grossRoomTotal - nextRoomTotal);
+  const nextGrandTotal = nextRoomTotal + (Number(transaction.fnb_total) || 0) + (Number(transaction.lc_total) || 0);
+
+  return {
+    transaction,
+    actualMinutes,
+    freeMinutes,
+    billableMinutes,
+    grossRoomTotal,
+    nextRoomTotal,
+    discountAmount,
+    nextGrandTotal,
+  };
+}
+
+function syncTransactionFreeRoomCorrectionControls() {
+  const modal = queryDashboard(".transaction-free-room-correction-modal");
+  if (!modal || !transactionFreeRoomCorrection) {
+    return;
+  }
+
+  const preview = getTransactionFreeRoomCorrectionPreview();
+  const submitButton = modal.querySelector("[data-role='transaction-free-room-correction-submit']");
+  if (submitButton) {
+    submitButton.disabled = isSavingTransactionFreeRoomCorrection
+      || preview.freeMinutes <= 0
+      || preview.freeMinutes >= preview.actualMinutes
+      || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
+  }
+}
+
+function createTransactionFreeRoomCorrectionElement() {
+  if (!transactionFreeRoomCorrection) {
+    return document.createDocumentFragment();
+  }
+
+  const preview = getTransactionFreeRoomCorrectionPreview();
+  const transaction = preview.transaction || {};
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-free-room-correction-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-free-room-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-free-room-title";
+  title.textContent = "Koreksi Free Room";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Durasi aktual room tetap dicatat penuh. Koreksi ini hanya mengurangi menit room yang ditagihkan. LC dan F&B tidak berubah.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+  [
+    ["ID", transaction.transaction_id],
+    ["Room", transaction.room_name || transaction.room_id],
+    ["Durasi Aktual", formatDurationMinutes(preview.actualMinutes)],
+    ["Free Room", formatDurationMinutes(preview.freeMinutes)],
+    ["Durasi Ditagihkan", formatDurationMinutes(preview.billableMinutes)],
+    ["Biaya Room Normal", formatCurrency(preview.grossRoomTotal)],
+    ["Potongan Room", `-${formatCurrency(preview.discountAmount)}`],
+    ["Biaya Room Baru", formatCurrency(preview.nextRoomTotal)],
+    ["Total Baru", formatCurrency(preview.nextGrandTotal)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const minutesField = document.createElement("label");
+  minutesField.className = "master-form-field";
+  const minutesLabel = document.createElement("span");
+  minutesLabel.className = "master-form-label";
+  minutesLabel.textContent = "Free Room";
+  const minutesSelect = document.createElement("select");
+  minutesSelect.className = "master-form-input";
+  minutesSelect.dataset.action = "update-transaction-free-room-correction";
+  minutesSelect.dataset.field = "freeRoomMinutes";
+  for (let minutes = 30; minutes < Math.max(60, preview.actualMinutes); minutes += 30) {
+    const option = document.createElement("option");
+    option.value = String(minutes);
+    option.textContent = formatDurationMinutes(minutes);
+    option.selected = minutes === preview.freeMinutes;
+    minutesSelect.appendChild(option);
+  }
+  minutesField.append(minutesLabel, minutesSelect);
+
+  const reasonField = document.createElement("label");
+  reasonField.className = "master-form-field";
+  const reasonLabel = document.createElement("span");
+  reasonLabel.className = "master-form-label";
+  reasonLabel.textContent = "Alasan Koreksi";
+  const reasonInput = document.createElement("input");
+  reasonInput.className = "master-form-input";
+  reasonInput.type = "text";
+  reasonInput.placeholder = "Contoh: Owner memberikan free room 1 jam, LC tetap 3 jam";
+  reasonInput.dataset.action = "update-transaction-free-room-correction";
+  reasonInput.dataset.field = "reason";
+  reasonInput.value = transactionFreeRoomCorrection.reason || "";
+  reasonField.append(reasonLabel, reasonInput);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-transaction-free-room-correction";
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-transaction-free-room-correction";
+  submitButton.dataset.role = "transaction-free-room-correction-submit";
+  submitButton.disabled = isSavingTransactionFreeRoomCorrection
+    || preview.freeMinutes <= 0
+    || preview.freeMinutes >= preview.actualMinutes
+    || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
+  submitButton.textContent = isSavingTransactionFreeRoomCorrection ? "Menyimpan..." : "Simpan Free Room";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, minutesField, reasonField, actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function submitTransactionFreeRoomCorrection() {
+  if (!transactionFreeRoomCorrection || isSavingTransactionFreeRoomCorrection) {
+    return;
+  }
+
+  const preview = getTransactionFreeRoomCorrectionPreview();
+  if (preview.freeMinutes <= 0 || preview.freeMinutes >= preview.actualMinutes || String(transactionFreeRoomCorrection.reason || "").trim().length < 5) {
+    showInlineNotice("Pilih durasi free room yang valid dan isi alasan minimal 5 karakter.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Owner Free Room",
+    message: `Masukkan PIN owner untuk koreksi free room transaksi ${transactionFreeRoomCorrection.transactionId}.`,
+    requestedAction: "correct_transaction_free_room",
+    requiredRole: "owner",
+    validatePin: false,
+    forcePrompt: true,
+    onSuccess: (authData, ownerPin) => executeTransactionFreeRoomCorrection(ownerPin),
+  });
+}
+
+async function executeTransactionFreeRoomCorrection(ownerPin) {
+  if (!transactionFreeRoomCorrection || isSavingTransactionFreeRoomCorrection) {
+    return { success: false };
+  }
+
+  isSavingTransactionFreeRoomCorrection = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "correctTransactionFreeRoom",
+      transaction_id: transactionFreeRoomCorrection.transactionId,
+      free_room_minutes: Number(transactionFreeRoomCorrection.freeRoomMinutes) || 0,
+      reason: String(transactionFreeRoomCorrection.reason || "").trim(),
+      admin_pin: ownerPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Koreksi free room gagal.";
+      showInlineNotice(message, "error");
+      if (adminPinModal) {
+        adminPinModal = { ...adminPinModal, pin: "", error: message };
+      }
+      return { success: false, message };
+    }
+
+    mergeUpdatedTransactionIntoState(data.transaction);
+    adminPinModal = null;
+    transactionFreeRoomCorrection = null;
+    showInlineNotice(data.message || "Koreksi free room berhasil disimpan.");
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadTodayCashierClosings(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat koreksi free room.";
+    showInlineNotice(message, "error");
+    if (adminPinModal) {
+      adminPinModal = { ...adminPinModal, pin: "", error: message };
+    }
+    return { success: false, message };
+  } finally {
+    isSavingTransactionFreeRoomCorrection = false;
     renderRooms();
   }
 }
@@ -24307,13 +24616,28 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-transaction-free-room-correction") {
+    openTransactionFreeRoomCorrection(button.dataset.transactionId || "");
+    return;
+  }
+
   if (action === "close-transaction-package-correction") {
     closeTransactionPackageCorrection();
     return;
   }
 
+  if (action === "close-transaction-free-room-correction") {
+    closeTransactionFreeRoomCorrection();
+    return;
+  }
+
   if (action === "submit-transaction-package-correction") {
     submitTransactionPackageCorrection();
+    return;
+  }
+
+  if (action === "submit-transaction-free-room-correction") {
+    submitTransactionFreeRoomCorrection();
     return;
   }
 
@@ -25171,6 +25495,15 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-transaction-free-room-correction") {
+    updateTransactionFreeRoomCorrection(field.dataset.field, field.value);
+    syncTransactionFreeRoomCorrectionControls();
+    if (field.dataset.field === "freeRoomMinutes") {
+      renderRooms();
+    }
+    return;
+  }
+
   if (action === "update-admin-pin-modal") {
     updateAdminPinModal(field.dataset.field, field.value);
     syncAdminPinModalControls();
@@ -25281,6 +25614,15 @@ function handleDashboardChange(event) {
   if (packageCorrectionField) {
     updateTransactionPackageCorrection(packageCorrectionField.dataset.field, packageCorrectionField.value);
     syncTransactionPackageCorrectionControls();
+    renderRooms();
+    return;
+  }
+
+  const freeRoomCorrectionField = event.target.closest("[data-action='update-transaction-free-room-correction']");
+
+  if (freeRoomCorrectionField) {
+    updateTransactionFreeRoomCorrection(freeRoomCorrectionField.dataset.field, freeRoomCorrectionField.value);
+    syncTransactionFreeRoomCorrectionControls();
     renderRooms();
     return;
   }

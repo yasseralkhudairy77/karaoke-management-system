@@ -210,6 +210,9 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_total NUMERIC(12,2) NO
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_by VARCHAR(100);
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS billable_room_minutes INT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     correction_id VARCHAR(80) PRIMARY KEY,

@@ -77,6 +77,10 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Mulai", formatReceiptDateTime(room.startTime), width);
   pushReceiptField(lines, "Selesai", formatReceiptDateTime(room.endTime), width);
   pushReceiptField(lines, "Durasi", formatReceiptDuration(room.durationMinutes), width);
+  if (room.freeRoomMinutes > 0) {
+    pushReceiptField(lines, "Free", formatReceiptDuration(room.freeRoomMinutes), width);
+    pushReceiptField(lines, "Tagih", formatReceiptDuration(room.billableRoomMinutes), width);
+  }
 
   lines.push(separator);
   if (room.packageId) {
@@ -99,6 +103,10 @@ export function formatReceipt58mm(receiptData, options = {}) {
 
   if (totals.promoDiscount > 0) {
     pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
+  }
+
+  if (totals.roomDiscountAmount > 0) {
+    pushReceiptField(lines, "Free Room", `-${formatReceiptCurrency(totals.roomDiscountAmount)}`, width);
   }
 
   if (lc.hasLc) {
@@ -169,6 +177,9 @@ export function formatReceipt58mm(receiptData, options = {}) {
   pushReceiptField(lines, "Room", formatReceiptCurrency(totals.roomTotal), width);
   if (totals.promoDiscount > 0) {
     pushReceiptField(lines, `Disc ${totals.promoCode}`, `-${formatReceiptCurrency(totals.promoDiscount)}`, width);
+  }
+  if (totals.roomDiscountAmount > 0) {
+    pushReceiptField(lines, "Free Room", `-${formatReceiptCurrency(totals.roomDiscountAmount)}`, width);
   }
   if (totals.lcTotal > 0) {
     pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
@@ -431,6 +442,10 @@ function normalizeRoom(transaction) {
     packageId: getText(transaction.package_id),
     packageName: getText(transaction.package_name),
     packageTotal: getNumber(transaction.package_total),
+    billableRoomMinutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined || transaction.billable_room_minutes === ""
+      ? getNumber(transaction.duration_minutes)
+      : getNumber(transaction.billable_room_minutes),
+    freeRoomMinutes: getNumber(transaction.free_room_minutes),
   };
 }
 
@@ -535,7 +550,8 @@ function normalizeTotals(transaction) {
   const grandTotal = getNumber(transaction.grand_total);
   const promoCode = getText(transaction.promo_code);
   const promoDiscount = getNumber(transaction.promo_discount);
-  const grossRoomTotal = promoDiscount > 0 ? netRoomTotal + promoDiscount : netRoomTotal;
+  const roomDiscountAmount = getNumber(transaction.room_discount_amount);
+  const grossRoomTotal = netRoomTotal + promoDiscount + roomDiscountAmount;
 
   return {
     roomTotal: grossRoomTotal,
@@ -545,6 +561,7 @@ function normalizeTotals(transaction) {
     grandTotal: grandTotal > 0 ? grandTotal : netRoomTotal + fnbTotal + lcTotal,
     promoCode,
     promoDiscount,
+    roomDiscountAmount,
   };
 }
 

@@ -134,6 +134,9 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     corrected_at_wib: transaction.corrected_at ? toJakartaIsoString(transaction.corrected_at) : '',
     corrected_by: transaction.corrected_by || '',
     correction_note: transaction.correction_note || '',
+    billable_room_minutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined ? null : Number(transaction.billable_room_minutes || 0),
+    free_room_minutes: Number(transaction.free_room_minutes || 0),
+    room_discount_amount: money(transaction.room_discount_amount),
     operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
     created_at: iso(transaction.created_at)
   }));

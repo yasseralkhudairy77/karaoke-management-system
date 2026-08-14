@@ -193,6 +193,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.updateTransactionDetails(req, res, payload);
     case 'correctTransactionPackage':
       return transactionsController.correctTransactionPackage(req, res, payload);
+    case 'correctTransactionFreeRoom':
+      return transactionsController.correctTransactionFreeRoom(req, res, payload);
     case 'updateTransactionLcDurations':
       return transactionsController.updateTransactionLcDurations(req, res, payload);
     case 'deleteTransaction':
