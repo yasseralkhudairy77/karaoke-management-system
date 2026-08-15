@@ -693,7 +693,7 @@ async function updateActiveSessionPackage(req, res, payload) {
 
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
-      VALUES ('room_sessions', $1, 'UPDATE_PACKAGE', $2)
+      VALUES ('room_sessions', $1, 'UPDATE', $2)
       ON CONFLICT (entity_type, entity_id, action) DO UPDATE
       SET payload_json = EXCLUDED.payload_json,
           status = 'pending',
