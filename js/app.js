@@ -7900,6 +7900,12 @@ function createReceiptPrintElement(transaction) {
   changePaymentMethodButton.dataset.transactionId = transaction?.transaction_id || "";
   changePaymentMethodButton.textContent = "Ubah Metode Bayar";
 
+  const closeButton = document.createElement("button");
+  closeButton.className = "receipt-print-button secondary";
+  closeButton.type = "button";
+  closeButton.dataset.action = "hide-receipt-print";
+  closeButton.textContent = "Tutup Preview";
+
   actions.append(printButton, thermalPreviewButton, thermalPrintButton, changePaymentMethodButton, closeButton);
   receipt.append(
     header,
