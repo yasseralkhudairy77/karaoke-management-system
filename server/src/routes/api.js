@@ -290,15 +290,52 @@ async function handlePostAction(action, req, res, payload) {
   }
 }
 
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzjBoz2FvaRqTdsmdR-eYQBRvzPVqGV0lf-FPJlDgfFDQ0bxSWr8JVpgxICBwIkI7CK/exec';
+
+async function forwardToAppsScript(req, res, action, payload) {
+  try {
+    const isPost = req.method === 'POST';
+    let targetUrl = `${APPS_SCRIPT_URL}?action=${encodeURIComponent(action)}`;
+
+    if (!isPost && req.query) {
+      const queryParams = new URLSearchParams(req.query);
+      targetUrl = `${APPS_SCRIPT_URL}?${queryParams.toString()}`;
+    }
+
+    const options = {
+      method: isPost ? 'POST' : 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    if (isPost) {
+      options.body = JSON.stringify({ ...(payload || {}), action });
+    }
+
+    const response = await fetch(targetUrl, options);
+    const data = await response.json();
+    return res.json(data);
+  } catch (fallbackErr) {
+    return errorResponse(res, `Gagal memuat data dari database lokal maupun cloud: ${fallbackErr.message}`);
+  }
+}
+
 // Legacy Web App GET compatibility route (/exec)
-router.get('/exec', (req, res) => {
+router.get('/exec', async (req, res) => {
   const action = req.query.action || '';
   if (!action) return errorResponse(res, 'Parameter action wajib diisi.');
-  return handleGetAction(action, req, res);
+  try {
+    return await handleGetAction(action, req, res);
+  } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) {
+      console.warn(`[API Fallback] PostgreSQL lokal offline untuk aksi '${action}'. Mengalihkan ke Cloud Apps Script...`);
+      return forwardToAppsScript(req, res, action, null);
+    }
+    return errorResponse(res, err.message);
+  }
 });
 
 // Legacy Web App POST compatibility route (/exec)
-router.post('/exec', (req, res) => {
+router.post('/exec', async (req, res) => {
   let payload = req.body || {};
   // Handle text/plain JSON strings sent by Apps Script clients
   if (typeof payload === 'string') {
@@ -306,7 +343,15 @@ router.post('/exec', (req, res) => {
   }
   const action = payload.action || req.query.action || '';
   if (!action) return errorResponse(res, 'Parameter action wajib diisi.');
-  return handlePostAction(action, req, res, payload);
+  try {
+    return await handlePostAction(action, req, res, payload);
+  } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) {
+      console.warn(`[API Fallback] PostgreSQL lokal offline untuk aksi '${action}'. Mengalihkan ke Cloud Apps Script...`);
+      return forwardToAppsScript(req, res, action, payload);
+    }
+    return errorResponse(res, err.message);
+  }
 });
 
 // RESTful aliases

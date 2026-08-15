@@ -150,6 +150,7 @@ async function getRooms(req, res) {
 
     return res.json({ ok: true, success: true, rooms });
   } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) throw err;
     return errorResponse(res, err.message);
   }
 }
