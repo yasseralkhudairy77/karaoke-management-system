@@ -87,6 +87,20 @@ async function getRooms(req, res) {
       });
     }
 
+    const activeSessionsRes = await db.query(`
+      SELECT session_id, room_id, booking_mode, status, note, booked_duration_minutes, package_included_minutes
+      FROM room_sessions
+      WHERE status IN ('starting', 'active')
+      ORDER BY created_at DESC
+    `);
+
+    const sessionByRoom = new Map();
+    for (const session of activeSessionsRes.rows) {
+      if (!sessionByRoom.has(session.room_id)) {
+        sessionByRoom.set(session.room_id, session);
+      }
+    }
+
     const rooms = result.rows.map(r => {
       const lcAssignments = Array.from((activeLcsByRoom.get(r.room_id) || new Map()).values());
       const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
@@ -98,10 +112,28 @@ async function getRooms(req, res) {
         return orderStartTimeMs === roomStartTimeMs;
       });
 
+      const activeSession = sessionByRoom.get(r.room_id);
+      let bookingMode = 'regular';
+      let packageId = '';
+      let packageName = '';
+      let packageTotal = 0;
+
+      if (activeSession && activeSession.booking_mode === 'package') {
+        const pkgMeta = parseSessionPackageMeta(activeSession);
+        bookingMode = 'package';
+        packageId = pkgMeta.packageId;
+        packageName = pkgMeta.packageName;
+        packageTotal = pkgMeta.packageTotal;
+      }
+
       return {
         room_id: r.room_id,
         room_name: r.room_name,
         status: r.status,
+        booking_mode: bookingMode,
+        package_id: packageId,
+        package_name: packageName,
+        package_total: packageTotal,
         start_time: r.start_time ? new Date(r.start_time).toISOString() : "",
         booked_duration_minutes: r.booked_duration_minutes || 0,
         scheduled_end_time: r.scheduled_end_time ? new Date(r.scheduled_end_time).toISOString() : "",
@@ -128,7 +160,8 @@ async function startSession(req, res, payload) {
     client = await db.pool.connect();
     await client.query('BEGIN');
     const roomId = payload.room_id || req.query.room_id;
-    const durationMinutes = parseInt(payload.duration_minutes || req.query.duration_minutes || 60, 10);
+    let durationMinutes = parseInt(payload.duration_minutes || req.query.duration_minutes || 60, 10);
+    const packageId = payload.package_id || req.query.package_id || '';
     const cashierName = payload.cashier_name || 'Kasir';
     const idempotencyKey = payload.idempotency_key || null;
 
@@ -150,6 +183,23 @@ async function startSession(req, res, payload) {
       throw new Error(`Room ${roomId} sedang tidak tersedia (status: ${room.status}).`);
     }
 
+    let bookingMode = 'regular';
+    let billableMinutes = durationMinutes;
+    let packageIncludedMinutes = 0;
+    let note = payload.customer_name ? `customer_name=${payload.customer_name}` : '';
+
+    if (packageId) {
+      const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
+      if (pkgRes.rowCount > 0) {
+        const pkg = pkgRes.rows[0];
+        bookingMode = 'package';
+        durationMinutes = Number(pkg.duration_minutes || durationMinutes);
+        billableMinutes = 0;
+        packageIncludedMinutes = durationMinutes;
+        note = [note, `package_id=${pkg.package_id}`, `package_name=${pkg.package_name}`, `package_total=${Number(pkg.selling_price || 0)}`].filter(Boolean).join(' | ');
+      }
+    }
+
     const startTime = new Date();
     const scheduledEndTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
 
@@ -168,9 +218,9 @@ async function startSession(req, res, payload) {
       INSERT INTO room_sessions (
         session_id, room_id, room_name, booking_mode, status, 
         start_time, scheduled_end_time, booked_duration_minutes, 
-        billable_room_minutes, rate_per_hour, cashier_name, idempotency_key
-      ) VALUES ($1, $2, $3, 'regular', 'active', $4, $5, $6, $7, $8, $9, $10)
-    `, [sessionId, roomId, room.room_name, startTime, scheduledEndTime, durationMinutes, durationMinutes, room.rate_per_hour, cashierName, idempotencyKey]);
+        package_included_minutes, billable_room_minutes, rate_per_hour, cashier_name, idempotency_key, note
+      ) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `, [sessionId, roomId, room.room_name, bookingMode, startTime, scheduledEndTime, durationMinutes, packageIncludedMinutes, billableMinutes, room.rate_per_hour, cashierName, idempotencyKey, note]);
 
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
@@ -626,7 +676,7 @@ async function closeSession(req, res, payload) {
 
     const activeSessionRes = await client.query(`
       SELECT * FROM room_sessions
-      WHERE room_id = $1 AND status = 'active'
+      WHERE room_id = $1 AND status IN ('starting', 'active')
       ORDER BY created_at DESC
       LIMIT 1
     `, [roomId]);
@@ -715,6 +765,14 @@ async function closeSession(req, res, payload) {
           updated_at = CURRENT_TIMESTAMP
       WHERE room_id = $1
     `, [roomId]);
+
+    if (activeSessionRes.rowCount > 0) {
+      await client.query(`
+        UPDATE room_sessions
+        SET status = 'closed', end_time = $1, closed_transaction_id = $2, updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = $3
+      `, [endTime, transactionId, activeSessionRes.rows[0].session_id]);
+    }
 
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
@@ -846,7 +904,7 @@ async function activatePreparedSession(req, res, payload) {
 
     const sessionRes = await client.query(`
       SELECT * FROM room_sessions
-      WHERE room_id = $1 AND status = 'active'
+      WHERE room_id = $1 AND status IN ('starting', 'active')
       ORDER BY created_at DESC
       LIMIT 1
     `, [roomId]);

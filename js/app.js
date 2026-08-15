@@ -347,11 +347,15 @@ function getPackageForRoom(room) {
 function getRoomPriceLabel(room) {
   const pkg = getPackageForRoom(room);
   if (pkg) {
-    return `${currencyFormatter.format(Number(pkg.selling_price) || 0)} / paket`;
+    return `${pkg.package_name || pkg.package_id} (${currencyFormatter.format(Number(pkg.selling_price) || 0)})`;
   }
 
-  if (room?.package_id) {
-    return `${room.package_id} / paket`;
+  if (room?.package_name || room?.package_id) {
+    const name = room.package_name || room.package_id;
+    const total = Number(room.package_total || 0);
+    return total > 0
+      ? `${name} (${currencyFormatter.format(total)})`
+      : `${name} / paket`;
   }
 
   return `${currencyFormatter.format(Number(room?.rate_per_hour) || 0)} / jam`;
