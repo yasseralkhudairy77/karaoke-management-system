@@ -93,11 +93,14 @@ async function saveRoomMaster(req, res, payload) {
 async function saveMenuMaster(req, res, payload) {
   try {
     const menuId = payload.menu_id || `MENU-${Date.now()}`;
+    const stockItemId = payload.stock_item_id || null;
+    const stockTracking = payload.stock_tracking || (stockItemId ? 'yes' : 'no');
+    const stockQtyPerUnit = Number(payload.stock_qty_per_unit || payload.qty_per_unit || 1);
     await db.query(`
       INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit, bonus_sales_lc, hpp, variable_cost_rate)
       VALUES ($1, $2, $3, $4, COALESCE($5, 'active'), $6, $7, $8, $9, $10, $11)
       ON CONFLICT (menu_id) DO UPDATE SET menu_name = EXCLUDED.menu_name, category = EXCLUDED.category, price = EXCLUDED.price, status = EXCLUDED.status, stock_tracking = EXCLUDED.stock_tracking, stock_item_id = EXCLUDED.stock_item_id, stock_qty_per_unit = EXCLUDED.stock_qty_per_unit, bonus_sales_lc = EXCLUDED.bonus_sales_lc, hpp = EXCLUDED.hpp, variable_cost_rate = EXCLUDED.variable_cost_rate, updated_at = CURRENT_TIMESTAMP
-    `, [menuId, payload.menu_name || menuId, payload.category || 'F&B', Number(payload.price || 0), payload.status || 'active', payload.stock_tracking || 'no', payload.stock_item_id || null, Number(payload.stock_qty_per_unit || 1), Number(payload.bonus_sales_lc || 0), Number(payload.hpp || 0), Number(payload.variable_cost_rate || 0)]);
+    `, [menuId, payload.menu_name || menuId, payload.category || 'F&B', Number(payload.price || 0), payload.status || 'active', stockTracking, stockItemId, stockQtyPerUnit, Number(payload.bonus_sales_lc || 0), Number(payload.hpp || 0), Number(payload.variable_cost_rate || 0)]);
     await logMasterAudit('menu', menuId, payload.menu_name || menuId, 'save', null, payload, payload.changed_by || payload.cashier_name);
     return successResponse(res, { message: 'Master menu berhasil disimpan.', menu_id: menuId });
   } catch (err) {

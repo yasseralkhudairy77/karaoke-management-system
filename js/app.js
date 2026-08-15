@@ -2107,8 +2107,9 @@ async function executeAddInventoryItemSubmit(adminPin) {
       menu_name: addInventoryItemForm.name.trim(),
       category: addInventoryItemForm.category,
       price: Number(addInventoryItemForm.price) || 0,
+      stock_tracking: "yes",
       stock_item_id: stockItemId,
-      qty_per_unit: 1,
+      stock_qty_per_unit: 1,
       status: "active",
       admin_pin: adminPin,
       changed_by: getLoggedInOperatorName()
@@ -2210,11 +2211,7 @@ function createAddInventoryItemModalElement() {
   };
 
   grid.appendChild(createField("Nama Item F&B", "name", "text", "Contoh: Keripik Pisang"));
-  grid.appendChild(createField("Kategori", "category", "select", "", [
-    ["Snack", "Snack"],
-    ["Makanan", "Makanan"],
-    ["Minuman", "Minuman"]
-  ]));
+  grid.appendChild(createField("Kategori", "category", "text", "Contoh: Cigarette, Minuman, Snack, Makanan"));
   grid.appendChild(createField("Harga Jual (Rp)", "price", "number", "Contoh: 15000"));
   grid.appendChild(createField("Satuan (Unit)", "unit", "text", "Contoh: pcs, porsi, botol"));
   grid.appendChild(createField("Minimum Stok", "min_stock", "number", "Contoh: 5"));
