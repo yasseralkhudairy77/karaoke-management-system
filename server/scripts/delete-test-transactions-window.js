@@ -112,7 +112,7 @@ async function main() {
         const qtyToRestore = mov.movement_type === 'out' ? Math.abs(Number(mov.qty_change)) : -Number(mov.qty_change);
         await client.query(`
           UPDATE inventory
-          SET current_stock = current_stock + $1,
+          SET stock_qty = stock_qty + $1,
               updated_at = CURRENT_TIMESTAMP
           WHERE stock_item_id = $2
         `, [qtyToRestore, mov.stock_item_id]);
