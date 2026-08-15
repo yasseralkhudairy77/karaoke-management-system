@@ -31,6 +31,8 @@ function serializeTransaction(row) {
     package_id: row.package_id || '',
     package_name: row.package_name || '',
     package_total: Number(row.package_total || 0),
+    promo_code: row.promo_code || '',
+    promo_discount: Number(row.promo_discount || 0),
     corrected_at: row.corrected_at ? new Date(row.corrected_at).toISOString() : '',
     corrected_by: row.corrected_by || '',
     correction_note: row.correction_note || '',
@@ -77,6 +79,8 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS billable_room_minutes INT;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS transaction_correction_logs (
       correction_id VARCHAR(80) PRIMARY KEY,
@@ -249,6 +253,7 @@ async function markTransactionPaid(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
 
     const { transaction_id, payment_method = 'cash', promo_code = '' } = payload;
     if (!transaction_id) throw new Error('transaction_id wajib diisi.');
@@ -322,7 +327,7 @@ async function markTransactionPaid(req, res, payload) {
 
     return successResponse(res, {
       message: `Transaksi ${transaction_id} berhasil ditandai Lunas.`,
-      transaction: updatedTrx.rows[0]
+      transaction: serializeTransaction(updatedTrx.rows[0])
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK');

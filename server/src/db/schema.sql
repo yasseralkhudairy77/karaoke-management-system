@@ -216,6 +216,8 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS billable_room_minutes INT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL DEFAULT 0;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     correction_id VARCHAR(80) PRIMARY KEY,
