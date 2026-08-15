@@ -345,6 +345,10 @@ function getPackageForRoom(room) {
 }
 
 function getRoomPriceLabel(room) {
+  if (room?.status === "available" || room?.status === "cleaning") {
+    return `${currencyFormatter.format(Number(room?.rate_per_hour) || 0)} / jam`;
+  }
+
   const pkg = getPackageForRoom(room);
   if (pkg) {
     return `${pkg.package_name || pkg.package_id} (${currencyFormatter.format(Number(pkg.selling_price) || 0)})`;

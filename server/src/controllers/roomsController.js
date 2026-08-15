@@ -118,7 +118,7 @@ async function getRooms(req, res) {
       let packageName = '';
       let packageTotal = 0;
 
-      if (activeSession && activeSession.booking_mode === 'package') {
+      if (r.status !== 'available' && r.status !== 'cleaning' && activeSession && activeSession.booking_mode === 'package') {
         const pkgMeta = parseSessionPackageMeta(activeSession);
         bookingMode = 'package';
         packageId = pkgMeta.packageId;
