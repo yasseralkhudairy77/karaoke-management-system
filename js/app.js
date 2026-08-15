@@ -4674,14 +4674,7 @@ function isFnbOrderForActiveRoomSession(order, room, roomStartTime = "") {
     return false;
   }
 
-  const normalizedRoomStartTime = roomStartTime || formatJakartaIsoString(room.start_time);
-  const normalizedOrderStartTime = formatJakartaIsoString(order.room_start_time);
-
-  if (!normalizedRoomStartTime || !normalizedOrderStartTime) {
-    return true;
-  }
-
-  return normalizedOrderStartTime === normalizedRoomStartTime;
+  return true;
 }
 
 function mergeOpenFnbOrdersForRoom(room, roomStartTime = "") {

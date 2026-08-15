@@ -214,11 +214,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
   ]);
 
   const rooms = roomsRes.rows.map(room => {
-    const roomStartMs = room.start_time ? new Date(room.start_time).getTime() : 0;
     const roomOpenFnbOrders = openFnbOrders.filter(order => {
-      if (order.room_id !== room.room_id) return false;
-      if (!roomStartMs || !order.room_start_time) return true;
-      return new Date(order.room_start_time).getTime() === roomStartMs;
+      return order.room_id === room.room_id;
     });
 
     return {

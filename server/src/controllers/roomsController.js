@@ -127,12 +127,8 @@ async function getRooms(req, res) {
     const rooms = result.rows.map(r => {
       const lcAssignments = Array.from((activeLcsByRoom.get(r.room_id) || new Map()).values());
       const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
-      const roomStartTimeMs = r.start_time ? new Date(r.start_time).getTime() : 0;
       const roomOpenFnbOrders = openFnbOrders.filter(order => {
-        if (order.room_id !== r.room_id || order.order_status !== 'open') return false;
-        if (!roomStartTimeMs || !order.room_start_time) return true;
-        const orderStartTimeMs = new Date(order.room_start_time).getTime();
-        return orderStartTimeMs === roomStartTimeMs;
+        return order.room_id === r.room_id && order.order_status === 'open';
       });
 
       const activeSession = sessionByRoom.get(r.room_id);
