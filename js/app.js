@@ -4257,6 +4257,7 @@ function syncSelectedFbRoomWithRooms() {
 function normalizeRooms(rawRooms) {
   return rawRooms.map((room) => {
     const ratePerHour = Number(room.rate_per_hour);
+    const openFnbOrders = parseRoomOpenFnbOrders(room);
 
     return {
       room_id: room.room_id || "",
@@ -4269,6 +4270,14 @@ function normalizeRooms(rawRooms) {
       updated_at: room.updated_at || null,
       customer_name: room.customer_name || "",
       package_id: room.package_id || "",
+      package_name: room.package_name || "",
+      package_total: Number(room.package_total) || 0,
+      booking_mode: room.booking_mode || "regular",
+      open_fnb_orders: openFnbOrders,
+      open_fnb_total: Number(room.open_fnb_total) || openFnbOrders.reduce(
+        (total, order) => total + (Number(order?.order_total) || 0),
+        0
+      ),
       lc_ids: String(room.lc_ids || "").trim(),
       lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
       _debug_lc_info: room._debug_lc_info || null,
