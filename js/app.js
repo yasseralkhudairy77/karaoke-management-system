@@ -3135,8 +3135,7 @@ async function loadOpenFnbOrders() {
     openFnbOrderSummary = data.summary || null;
   } catch (error) {
     console.warn("Gagal memuat open order F&B.", error);
-    openFnbOrders = [];
-    openFnbOrderSummary = null;
+    openFnbOrderSummary = openFnbOrderSummary || null;
   } finally {
     isLoadingOpenFnbOrders = false;
     renderRooms();
@@ -4670,7 +4669,12 @@ function parseRoomOpenFnbOrders(room) {
 }
 
 function isFnbOrderForActiveRoomSession(order, room, roomStartTime = "") {
-  if (!order || !room || order.order_status !== "open") {
+  if (!order || !room) {
+    return false;
+  }
+
+  const orderStatus = String(order.order_status || "open").toLowerCase();
+  if (orderStatus && orderStatus !== "open") {
     return false;
   }
 
@@ -4878,6 +4882,7 @@ function buildFnbOrderPayload(idempotencyKey) {
   return {
     action: "saveFnbOrder",
     room_id: fnbOrderMode === "general" ? "FNB-GENERAL" : selectedFbRoomId,
+    room_start_time: fnbOrderMode === "general" ? "" : getSelectedFbRoomStartTime(),
     items: fbCartItems.map((item) => ({
       menu_id: item.menu_id,
       quantity: item.quantity,
@@ -5024,6 +5029,19 @@ async function performFnbOrderSave(isGeneralOrder) {
       order: data.order || null,
       items: Array.isArray(data.items) ? data.items : [],
     };
+    if (!isGeneralOrder && data.order?.order_status === "open") {
+      const savedOpenOrder = Object.assign({}, data.order, {
+        room_id: data.order.room_id || selectedRoom?.room_id || selectedFbRoomId,
+        room_name: data.order.room_name || selectedRoom?.room_name || selectedFbRoomId,
+        room_start_time: data.order.room_start_time || selectedRoom?.start_time || "",
+        order_status: "open",
+        items: lastFnbOrder.items,
+      });
+      openFnbOrders = [
+        ...openFnbOrders.filter((order) => order.order_id !== savedOpenOrder.order_id),
+        savedOpenOrder,
+      ];
+    }
     fbCartItems = [];
     fnbOrderNote = "";
     resetFnbOrderIdempotencyKey();
