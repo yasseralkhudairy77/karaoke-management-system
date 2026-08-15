@@ -2,8 +2,9 @@ const db = require('../src/db');
 
 async function main() {
   const isDryRun = process.argv.includes('--dry-run');
-  const startTime = process.argv[2] || '2026-08-15T04:00:00.000Z'; // 11:00 WIB (04:00 UTC)
-  const endTime = process.argv[3] || '2026-08-15T06:50:00.000Z';   // 13:50 WIB (06:50 UTC)
+  const positionalArgs = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
+  const startTime = positionalArgs[0] || '2026-08-15T04:00:00.000Z'; // 11:00 WIB (04:00 UTC)
+  const endTime = positionalArgs[1] || '2026-08-15T06:50:00.000Z';   // 13:50 WIB (06:50 UTC)
 
   console.log(`🔍 Memeriksa & memulihkan data tes operasional (Sesi, Transaksi, F&B, Stok, & LC)`);
   console.log(`⏱️ Rentang Waktu: ${startTime} s/d ${endTime}\n`);
