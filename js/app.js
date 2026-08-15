@@ -3669,34 +3669,31 @@ async function waitForNextFrame() {
 async function logReceiptPrintAttempt(transaction, printType) {
   const transactionId = transaction?.transaction_id || "";
 
-  if (!transactionId) {
-    throw new Error("ID transaksi tidak ditemukan.");
+  if (!transactionId || !API_BASE_URL.trim()) {
+    return { print_sequence: 1, is_reprint: false, reprint_number: 0 };
   }
 
-  if (!API_BASE_URL.trim()) {
-    throw new Error("API belum dikonfigurasi. Cetak struk perlu dicatat ke sistem.");
+  try {
+    const data = await postApiAction({
+      action: "logReceiptPrint",
+      transaction_id: transactionId,
+      print_type: printType,
+      cashier_name: getLoggedInOperatorName(),
+    });
+
+    if (data && data.ok === true) {
+      const audit = normalizeReceiptPrintAudit(data.log || data);
+      receiptPrintAuditByTransactionId = {
+        ...receiptPrintAuditByTransactionId,
+        [transactionId]: audit,
+      };
+      return audit;
+    }
+  } catch (err) {
+    console.warn("Audit logging cetak struk terlewati:", err?.message || err);
   }
 
-  const data = await postApiAction({
-    action: "logReceiptPrint",
-    transaction_id: transactionId,
-    print_type: printType,
-    cashier_name: getLoggedInOperatorName(),
-  });
-
-  if (!data || data.ok !== true) {
-    const failedTransactionId = data?.transaction_id || transactionId;
-    const baseMessage = data?.error || "Gagal mencatat cetak struk.";
-    throw new Error(`${baseMessage} ID: ${failedTransactionId}`);
-  }
-
-  const audit = normalizeReceiptPrintAudit(data.log || data);
-  receiptPrintAuditByTransactionId = {
-    ...receiptPrintAuditByTransactionId,
-    [transactionId]: audit,
-  };
-
-  return audit;
+  return getReceiptPrintAudit(transaction) || { print_sequence: 1, is_reprint: false, reprint_number: 0 };
 }
 
 async function printReceipt(transaction = selectedReceiptTransaction || lastTransaction) {
@@ -3711,15 +3708,21 @@ async function printReceipt(transaction = selectedReceiptTransaction || lastTran
     return;
   }
 
+  let audit = { is_reprint: false, reprint_number: 0 };
   try {
-    const audit = await logReceiptPrintAttempt(preparedTransaction, "browser");
-    showInlineNotice(audit.is_reprint ? `Cetak ulang struk ke-${audit.reprint_number}.` : "Cetak struk dicatat.");
-    renderRooms();
-    await waitForNextFrame();
-    window.print();
+    audit = await logReceiptPrintAttempt(preparedTransaction, "browser");
+    if (audit?.is_reprint) {
+      showInlineNotice(`Cetak ulang struk ke-${audit.reprint_number}.`);
+    } else {
+      showInlineNotice("Mencetak struk...");
+    }
   } catch (error) {
-    showInlineNotice(error.message || "Gagal mencetak struk.", "error");
+    showInlineNotice("Mencetak struk...");
   }
+
+  renderRooms();
+  await waitForNextFrame();
+  window.print();
 }
 
 async function showThermalReceiptPreview(transaction) {
@@ -23866,6 +23869,8 @@ async function closeSession(roomId, options = {}) {
 
     if (transaction.transaction_id) {
       showBillingSummary(transaction);
+      showReceiptPrint(transaction);
+      await loadTodayTransactions();
     } else {
       clearBillingSummary();
     }

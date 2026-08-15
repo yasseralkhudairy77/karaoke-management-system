@@ -342,18 +342,46 @@ async function logReceiptPrint(req, res, payload) {
     const { transaction_id, print_type = 'thermal', cashier_name = 'Kasir', note = '' } = payload;
     if (!transaction_id) throw new Error('transaction_id wajib diisi.');
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS receipt_print_logs (
+        print_log_id VARCHAR(50) PRIMARY KEY,
+        transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+        print_sequence INT NOT NULL DEFAULT 1,
+        is_reprint BOOLEAN DEFAULT FALSE,
+        print_type VARCHAR(20),
+        cashier_name VARCHAR(100) NOT NULL,
+        printed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        note TEXT
+      )
+    `);
+
     const logRes = await db.query('SELECT COUNT(*) FROM receipt_print_logs WHERE transaction_id = $1', [transaction_id]);
-    const printSeq = parseInt(logRes.rows[0].count || 0, 10) + 1;
+    const printSeq = parseInt(logRes.rows[0]?.count || 0, 10) + 1;
     const isReprint = printSeq > 1;
 
     const logId = `RPL-${Date.now()}`;
+    const printedAt = new Date();
     await db.query(`
       INSERT INTO receipt_print_logs (
-        print_log_id, transaction_id, print_sequence, is_reprint, print_type, cashier_name, note
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, [logId, transaction_id, printSeq, isReprint, print_type, cashier_name, note]);
+        print_log_id, transaction_id, print_sequence, is_reprint, print_type, cashier_name, printed_at, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [logId, transaction_id, printSeq, isReprint, print_type, cashier_name, printedAt, note]);
 
-    return successResponse(res, { message: 'Audit cetak struk dicatat.', print_sequence: printSeq, is_reprint: isReprint });
+    return successResponse(res, {
+      message: 'Audit cetak struk dicatat.',
+      print_sequence: printSeq,
+      is_reprint: isReprint,
+      log: {
+        print_log_id: logId,
+        transaction_id,
+        print_sequence: printSeq,
+        is_reprint: isReprint,
+        reprint_number: Math.max(0, printSeq - 1),
+        print_type,
+        cashier_name,
+        printed_at: printedAt.toISOString()
+      }
+    });
   } catch (err) {
     return errorResponse(res, err.message);
   }
