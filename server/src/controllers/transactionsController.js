@@ -360,14 +360,24 @@ async function logReceiptPrint(req, res, payload) {
 }
 
 async function updateTransactionDetails(req, res, payload) {
+  let client;
   try {
     const transactionId = payload.transaction_id;
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
 
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const trxCheck = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxCheck.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+
     const fields = [];
     const params = [];
     const allowed = {
-      payment_method: value => String(value || '').toLowerCase(),
+      payment_method: value => {
+        const val = String(value || '').toLowerCase().trim();
+        return ['transfer', 'qris'].includes(val) ? 'transfer' : 'cash';
+      },
       payment_status: value => String(value || '').toLowerCase(),
       room_total: value => Number(value || 0),
       fnb_total: value => Number(value || 0),
@@ -385,10 +395,26 @@ async function updateTransactionDetails(req, res, payload) {
 
     if (fields.length === 0) throw new Error('Tidak ada field transaksi yang diperbarui.');
     params.push(transactionId);
-    await db.query(`UPDATE transactions SET ${fields.join(', ')} WHERE transaction_id = $${params.length}`, params);
-    return successResponse(res, { message: 'Transaksi berhasil diperbarui.', transaction_id: transactionId });
+    await client.query(`UPDATE transactions SET ${fields.join(', ')} WHERE transaction_id = $${params.length}`, params);
+
+    const updatedTrx = await client.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
+    if (updatedTrx.rowCount > 0) {
+      await refreshClosingSnapshotForTransaction(client, updatedTrx.rows[0]);
+    }
+
+    await client.query('COMMIT');
+
+    const serialized = serializeTransaction(updatedTrx.rows[0]);
+    return successResponse(res, {
+      message: `Metode pembayaran transaksi ${transactionId} berhasil diperbarui ke ${serialized.payment_method ? serialized.payment_method.toUpperCase() : ''}.`,
+      transaction: serialized,
+      transaction_id: transactionId
+    });
   } catch (err) {
+    if (client) await client.query('ROLLBACK');
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 

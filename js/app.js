@@ -3513,14 +3513,36 @@ function createActionConfirmationElement() {
     field.className = "action-confirmation-field";
     const fieldLabel = document.createElement("span");
     fieldLabel.textContent = modal.field.label || "Catatan";
-    const input = modal.field.multiline
-      ? document.createElement("textarea")
-      : document.createElement("input");
-    input.className = "action-confirmation-input";
-    input.value = modal.fieldValue || "";
-    input.placeholder = modal.field.placeholder || "";
+
+    let input;
+    if (Array.isArray(modal.field.options)) {
+      input = document.createElement("select");
+      input.className = "action-confirmation-input action-confirmation-select";
+      modal.field.options.forEach(([optVal, optText]) => {
+        const opt = document.createElement("option");
+        opt.value = optVal;
+        opt.textContent = optText;
+        if (optVal === (modal.fieldValue || modal.field.value)) {
+          opt.selected = true;
+        }
+        input.appendChild(opt);
+      });
+      input.onchange = (event) => updateActionConfirmationField(event.target.value);
+    } else if (modal.field.multiline) {
+      input = document.createElement("textarea");
+      input.className = "action-confirmation-input";
+      input.value = modal.fieldValue || "";
+      input.placeholder = modal.field.placeholder || "";
+      input.oninput = (event) => updateActionConfirmationField(event.target.value);
+    } else {
+      input = document.createElement("input");
+      input.className = "action-confirmation-input";
+      input.value = modal.fieldValue || "";
+      input.placeholder = modal.field.placeholder || "";
+      input.oninput = (event) => updateActionConfirmationField(event.target.value);
+    }
+
     input.disabled = modal.busy;
-    input.oninput = (event) => updateActionConfirmationField(event.target.value);
     field.append(fieldLabel, input);
     dialog.appendChild(field);
   }
@@ -7860,13 +7882,14 @@ function createReceiptPrintElement(transaction) {
   thermalPrintButton.dataset.action = "print-thermal-receipt";
   thermalPrintButton.textContent = "Cetak Thermal";
 
-  const closeButton = document.createElement("button");
-  closeButton.className = "receipt-print-button secondary";
-  closeButton.type = "button";
-  closeButton.dataset.action = "hide-receipt-print";
-  closeButton.textContent = "Tutup Preview";
+  const changePaymentMethodButton = document.createElement("button");
+  changePaymentMethodButton.className = "receipt-print-button secondary";
+  changePaymentMethodButton.type = "button";
+  changePaymentMethodButton.dataset.action = "open-change-payment-method";
+  changePaymentMethodButton.dataset.transactionId = transaction?.transaction_id || "";
+  changePaymentMethodButton.textContent = "Ubah Metode Bayar";
 
-  actions.append(printButton, thermalPreviewButton, thermalPrintButton, closeButton);
+  actions.append(printButton, thermalPreviewButton, thermalPrintButton, changePaymentMethodButton, closeButton);
   receipt.append(
     header,
     reprintNotice,
@@ -15106,6 +15129,14 @@ function createTransactionActionsElement(transaction) {
   printButton.dataset.transactionId = transaction?.transaction_id || "";
   printButton.textContent = transaction?.payment_status === "paid" ? "Cetak" : "Struk";
   actions.appendChild(printButton);
+
+  const changeMethodButton = document.createElement("button");
+  changeMethodButton.className = "transaction-action-button";
+  changeMethodButton.type = "button";
+  changeMethodButton.dataset.action = "open-change-payment-method";
+  changeMethodButton.dataset.transactionId = transaction?.transaction_id || "";
+  changeMethodButton.textContent = "Ubah Metode";
+  actions.appendChild(changeMethodButton);
 
   if (getCurrentOperatorRole() === "owner") {
     const correctionButton = document.createElement("button");
@@ -24136,6 +24167,79 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
   }
 }
 
+function openChangePaymentMethodModal(transactionId) {
+  const transaction = getTransactionById(transactionId)
+    || todayTransactions.find((t) => t.transaction_id === transactionId)
+    || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null);
+
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan.", "error");
+    return;
+  }
+
+  const currentMethod = String(transaction.payment_method || "cash").toLowerCase();
+
+  openActionConfirmation({
+    tone: "warning",
+    title: "Ubah Metode Pembayaran",
+    message: "Pilih metode pembayaran baru untuk transaksi ini. Rekapan laporan harian kasir akan diperbarui secara otomatis.",
+    details: [
+      ["ID Transaksi", transaction.transaction_id || transactionId],
+      ["Ruangan", transaction.room_name || transaction.room_id || "-"],
+      ["Metode Saat Ini", formatPaymentMethodLabel(currentMethod)],
+      ["Total Transaksi", formatCurrency(getTransactionFinalTotal(transaction))],
+    ],
+    field: {
+      label: "Pilih Metode Pembayaran Baru",
+      options: [
+        ["cash", "Cash (Tunai)"],
+        ["transfer", "Transfer / QRIS"],
+      ],
+      value: currentMethod,
+    },
+    confirmLabel: "Simpan Perubahan Metode",
+    cancelLabel: "Batal",
+    onConfirm: (selectedMethod) => changeTransactionPaymentMethod(transactionId, selectedMethod || currentMethod),
+  });
+}
+
+async function changeTransactionPaymentMethod(transactionId, newPaymentMethod) {
+  if (!transactionId) return;
+
+  const normalizedMethod = String(newPaymentMethod || "cash").toLowerCase();
+
+  try {
+    const data = await postApiAction({
+      action: "updateTransactionDetails",
+      transaction_id: transactionId,
+      payment_method: normalizedMethod,
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memperbarui metode pembayaran.");
+    }
+
+    const updatedTrx = data.transaction;
+    if (updatedTrx) {
+      const idx = todayTransactions.findIndex((t) => t.transaction_id === transactionId);
+      if (idx !== -1) {
+        todayTransactions[idx] = { ...todayTransactions[idx], ...updatedTrx };
+      }
+      if (lastTransaction?.transaction_id === transactionId) {
+        lastTransaction = { ...lastTransaction, ...updatedTrx };
+      }
+      if (selectedReceiptTransaction?.transaction_id === transactionId) {
+        selectedReceiptTransaction = { ...selectedReceiptTransaction, ...updatedTrx };
+      }
+    }
+
+    await loadTodayTransactions();
+    showFloatingToast(`Metode pembayaran transaksi ${transactionId} berhasil diubah ke ${formatPaymentMethodLabel(normalizedMethod)}.`, "success");
+  } catch (err) {
+    showFloatingToast(`Gagal mengubah metode pembayaran: ${err.message}`, "error");
+  }
+}
+
 async function saveCashierClosing() {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
@@ -24891,6 +24995,12 @@ async function handleRoomAction(event) {
 
   if (action === "show-receipt-print") {
     showReceiptPrint(await findTransactionForAction(button));
+    return;
+  }
+
+  if (action === "open-change-payment-method") {
+    const transactionId = button.dataset.transactionId || button.closest("[data-transaction-id]")?.dataset.transactionId || "";
+    openChangePaymentMethodModal(transactionId);
     return;
   }
 
