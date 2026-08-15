@@ -33,17 +33,25 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
 echo -----------------------------------------------------------------------
 echo.
 
-echo [2/3] Membuka Dashboard Kasir di Browser...
+echo [2/3] Membuka Dashboard Kasir di Google Chrome...
 timeout /t 2 /nobreak >nul
-start http://localhost:3000
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
+    start "" "%ProgramFiles%\Google\Chrome\Application\chrome.exe" http://localhost:3000
+) else if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" (
+    start "" "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" http://localhost:3000
+) else if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" (
+    start "" "%LocalAppData%\Google\Chrome\Application\chrome.exe" http://localhost:3000
+) else (
+    start chrome http://localhost:3000 || start http://localhost:3000
+)
 
 echo.
 echo [3/3] Menyalakan Server POS...
 echo =======================================================================
 echo  STATUS SERVER: ONLINE & AKTIF (JANGAN TUTUP JENDELA INI SAAT JAM OPERASIONAL)
 echo.
-echo  - Akses PC Kasir      : http://localhost:3000
-echo  - Akses Tablet Manager : http://192.168.1.4:3000 (atau IP WiFi di atas)
+echo  - Akses PC Kasir (Chrome) : http://localhost:3000
+echo  - Akses Tablet Manager   : http://192.168.1.4:3000 (atau IP WiFi di atas)
 echo =======================================================================
 echo.
 
