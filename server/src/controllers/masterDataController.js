@@ -110,12 +110,37 @@ async function saveMenuMaster(req, res, payload) {
 
 async function saveInventoryMaster(req, res, payload) {
   try {
-    const stockItemId = payload.stock_item_id || payload.item_id || `STOCK-${Date.now()}`;
+    const stockItemName = payload.stock_item_name || payload.item_name || '';
+    const category = payload.category || 'General';
+    let stockItemId = payload.stock_item_id || payload.item_id || '';
+    let existingStockQty = null;
+
+    if (!stockItemId && stockItemName) {
+      const existingRes = await db.query(`
+        SELECT stock_item_id, stock_qty
+        FROM inventory
+        WHERE LOWER(stock_item_name) = LOWER($1)
+          AND LOWER(category) = LOWER($2)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `, [stockItemName, category]);
+      stockItemId = existingRes.rows[0]?.stock_item_id || '';
+      existingStockQty = existingRes.rows[0]?.stock_qty ?? null;
+    }
+
+    if (!stockItemId) {
+      stockItemId = `STOCK-${Date.now()}`;
+    }
+
+    const stockQty = Object.prototype.hasOwnProperty.call(payload, 'stock_qty')
+      ? Number(payload.stock_qty || 0)
+      : Number(existingStockQty || 0);
+
     await db.query(`
       INSERT INTO inventory (stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status)
       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'active'))
       ON CONFLICT (stock_item_id) DO UPDATE SET stock_item_name = EXCLUDED.stock_item_name, category = EXCLUDED.category, unit = EXCLUDED.unit, stock_qty = EXCLUDED.stock_qty, min_stock = EXCLUDED.min_stock, status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP
-    `, [stockItemId, payload.stock_item_name || payload.item_name || stockItemId, payload.category || 'General', payload.unit || 'pcs', Number(payload.stock_qty || 0), Number(payload.min_stock || 0), payload.status || 'active']);
+    `, [stockItemId, stockItemName || stockItemId, category, payload.unit || 'pcs', stockQty, Number(payload.min_stock || 0), payload.status || 'active']);
     await logMasterAudit('inventory', stockItemId, payload.stock_item_name || stockItemId, 'save', null, payload, payload.changed_by || payload.cashier_name);
     return successResponse(res, { message: 'Master stok berhasil disimpan.', stock_item_id: stockItemId });
   } catch (err) {

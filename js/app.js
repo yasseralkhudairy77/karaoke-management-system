@@ -2095,7 +2095,7 @@ async function executeAddInventoryItemSubmit(adminPin) {
       throw new Error(invResponse?.message || invResponse?.error || "Gagal mendaftarkan item stok.");
     }
 
-    const savedInventory = invResponse.data || {};
+    const savedInventory = invResponse.data || invResponse || {};
     const stockItemId = savedInventory.stock_item_id;
 
     if (!stockItemId) {
