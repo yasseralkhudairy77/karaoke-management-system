@@ -215,7 +215,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
 
   const rooms = roomsRes.rows.map(room => {
     const roomOpenFnbOrders = openFnbOrders.filter(order => {
-      return order.room_id === room.room_id;
+      if (order.room_id && order.room_id === room.room_id) return true;
+      return Boolean(order.room_name && room.room_name && order.room_name === room.room_name);
     });
 
     return {

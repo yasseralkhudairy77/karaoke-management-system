@@ -128,7 +128,9 @@ async function getRooms(req, res) {
       const lcAssignments = Array.from((activeLcsByRoom.get(r.room_id) || new Map()).values());
       const lcIds = lcAssignments.map(lc => lc.lc_id).filter(Boolean).join(',');
       const roomOpenFnbOrders = openFnbOrders.filter(order => {
-        return order.room_id === r.room_id && order.order_status === 'open';
+        if (order.order_status !== 'open') return false;
+        if (order.room_id && order.room_id === r.room_id) return true;
+        return Boolean(order.room_name && r.room_name && order.room_name === r.room_name);
       });
 
       const activeSession = sessionByRoom.get(r.room_id);

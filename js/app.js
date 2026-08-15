@@ -4670,11 +4670,19 @@ function parseRoomOpenFnbOrders(room) {
 }
 
 function isFnbOrderForActiveRoomSession(order, room, roomStartTime = "") {
-  if (!order || !room || order.room_id !== room.room_id || order.order_status !== "open") {
+  if (!order || !room || order.order_status !== "open") {
     return false;
   }
 
-  return true;
+  const orderRoomId = String(order.room_id || "").trim();
+  const roomId = String(room.room_id || "").trim();
+  if (orderRoomId && roomId && orderRoomId === roomId) {
+    return true;
+  }
+
+  const orderRoomName = String(order.room_name || "").trim().toLowerCase();
+  const roomName = String(room.room_name || "").trim().toLowerCase();
+  return Boolean(orderRoomName && roomName && orderRoomName === roomName);
 }
 
 function mergeOpenFnbOrdersForRoom(room, roomStartTime = "") {
@@ -8272,7 +8280,7 @@ function createRoomRecoveryCandidateElement(candidate) {
 }
 
 function getOpenFnbOrdersForRoom(room) {
-  if (room.status !== "occupied" || !room.start_time) {
+  if (room.status !== "occupied") {
     return [];
   }
   const roomStartTime = formatJakartaIsoString(room.start_time);
