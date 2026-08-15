@@ -199,6 +199,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
       SELECT *
       FROM transactions
       WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status <> 'cancelled'
       ORDER BY created_at DESC
     `, [startDate, endDate]),
     db.query(`
