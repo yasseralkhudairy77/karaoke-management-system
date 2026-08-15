@@ -167,6 +167,8 @@ async function handlePostAction(action, req, res, payload) {
       return roomsController.startSession(req, res, payload);
     case 'extendSession':
       return roomsController.extendSession(req, res, payload);
+    case 'updateActiveSessionPackage':
+      return roomsController.updateActiveSessionPackage(req, res, payload);
     case 'closeSession':
       return roomsController.closeSession(req, res, payload);
     case 'completeCleaning':

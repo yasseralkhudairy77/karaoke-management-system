@@ -11,6 +11,29 @@ function parseSessionPackageMeta(session) {
   return { packageId, packageName, packageTotal };
 }
 
+function stripSessionPackageMeta(note) {
+  return String(note || '')
+    .split('|')
+    .map(part => part.trim())
+    .filter(part => part && !/^package_(id|name|total)=/i.test(part))
+    .join(' | ');
+}
+
+function buildSessionPackageNote(baseNote, pkg = null, reason = '') {
+  const parts = [];
+  const cleanBase = stripSessionPackageMeta(baseNote);
+  if (cleanBase) parts.push(cleanBase);
+  if (pkg) {
+    parts.push(`package_id=${pkg.package_id}`);
+    parts.push(`package_name=${pkg.package_name}`);
+    parts.push(`package_total=${Number(pkg.selling_price || 0)}`);
+  }
+  if (reason) {
+    parts.push(`package_change_reason=${String(reason).replace(/\|/g, '/').trim()}`);
+  }
+  return parts.join(' | ');
+}
+
 async function getRooms(req, res) {
   try {
     const result = await db.query(`
@@ -574,6 +597,131 @@ async function extendSession(req, res, payload) {
   }
 }
 
+async function updateActiveSessionPackage(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const roomId = payload.room_id || req.query.room_id || '';
+    const packageId = String(payload.package_id || req.query.package_id || '').trim();
+    const reason = String(payload.reason || payload.note || '').trim();
+    const changedBy = payload.cashier_name || payload.changed_by || 'Kasir';
+
+    if (!roomId) throw new Error('room_id wajib diisi.');
+    if (!reason) throw new Error('Alasan ubah paket wajib diisi.');
+
+    const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
+    if (roomRes.rowCount === 0) throw new Error('Room tidak ditemukan.');
+    const room = roomRes.rows[0];
+    if (room.status !== 'occupied') throw new Error('Ubah paket hanya bisa untuk sesi room yang sedang berjalan.');
+
+    const sessionRes = await client.query(`
+      SELECT *
+      FROM room_sessions
+      WHERE room_id = $1 AND status IN ('starting', 'active')
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [roomId]);
+    if (sessionRes.rowCount === 0) throw new Error('Sesi aktif tidak ditemukan.');
+
+    const session = sessionRes.rows[0];
+    const oldMeta = parseSessionPackageMeta(session);
+    const oldValue = {
+      session_id: session.session_id,
+      room_id: roomId,
+      room_name: room.room_name,
+      booking_mode: session.booking_mode || 'regular',
+      package_id: oldMeta.packageId,
+      package_name: oldMeta.packageName,
+      package_total: oldMeta.packageTotal,
+      note: session.note || ''
+    };
+
+    let nextBookingMode = 'regular';
+    let nextNote = buildSessionPackageNote(session.note, null, reason);
+    let nextPackage = null;
+    let nextBillableMinutes = Number(session.booked_duration_minutes || room.booked_duration_minutes || 0);
+    let nextIncludedMinutes = 0;
+
+    if (packageId) {
+      const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
+      if (pkgRes.rowCount === 0) throw new Error('Paket tidak ditemukan atau tidak aktif.');
+      nextPackage = pkgRes.rows[0];
+      nextBookingMode = 'package';
+      nextNote = buildSessionPackageNote(session.note, nextPackage, reason);
+      nextBillableMinutes = 0;
+      nextIncludedMinutes = Number(session.booked_duration_minutes || room.booked_duration_minutes || nextPackage.duration_minutes || 0);
+    }
+
+    await client.query(`
+      UPDATE room_sessions
+      SET booking_mode = $1,
+          package_included_minutes = $2,
+          billable_room_minutes = $3,
+          note = $4,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = $5
+    `, [nextBookingMode, nextIncludedMinutes, nextBillableMinutes, nextNote, session.session_id]);
+
+    const newValue = {
+      session_id: session.session_id,
+      room_id: roomId,
+      room_name: room.room_name,
+      booking_mode: nextBookingMode,
+      package_id: nextPackage?.package_id || '',
+      package_name: nextPackage?.package_name || '',
+      package_total: Number(nextPackage?.selling_price || 0),
+      reason
+    };
+
+    await client.query(`
+      INSERT INTO master_data_audit_logs (
+        log_id, entity_type, entity_id, entity_name, action_type,
+        old_value_json, new_value_json, changed_by, note, result
+      ) VALUES ($1, 'room_session', $2, $3, 'package_change', $4, $5, $6, $7, 'success')
+    `, [
+      `MDA-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      session.session_id,
+      room.room_name,
+      oldValue,
+      newValue,
+      changedBy,
+      reason
+    ]);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('room_sessions', $1, 'UPDATE_PACKAGE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [session.session_id, JSON.stringify(newValue)]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: nextBookingMode === 'package'
+        ? `Paket sesi ${room.room_name} berhasil diubah ke ${nextPackage.package_name}.`
+        : `Paket sesi ${room.room_name} berhasil diubah ke Tanpa Paket.`,
+      room_id: roomId,
+      session_id: session.session_id,
+      booking_mode: nextBookingMode,
+      package_id: nextPackage?.package_id || '',
+      package_name: nextPackage?.package_name || '',
+      package_total: Number(nextPackage?.selling_price || 0)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashierName) {
   if (!fnbOrderIds || fnbOrderIds.length === 0) return { movements: [] };
 
@@ -1107,6 +1255,7 @@ module.exports = {
   activatePreparedSession,
   startSession,
   extendSession,
+  updateActiveSessionPackage,
   closeSession,
   completeCleaning,
   cancelBooking,
