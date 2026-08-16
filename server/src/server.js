@@ -19,10 +19,20 @@ const allowedOrigins = [
   /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/
 ];
 
+const normalizeOrigin = (value) => String(value || '').trim().replace(/\/$/, '').toLowerCase();
+const configuredAllowedOrigins = new Set([
+  'https://karaoke-management-system-production.up.railway.app',
+  process.env.APP_PUBLIC_URL,
+  process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '',
+  ...String(process.env.CORS_ALLOWED_ORIGINS || '').split(',')
+].map(normalizeOrigin).filter(Boolean));
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    const isAllowed = allowedOrigins.some(regex => regex.test(origin));
+    const normalizedOrigin = normalizeOrigin(origin);
+    const isAllowed = configuredAllowedOrigins.has(normalizedOrigin)
+      || allowedOrigins.some(regex => regex.test(normalizedOrigin));
     if (isAllowed) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
