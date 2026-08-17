@@ -5021,7 +5021,7 @@ async function executeSaveFnbOrder() {
     return;
   }
 
-  activeFnbOrderSavePromise = performFnbOrderSave(isGeneralOrder);
+  activeFnbOrderSavePromise = performFnbOrderSave(isGeneralOrder, selectedRoom);
 
   try {
     return await activeFnbOrderSavePromise;
@@ -5030,7 +5030,7 @@ async function executeSaveFnbOrder() {
   }
 }
 
-async function performFnbOrderSave(isGeneralOrder) {
+async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
   isSavingFnbOrder = true;
   renderRooms();
 
