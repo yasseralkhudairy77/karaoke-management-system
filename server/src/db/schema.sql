@@ -184,6 +184,34 @@ CREATE TABLE IF NOT EXISTS room_sessions (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Riwayat lokasi dan snapshot tarif untuk satu sesi yang berpindah room.
+CREATE TABLE IF NOT EXISTS room_session_segments (
+    segment_id VARCHAR(100) PRIMARY KEY,
+    session_id VARCHAR(100) NOT NULL REFERENCES room_sessions(session_id) ON DELETE CASCADE,
+    sequence_no INT NOT NULL,
+    room_id VARCHAR(50) NOT NULL REFERENCES rooms(room_id),
+    room_name VARCHAR(100) NOT NULL,
+    rate_per_hour NUMERIC(12,2) NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    allocated_minutes INT,
+    move_reason TEXT,
+    moved_by VARCHAR(100),
+    transfer_idempotency_key VARCHAR(100) UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_room_session_segment_sequence UNIQUE (session_id, sequence_no)
+);
+
+ALTER TABLE room_session_segments ADD COLUMN IF NOT EXISTS transfer_idempotency_key VARCHAR(100);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_room_session_segments_transfer_idempotency
+ON room_session_segments(transfer_idempotency_key)
+WHERE transfer_idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_room_session_segments_one_active
+ON room_session_segments(session_id)
+WHERE ended_at IS NULL;
+
 -- 9. Transactions & Billing Breakdown (Postpaid Room Billing Default)
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id VARCHAR(50) PRIMARY KEY,
@@ -218,6 +246,8 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     correction_id VARCHAR(80) PRIMARY KEY,
@@ -255,6 +285,7 @@ CREATE TABLE IF NOT EXISTS fnb_orders (
     order_id VARCHAR(50) PRIMARY KEY,
     room_id VARCHAR(50) REFERENCES rooms(room_id),
     room_name VARCHAR(100) NOT NULL,
+    session_id VARCHAR(100) REFERENCES room_sessions(session_id),
     room_start_time TIMESTAMPTZ,
     order_status VARCHAR(30) DEFAULT 'open' CHECK (order_status IN ('open', 'billed', 'cancelled')),
     order_total NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -269,6 +300,8 @@ CREATE TABLE IF NOT EXISTS fnb_orders (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE fnb_orders ADD COLUMN IF NOT EXISTS session_id VARCHAR(100) REFERENCES room_sessions(session_id);
 
 CREATE TABLE IF NOT EXISTS fnb_order_items (
     order_item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -572,6 +605,12 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
     CONSTRAINT unq_sync_outbox_entity_action UNIQUE (entity_type, entity_id, action)
 );
 
+-- Pastikan database lama menerima tiga aksi outbox standar. CREATE TABLE IF NOT
+-- EXISTS tidak memperbarui CHECK constraint yang sudah terlanjur ada.
+ALTER TABLE sync_outbox DROP CONSTRAINT IF EXISTS sync_outbox_action_check;
+ALTER TABLE sync_outbox ADD CONSTRAINT sync_outbox_action_check
+CHECK (action IN ('INSERT', 'UPDATE', 'DELETE'));
+
 -- 16. Temporary Owner Mirror Snapshot Inbox (Local PC -> Railway Cloud)
 CREATE TABLE IF NOT EXISTS owner_mirror_snapshots (
     snapshot_id BIGSERIAL PRIMARY KEY,
@@ -590,6 +629,8 @@ CREATE TABLE IF NOT EXISTS owner_mirror_snapshots (
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_pending ON sync_outbox(status, created_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_transactions_opdate ON transactions(operational_date);
 CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, room_id);
+CREATE INDEX IF NOT EXISTS idx_fnb_orders_session_status ON fnb_orders(session_id, order_status);
+CREATE INDEX IF NOT EXISTS idx_room_session_segments_session ON room_session_segments(session_id, sequence_no);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_snapshots(source_id, period, operational_date_start, operational_date_end, received_at DESC);

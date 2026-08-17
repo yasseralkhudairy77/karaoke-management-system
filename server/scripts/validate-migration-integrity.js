@@ -8,7 +8,7 @@ async function validate() {
     const tables = [
       'settings', 'employees', 'rooms', 'tv_devices', 'tv_displays',
       'inventory', 'menu', 'package_master', 'lc_master', 'room_sessions',
-      'transactions', 'fnb_orders', 'stock_movements', 'cashier_closings'
+      'room_session_segments', 'transactions', 'fnb_orders', 'stock_movements', 'cashier_closings'
     ];
 
     console.log('---------------------------------------------------------');

@@ -10,6 +10,10 @@ function toNumber(value, fallback = 0) {
 
 function serializeTransaction(row) {
   if (!row) return null;
+  let roomJourney = row.room_journey_json || [];
+  if (typeof roomJourney === 'string') {
+    try { roomJourney = JSON.parse(roomJourney); } catch (_) { roomJourney = []; }
+  }
   return {
     transaction_id: row.transaction_id,
     room_id: row.room_id,
@@ -39,6 +43,8 @@ function serializeTransaction(row) {
     billable_room_minutes: row.billable_room_minutes === null || row.billable_room_minutes === undefined ? null : Number(row.billable_room_minutes || 0),
     free_room_minutes: Number(row.free_room_minutes || 0),
     room_discount_amount: Number(row.room_discount_amount || 0),
+    room_upgrade_total: Number(row.room_upgrade_total || 0),
+    room_journey: Array.isArray(roomJourney) ? roomJourney : [],
     created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
   };
 }
@@ -81,6 +87,8 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 
     CREATE TABLE IF NOT EXISTS transaction_correction_logs (
       correction_id VARCHAR(80) PRIMARY KEY,

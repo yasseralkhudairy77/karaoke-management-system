@@ -264,6 +264,10 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     billable_room_minutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined ? null : Number(transaction.billable_room_minutes || 0),
     free_room_minutes: Number(transaction.free_room_minutes || 0),
     room_discount_amount: money(transaction.room_discount_amount),
+    room_upgrade_total: money(transaction.room_upgrade_total),
+    room_journey: Array.isArray(transaction.room_journey_json)
+      ? transaction.room_journey_json
+      : [],
     operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
     created_at: iso(transaction.created_at)
   }));

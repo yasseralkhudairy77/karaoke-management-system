@@ -155,12 +155,21 @@ async function saveFnbOrder(req, res, payload) {
     if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
     const roomName = isGeneralOrder ? FNB_GENERAL_ROOM_NAME : roomRes.rows[0].room_name;
     const roomStartTime = roomRes.rows[0].start_time || null;
+    let sessionId = null;
 
     if (!isGeneralOrder) {
       const status = String(roomRes.rows[0].status || '').toLowerCase();
       if (!['occupied', 'waiting_payment', 'booked', 'paid_waiting_start'].includes(status)) {
         throw new Error('Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau sudah dibooking.');
       }
+      const sessionRes = await client.query(`
+        SELECT session_id
+        FROM room_sessions
+        WHERE room_id = $1 AND status IN ('starting', 'active')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [room_id]);
+      sessionId = sessionRes.rows[0]?.session_id || null;
     }
 
     let orderTotal = 0;
@@ -202,10 +211,10 @@ async function saveFnbOrder(req, res, payload) {
 
     await client.query(`
       INSERT INTO fnb_orders (
-        order_id, room_id, room_name, room_start_time, order_status, 
+        order_id, room_id, room_name, session_id, room_start_time, order_status,
         order_total, cashier_name, note, idempotency_key, customer_name, general_bill_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    `, [orderId, room_id, roomName, roomStartTime, orderStatus, orderTotal, cashier_name, note, idempotency_key || null, customer_name || null, effectiveGeneralBillId || null]);
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [orderId, room_id, roomName, sessionId, roomStartTime, orderStatus, orderTotal, cashier_name, note, idempotency_key || null, customer_name || null, effectiveGeneralBillId || null]);
 
     for (const vItem of verifiedItems) {
       await client.query(`
@@ -248,6 +257,7 @@ async function saveFnbOrder(req, res, payload) {
         order_id: orderId,
         room_id,
         room_name: roomName,
+        session_id: sessionId,
         order_status: orderStatus,
         order_total: orderTotal,
         customer_name,

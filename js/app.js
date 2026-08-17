@@ -953,6 +953,11 @@ let activeSessionPackageRoomId = "";
 let activeSessionPackageSelection = "";
 let activeSessionPackageReason = "";
 let isUpdatingActiveSessionPackage = false;
+let moveRoomSourceId = "";
+let moveRoomTargetId = "";
+let moveRoomReason = "";
+let moveRoomIdempotencyKey = "";
+let isMovingRoomSession = false;
 let lcSelectionRoomId = "";
 let isSavingSessionLcs = false;
 let extendPaymentMethod = "cash";
@@ -1017,7 +1022,10 @@ function isUserBusy() {
     durationSelectionRoomId ||
     paymentSelectionRoomId ||
     extendSelectionRoomId ||
-    lcSelectionRoomId
+    lcSelectionRoomId ||
+    activeSessionPackageRoomId ||
+    moveRoomSourceId ||
+    isMovingRoomSession
   ) {
     return true;
   }
@@ -7647,6 +7655,7 @@ function createBillingSummaryElement(transaction) {
     header,
     createBillingBasisNoteElement(transaction),
     grid,
+    createRoomJourneyElement(transaction),
     createBillingBreakdownElement(transaction),
     createBillingFnbDetailsElement(transaction),
     createBillingStockInfoElement(transaction),
@@ -7654,6 +7663,44 @@ function createBillingSummaryElement(transaction) {
   );
 
   return summary;
+}
+
+function getTransactionRoomJourney(transaction) {
+  let journey = transaction?.room_journey || transaction?.room_journey_json || [];
+  if (typeof journey === "string") {
+    try {
+      journey = JSON.parse(journey);
+    } catch (error) {
+      journey = [];
+    }
+  }
+  return Array.isArray(journey) ? journey : [];
+}
+
+function createRoomJourneyElement(transaction) {
+  const journey = getTransactionRoomJourney(transaction);
+  if (journey.length <= 1) return document.createDocumentFragment();
+
+  const section = document.createElement("section");
+  section.className = "billing-fnb-detail";
+  const title = document.createElement("h3");
+  title.className = "billing-fnb-detail-title";
+  title.textContent = "Perjalanan Room";
+  section.appendChild(title);
+
+  journey.forEach((segment, index) => {
+    const row = document.createElement("div");
+    row.className = "billing-breakdown-row";
+    const label = document.createElement("p");
+    label.className = "billing-breakdown-label";
+    label.textContent = `${index + 1}. ${segment.room_name || segment.room_id || "-"}`;
+    const value = document.createElement("p");
+    value.className = "billing-breakdown-value";
+    value.textContent = `${formatDurationMinutes(Number(segment.allocated_minutes) || 0)} @ ${formatCurrency(segment.rate_per_hour)}/jam`;
+    row.append(label, value);
+    section.appendChild(row);
+  });
+  return section;
 }
 
 function createBillingStockInfoElement(transaction) {
@@ -7678,9 +7725,14 @@ function createBillingBreakdownElement(transaction) {
   const promoDiscount = Number(transaction?.promo_discount) || 0;
   const originalRoomTotal = roomTotal + promoDiscount + getTransactionRoomDiscountAmount(transaction);
 
-  const rows = [
-    [transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room", formatCurrency(originalRoomTotal)],
-  ];
+  const roomUpgradeTotal = Math.max(0, Number(transaction?.room_upgrade_total) || 0);
+  const rows = transactionHasPackage(transaction)
+    ? [["Biaya Paket", formatCurrency(Math.max(0, originalRoomTotal - roomUpgradeTotal))]]
+    : [["Biaya Room (gabungan pemakaian)", formatCurrency(originalRoomTotal)]];
+
+  if (roomUpgradeTotal > 0) {
+    rows.push(["Upgrade Room", formatCurrency(roomUpgradeTotal)]);
+  }
 
   if (promoDiscount > 0) {
     rows.push([`Diskon (${transaction.promo_code})`, `-${formatCurrency(promoDiscount)}`]);
@@ -7867,10 +7919,19 @@ function createReceiptPrintElement(transaction) {
   }
 
   const roomSection = createReceiptSection("Informasi Ruangan", roomRows);
+  const journeySection = receiptData.room.journey.length > 1
+    ? createReceiptSection("Perjalanan Room", receiptData.room.journey.map((segment, index) => [
+      `${index + 1}. ${segment.roomName || segment.roomId || "-"}`,
+      `${formatLcDurationShort(segment.durationMinutes)} @ ${formatCurrency(segment.ratePerHour)}/jam`,
+    ]))
+    : document.createDocumentFragment();
 
-  const billingRows = [
-    [receiptData.room.packageId ? "Biaya Paket" : "Biaya Room", formatCurrency(receiptData.totals.roomTotal)],
-  ];
+  const billingRows = receiptData.room.packageId
+    ? [["Biaya Paket", formatCurrency(Math.max(0, receiptData.totals.roomTotal - receiptData.room.upgradeTotal))]]
+    : [["Biaya Room", formatCurrency(receiptData.totals.roomTotal)]];
+  if (receiptData.room.upgradeTotal > 0) {
+    billingRows.push(["Upgrade Room", formatCurrency(receiptData.room.upgradeTotal)]);
+  }
 
   const lcTotal = Number(transaction?.lc_total || 0);
   if (Number(receiptData.totals.roomDiscountAmount || 0) > 0) {
@@ -7940,6 +8001,7 @@ function createReceiptPrintElement(transaction) {
     header,
     reprintNotice,
     roomSection,
+    journeySection,
     createReceiptLcDetailElement(receiptData),
     createReceiptFnbDetailElement(receiptData),
     billingSection,
@@ -8509,7 +8571,17 @@ function createRoomCard(room) {
     changePackageButton.textContent = "Ubah Paket";
     changePackageButton.disabled = isUpdatingActiveSessionPackage;
 
-    actions.append(sessionButton, extendButton, selectLcButton, changePackageButton);
+    const moveRoomButton = document.createElement("button");
+    moveRoomButton.className = "room-button room-button-secondary";
+    moveRoomButton.type = "button";
+    moveRoomButton.dataset.action = "show-move-room";
+    moveRoomButton.dataset.roomId = room.room_id;
+    moveRoomButton.textContent = isMovingRoomSession && moveRoomSourceId === room.room_id
+      ? "Memindahkan..."
+      : "Pindah Room";
+    moveRoomButton.disabled = isMovingRoomSession || getCurrentOperatorRole() === "receptionist";
+
+    actions.append(sessionButton, extendButton, selectLcButton, changePackageButton, moveRoomButton);
   } else if (["booked", "waiting_payment"].includes(room.status)) {
     const cancelBookingButton = document.createElement("button");
     cancelBookingButton.className = "room-button room-button-secondary";
@@ -8527,6 +8599,7 @@ function createRoomCard(room) {
   const isExtendActive = extendSelectionRoomId === room.room_id && room.status === "occupied";
   const isLcActive = lcSelectionRoomId === room.room_id && room.status === "occupied";
   const isPackageChangeActive = activeSessionPackageRoomId === room.room_id && room.status === "occupied";
+  const isMoveRoomActive = moveRoomSourceId === room.room_id && room.status === "occupied";
 
   if (isDurationActive) {
     card.appendChild(createDurationSelectionElement(room));
@@ -8536,6 +8609,8 @@ function createRoomCard(room) {
     card.appendChild(createSelectLcModalOverlay(room));
   } else if (isPackageChangeActive) {
     card.appendChild(createActiveSessionPackageElement(room));
+  } else if (isMoveRoomActive) {
+    card.appendChild(createMoveRoomElement(room));
   } else {
     card.append(topLine, meta, actions);
   }
@@ -10490,6 +10565,101 @@ function createActiveSessionPackageElement(room) {
   cancelButton.textContent = "Batal";
 
   panel.append(title, currentInfo, packageField, preview, reasonField, saveButton, cancelButton);
+  return panel;
+}
+
+function createMoveRoomElement(room) {
+  const panel = document.createElement("div");
+  panel.className = "extend-selection";
+
+  const title = document.createElement("p");
+  title.className = "extend-selection-title";
+  title.textContent = `Pindahkan sesi dari ${room.room_name}`;
+
+  const currentInfo = document.createElement("div");
+  currentInfo.className = "extend-note-field";
+  currentInfo.style.fontSize = "12px";
+  currentInfo.style.color = "rgba(255,255,255,0.78)";
+  currentInfo.textContent = `Tarif room asal: ${formatCurrency(room.rate_per_hour)}/jam. Waktu, F&B, dan LC akan ikut ke room tujuan.`;
+
+  const targetField = document.createElement("div");
+  targetField.className = "extend-note-field";
+  const targetLabel = document.createElement("label");
+  targetLabel.className = "extend-note-label";
+  targetLabel.textContent = "Room tujuan";
+  const targetSelect = document.createElement("select");
+  targetSelect.className = "duration-payment-select";
+  targetSelect.style.width = "100%";
+  targetSelect.dataset.action = "update-move-room-field";
+  targetSelect.dataset.field = "target_room_id";
+  targetSelect.disabled = isMovingRoomSession;
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "-- Pilih room kosong --";
+  targetSelect.appendChild(placeholder);
+  rooms
+    .filter((candidate) => candidate.room_id !== room.room_id && candidate.status === "available")
+    .forEach((candidate) => {
+      const option = document.createElement("option");
+      option.value = candidate.room_id;
+      option.textContent = `${candidate.room_name} - ${formatCurrency(candidate.rate_per_hour)}/jam`;
+      option.selected = candidate.room_id === moveRoomTargetId;
+      targetSelect.appendChild(option);
+    });
+  targetField.append(targetLabel, targetSelect);
+
+  const targetRoom = rooms.find((candidate) => candidate.room_id === moveRoomTargetId);
+  const pricingInfo = document.createElement("div");
+  pricingInfo.className = "extend-note-field";
+  pricingInfo.style.padding = "8px 12px";
+  pricingInfo.style.borderRadius = "var(--radius-sm)";
+  pricingInfo.style.fontSize = "12px";
+  if (!targetRoom) {
+    pricingInfo.textContent = "Pilih room kosong untuk melihat aturan tarif.";
+  } else if (Number(targetRoom.rate_per_hour) === Number(room.rate_per_hour)) {
+    pricingInfo.style.color = "#86efac";
+    pricingInfo.textContent = "Tarif sama. Total biaya room tidak berubah karena perpindahan.";
+  } else if (room.package_id || room.package_name) {
+    pricingInfo.style.color = "#fde68a";
+    pricingInfo.textContent = Number(targetRoom.rate_per_hour) > Number(room.rate_per_hour)
+      ? "Paket tetap. Selisih kenaikan kelas dihitung sejak waktu pindah sampai sesi selesai."
+      : "Paket tetap. Pindah ke tarif lebih rendah tidak mengurangi harga paket.";
+  } else {
+    pricingInfo.style.color = "#fde68a";
+    pricingInfo.textContent = `Tarif ${formatCurrency(targetRoom.rate_per_hour)}/jam berlaku sejak waktu pindah; pemakaian sebelum pindah tetap memakai tarif room asal.`;
+  }
+
+  const reasonField = document.createElement("div");
+  reasonField.className = "extend-note-field";
+  const reasonLabel = document.createElement("label");
+  reasonLabel.className = "extend-note-label";
+  reasonLabel.textContent = "Alasan pindah room (wajib)";
+  const reasonInput = document.createElement("input");
+  reasonInput.className = "extend-note-input";
+  reasonInput.type = "text";
+  reasonInput.placeholder = "Contoh: Konsumen meminta pindah room";
+  reasonInput.dataset.action = "update-move-room-field";
+  reasonInput.dataset.field = "reason";
+  reasonInput.value = moveRoomReason;
+  reasonInput.disabled = isMovingRoomSession;
+  reasonField.append(reasonLabel, reasonInput);
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "extend-custom-button";
+  saveButton.type = "button";
+  saveButton.dataset.action = "save-move-room";
+  saveButton.dataset.roomId = room.room_id;
+  saveButton.disabled = isMovingRoomSession || !moveRoomTargetId;
+  saveButton.textContent = isMovingRoomSession ? "Memindahkan..." : "Simpan Pindah Room";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "extend-cancel-button";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "cancel-move-room";
+  cancelButton.disabled = isMovingRoomSession;
+  cancelButton.textContent = "Batal";
+
+  panel.append(title, currentInfo, targetField, pricingInfo, reasonField, saveButton, cancelButton);
   return panel;
 }
 
@@ -22741,6 +22911,7 @@ function updateRunningTimers() {
 }
 
 function showDurationSelection(roomId) {
+  moveRoomSourceId = "";
   durationSelectionRoomId = roomId;
   customDurationMinutes = "";
   bookingCartItems = []; // reset cart for new booking
@@ -22805,6 +22976,7 @@ function showExtendSelection(roomId) {
   extendSelectionRoomId = roomId;
   activeSessionPackageRoomId = "";
   lcSelectionRoomId = "";
+  moveRoomSourceId = "";
   customExtendMinutes = "";
   extendSessionNote = "";
   renderRooms();
@@ -22830,6 +23002,7 @@ function showActiveSessionPackageSelection(roomId) {
   const room = rooms.find((item) => item.room_id === roomId);
   extendSelectionRoomId = "";
   lcSelectionRoomId = "";
+  moveRoomSourceId = "";
   activeSessionPackageRoomId = roomId;
   activeSessionPackageSelection = room?.package_id || "";
   activeSessionPackageReason = "";
@@ -22904,6 +23077,113 @@ async function saveActiveSessionPackage(roomId) {
   }
 }
 
+function showMoveRoomSelection(roomId) {
+  const room = rooms.find((item) => item.room_id === roomId);
+  if (!room || room.status !== "occupied") {
+    showInlineNotice("Sesi room asal tidak ditemukan atau sudah tidak aktif.", "error");
+    return;
+  }
+  durationSelectionRoomId = "";
+  extendSelectionRoomId = "";
+  lcSelectionRoomId = "";
+  activeSessionPackageRoomId = "";
+  moveRoomSourceId = roomId;
+  moveRoomTargetId = "";
+  moveRoomReason = "";
+  moveRoomIdempotencyKey = "";
+  renderRooms();
+}
+
+function cancelMoveRoomSelection() {
+  if (isMovingRoomSession) return;
+  moveRoomSourceId = "";
+  moveRoomTargetId = "";
+  moveRoomReason = "";
+  moveRoomIdempotencyKey = "";
+  renderRooms();
+}
+
+function updateMoveRoomField(field, value) {
+  if (field === "target_room_id") {
+    moveRoomTargetId = value;
+    moveRoomIdempotencyKey = "";
+    renderRooms();
+    return;
+  }
+  if (field === "reason") {
+    moveRoomReason = value;
+    moveRoomIdempotencyKey = "";
+  }
+}
+
+function getMoveRoomIdempotencyKey(sourceRoomId, targetRoomId) {
+  if (!moveRoomIdempotencyKey) {
+    moveRoomIdempotencyKey = [
+      "move-room",
+      sourceRoomId || "source",
+      targetRoomId || "target",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 8),
+    ].join("-");
+  }
+  return moveRoomIdempotencyKey;
+}
+
+async function saveMoveRoom(sourceRoomId) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
+    return;
+  }
+  const targetRoomId = moveRoomTargetId;
+  const reason = moveRoomReason.trim();
+  if (!targetRoomId) {
+    showInlineNotice("Pilih room tujuan terlebih dahulu.", "error");
+    return;
+  }
+  if (reason.length < 3) {
+    showInlineNotice("Alasan pindah room wajib diisi minimal 3 karakter.", "error");
+    return;
+  }
+
+  isMovingRoomSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+  try {
+    const data = await postApiAction({
+      action: "moveActiveSessionRoom",
+      room_id: sourceRoomId,
+      target_room_id: targetRoomId,
+      reason,
+      cashier_name: getLoggedInOperatorName(),
+      idempotency_key: getMoveRoomIdempotencyKey(sourceRoomId, targetRoomId),
+    });
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal memindahkan sesi room.");
+    }
+
+    const tvResults = await Promise.allSettled([
+      sendLocalTvCommand(sourceRoomId, "power_off", "move_room_source"),
+      sendLocalTvCommand(targetRoomId, "power_on", "move_room_target"),
+    ]);
+    const tvFailed = tvResults.some((result) => result.status === "rejected");
+    showInlineNotice(tvFailed
+      ? `${data.message || "Sesi berhasil dipindahkan."} Periksa TV room secara manual.`
+      : (data.message || "Sesi berhasil dipindahkan."), tvFailed ? "warning" : "success");
+
+    moveRoomSourceId = "";
+    moveRoomTargetId = "";
+    moveRoomReason = "";
+    moveRoomIdempotencyKey = "";
+    await Promise.all([loadRooms(), loadOpenFnbOrders()]);
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memindahkan sesi room.", "error");
+  } finally {
+    isMovingRoomSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
 // ── LC Mid-Session Selection ──
 
 let pendingLcSelections = {};
@@ -22913,6 +23193,7 @@ async function showLcSelection(roomId) {
   lcSelectionRoomId = roomId;
   extendSelectionRoomId = "";
   activeSessionPackageRoomId = "";
+  moveRoomSourceId = "";
   pendingLcSelections = {};
   pendingLcDurations = {};
   const room = rooms.find(r => r.room_id === roomId);
@@ -25595,6 +25876,25 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "show-move-room") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan memindahkan sesi room.", "error");
+      return;
+    }
+    showMoveRoomSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "cancel-move-room") {
+    cancelMoveRoomSelection();
+    return;
+  }
+
+  if (action === "save-move-room") {
+    await saveMoveRoom(button.dataset.roomId || roomId || "");
+    return;
+  }
+
   if (action === "reload-lc-selection") {
     await loadLcs(true);
     renderRooms();
@@ -25787,6 +26087,11 @@ function handleDashboardInput(event) {
 
   if (action === "update-active-session-package-field") {
     updateActiveSessionPackageField(field.dataset.field || "", field.value);
+    return;
+  }
+
+  if (action === "update-move-room-field") {
+    updateMoveRoomField(field.dataset.field || "", field.value);
     return;
   }
 
@@ -25989,6 +26294,13 @@ function handleDashboardChange(event) {
 
   if (activeSessionPackageField) {
     updateActiveSessionPackageField(activeSessionPackageField.dataset.field || "", activeSessionPackageField.value);
+    return;
+  }
+
+  const moveRoomField = event.target.closest("[data-action='update-move-room-field']");
+
+  if (moveRoomField) {
+    updateMoveRoomField(moveRoomField.dataset.field || "", moveRoomField.value);
     return;
   }
 

@@ -524,6 +524,9 @@
                 <td>
                   ${safe(trx.transaction_id || "-")}
                   <div class="small">${safe(trx.room_name || trx.room_id || "-")} · ${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div>
+                  ${Array.isArray(trx.room_journey) && trx.room_journey.length > 1
+                    ? `<div class="small">Pindah: ${trx.room_journey.map(segment => safe(segment.room_name || segment.room_id || "-")).join(" &rarr; ")}</div>`
+                    : ""}
                   ${trx.package_name ? `<div class="small">Paket: ${safe(trx.package_name)}</div>` : ""}
                   ${Number(trx.free_room_minutes || 0) > 0 ? `<div class="small">Free room: ${formatDuration(trx.free_room_minutes)}</div>` : ""}
                 </td>

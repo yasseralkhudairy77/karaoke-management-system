@@ -82,14 +82,27 @@ export function formatReceipt58mm(receiptData, options = {}) {
     pushReceiptField(lines, "Tagih", formatReceiptDuration(room.billableRoomMinutes), width);
   }
 
+  if (Array.isArray(room.journey) && room.journey.length > 1) {
+    lines.push(separator);
+    lines.push(centerReceiptText("PERJALANAN ROOM", width));
+    room.journey.forEach((segment) => {
+      wrapReceiptText(segment.roomName || segment.roomId || "-", width).forEach((line) => lines.push(line));
+      pushReceiptField(lines, "  Durasi", formatReceiptDuration(segment.durationMinutes), width);
+      pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(segment.ratePerHour)}/jam`, width);
+    });
+  }
+
   lines.push(separator);
   if (room.packageId) {
     lines.push(centerReceiptText("BIAYA PAKET", width));
     lines.push(formatReceiptLine(
       room.packageName || room.packageId || "Paket",
-      formatReceiptCurrency(totals.roomTotal),
+      formatReceiptCurrency(Math.max(0, totals.roomTotal - room.upgradeTotal)),
       width
     ));
+    if (room.upgradeTotal > 0) {
+      pushReceiptField(lines, "Upgrade Room", formatReceiptCurrency(room.upgradeTotal), width);
+    }
   } else {
     lines.push(centerReceiptText("BIAYA ROOM", width));
     lines.push(formatReceiptLine(
@@ -431,6 +444,14 @@ function normalizeTransaction(transaction) {
 }
 
 function normalizeRoom(transaction) {
+  let rawJourney = transaction.room_journey || transaction.room_journey_json || [];
+  if (typeof rawJourney === "string") {
+    try {
+      rawJourney = JSON.parse(rawJourney);
+    } catch (error) {
+      rawJourney = [];
+    }
+  }
   return {
     id: getText(transaction.room_id),
     name: getText(transaction.room_name || transaction.room_id),
@@ -442,6 +463,17 @@ function normalizeRoom(transaction) {
     packageId: getText(transaction.package_id),
     packageName: getText(transaction.package_name),
     packageTotal: getNumber(transaction.package_total),
+    upgradeTotal: getNumber(transaction.room_upgrade_total),
+    journey: Array.isArray(rawJourney) ? rawJourney.map((segment) => ({
+      sequenceNo: getNumber(segment?.sequence_no),
+      roomId: getText(segment?.room_id),
+      roomName: getText(segment?.room_name || segment?.room_id),
+      ratePerHour: getNumber(segment?.rate_per_hour),
+      durationMinutes: getNumber(segment?.allocated_minutes),
+      startedAt: getText(segment?.started_at),
+      endedAt: getText(segment?.ended_at),
+      reason: getText(segment?.move_reason),
+    })) : [],
     billableRoomMinutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined || transaction.billable_room_minutes === ""
       ? getNumber(transaction.duration_minutes)
       : getNumber(transaction.billable_room_minutes),
