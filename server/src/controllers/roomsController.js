@@ -1251,12 +1251,6 @@ async function closeSession(req, res, payload) {
       total: lcTotal
     };
 
-    await client.query(`
-      UPDATE lc_work_logs SET closed_at = CURRENT_TIMESTAMP, status = 'closed' 
-      WHERE closed_at IS NULL AND status != 'cancelled'
-        AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
-    `, [activeSession?.session_id || null, roomId]);
-
     const grandTotal = roomTotal + fnbTotal + lcTotal;
     const opDate = getOperationalDate(endTime);
 
@@ -1269,6 +1263,15 @@ async function closeSession(req, res, payload) {
         booking_mode, package_id, package_name, package_total, room_upgrade_total, room_journey_json
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19, $20, $21)
     `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney)]);
+
+    await client.query(`
+      UPDATE lc_work_logs
+      SET closed_at = CURRENT_TIMESTAMP,
+          closed_transaction_id = $1,
+          status = 'closed'
+      WHERE closed_at IS NULL AND status != 'cancelled'
+        AND ($2::varchar IS NOT NULL AND session_id = $2 OR session_id IS NULL AND room_id = $3)
+    `, [transactionId, activeSession?.session_id || null, roomId]);
 
     await client.query(`
       UPDATE rooms 

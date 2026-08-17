@@ -174,9 +174,22 @@ async function runContractTests() {
       if (!pass) {
         console.log(`    ${failureDetails(res)}`);
       }
+      return res;
     } catch (err) {
       testMatrix.push({ action: name, type, status: 'FAIL', error: err.message });
       console.log(`  FAIL [${type}] ${name}: ${err.message}`);
+      return null;
+    }
+  }
+
+  async function testDatabaseState(name, check) {
+    try {
+      const pass = await check();
+      testMatrix.push({ action: name, type: 'DB', status: pass ? 'PASS' : 'FAIL' });
+      console.log(`  ${pass ? 'PASS' : 'FAIL'} [DB] ${name}`);
+    } catch (err) {
+      testMatrix.push({ action: name, type: 'DB', status: 'FAIL', error: err.message });
+      console.log(`  FAIL [DB] ${name}: ${err.message}`);
     }
   }
 
@@ -197,7 +210,7 @@ async function runContractTests() {
   await testAction('validateAdminPin invalid rejection', 'POST', '/exec', { action: 'validateAdminPin', pin: '999999' }, res => res.body.ok === false && res.body.code === 'INVALID_ADMIN_PIN');
   await testAction('sendTvCommand mock bridge', 'POST', '/exec', { action: 'sendTvCommand', room_id: TEST_ROOM_ID, tv_action: 'power_on' }, res => res.body.ok === true);
   await testAction('saveFnbOrder payload verification', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_FNB_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 2 }], idempotency_key: `IDEM-FNB-${Date.now()}` }, res => res.body.ok === true && res.body.order_id);
-  await testAction('assignSessionLcs frontend payload', 'POST', '/exec', { action: 'assignSessionLcs', room_id: TEST_ROOM_ID, lc_ids: `${TEST_LC_ID},${TEST_LC_ID_2}`, lc_assignments: `[{"lc_id":"${TEST_LC_ID}","duration_minutes":60}]` }, res => res.body.ok === true);
+  await testAction('assignSessionLcs frontend payload', 'POST', '/exec', { action: 'assignSessionLcs', room_id: TEST_ROOM_ID, lc_ids: `${TEST_LC_ID},${TEST_LC_ID_2}`, lc_assignments: `[{"lc_id":"${TEST_LC_ID}","duration_minutes":120}]` }, res => res.body.ok === true);
   await testAction('startSession', 'POST', '/exec', { action: 'startSession', room_id: TEST_ROOM_ID, duration_minutes: 60, cashier_name: 'TestKasir', idempotency_key: `IDEM-START-${Date.now()}` }, res => res.body.ok === true && res.body.session);
   await testAction('extendSession', 'POST', '/exec', { action: 'extendSession', room_id: TEST_ROOM_ID, add_minutes: 30, cashier_name: 'TestKasir' }, res => res.body.ok === true && res.body.room);
   await testAction('saveFnbOrder active session', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 1 }], idempotency_key: `IDEM-FNB-SESSION-${Date.now()}` }, res => res.body.ok === true && res.body.order_id);
@@ -205,7 +218,36 @@ async function runContractTests() {
   await testAction('moveActiveSessionRoom', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_ROOM_ID, target_room_id: TEST_TARGET_ROOM_ID, reason: 'Contract test room transfer', cashier_name: 'TestKasir', idempotency_key: moveIdempotencyKey }, res => res.body.ok === true && res.body.target_room?.room_id === TEST_TARGET_ROOM_ID && Array.isArray(res.body.room_journey) && res.body.room_journey.length === 2);
   await testAction('moveActiveSessionRoom idempotent replay', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_ROOM_ID, target_room_id: TEST_TARGET_ROOM_ID, reason: 'Contract test room transfer', cashier_name: 'TestKasir', idempotency_key: moveIdempotencyKey }, res => res.body.ok === true && res.body.idempotent_replay === true);
   await testAction('moveActiveSessionRoom same grade', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_TARGET_ROOM_ID, target_room_id: TEST_TARGET_ROOM_ID_2, reason: 'Contract test same grade transfer', cashier_name: 'TestKasir', idempotency_key: `IDEM-MOVE-SAME-${Date.now()}` }, res => res.body.ok === true && res.body.same_rate === true && res.body.room_journey?.length === 3);
-  await testAction('closeSession postpaid contract', 'POST', '/exec', { action: 'closeSession', room_id: TEST_TARGET_ROOM_ID_2, cashier_name: 'TestKasir', idempotency_key: `IDEM-CLOSE-${Date.now()}` }, res => res.body.ok === true && res.body.transaction?.payment_status === 'unpaid' && res.body.transaction?.fnb_total === 25000 && res.body.transaction?.room_total === 225000 && res.body.transaction?.room_journey?.length === 3);
+  let checkoutTransactionId = '';
+  await testAction('closeSession postpaid contract', 'POST', '/exec', { action: 'closeSession', room_id: TEST_TARGET_ROOM_ID_2, cashier_name: 'TestKasir', idempotency_key: `IDEM-CLOSE-${Date.now()}` }, res => {
+    checkoutTransactionId = res.body.transaction?.transaction_id || '';
+    return res.body.ok === true && checkoutTransactionId && res.body.transaction?.payment_status === 'unpaid' && res.body.transaction?.fnb_total === 25000 && res.body.transaction?.room_total === 225000 && res.body.transaction?.room_journey?.length === 3;
+  });
+  await testAction('getTransactionLcEditDetails checkout review', 'GET', `/exec?action=getTransactionLcEditDetails&transaction_id=${encodeURIComponent(checkoutTransactionId)}`, null, res => res.body.ok === true && res.body.can_edit === true && res.body.requires_admin_pin === false && res.body.lc_logs?.length === 1 && res.body.lc_logs[0].duration_minutes === 120);
+  await testAction('updateTransactionLcDurations 2h to 3h without PIN', 'POST', '/exec', {
+    action: 'updateTransactionLcDurations',
+    transaction_id: checkoutTransactionId,
+    assignments: [{ lc_id: TEST_LC_ID, duration_minutes: 180 }],
+    reason: 'Koreksi informasi koordinator LC',
+    changed_by: 'TestKasir'
+  }, res => res.body.ok === true && res.body.requires_admin_pin === false && res.body.old_lc_total === 100000 && res.body.lc_total === 150000 && res.body.difference === 50000 && res.body.grand_total === 400000);
+  await testAction('getTransactionLcEditDetails after correction', 'GET', `/exec?action=getTransactionLcEditDetails&transaction_id=${encodeURIComponent(checkoutTransactionId)}`, null, res => res.body.ok === true && res.body.current_lc_total === 150000 && res.body.current_grand_total === 400000 && res.body.lc_logs?.[0]?.duration_minutes === 180);
+  await testDatabaseState('LC correction audit and exact transaction linkage', async () => {
+    const linked = await db.query('SELECT COUNT(*)::int AS count FROM lc_work_logs WHERE closed_transaction_id = $1 AND duration_minutes = 180 AND rate = 150000', [checkoutTransactionId]);
+    const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'lc_duration_correction'", [checkoutTransactionId]);
+    const transaction = await db.query(`
+      SELECT room_total, fnb_total, lc_total, grand_total, payment_status
+      FROM transactions WHERE transaction_id = $1
+    `, [checkoutTransactionId]);
+    const row = transaction.rows[0] || {};
+    return linked.rows[0].count === 1
+      && audit.rows[0].count === 1
+      && Number(row.room_total) === 225000
+      && Number(row.fnb_total) === 25000
+      && Number(row.lc_total) === 150000
+      && Number(row.grand_total) === 400000
+      && row.payment_status === 'unpaid';
+  });
   await testAction('completeCleaning', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_ROOM_ID }, res => res.body.ok === true);
   await testAction('completeCleaning target', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_TARGET_ROOM_ID }, res => res.body.ok === true);
   await testAction('completeCleaning target same grade', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_TARGET_ROOM_ID_2 }, res => res.body.ok === true);

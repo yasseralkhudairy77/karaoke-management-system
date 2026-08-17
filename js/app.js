@@ -7116,7 +7116,8 @@ function canOpenLcDurationEditor(transaction) {
   return Boolean(
     API_BASE_URL.trim()
     && transaction?.transaction_id
-    && String(transaction.transaction_type || "").trim().toLowerCase() === "session_checkout"
+    && Number(transaction?.lc_total || 0) > 0
+    && String(transaction?.payment_status || "").trim().toLowerCase() !== "cancelled"
     && getCurrentOperatorRole() !== "receptionist"
   );
 }
@@ -7134,7 +7135,6 @@ async function openLcDurationEditor(transactionId) {
     details: null,
     durations: {},
     reason: "",
-    admin_pin: "",
   };
   isLoadingLcDurationEditor = true;
   renderRooms();
@@ -7276,11 +7276,7 @@ function updateLcDurationEditorField(field, value) {
     const preview = getLcDurationEditorPreview();
     saveButton.disabled = !lcDurationEditor.details?.can_edit
       || !preview.changed
-      || String(lcDurationEditor.reason || "").trim().length < 3
-      || (
-        lcDurationEditor.details?.requires_admin_pin
-        && !String(lcDurationEditor.admin_pin || "").trim()
-      );
+      || String(lcDurationEditor.reason || "").trim().length < 3;
   }
 }
 
@@ -7327,12 +7323,6 @@ async function saveLcDurationEditor() {
     renderRooms();
     return;
   }
-  if (details.requires_admin_pin && !String(editor.admin_pin || "").trim()) {
-    editor.error = "PIN owner/manager wajib diisi untuk transaksi yang sudah dibayar.";
-    renderRooms();
-    return;
-  }
-
   isSavingLcDurationEditor = true;
   editor.error = "";
   renderRooms();
@@ -7342,13 +7332,12 @@ async function saveLcDurationEditor() {
       action: "updateTransactionLcDurations",
       transaction_id: editor.transaction_id,
       assignments: (details.lc_logs || []).map((log) => ({
+        log_id: log.log_id,
         lc_id: log.lc_id,
         duration_minutes: Number(editor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60,
       })),
       reason: String(editor.reason || "").trim(),
       changed_by: getLoggedInOperatorName(),
-      operator_pin: getLoggedInOperatorPin(),
-      admin_pin: String(editor.admin_pin || "").trim(),
     });
 
     if (!data || data.ok !== true) {
@@ -7358,10 +7347,10 @@ async function saveLcDurationEditor() {
     mergeUpdatedTransactionIntoState(data.transaction);
     lcDurationEditor = null;
     showInlineNotice(data.message || "Durasi LC berhasil diperbarui.", "success");
+    await loadReceiptDetailsForTransaction(data.transaction);
   } catch (error) {
     lcDurationEditor = {
       ...editor,
-      admin_pin: "",
       error: error.message || "Gagal memperbarui durasi LC.",
     };
   } finally {
@@ -7523,25 +7512,6 @@ function createLcDurationEditorElement() {
   reasonField.append(reasonLabel, reasonInput);
   dialog.appendChild(reasonField);
 
-  if (details.requires_admin_pin) {
-    const pinField = document.createElement("label");
-    pinField.className = "lc-duration-editor-reason";
-    const pinLabel = document.createElement("span");
-    pinLabel.textContent = "PIN Owner/Manager";
-    const pinInput = document.createElement("input");
-    pinInput.className = "lc-duration-editor-input";
-    pinInput.type = "password";
-    pinInput.inputMode = "numeric";
-    pinInput.autocomplete = "off";
-    pinInput.value = editor.admin_pin || "";
-    pinInput.disabled = isSavingLcDurationEditor;
-    pinInput.addEventListener("input", (event) => {
-      updateLcDurationEditorField("admin_pin", event.target.value);
-    });
-    pinField.append(pinLabel, pinInput);
-    dialog.appendChild(pinField);
-  }
-
   const actions = document.createElement("div");
   actions.className = "lc-duration-editor-actions";
   const cancelButton = document.createElement("button");
@@ -7558,7 +7528,6 @@ function createLcDurationEditorElement() {
   saveButton.disabled = !details.can_edit
     || !preview.changed
     || String(editor.reason || "").trim().length < 3
-    || (details.requires_admin_pin && !String(editor.admin_pin || "").trim())
     || isSavingLcDurationEditor;
   saveButton.textContent = isSavingLcDurationEditor ? "Menyimpan..." : "Simpan Perubahan";
   actions.append(cancelButton, saveButton);
@@ -7580,7 +7549,9 @@ function createBillingSummaryElement(transaction) {
   const title = document.createElement("h2");
   title.className = "billing-summary-title";
   title.id = "billing-summary-title";
-  title.textContent = "Ringkasan Tagihan";
+  title.textContent = String(transaction?.payment_status || "").toLowerCase() === "unpaid"
+    ? "Periksa Tagihan Akhir"
+    : "Ringkasan Tagihan";
 
   const actions = document.createElement("div");
   actions.className = "billing-summary-actions";
@@ -7604,7 +7575,7 @@ function createBillingSummaryElement(transaction) {
     editLcButton.type = "button";
     editLcButton.dataset.action = "open-lc-duration-editor";
     editLcButton.dataset.transactionId = transaction.transaction_id;
-    editLcButton.textContent = "Edit Durasi LC";
+    editLcButton.textContent = "Revisi Durasi LC";
     actions.appendChild(editLcButton);
   }
 
@@ -7654,6 +7625,7 @@ function createBillingSummaryElement(transaction) {
   summary.append(
     header,
     createBillingBasisNoteElement(transaction),
+    createLcCheckoutReviewNotice(transaction),
     grid,
     createRoomJourneyElement(transaction),
     createBillingBreakdownElement(transaction),
@@ -7663,6 +7635,16 @@ function createBillingSummaryElement(transaction) {
   );
 
   return summary;
+}
+
+function createLcCheckoutReviewNotice(transaction) {
+  if (String(transaction?.payment_status || "").toLowerCase() !== "unpaid" || Number(transaction?.lc_total || 0) <= 0) {
+    return document.createDocumentFragment();
+  }
+  const notice = document.createElement("p");
+  notice.className = "billing-fnb-orders";
+  notice.textContent = "Periksa durasi setiap LC bersama koordinator LC. Gunakan Revisi Durasi LC bila ada koreksi sebelum pembayaran dan struk dicetak.";
+  return notice;
 }
 
 function getTransactionRoomJourney(transaction) {
@@ -24364,16 +24346,19 @@ async function closeSession(roomId, options = {}) {
       transactionFnbDetails[transaction.transaction_id] = transaction.fnb_orders;
     }
 
+    let closeSessionTvWarning = "";
     try {
       await sendLocalTvCommand(roomId, "power_off", "close_session");
-      showInlineNotice("Sesi berhasil diselesaikan. TV dimatikan.");
     } catch (tvError) {
-      showInlineNotice(`Sesi berhasil diselesaikan. Namun TV gagal dimatikan: ${tvError.message}`, "warning");
+      closeSessionTvWarning = ` TV gagal dimatikan: ${tvError.message}`;
     }
 
     if (transaction.transaction_id) {
       showBillingSummary(transaction);
-      showReceiptPrint(transaction);
+      showInlineNotice(
+        `Sesi selesai. Periksa durasi LC dan total tagihan sebelum mencetak struk.${closeSessionTvWarning}`,
+        closeSessionTvWarning ? "warning" : "success"
+      );
       await loadTodayTransactions();
     } else {
       clearBillingSummary();

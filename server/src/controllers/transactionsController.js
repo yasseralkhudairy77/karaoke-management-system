@@ -725,15 +725,25 @@ async function getTransactionLcDetails(req, res) {
     const trxRes = await db.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
     if (trxRes.rowCount === 0) return errorResponse(res, 'Transaksi tidak ditemukan.', 'TRANSACTION_NOT_FOUND');
     const trx = trxRes.rows[0];
-    const logsRes = await db.query(`
+    let logsRes = await db.query(`
       SELECT * FROM lc_work_logs
-      WHERE room_id = $1
-        AND created_at >= $2::timestamptz
-        AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
-        AND status != 'cancelled'
-      ORDER BY created_at DESC
-      LIMIT 20
-    `, [trx.room_id, trx.start_time, trx.end_time]);
+      WHERE closed_transaction_id = $1 AND status != 'cancelled'
+      ORDER BY created_at ASC, log_id ASC
+    `, [transactionId]);
+
+    // Fallback read-only untuk transaksi lama sebelum kolom relasi langsung tersedia.
+    if (logsRes.rowCount === 0) {
+      logsRes = await db.query(`
+        SELECT * FROM lc_work_logs
+        WHERE room_id = $1
+          AND created_at >= $2::timestamptz
+          AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
+          AND status != 'cancelled'
+        ORDER BY created_at ASC, log_id ASC
+        LIMIT 20
+      `, [trx.room_id, trx.start_time, trx.end_time]);
+    }
+
     const uniqueRows = Array.from(logsRes.rows.reduce((map, row) => {
       if (!row.lc_id || map.has(row.lc_id)) return map;
       map.set(row.lc_id, row);
@@ -750,6 +760,16 @@ async function getTransactionLcDetails(req, res) {
     }));
     const itemTotal = logs.reduce((total, row) => total + Number(row.rate || 0), 0);
     const lcTotal = Number(trx.lc_total || 0);
+    const payrollLocked = uniqueRows.some(row => Boolean(row.payroll_id));
+    const cancelled = String(trx.payment_status || '').toLowerCase() === 'cancelled';
+    const canEdit = uniqueRows.length > 0 && !payrollLocked && !cancelled;
+    const blockedReason = cancelled
+      ? 'Transaksi yang dibatalkan tidak dapat direvisi.'
+      : payrollLocked
+        ? 'Durasi LC tidak dapat direvisi karena honor LC sudah masuk payroll.'
+        : uniqueRows.length === 0
+          ? 'Detail LC transaksi tidak ditemukan.'
+          : '';
     const lcDetails = {
       detail_available: logs.length > 0,
       lc_logs: logs,
@@ -762,6 +782,14 @@ async function getTransactionLcDetails(req, res) {
       ok: true,
       success: true,
       transaction: trx,
+      transaction_id: transactionId,
+      room_id: trx.room_id,
+      room_name: trx.room_name,
+      current_lc_total: lcTotal,
+      current_grand_total: Number(trx.grand_total || 0),
+      can_edit: canEdit,
+      requires_admin_pin: false,
+      blocked_reason: blockedReason,
       ...lcDetails,
       lc_details: lcDetails,
       details: logs
@@ -776,33 +804,152 @@ async function updateTransactionLcDurations(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
-    const transactionId = payload.transaction_id;
-    const updates = Array.isArray(payload.lc_assignments) ? payload.lc_assignments : [];
+    const transactionId = String(payload.transaction_id || '').trim();
+    const updates = Array.isArray(payload.assignments)
+      ? payload.assignments
+      : Array.isArray(payload.lc_assignments)
+        ? payload.lc_assignments
+        : [];
+    const reason = String(payload.reason || '').trim();
+    const changedBy = String(payload.changed_by || payload.cashier_name || 'Kasir').trim();
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (updates.length === 0) throw new Error('Daftar perubahan durasi LC wajib diisi.');
+    if (reason.length < 3) throw new Error('Alasan perubahan minimal 3 karakter.');
 
-    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
     if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
     const trx = trxRes.rows[0];
+    if (String(trx.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang dibatalkan tidak dapat direvisi.');
+    }
+
+    let logsRes = await client.query(`
+      SELECT * FROM lc_work_logs
+      WHERE closed_transaction_id = $1 AND status != 'cancelled'
+      ORDER BY created_at ASC, log_id ASC
+      FOR UPDATE
+    `, [transactionId]);
+
+    // Migrasi aman untuk transaksi lama: ikat dahulu log yang berada tepat di
+    // rentang transaksi, kemudian seluruh perubahan berikutnya memakai log_id.
+    if (logsRes.rowCount === 0) {
+      logsRes = await client.query(`
+        SELECT * FROM lc_work_logs
+        WHERE room_id = $1
+          AND created_at >= $2::timestamptz
+          AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
+          AND status != 'cancelled'
+        ORDER BY created_at ASC, log_id ASC
+        FOR UPDATE
+      `, [trx.room_id, trx.start_time, trx.end_time]);
+      if (logsRes.rowCount > 0) {
+        await client.query(`
+          UPDATE lc_work_logs SET closed_transaction_id = $1
+          WHERE log_id = ANY($2)
+        `, [transactionId, logsRes.rows.map(row => row.log_id)]);
+      }
+    }
+
+    const uniqueLogs = Array.from(logsRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, row);
+      return map;
+    }, new Map()).values());
+    if (uniqueLogs.length === 0) throw new Error('Detail LC transaksi tidak ditemukan.');
+    if (uniqueLogs.some(row => Boolean(row.payroll_id))) {
+      throw new Error('Durasi LC tidak dapat direvisi karena honor LC sudah masuk payroll.');
+    }
+
+    const oldLcTotal = Number(trx.lc_total || 0);
+    const oldGrandTotal = Number(trx.grand_total || 0);
+    const oldItems = uniqueLogs.map(row => ({
+      log_id: row.log_id,
+      lc_id: row.lc_id,
+      lc_name: row.lc_name,
+      duration_minutes: Number(row.duration_minutes || 0),
+      rate_per_hour: Number(row.rate_per_hour || 0),
+      rate: Number(row.rate || 0)
+    }));
 
     let lcTotal = 0;
-    for (const item of updates) {
-      if (!item.lc_id) continue;
-      const duration = Number(item.duration_minutes || 60);
-      const lcRes = await client.query('SELECT rate_per_hour FROM lc_master WHERE lc_id = $1', [item.lc_id]);
-      const hourlyRate = lcRes.rowCount > 0 ? Number(lcRes.rows[0].rate_per_hour || 0) : Number(item.rate_per_hour || 0);
+    const newItems = [];
+    for (const log of uniqueLogs) {
+      const item = updates.find(update => (
+        (update.log_id && String(update.log_id) === String(log.log_id))
+        || (!update.log_id && update.lc_id && String(update.lc_id) === String(log.lc_id))
+      ));
+      const duration = Math.round(Number(item?.duration_minutes ?? log.duration_minutes));
+      if (!Number.isFinite(duration) || duration < 30 || duration > 720 || duration % 30 !== 0) {
+        throw new Error(`Durasi ${log.lc_name || log.lc_id} harus kelipatan 30 menit antara 30 menit sampai 12 jam.`);
+      }
+      const hourlyRate = Number(log.rate_per_hour || 0);
+      if (hourlyRate <= 0) throw new Error(`Tarif historis ${log.lc_name || log.lc_id} tidak valid.`);
       const rate = Math.ceil(duration / 60) * hourlyRate;
       lcTotal += rate;
       await client.query(`
         UPDATE lc_work_logs
         SET duration_minutes = $1, rate_per_hour = $2, rate = $3
-        WHERE room_id = $4 AND lc_id = $5 AND status <> 'cancelled'
-      `, [duration, hourlyRate, rate, trx.room_id, item.lc_id]);
+        WHERE log_id = $4 AND closed_transaction_id = $5 AND status <> 'cancelled'
+      `, [duration, hourlyRate, rate, log.log_id, transactionId]);
+      newItems.push({
+        log_id: log.log_id,
+        lc_id: log.lc_id,
+        lc_name: log.lc_name,
+        duration_minutes: duration,
+        rate_per_hour: hourlyRate,
+        rate
+      });
     }
 
     const grandTotal = Number(trx.room_total || 0) + Number(trx.fnb_total || 0) + lcTotal;
-    await client.query('UPDATE transactions SET lc_total = $1, grand_total = $2 WHERE transaction_id = $3', [lcTotal, grandTotal, transactionId]);
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET lc_total = $1,
+          grand_total = $2,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $3,
+          correction_note = $4
+      WHERE transaction_id = $5
+      RETURNING *
+    `, [lcTotal, grandTotal, changedBy, reason, transactionId]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'lc_duration_correction', $3, $4, $5, $6)
+    `, [
+      `TCOR-LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      transactionId,
+      JSON.stringify({ lc_total: oldLcTotal, grand_total: oldGrandTotal, items: oldItems }),
+      JSON.stringify({ lc_total: lcTotal, grand_total: grandTotal, items: newItems }),
+      reason,
+      changedBy
+    ]);
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0,
+          last_attempt_at = NULL, error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
     await client.query('COMMIT');
-    return successResponse(res, { message: 'Durasi LC transaksi berhasil diperbarui.', transaction_id: transactionId, lc_total: lcTotal, grand_total: grandTotal });
+    return successResponse(res, {
+      message: 'Durasi LC dan total tagihan berhasil diperbarui.',
+      transaction: serializeTransaction(updatedTransaction),
+      transaction_id: transactionId,
+      old_lc_total: oldLcTotal,
+      lc_total: lcTotal,
+      difference: lcTotal - oldLcTotal,
+      grand_total: grandTotal,
+      lc_logs: newItems,
+      can_edit: true,
+      requires_admin_pin: false
+    });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);

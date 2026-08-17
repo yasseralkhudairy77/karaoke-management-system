@@ -376,8 +376,11 @@ CREATE TABLE IF NOT EXISTS lc_work_logs (
     closed_at TIMESTAMPTZ,
     cashier_name VARCHAR(100) NOT NULL,
     note TEXT,
-    payroll_id VARCHAR(50)
+    payroll_id VARCHAR(50),
+    closed_transaction_id VARCHAR(50) REFERENCES transactions(transaction_id)
 );
+
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS closed_transaction_id VARCHAR(50) REFERENCES transactions(transaction_id);
 
 CREATE TABLE IF NOT EXISTS lc_sales_bonus_logs (
     bonus_log_id VARCHAR(50) PRIMARY KEY,
@@ -632,6 +635,7 @@ CREATE INDEX IF NOT EXISTS idx_fnb_orders_status ON fnb_orders(order_status, roo
 CREATE INDEX IF NOT EXISTS idx_fnb_orders_session_status ON fnb_orders(session_id, order_status);
 CREATE INDEX IF NOT EXISTS idx_room_session_segments_session ON room_session_segments(session_id, sequence_no);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_item_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_lc_work_logs_closed_transaction ON lc_work_logs(closed_transaction_id, status);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_snapshots(source_id, period, operational_date_start, operational_date_end, received_at DESC);
 
