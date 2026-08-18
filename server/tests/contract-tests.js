@@ -8,6 +8,8 @@ process.env.PGDATABASE = process.env.PGTESTDATABASE || 'happy_song_pos_test';
 
 const app = require('../src/server');
 const db = require('../src/db');
+const { getOperationalDateRange } = require('../src/utils/operationalDate');
+const { getLatestOwnerMirrorSnapshot } = require('../src/services/ownerMirrorService');
 
 let serverInstance = null;
 const PORT = 3099;
@@ -247,6 +249,40 @@ async function runContractTests() {
       && Number(row.lc_total) === 150000
       && Number(row.grand_total) === 400000
       && row.payment_status === 'unpaid';
+  });
+  await testDatabaseState('owner mirror reuses exact-date snapshot after cutoff rollover', async () => {
+    const sourceId = `rollover-test-${Date.now()}`;
+    const range = getOperationalDateRange('yesterday');
+    try {
+      await db.query(`
+        INSERT INTO owner_mirror_snapshots (
+          source_id, mirror_version, generated_at, generated_at_wib, period,
+          operational_date_start, operational_date_end, payload_json
+        ) VALUES ($1, 'rollover-regression-v1', CURRENT_TIMESTAMP, '', 'today', $2, $3, $4)
+      `, [
+        sourceId,
+        range.startDate,
+        range.endDate,
+        JSON.stringify({
+          mirror_version: 'rollover-regression-v1',
+          period: 'today',
+          operational_date_start: range.startDate,
+          operational_date_end: range.endDate,
+          summary: { total_transactions: 7 }
+        })
+      ]);
+
+      const snapshot = await getLatestOwnerMirrorSnapshot(sourceId, { period: 'yesterday' });
+      return snapshot.has_snapshot === true
+        && snapshot.period === 'yesterday'
+        && snapshot.snapshot_period === 'today'
+        && snapshot.period_relabelled === true
+        && snapshot.operational_date_start === range.startDate
+        && snapshot.operational_date_end === range.endDate
+        && snapshot.summary?.total_transactions === 7;
+    } finally {
+      await db.query('DELETE FROM owner_mirror_snapshots WHERE source_id = $1', [sourceId]);
+    }
   });
   await testAction('completeCleaning', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_ROOM_ID }, res => res.body.ok === true);
   await testAction('completeCleaning target', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_TARGET_ROOM_ID }, res => res.body.ok === true);

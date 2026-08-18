@@ -385,10 +385,11 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
       SELECT *
       FROM owner_mirror_snapshots
       WHERE source_id = $1
-        AND period = $2
         AND operational_date_start = $3::date
         AND operational_date_end = $4::date
-      ORDER BY received_at DESC
+      ORDER BY
+        CASE WHEN period = $2 THEN 0 ELSE 1 END,
+        received_at DESC
       LIMIT 1
     `, [sourceId, period || 'today', range.startDate, range.endDate])
     : await db.query(`
@@ -419,11 +420,15 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
   }
 
   const row = result.rows[0];
+  const storedPeriod = row.period || row.payload_json?.period || '';
   return {
     ...row.payload_json,
     mode: 'cloud_latest_snapshot',
     source_id: row.source_id,
     has_snapshot: true,
+    period: period || storedPeriod || 'latest',
+    snapshot_period: storedPeriod,
+    period_relabelled: Boolean(period && storedPeriod && period !== storedPeriod),
     cloud_snapshot_id: row.snapshot_id,
     cloud_received_at: iso(row.received_at),
     cloud_received_at_wib: toJakartaIsoString(row.received_at)
