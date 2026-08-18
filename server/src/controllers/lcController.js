@@ -69,7 +69,7 @@ async function assignSessionLcs(req, res, payload) {
     const roomName = roomRes.rowCount > 0 ? roomRes.rows[0].room_name : roomId;
 
     const sessRes = await client.query(`
-      SELECT session_id FROM room_sessions WHERE room_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1
+      SELECT session_id FROM room_sessions WHERE room_id = $1 AND status IN ('starting', 'active') ORDER BY created_at DESC LIMIT 1
     `, [roomId]);
     const sessionId = sessRes.rowCount > 0 ? sessRes.rows[0].session_id : null;
 

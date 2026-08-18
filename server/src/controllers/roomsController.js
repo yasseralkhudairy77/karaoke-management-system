@@ -770,15 +770,51 @@ async function moveActiveSessionRoom(req, res, payload) {
       throw new Error(`Room tujuan belum tersedia (status: ${targetRoom.status}).`);
     }
 
-    const sessionRes = await client.query(`
+    let sessionRes = await client.query(`
       SELECT * FROM room_sessions
-      WHERE room_id = $1 AND status = 'active'
+      WHERE room_id = $1 AND status IN ('starting', 'active')
       ORDER BY created_at DESC
       LIMIT 1
       FOR UPDATE
     `, [sourceRoomId]);
-    if (sessionRes.rowCount === 0) throw new Error('Sesi aktif room asal tidak ditemukan.');
-    const session = sessionRes.rows[0];
+
+    let session = sessionRes.rows[0];
+
+    if (!session) {
+      const startTime = sourceRoom.start_time ? new Date(sourceRoom.start_time) : new Date();
+      const durationMinutes = Math.max(0, Number(sourceRoom.booked_duration_minutes || 60));
+      const scheduledEndTime = sourceRoom.scheduled_end_time
+        ? new Date(sourceRoom.scheduled_end_time)
+        : new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+      const sessionId = `${sourceRoomId}-${startTime.toISOString().replace(/[-:T.Z]/g, '')}`;
+
+      const insertedSession = await client.query(`
+        INSERT INTO room_sessions (
+          session_id, room_id, room_name, booking_mode, status,
+          start_time, scheduled_end_time, booked_duration_minutes,
+          package_included_minutes, billable_room_minutes, rate_per_hour, cashier_name
+        ) VALUES ($1, $2, $3, 'regular', 'active', $4, $5, $6, 0, $6, $7, $8)
+        RETURNING *
+      `, [
+        sessionId,
+        sourceRoomId,
+        sourceRoom.room_name,
+        startTime,
+        scheduledEndTime,
+        durationMinutes,
+        Number(sourceRoom.rate_per_hour || 0),
+        movedBy
+      ]);
+      session = insertedSession.rows[0];
+    } else if (session.status !== 'active') {
+      await client.query(`
+        UPDATE room_sessions
+        SET status = 'active', updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = $1
+      `, [session.session_id]);
+      session.status = 'active';
+    }
+
     const currentSegment = await ensureActiveRoomSegment(client, session, sourceRoom);
 
     const completedRes = await client.query(`
@@ -1456,13 +1492,31 @@ async function activatePreparedSession(req, res, payload) {
     if (sessionRes.rowCount > 0) {
       await client.query(`
         UPDATE room_sessions
-        SET start_time = $1, scheduled_end_time = $2, updated_at = CURRENT_TIMESTAMP
+        SET status = 'active', start_time = $1, scheduled_end_time = $2, updated_at = CURRENT_TIMESTAMP
         WHERE session_id = $3
       `, [startTime, scheduledEndTime, sessionRes.rows[0].session_id]);
 
       await ensureActiveRoomSegment(client, {
         ...sessionRes.rows[0],
+        status: 'active',
         start_time: startTime
+      }, room);
+    } else {
+      const sessionId = `${roomId}-${startTime.toISOString().replace(/[-:T.Z]/g, '')}`;
+      await client.query(`
+        INSERT INTO room_sessions (
+          session_id, room_id, room_name, booking_mode, status,
+          start_time, scheduled_end_time, booked_duration_minutes,
+          package_included_minutes, billable_room_minutes, rate_per_hour, cashier_name
+        ) VALUES ($1, $2, $3, 'regular', 'active', $4, $5, $6, 0, $6, $7, $8)
+      `, [sessionId, roomId, room.room_name, startTime, scheduledEndTime, durationMinutes, Number(room.rate_per_hour || 0), 'Kasir']);
+
+      await ensureActiveRoomSegment(client, {
+        session_id: sessionId,
+        status: 'active',
+        start_time: startTime,
+        rate_per_hour: room.rate_per_hour,
+        cashier_name: 'Kasir'
       }, room);
     }
 

@@ -17,6 +17,8 @@ const PORT = 3099;
 const TEST_ROOM_ID = 'ROOM-TEST-001';
 const TEST_TARGET_ROOM_ID = 'ROOM-TEST-002';
 const TEST_TARGET_ROOM_ID_2 = 'ROOM-TEST-003';
+const TEST_ORPHAN_ROOM_ID = 'ROOM-TEST-004';
+const TEST_ORPHAN_TARGET_ROOM_ID = 'ROOM-TEST-005';
 const TEST_FNB_ROOM_ID = 'ROOM-TEST-FNB';
 const TEST_MENU_ID = 'MENU-TEST-001';
 const TEST_LC_ID = 'LC-TEST-001';
@@ -66,7 +68,9 @@ async function seedContractData() {
       ($1, 'Room Test Contract', 'available', NULL, 0, NULL, 100000),
       ($2, 'Room Test FNB', 'occupied', $3, 60, $4, 100000),
       ($5, 'Room Test Target', 'available', NULL, 0, NULL, 150000),
-      ($6, 'Room Test Target Same Grade', 'available', NULL, 0, NULL, 150000)
+      ($6, 'Room Test Target Same Grade', 'available', NULL, 0, NULL, 150000),
+      ($7, 'Room Test Orphan Active', 'occupied', $3, 60, $4, 125000),
+      ($8, 'Room Test Orphan Target', 'available', NULL, 0, NULL, 185000)
     ON CONFLICT (room_id) DO UPDATE SET
       room_name = EXCLUDED.room_name,
       status = EXCLUDED.status,
@@ -75,7 +79,7 @@ async function seedContractData() {
       scheduled_end_time = EXCLUDED.scheduled_end_time,
       rate_per_hour = EXCLUDED.rate_per_hour,
       updated_at = CURRENT_TIMESTAMP
-  `, [TEST_ROOM_ID, TEST_FNB_ROOM_ID, now, end, TEST_TARGET_ROOM_ID, TEST_TARGET_ROOM_ID_2]);
+  `, [TEST_ROOM_ID, TEST_FNB_ROOM_ID, now, end, TEST_TARGET_ROOM_ID, TEST_TARGET_ROOM_ID_2, TEST_ORPHAN_ROOM_ID, TEST_ORPHAN_TARGET_ROOM_ID]);
 
   await db.query(`
     INSERT INTO inventory (stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status)
@@ -212,6 +216,12 @@ async function runContractTests() {
   await testAction('validateAdminPin invalid rejection', 'POST', '/exec', { action: 'validateAdminPin', pin: '999999' }, res => res.body.ok === false && res.body.code === 'INVALID_ADMIN_PIN');
   await testAction('sendTvCommand mock bridge', 'POST', '/exec', { action: 'sendTvCommand', room_id: TEST_ROOM_ID, tv_action: 'power_on' }, res => res.body.ok === true);
   await testAction('saveFnbOrder payload verification', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_FNB_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 2 }], idempotency_key: `IDEM-FNB-${Date.now()}` }, res => res.body.ok === true && res.body.order_id);
+  await db.query(`
+    UPDATE room_sessions
+    SET status = 'voided', updated_at = CURRENT_TIMESTAMP
+    WHERE room_id = ANY($1) AND status IN ('starting', 'active')
+  `, [[TEST_ORPHAN_ROOM_ID, TEST_ORPHAN_TARGET_ROOM_ID]]);
+  await testAction('moveActiveSessionRoom recovers missing session record', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_ORPHAN_ROOM_ID, target_room_id: TEST_ORPHAN_TARGET_ROOM_ID, reason: 'Contract test recover missing session', cashier_name: 'TestKasir', idempotency_key: `IDEM-MOVE-ORPHAN-${Date.now()}` }, res => res.body.ok === true && res.body.target_room?.room_id === TEST_ORPHAN_TARGET_ROOM_ID && Array.isArray(res.body.room_journey) && res.body.room_journey.length === 2);
   await testAction('assignSessionLcs frontend payload', 'POST', '/exec', { action: 'assignSessionLcs', room_id: TEST_ROOM_ID, lc_ids: `${TEST_LC_ID},${TEST_LC_ID_2}`, lc_assignments: `[{"lc_id":"${TEST_LC_ID}","duration_minutes":120}]` }, res => res.body.ok === true);
   await testAction('startSession', 'POST', '/exec', { action: 'startSession', room_id: TEST_ROOM_ID, duration_minutes: 60, cashier_name: 'TestKasir', idempotency_key: `IDEM-START-${Date.now()}` }, res => res.body.ok === true && res.body.session);
   await testAction('extendSession', 'POST', '/exec', { action: 'extendSession', room_id: TEST_ROOM_ID, add_minutes: 30, cashier_name: 'TestKasir' }, res => res.body.ok === true && res.body.room);
@@ -287,6 +297,8 @@ async function runContractTests() {
   await testAction('completeCleaning', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_ROOM_ID }, res => res.body.ok === true);
   await testAction('completeCleaning target', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_TARGET_ROOM_ID }, res => res.body.ok === true);
   await testAction('completeCleaning target same grade', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_TARGET_ROOM_ID_2 }, res => res.body.ok === true);
+  await testAction('completeCleaning orphan source', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_ORPHAN_ROOM_ID }, res => res.body.ok === true);
+  await testAction('completeCleaning orphan target', 'POST', '/exec', { action: 'completeCleaning', room_id: TEST_ORPHAN_TARGET_ROOM_ID }, res => res.body.ok === true);
   await testAction('saveCashierClosing', 'POST', '/exec', { action: 'saveCashierClosing', cash_actual: 500000, note: 'Closing test', cashier_name: 'TestKasir' }, res => res.body.ok === true || /sudah dilakukan/i.test(res.body.message || ''));
   await testAction('unknownActionRejection', 'GET', '/exec?action=invalidActionName', null, res => res.body.ok === false && res.body.code === 'UNKNOWN_ACTION');
 
