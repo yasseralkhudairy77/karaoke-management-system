@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS promos (
     promo_code VARCHAR(50) PRIMARY KEY,
     promo_name VARCHAR(100) NOT NULL,
     type VARCHAR(20) DEFAULT 'promo',
-    discount_type VARCHAR(20) CHECK (discount_type IN ('percentage', 'fixed')),
+    discount_type VARCHAR(20) CHECK (discount_type IN ('percentage', 'fixed', 'nominal')),
     discount_value NUMERIC(12,2) NOT NULL,
     max_discount NUMERIC(12,2),
     min_spend NUMERIC(12,2) DEFAULT 0,

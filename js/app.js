@@ -19503,10 +19503,13 @@ function createPromosiPanelElement() {
       </thead>
       <tbody>
         ${promosList.map(row => {
+          const promoCode = row.code || row.promo_code || "";
           const typeLabel = row.type === "voucher" ? "Voucher (Sekali Pakai)" : "Promo (Berkali-kali)";
-          const discTypeLabel = row.discount_type === "percentage" ? "Persentase (%)" : "Potongan Rupiah (Nominal)";
-          const discValLabel = row.discount_type === "percentage" ? `${row.discount_value}%` : formatCurrency(row.discount_value);
-          const statusBadge = row.status === "active"
+          const isPercentage = row.discount_type === "percentage";
+          const discTypeLabel = isPercentage ? "Persentase (%)" : "Potongan Rupiah (Nominal)";
+          const discValLabel = isPercentage ? `${row.discount_value}%` : formatCurrency(row.discount_value);
+          const isRowActive = row.status === "active" || row.is_active === true || row.is_active === "true";
+          const statusBadge = isRowActive
             ? `<span class="badge badge-success" style="background-color: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Aktif</span>`
             : `<span class="badge badge-error" style="background-color: var(--error); color: #fff; padding: 2px 6px; border-radius: 4px; font-size:11px;">Tidak Aktif</span>`;
           
@@ -19521,17 +19524,17 @@ function createPromosiPanelElement() {
 
           return `
             <tr>
-              <td><strong>${escapeHtml(row.code)}</strong></td>
+              <td><strong>${escapeHtml(promoCode)}</strong></td>
               <td>${typeLabel}</td>
               <td>${discTypeLabel}</td>
               <td><strong>${discValLabel}</strong></td>
               <td>${statusBadge}</td>
               <td>${usageInfo}</td>
               <td style="text-align: center; white-space: nowrap; gap: 6px;">
-                <button type="button" class="erp-btn erp-btn-secondary btn-toggle-status" style="padding: 4px 8px; font-size: 12px; margin-right: 6px;" data-code="${row.code}" data-status="${row.status}">
-                  ${row.status === "active" ? "Nonaktifkan" : "Aktifkan"}
+                <button type="button" class="erp-btn erp-btn-secondary btn-toggle-status" style="padding: 4px 8px; font-size: 12px; margin-right: 6px;" data-code="${escapeHtml(promoCode)}" data-status="${isRowActive ? "active" : "inactive"}">
+                  ${isRowActive ? "Nonaktifkan" : "Aktifkan"}
                 </button>
-                <button type="button" class="erp-btn erp-btn-secondary btn-delete-promo" style="padding: 4px 8px; font-size: 12px; border-color: var(--error); color: var(--error);" data-code="${row.code}">
+                <button type="button" class="erp-btn erp-btn-secondary btn-delete-promo" style="padding: 4px 8px; font-size: 12px; border-color: var(--error); color: var(--error);" data-code="${escapeHtml(promoCode)}">
                   Hapus
                 </button>
               </td>
@@ -19646,7 +19649,7 @@ function createAddPromoModalOverlay() {
   discTypeSelect.style.borderRadius = "4px";
   discTypeSelect.innerHTML = `
     <option value="percentage">Persentase (%)</option>
-    <option value="nominal">Nominal Rupiah (Rp)</option>
+    <option value="fixed">Nominal Rupiah (Rp)</option>
   `;
   discTypeGroup.append(discTypeLabel, discTypeSelect);
 

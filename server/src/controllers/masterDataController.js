@@ -214,30 +214,114 @@ async function savePackageMaster(req, res, payload) {
   }
 }
 
+let promoSchemaChecked = false;
+async function ensurePromosSchema() {
+  if (promoSchemaChecked) return;
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS promos (
+        promo_code VARCHAR(50) PRIMARY KEY,
+        promo_name VARCHAR(100) NOT NULL,
+        type VARCHAR(20) DEFAULT 'promo',
+        discount_type VARCHAR(20),
+        discount_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+        max_discount NUMERIC(12,2),
+        min_spend NUMERIC(12,2) DEFAULT 0,
+        valid_from DATE,
+        valid_until DATE,
+        is_active BOOLEAN DEFAULT TRUE,
+        used_in_transaction_id VARCHAR(50),
+        used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+      ALTER TABLE promos DROP CONSTRAINT IF EXISTS promos_discount_type_check;
+      ALTER TABLE promos ADD CONSTRAINT promos_discount_type_check CHECK (discount_type IN ('percentage', 'fixed', 'nominal'));
+    `);
+    promoSchemaChecked = true;
+  } catch (e) {
+    console.warn('[Schema] ensurePromosSchema notice:', e.message);
+  }
+}
+
 async function savePromo(req, res, payload) {
   try {
+    await ensurePromosSchema();
     const promoCode = String(payload.promo_code || payload.code || '').trim().toUpperCase();
     if (!promoCode) throw new Error('promo_code wajib diisi.');
     const promoType = String(payload.type || 'promo').trim().toLowerCase();
+    
+    // Normalisasi discount_type: 'percentage' atau 'fixed' (juga menerima 'nominal')
+    const rawDiscType = String(payload.discount_type || payload.discountType || 'percentage').trim().toLowerCase();
+    const discountType = (rawDiscType === 'percentage' || rawDiscType === 'percent') ? 'percentage' : 'fixed';
+
+    const discountValue = Math.max(0, Number(payload.discount_value || payload.discountValue || 0));
+    const maxDiscount = (payload.max_discount !== null && payload.max_discount !== undefined && payload.max_discount !== '') 
+      ? Number(payload.max_discount) 
+      : null;
+    const minSpend = Math.max(0, Number(payload.min_spend || payload.minSpend || 0));
+
     await db.query(`
-      INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, max_discount, min_spend, valid_from, valid_until, is_active)
+      INSERT INTO promos (
+        promo_code, promo_name, type, discount_type, discount_value,
+        max_discount, min_spend, valid_from, valid_until, is_active
+      )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (promo_code) DO UPDATE SET promo_name = EXCLUDED.promo_name, type = EXCLUDED.type, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value, max_discount = EXCLUDED.max_discount, min_spend = EXCLUDED.min_spend, valid_from = EXCLUDED.valid_from, valid_until = EXCLUDED.valid_until, is_active = EXCLUDED.is_active
-    `, [promoCode, payload.promo_name || promoCode, promoType, payload.discount_type || 'fixed', Number(payload.discount_value || 0), payload.max_discount || null, Number(payload.min_spend || 0), payload.valid_from || null, payload.valid_until || null, payload.is_active !== false]);
+      ON CONFLICT (promo_code) DO UPDATE SET
+        promo_name = EXCLUDED.promo_name,
+        type = EXCLUDED.type,
+        discount_type = EXCLUDED.discount_type,
+        discount_value = EXCLUDED.discount_value,
+        max_discount = EXCLUDED.max_discount,
+        min_spend = EXCLUDED.min_spend,
+        valid_from = EXCLUDED.valid_from,
+        valid_until = EXCLUDED.valid_until,
+        is_active = EXCLUDED.is_active
+    `, [
+      promoCode,
+      payload.promo_name || promoCode,
+      promoType,
+      discountType,
+      discountValue,
+      maxDiscount,
+      minSpend,
+      payload.valid_from || null,
+      payload.valid_until || null,
+      payload.is_active !== false && payload.status !== 'inactive'
+    ]);
+
     await logMasterAudit('promo', promoCode, payload.promo_name || promoCode, 'save', null, payload, payload.changed_by || payload.cashier_name);
     return successResponse(res, { message: 'Promo berhasil disimpan.', promo_code: promoCode });
   } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) throw err;
     return errorResponse(res, err.message);
   }
 }
 
 async function updatePromoStatus(req, res, payload) {
   try {
+    await ensurePromosSchema();
     const promoCode = String(payload.promo_code || payload.code || '').trim().toUpperCase();
     if (!promoCode) throw new Error('promo_code wajib diisi.');
-    await db.query('UPDATE promos SET is_active = $1 WHERE promo_code = $2', [payload.is_active !== false && payload.status !== 'inactive', promoCode]);
-    return successResponse(res, { message: 'Status promo berhasil diperbarui.', promo_code: promoCode });
+    const isActive = payload.is_active !== false && payload.status !== 'inactive';
+    await db.query('UPDATE promos SET is_active = $1 WHERE promo_code = $2', [isActive, promoCode]);
+    await logMasterAudit('promo', promoCode, promoCode, isActive ? 'activate' : 'deactivate', null, payload, payload.changed_by || payload.cashier_name);
+    return successResponse(res, { message: 'Status promo berhasil diperbarui.', promo_code: promoCode, is_active: isActive });
   } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) throw err;
+    return errorResponse(res, err.message);
+  }
+}
+
+async function deletePromo(req, res, payload) {
+  try {
+    await ensurePromosSchema();
+    const promoCode = String(payload.promo_code || payload.code || '').trim().toUpperCase();
+    if (!promoCode) throw new Error('promo_code wajib diisi.');
+    await db.query('DELETE FROM promos WHERE promo_code = $1', [promoCode]);
+    await logMasterAudit('promo', promoCode, promoCode, 'delete', null, payload, payload.changed_by || payload.cashier_name);
+    return successResponse(res, { message: 'Promo berhasil dihapus.', promo_code: promoCode });
+  } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) throw err;
     return errorResponse(res, err.message);
   }
 }
@@ -464,9 +548,28 @@ async function getEligiblePackages(req, res) {
 
 async function getPromos(req, res) {
   try {
-    const result = await db.query('SELECT * FROM promos WHERE is_active = TRUE ORDER BY promo_code ASC');
-    return res.json({ ok: true, success: true, promos: result.rows });
+    await ensurePromosSchema();
+    const result = await db.query('SELECT * FROM promos ORDER BY created_at DESC, promo_code ASC');
+    const promos = result.rows.map(p => ({
+      code: p.promo_code,
+      promo_code: p.promo_code,
+      promo_name: p.promo_name || p.promo_code,
+      type: p.type || 'promo',
+      discount_type: p.discount_type || 'fixed',
+      discount_value: Number(p.discount_value || 0),
+      max_discount: (p.max_discount !== null && p.max_discount !== undefined) ? Number(p.max_discount) : null,
+      min_spend: Number(p.min_spend || 0),
+      valid_from: p.valid_from ? new Date(p.valid_from).toISOString().slice(0, 10) : '',
+      valid_until: p.valid_until ? new Date(p.valid_until).toISOString().slice(0, 10) : '',
+      status: p.is_active ? 'active' : 'inactive',
+      is_active: Boolean(p.is_active),
+      used_in_transaction_id: p.used_in_transaction_id || '',
+      used_at: p.used_at ? new Date(p.used_at).toISOString() : '',
+      created_at: p.created_at ? new Date(p.created_at).toISOString() : ''
+    }));
+    return res.json({ ok: true, success: true, promos });
   } catch (err) {
+    if (err.message && err.message.includes('DATABASE_OFFLINE')) throw err;
     return errorResponse(res, err.message);
   }
 }
@@ -574,7 +677,7 @@ module.exports = {
   deletePackageMaster,
   savePromo,
   updatePromoStatus,
-  deletePromo: (req, res, payload) => updatePromoStatus(req, res, { ...payload, is_active: false }),
+  deletePromo,
   bulkUpdateMenuProfitability,
   bulkImportPackages,
   seedReceptionistEmployee,
