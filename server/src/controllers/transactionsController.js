@@ -561,6 +561,12 @@ async function correctTransactionPackage(req, res, payload) {
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
       VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
     `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
 
     await client.query('COMMIT');
@@ -689,6 +695,12 @@ async function correctTransactionFreeRoom(req, res, payload) {
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
       VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
     `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
 
     await client.query('COMMIT');
