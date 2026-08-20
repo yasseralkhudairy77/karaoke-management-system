@@ -203,6 +203,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.updateTransactionLcDurations(req, res, payload);
     case 'deleteTransaction':
       return transactionsController.deleteTransaction(req, res, payload);
+    case 'voidTransactionFnbOrder':
+      return transactionsController.voidTransactionFnbOrder(req, res, payload);
     case 'createManualOutageTransaction':
       return transactionsController.createManualOutageTransaction(req, res, payload);
     case 'logReceiptPrint':

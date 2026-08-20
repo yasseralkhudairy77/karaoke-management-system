@@ -835,6 +835,8 @@ let transactionPackageCorrection = null;
 let isSavingTransactionPackageCorrection = false;
 let transactionFreeRoomCorrection = null;
 let isSavingTransactionFreeRoomCorrection = false;
+let transactionFnbVoidModal = null;
+let isVoidingTransactionFnb = false;
 let employees = [];
 let adminPinModal = null;
 let isValidatingAdminPin = false;
@@ -14426,6 +14428,9 @@ function createTransactionHistoryElement() {
     transactionFreeRoomCorrection
       ? createTransactionFreeRoomCorrectionElement()
       : document.createDocumentFragment(),
+    transactionFnbVoidModal
+      ? createTransactionFnbVoidModalElement()
+      : document.createDocumentFragment(),
     adminPinModal
       ? createAdminPinModalElement()
       : document.createDocumentFragment()
@@ -15459,6 +15464,16 @@ function createTransactionActionsElement(transaction) {
       freeRoomButton.dataset.transactionId = transaction?.transaction_id || "";
       freeRoomButton.textContent = "Free Room";
       actions.appendChild(freeRoomButton);
+    }
+
+    if (getTransactionFnbTotal(transaction) > 0 || getTransactionFnbOrderIds(transaction).length > 0) {
+      const voidFnbButton = document.createElement("button");
+      voidFnbButton.className = "transaction-action-button";
+      voidFnbButton.type = "button";
+      voidFnbButton.dataset.action = "open-transaction-fnb-void";
+      voidFnbButton.dataset.transactionId = transaction?.transaction_id || "";
+      voidFnbButton.textContent = "Void F&B";
+      actions.appendChild(voidFnbButton);
     }
 
     const deleteButton = document.createElement("button");
@@ -16700,6 +16715,299 @@ async function executeTransactionFreeRoomCorrection(ownerPin) {
     return { success: false, message };
   } finally {
     isSavingTransactionFreeRoomCorrection = false;
+    renderRooms();
+  }
+}
+
+async function openTransactionFnbVoidModal(transactionId) {
+  const operatorRole = getCurrentOperatorRole();
+  if (operatorRole !== "owner" && operatorRole !== "manager") {
+    showInlineNotice("Hanya akun Owner atau Manager yang dapat melakukan void F&B.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan.", "error");
+    return;
+  }
+
+  const orderIds = getTransactionFnbOrderIds(transaction);
+  if (orderIds.length === 0 && getTransactionFnbTotal(transaction) <= 0) {
+    showInlineNotice("Tidak ada pesanan F&B pada transaksi ini.", "error");
+    return;
+  }
+
+  let orders = [];
+  try {
+    if (orderIds.length > 0) {
+      const data = await postApiAction({
+        action: "getFnbOrdersByIds",
+        order_ids: orderIds.join(",")
+      }).catch(() => null);
+      if (data && Array.isArray(data.orders) && data.orders.length > 0) {
+        orders = data.orders;
+      }
+    }
+  } catch (_) {
+    // fallback
+  }
+
+  if (orders.length === 0) {
+    const cachedReceiptOrders = getReceiptFnbOrders(transaction);
+    if (Array.isArray(cachedReceiptOrders) && cachedReceiptOrders.length > 0) {
+      orders = cachedReceiptOrders;
+    } else if (Array.isArray(todayFnbOrders) && todayFnbOrders.length > 0) {
+      orders = todayFnbOrders.filter(o => orderIds.includes(o.order_id));
+    }
+  }
+
+  const activeOrders = orders.filter(o => String(o.order_status || "").toLowerCase() !== "cancelled");
+
+  if (activeOrders.length === 0 && orderIds.length > 0) {
+    activeOrders.push(...orderIds.map(id => ({ order_id: id, order_total: getTransactionFnbTotal(transaction), items: [] })));
+  }
+
+  transactionFnbVoidModal = {
+    transactionId,
+    selectedOrderId: activeOrders[0]?.order_id || orderIds[0] || "",
+    reason: "",
+    orders: activeOrders
+  };
+
+  renderRooms();
+}
+
+function closeTransactionFnbVoidModal() {
+  if (isVoidingTransactionFnb || isValidatingAdminPin) {
+    return;
+  }
+  transactionFnbVoidModal = null;
+  renderRooms();
+}
+
+function updateTransactionFnbVoidModal(field, value) {
+  if (!transactionFnbVoidModal || !["selectedOrderId", "reason"].includes(field)) {
+    return;
+  }
+  transactionFnbVoidModal = {
+    ...transactionFnbVoidModal,
+    [field]: value
+  };
+}
+
+function syncTransactionFnbVoidModalControls() {
+  const modal = queryDashboard(".transaction-fnb-void-modal");
+  if (!modal || !transactionFnbVoidModal) {
+    return;
+  }
+  const submitButton = modal.querySelector("[data-role='transaction-fnb-void-submit']");
+  if (submitButton) {
+    submitButton.disabled = isVoidingTransactionFnb
+      || !transactionFnbVoidModal.selectedOrderId
+      || String(transactionFnbVoidModal.reason || "").trim().length < 5;
+  }
+}
+
+function createTransactionFnbVoidModalElement() {
+  if (!transactionFnbVoidModal) {
+    return document.createDocumentFragment();
+  }
+
+  const transaction = getTransactionById(transactionFnbVoidModal.transactionId) || {};
+  const selectedOrder = (transactionFnbVoidModal.orders || []).find(
+    o => o.order_id === transactionFnbVoidModal.selectedOrderId
+  ) || transactionFnbVoidModal.orders?.[0];
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-fnb-void-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-fnb-void-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-fnb-void-title";
+  title.textContent = "Void / Koreksi Order F&B";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Membatalkan order F&B akan mengembalikan stok barang ke inventory dan memotong total tagihan transaksi secara otomatis.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+
+  const orderTotalAmount = Number(selectedOrder?.order_total || getTransactionFnbTotal(transaction) || 0);
+  const currentGrandTotal = Number(transaction.grand_total || 0);
+  const nextGrandTotal = Math.max(0, currentGrandTotal - orderTotalAmount);
+
+  [
+    ["ID Transaksi", transaction.transaction_id || "-"],
+    ["Room", transaction.room_name || transaction.room_id || "-"],
+    ["Total Tagihan Saat Ini", formatCurrency(currentGrandTotal)],
+    ["Total F&B Saat Ini", formatCurrency(getTransactionFnbTotal(transaction))],
+    ["Nilai Void F&B", `-${formatCurrency(orderTotalAmount)}`],
+    ["Total Tagihan Baru", formatCurrency(nextGrandTotal)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const orderField = document.createElement("label");
+  orderField.className = "master-form-field";
+  const orderLabel = document.createElement("span");
+  orderLabel.className = "master-form-label";
+  orderLabel.textContent = "Pilih Order F&B yang Ingin Divoid";
+
+  const orderSelect = document.createElement("select");
+  orderSelect.className = "master-form-input";
+  orderSelect.dataset.action = "update-transaction-fnb-void";
+  orderSelect.dataset.field = "selectedOrderId";
+
+  const ordersList = transactionFnbVoidModal.orders || [];
+  if (ordersList.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = transactionFnbVoidModal.selectedOrderId || "";
+    opt.textContent = `${transactionFnbVoidModal.selectedOrderId || "Order F&B"} (${formatCurrency(getTransactionFnbTotal(transaction))})`;
+    orderSelect.appendChild(opt);
+  } else {
+    ordersList.forEach(order => {
+      const opt = document.createElement("option");
+      opt.value = order.order_id;
+      const itemsSummary = Array.isArray(order.items) && order.items.length > 0
+        ? order.items.map(it => `${it.menu_name || it.item_name} (${it.quantity || it.qty}x)`).join(", ")
+        : "F&B Items";
+      opt.textContent = `${order.order_id} - ${itemsSummary} [${formatCurrency(order.order_total)}]`;
+      opt.selected = order.order_id === transactionFnbVoidModal.selectedOrderId;
+      orderSelect.appendChild(opt);
+    });
+  }
+  orderField.append(orderLabel, orderSelect);
+
+  const reasonField = document.createElement("label");
+  reasonField.className = "master-form-field";
+  const reasonLabel = document.createElement("span");
+  reasonLabel.className = "master-form-label";
+  reasonLabel.textContent = "Alasan Void F&B (Wajib)";
+  const reasonInput = document.createElement("input");
+  reasonInput.className = "master-form-input";
+  reasonInput.type = "text";
+  reasonInput.placeholder = "Contoh: Pelanggan membatalkan pesanan sebelum botol dibuka";
+  reasonInput.dataset.action = "update-transaction-fnb-void";
+  reasonInput.dataset.field = "reason";
+  reasonInput.value = transactionFnbVoidModal.reason || "";
+  reasonField.append(reasonLabel, reasonInput);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-transaction-fnb-void";
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-transaction-fnb-void";
+  submitButton.dataset.role = "transaction-fnb-void-submit";
+  submitButton.disabled = isVoidingTransactionFnb
+    || !transactionFnbVoidModal.selectedOrderId
+    || String(transactionFnbVoidModal.reason || "").trim().length < 5;
+  submitButton.textContent = isVoidingTransactionFnb ? "Memproses Void..." : "Simpan Void F&B";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, orderField, reasonField, actions);
+  overlay.appendChild(dialog);
+
+  return overlay;
+}
+
+function submitTransactionFnbVoid() {
+  if (!transactionFnbVoidModal || isVoidingTransactionFnb) {
+    return;
+  }
+
+  const reason = String(transactionFnbVoidModal.reason || "").trim();
+  if (!transactionFnbVoidModal.selectedOrderId || reason.length < 5) {
+    showInlineNotice("Pilih order F&B dan isi alasan pembatalan minimal 5 karakter.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Otorisasi Void F&B",
+    message: `Masukkan PIN Owner/Manager untuk memvoid order ${transactionFnbVoidModal.selectedOrderId} pada transaksi ${transactionFnbVoidModal.transactionId}.`,
+    requestedAction: "void_transaction_fnb",
+    requiredRole: "manager",
+    validatePin: false,
+    forcePrompt: true,
+    onSuccess: (authData, adminPin) => executeTransactionFnbVoid(adminPin),
+  });
+}
+
+async function executeTransactionFnbVoid(adminPin) {
+  if (!transactionFnbVoidModal || isVoidingTransactionFnb) {
+    return { success: false };
+  }
+
+  isVoidingTransactionFnb = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "voidTransactionFnbOrder",
+      transaction_id: transactionFnbVoidModal.transactionId,
+      order_id: transactionFnbVoidModal.selectedOrderId,
+      reason: String(transactionFnbVoidModal.reason || "").trim(),
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Gagal memvoid order F&B.";
+      showInlineNotice(message, "error");
+      if (adminPinModal) {
+        adminPinModal = { ...adminPinModal, pin: "", error: message };
+      }
+      return { success: false, message };
+    }
+
+    if (data.transaction) {
+      mergeUpdatedTransactionIntoState(data.transaction);
+    }
+    adminPinModal = null;
+    transactionFnbVoidModal = null;
+    showInlineNotice(data.message || "Order F&B berhasil divoid dan stok telah dikembalikan.");
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadTodayFnbOrders(),
+      loadOpenFnbOrders(),
+      loadInventoryItems(),
+      loadTodayStockMovements(),
+      loadTodayFnbSalesReport(),
+      loadTodayCashierClosings(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat memvoid order F&B.";
+    showInlineNotice(message, "error");
+    if (adminPinModal) {
+      adminPinModal = { ...adminPinModal, pin: "", error: message };
+    }
+    return { success: false, message };
+  } finally {
+    isVoidingTransactionFnb = false;
     renderRooms();
   }
 }
@@ -25285,6 +25593,21 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-transaction-fnb-void") {
+    openTransactionFnbVoidModal(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "close-transaction-fnb-void") {
+    closeTransactionFnbVoidModal();
+    return;
+  }
+
+  if (action === "submit-transaction-fnb-void") {
+    submitTransactionFnbVoid();
+    return;
+  }
+
   if (action === "close-admin-pin-modal") {
     closeAdminPinModal();
     return;
@@ -26188,6 +26511,15 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-transaction-fnb-void") {
+    updateTransactionFnbVoidModal(field.dataset.field, field.value);
+    syncTransactionFnbVoidModalControls();
+    if (field.dataset.field === "selectedOrderId") {
+      renderRooms();
+    }
+    return;
+  }
+
   if (action === "update-admin-pin-modal") {
     updateAdminPinModal(field.dataset.field, field.value);
     syncAdminPinModalControls();
@@ -26321,6 +26653,15 @@ function handleDashboardChange(event) {
   if (freeRoomCorrectionField) {
     updateTransactionFreeRoomCorrection(freeRoomCorrectionField.dataset.field, freeRoomCorrectionField.value);
     syncTransactionFreeRoomCorrectionControls();
+    renderRooms();
+    return;
+  }
+
+  const fnbVoidField = event.target.closest("[data-action='update-transaction-fnb-void']");
+
+  if (fnbVoidField) {
+    updateTransactionFnbVoidModal(fnbVoidField.dataset.field, fnbVoidField.value);
+    syncTransactionFnbVoidModalControls();
     renderRooms();
     return;
   }

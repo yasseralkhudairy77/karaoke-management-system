@@ -225,7 +225,11 @@ async function runContractTests() {
   await testAction('assignSessionLcs frontend payload', 'POST', '/exec', { action: 'assignSessionLcs', room_id: TEST_ROOM_ID, lc_ids: `${TEST_LC_ID},${TEST_LC_ID_2}`, lc_assignments: `[{"lc_id":"${TEST_LC_ID}","duration_minutes":120}]` }, res => res.body.ok === true);
   await testAction('startSession', 'POST', '/exec', { action: 'startSession', room_id: TEST_ROOM_ID, duration_minutes: 60, cashier_name: 'TestKasir', idempotency_key: `IDEM-START-${Date.now()}` }, res => res.body.ok === true && res.body.session);
   await testAction('extendSession', 'POST', '/exec', { action: 'extendSession', room_id: TEST_ROOM_ID, add_minutes: 30, cashier_name: 'TestKasir' }, res => res.body.ok === true && res.body.room);
-  await testAction('saveFnbOrder active session', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 1 }], idempotency_key: `IDEM-FNB-SESSION-${Date.now()}` }, res => res.body.ok === true && res.body.order_id);
+  let sessionFnbOrderId = '';
+  await testAction('saveFnbOrder active session', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 1 }], idempotency_key: `IDEM-FNB-SESSION-${Date.now()}` }, res => {
+    sessionFnbOrderId = res.body.order_id || '';
+    return res.body.ok === true && sessionFnbOrderId;
+  });
   const moveIdempotencyKey = `IDEM-MOVE-${Date.now()}`;
   await testAction('moveActiveSessionRoom', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_ROOM_ID, target_room_id: TEST_TARGET_ROOM_ID, reason: 'Contract test room transfer', cashier_name: 'TestKasir', idempotency_key: moveIdempotencyKey }, res => res.body.ok === true && res.body.target_room?.room_id === TEST_TARGET_ROOM_ID && Array.isArray(res.body.room_journey) && res.body.room_journey.length === 2);
   await testAction('moveActiveSessionRoom idempotent replay', 'POST', '/exec', { action: 'moveActiveSessionRoom', room_id: TEST_ROOM_ID, target_room_id: TEST_TARGET_ROOM_ID, reason: 'Contract test room transfer', cashier_name: 'TestKasir', idempotency_key: moveIdempotencyKey }, res => res.body.ok === true && res.body.idempotent_replay === true);
@@ -259,6 +263,25 @@ async function runContractTests() {
       && Number(row.lc_total) === 150000
       && Number(row.grand_total) === 400000
       && row.payment_status === 'unpaid';
+  });
+  await testAction('voidTransactionFnbOrder restores stock and recalculates total', 'POST', '/exec', {
+    action: 'voidTransactionFnbOrder',
+    transaction_id: checkoutTransactionId,
+    order_id: sessionFnbOrderId,
+    reason: 'Pelanggan membatalkan pesanan minuman',
+    admin_pin: '123456',
+    changed_by: 'TestOwner'
+  }, res => res.body.ok === true && res.body.transaction?.fnb_total === 0 && res.body.transaction?.grand_total === 375000 && res.body.voided_amount === 25000 && Array.isArray(res.body.restored_stock) && res.body.restored_stock.length > 0);
+  await testDatabaseState('FNB void restored stock and cancelled order', async () => {
+    const fnbOrder = await db.query('SELECT order_status, cancel_reason FROM fnb_orders WHERE order_id = $1', [sessionFnbOrderId]);
+    const movement = await db.query("SELECT COUNT(*)::int AS count FROM stock_movements WHERE reference_id = $1 AND movement_type = 'in'", [checkoutTransactionId]);
+    const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'fnb_void_correction'", [checkoutTransactionId]);
+    const trx = await db.query('SELECT fnb_total, grand_total FROM transactions WHERE transaction_id = $1', [checkoutTransactionId]);
+    return fnbOrder.rows[0]?.order_status === 'cancelled'
+      && movement.rows[0]?.count >= 1
+      && audit.rows[0]?.count === 1
+      && Number(trx.rows[0]?.fnb_total) === 0
+      && Number(trx.rows[0]?.grand_total) === 375000;
   });
   await testDatabaseState('owner mirror reuses exact-date snapshot after cutoff rollover', async () => {
     const sourceId = `rollover-test-${Date.now()}`;
