@@ -21,6 +21,7 @@ const TEST_ORPHAN_ROOM_ID = 'ROOM-TEST-004';
 const TEST_ORPHAN_TARGET_ROOM_ID = 'ROOM-TEST-005';
 const TEST_FNB_ROOM_ID = 'ROOM-TEST-FNB';
 const TEST_MENU_ID = 'MENU-TEST-001';
+const TEST_MENU_ID_2 = 'MENU-TEST-002';
 const TEST_LC_ID = 'LC-TEST-001';
 const TEST_LC_ID_2 = 'LC-TEST-002';
 const TEST_TV_ID = 'TV-TEST-001';
@@ -83,15 +84,17 @@ async function seedContractData() {
 
   await db.query(`
     INSERT INTO inventory (stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status)
-    VALUES ('INV-TEST-001', 'Stok Test', 'Test', 'pcs', 100, 5, 'active')
-    ON CONFLICT (stock_item_id) DO UPDATE SET stock_qty = 100, status = 'active'
+    VALUES ('INV-TEST-001', 'Stok Red Label Test', 'Liquor', 'bottle', 10, 2, 'active'),
+           ('INV-TEST-002', 'Stok Coca Cola Test', 'Beverage', 'can', 50, 5, 'active')
+    ON CONFLICT (stock_item_id) DO UPDATE SET stock_qty = EXCLUDED.stock_qty, status = 'active'
   `);
 
   await db.query(`
     INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit)
-    VALUES ($1, 'Menu Test Contract', 'Test', 25000, 'active', 'no', NULL, 1)
-    ON CONFLICT (menu_id) DO UPDATE SET price = 25000, status = 'active', stock_tracking = 'no'
-  `, [TEST_MENU_ID]);
+    VALUES ($1, 'JW Red Label Test', 'Liquor', 550000, 'active', 'yes', 'INV-TEST-001', 1),
+           ($2, 'Coca Cola Test', 'Beverage', 25000, 'active', 'yes', 'INV-TEST-002', 1)
+    ON CONFLICT (menu_id) DO UPDATE SET price = EXCLUDED.price, status = 'active', stock_tracking = EXCLUDED.stock_tracking, stock_item_id = EXCLUDED.stock_item_id
+  `, [TEST_MENU_ID, TEST_MENU_ID_2]);
 
   await db.query(`
     INSERT INTO lc_master (lc_id, lc_name, rate_per_hour, status)
@@ -226,8 +229,21 @@ async function runContractTests() {
   await testAction('startSession', 'POST', '/exec', { action: 'startSession', room_id: TEST_ROOM_ID, duration_minutes: 60, cashier_name: 'TestKasir', idempotency_key: `IDEM-START-${Date.now()}` }, res => res.body.ok === true && res.body.session);
   await testAction('extendSession', 'POST', '/exec', { action: 'extendSession', room_id: TEST_ROOM_ID, add_minutes: 30, cashier_name: 'TestKasir' }, res => res.body.ok === true && res.body.room);
   let sessionFnbOrderId = '';
-  await testAction('saveFnbOrder active session', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 1 }], idempotency_key: `IDEM-FNB-SESSION-${Date.now()}` }, res => {
+  let redLabelItemId = '';
+  let cocaColaItemId = '';
+  await testAction('saveFnbOrder active session (Red Label & Coca Cola)', 'POST', '/exec', {
+    action: 'saveFnbOrder',
+    room_id: TEST_ROOM_ID,
+    items: [
+      { menu_id: TEST_MENU_ID, quantity: 1 },
+      { menu_id: TEST_MENU_ID_2, quantity: 2 }
+    ],
+    idempotency_key: `IDEM-FNB-SESSION-${Date.now()}`
+  }, res => {
     sessionFnbOrderId = res.body.order_id || '';
+    const items = res.body.items || [];
+    redLabelItemId = items.find(it => it.menu_id === TEST_MENU_ID)?.order_item_id || '';
+    cocaColaItemId = items.find(it => it.menu_id === TEST_MENU_ID_2)?.order_item_id || '';
     return res.body.ok === true && sessionFnbOrderId;
   });
   const moveIdempotencyKey = `IDEM-MOVE-${Date.now()}`;
@@ -237,7 +253,7 @@ async function runContractTests() {
   let checkoutTransactionId = '';
   await testAction('closeSession postpaid contract', 'POST', '/exec', { action: 'closeSession', room_id: TEST_TARGET_ROOM_ID_2, cashier_name: 'TestKasir', idempotency_key: `IDEM-CLOSE-${Date.now()}` }, res => {
     checkoutTransactionId = res.body.transaction?.transaction_id || '';
-    return res.body.ok === true && checkoutTransactionId && res.body.transaction?.payment_status === 'unpaid' && res.body.transaction?.fnb_total === 25000 && res.body.transaction?.room_total === 225000 && res.body.transaction?.room_journey?.length === 3;
+    return res.body.ok === true && checkoutTransactionId && res.body.transaction?.payment_status === 'unpaid' && res.body.transaction?.fnb_total === 600000 && res.body.transaction?.room_total === 225000 && res.body.transaction?.room_journey?.length === 3;
   });
   await testAction('getTransactionLcEditDetails checkout review', 'GET', `/exec?action=getTransactionLcEditDetails&transaction_id=${encodeURIComponent(checkoutTransactionId)}`, null, res => res.body.ok === true && res.body.can_edit === true && res.body.requires_admin_pin === false && res.body.lc_logs?.length === 1 && res.body.lc_logs[0].duration_minutes === 120);
   await testAction('updateTransactionLcDurations 2h to 3h without PIN', 'POST', '/exec', {
@@ -246,8 +262,8 @@ async function runContractTests() {
     assignments: [{ lc_id: TEST_LC_ID, duration_minutes: 180 }],
     reason: 'Koreksi informasi koordinator LC',
     changed_by: 'TestKasir'
-  }, res => res.body.ok === true && res.body.requires_admin_pin === false && res.body.old_lc_total === 100000 && res.body.lc_total === 150000 && res.body.difference === 50000 && res.body.grand_total === 400000);
-  await testAction('getTransactionLcEditDetails after correction', 'GET', `/exec?action=getTransactionLcEditDetails&transaction_id=${encodeURIComponent(checkoutTransactionId)}`, null, res => res.body.ok === true && res.body.current_lc_total === 150000 && res.body.current_grand_total === 400000 && res.body.lc_logs?.[0]?.duration_minutes === 180);
+  }, res => res.body.ok === true && res.body.requires_admin_pin === false && res.body.old_lc_total === 100000 && res.body.lc_total === 150000 && res.body.difference === 50000 && res.body.grand_total === 975000);
+  await testAction('getTransactionLcEditDetails after correction', 'GET', `/exec?action=getTransactionLcEditDetails&transaction_id=${encodeURIComponent(checkoutTransactionId)}`, null, res => res.body.ok === true && res.body.current_lc_total === 150000 && res.body.current_grand_total === 975000 && res.body.lc_logs?.[0]?.duration_minutes === 180);
   await testDatabaseState('LC correction audit and exact transaction linkage', async () => {
     const linked = await db.query('SELECT COUNT(*)::int AS count FROM lc_work_logs WHERE closed_transaction_id = $1 AND duration_minutes = 180 AND rate = 150000', [checkoutTransactionId]);
     const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'lc_duration_correction'", [checkoutTransactionId]);
@@ -259,29 +275,39 @@ async function runContractTests() {
     return linked.rows[0].count === 1
       && audit.rows[0].count === 1
       && Number(row.room_total) === 225000
-      && Number(row.fnb_total) === 25000
+      && Number(row.fnb_total) === 600000
       && Number(row.lc_total) === 150000
-      && Number(row.grand_total) === 400000
+      && Number(row.grand_total) === 975000
       && row.payment_status === 'unpaid';
   });
-  await testAction('voidTransactionFnbOrder restores stock and recalculates total', 'POST', '/exec', {
+  await testAction('voidTransactionFnbOrder partial item-level (Red Label only, keeping Coca Cola)', 'POST', '/exec', {
     action: 'voidTransactionFnbOrder',
     transaction_id: checkoutTransactionId,
-    order_id: sessionFnbOrderId,
-    reason: 'Pelanggan membatalkan pesanan minuman',
+    order_item_ids: [redLabelItemId],
+    reason: 'Pelanggan membatalkan pesanan JW Red Label, Coca Cola tetap',
     admin_pin: '123456',
     changed_by: 'TestOwner'
-  }, res => res.body.ok === true && res.body.transaction?.fnb_total === 0 && res.body.transaction?.grand_total === 375000 && res.body.voided_amount === 25000 && Array.isArray(res.body.restored_stock) && res.body.restored_stock.length > 0);
-  await testDatabaseState('FNB void restored stock and cancelled order', async () => {
-    const fnbOrder = await db.query('SELECT order_status, cancel_reason FROM fnb_orders WHERE order_id = $1', [sessionFnbOrderId]);
-    const movement = await db.query("SELECT COUNT(*)::int AS count FROM stock_movements WHERE reference_id = $1 AND movement_type = 'in'", [checkoutTransactionId]);
-    const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'fnb_void_correction'", [checkoutTransactionId]);
+  }, res => res.body.ok === true && res.body.transaction?.fnb_total === 50000 && res.body.transaction?.grand_total === 425000 && res.body.voided_amount === 550000 && Array.isArray(res.body.restored_stock) && res.body.restored_stock.length === 1);
+  await testDatabaseState('Partial item void: Red Label is voided & restored, Coca Cola remains active in billed order', async () => {
+    const fnbOrder = await db.query('SELECT order_status, order_total FROM fnb_orders WHERE order_id = $1', [sessionFnbOrderId]);
+    const items = await db.query('SELECT menu_name, quantity, subtotal, is_voided FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [sessionFnbOrderId]);
+    const redLabelStock = await db.query("SELECT stock_qty FROM inventory WHERE stock_item_id = 'INV-TEST-001'");
+    const cocaColaStock = await db.query("SELECT stock_qty FROM inventory WHERE stock_item_id = 'INV-TEST-002'");
+    const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'fnb_item_void_correction'", [checkoutTransactionId]);
     const trx = await db.query('SELECT fnb_total, grand_total FROM transactions WHERE transaction_id = $1', [checkoutTransactionId]);
-    return fnbOrder.rows[0]?.order_status === 'cancelled'
-      && movement.rows[0]?.count >= 1
+
+    const redLabel = items.rows.find(i => i.menu_name.includes('Red Label'));
+    const cocaCola = items.rows.find(i => i.menu_name.includes('Coca Cola'));
+
+    return fnbOrder.rows[0]?.order_status === 'billed'
+      && Number(fnbOrder.rows[0]?.order_total) === 50000
+      && redLabel?.is_voided === true
+      && cocaCola?.is_voided === false
+      && Number(redLabelStock.rows[0]?.stock_qty) === 10
+      && Number(cocaColaStock.rows[0]?.stock_qty) === 48
       && audit.rows[0]?.count === 1
-      && Number(trx.rows[0]?.fnb_total) === 0
-      && Number(trx.rows[0]?.grand_total) === 375000;
+      && Number(trx.rows[0]?.fnb_total) === 50000
+      && Number(trx.rows[0]?.grand_total) === 425000;
   });
   await testDatabaseState('owner mirror reuses exact-date snapshot after cutoff rollover', async () => {
     const sourceId = `rollover-test-${Date.now()}`;

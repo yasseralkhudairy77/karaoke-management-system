@@ -16762,17 +16762,47 @@ async function openTransactionFnbVoidModal(transactionId) {
     }
   }
 
-  const activeOrders = orders.filter(o => String(o.order_status || "").toLowerCase() !== "cancelled");
+  const activeItems = [];
+  for (const order of orders) {
+    if (String(order.order_status || "").toLowerCase() !== "cancelled" && Array.isArray(order.items)) {
+      for (const item of order.items) {
+        if (!item.is_voided) {
+          activeItems.push({
+            order_item_id: item.order_item_id || `${order.order_id}-${item.menu_id}`,
+            order_id: order.order_id,
+            menu_id: item.menu_id,
+            menu_name: item.menu_name || item.item_name || "Item F&B",
+            category: item.category || "F&B",
+            price: Number(item.price || 0),
+            quantity: Number(item.quantity || 1),
+            subtotal: Number(item.subtotal || (item.price * item.quantity) || 0)
+          });
+        }
+      }
+    }
+  }
 
-  if (activeOrders.length === 0 && orderIds.length > 0) {
-    activeOrders.push(...orderIds.map(id => ({ order_id: id, order_total: getTransactionFnbTotal(transaction), items: [] })));
+  if (activeItems.length === 0 && orderIds.length > 0) {
+    orderIds.forEach(id => {
+      activeItems.push({
+        order_item_id: id,
+        order_id: id,
+        menu_id: "",
+        menu_name: `Order ${id}`,
+        category: "F&B",
+        price: getTransactionFnbTotal(transaction),
+        quantity: 1,
+        subtotal: getTransactionFnbTotal(transaction)
+      });
+    });
   }
 
   transactionFnbVoidModal = {
     transactionId,
-    selectedOrderId: activeOrders[0]?.order_id || orderIds[0] || "",
+    items: activeItems,
+    selectedItemIds: activeItems.length === 1 ? [activeItems[0].order_item_id] : [],
     reason: "",
-    orders: activeOrders
+    orders
   };
 
   renderRooms();
@@ -16786,8 +16816,28 @@ function closeTransactionFnbVoidModal() {
   renderRooms();
 }
 
+function toggleTransactionFnbVoidItem(orderItemId) {
+  if (!transactionFnbVoidModal || !orderItemId) {
+    return;
+  }
+  const currentSelected = Array.isArray(transactionFnbVoidModal.selectedItemIds)
+    ? [...transactionFnbVoidModal.selectedItemIds]
+    : [];
+  const index = currentSelected.indexOf(orderItemId);
+  if (index >= 0) {
+    currentSelected.splice(index, 1);
+  } else {
+    currentSelected.push(orderItemId);
+  }
+  transactionFnbVoidModal = {
+    ...transactionFnbVoidModal,
+    selectedItemIds: currentSelected
+  };
+  renderRooms();
+}
+
 function updateTransactionFnbVoidModal(field, value) {
-  if (!transactionFnbVoidModal || !["selectedOrderId", "reason"].includes(field)) {
+  if (!transactionFnbVoidModal || !["reason"].includes(field)) {
     return;
   }
   transactionFnbVoidModal = {
@@ -16803,8 +16853,9 @@ function syncTransactionFnbVoidModalControls() {
   }
   const submitButton = modal.querySelector("[data-role='transaction-fnb-void-submit']");
   if (submitButton) {
+    const selectedCount = (transactionFnbVoidModal.selectedItemIds || []).length;
     submitButton.disabled = isVoidingTransactionFnb
-      || !transactionFnbVoidModal.selectedOrderId
+      || selectedCount === 0
       || String(transactionFnbVoidModal.reason || "").trim().length < 5;
   }
 }
@@ -16815,9 +16866,17 @@ function createTransactionFnbVoidModalElement() {
   }
 
   const transaction = getTransactionById(transactionFnbVoidModal.transactionId) || {};
-  const selectedOrder = (transactionFnbVoidModal.orders || []).find(
-    o => o.order_id === transactionFnbVoidModal.selectedOrderId
-  ) || transactionFnbVoidModal.orders?.[0];
+  const items = transactionFnbVoidModal.items || [];
+  const selectedIds = new Set(transactionFnbVoidModal.selectedItemIds || []);
+
+  const selectedVoidAmount = items
+    .filter(it => selectedIds.has(it.order_item_id))
+    .reduce((sum, it) => sum + Number(it.subtotal || 0), 0);
+
+  const currentGrandTotal = Number(transaction.grand_total || 0);
+  const nextGrandTotal = Math.max(0, currentGrandTotal - selectedVoidAmount);
+
+  const remainingItems = items.filter(it => !selectedIds.has(it.order_item_id));
 
   const overlay = document.createElement("section");
   overlay.className = "master-delete-modal transaction-fnb-void-modal";
@@ -16825,29 +16884,25 @@ function createTransactionFnbVoidModalElement() {
 
   const dialog = document.createElement("div");
   dialog.className = "master-delete-dialog";
+  dialog.style.maxWidth = "600px";
 
   const title = document.createElement("h3");
   title.className = "master-delete-title";
   title.id = "transaction-fnb-void-title";
-  title.textContent = "Void / Koreksi Order F&B";
+  title.textContent = "Void / Koreksi Item F&B";
 
   const warning = document.createElement("p");
   warning.className = "master-delete-warning";
-  warning.textContent = "Membatalkan order F&B akan mengembalikan stok barang ke inventory dan memotong total tagihan transaksi secara otomatis.";
+  warning.textContent = "Pilih baris item yang ingin dibatalkan. Stok item terpilih akan otomatis dikembalikan ke inventaris gudang dan total tagihan dipotong. Item yang tidak dicentang tetap masuk perhitungan.";
 
   const details = document.createElement("div");
   details.className = "master-delete-details";
-
-  const orderTotalAmount = Number(selectedOrder?.order_total || getTransactionFnbTotal(transaction) || 0);
-  const currentGrandTotal = Number(transaction.grand_total || 0);
-  const nextGrandTotal = Math.max(0, currentGrandTotal - orderTotalAmount);
-
   [
     ["ID Transaksi", transaction.transaction_id || "-"],
     ["Room", transaction.room_name || transaction.room_id || "-"],
     ["Total Tagihan Saat Ini", formatCurrency(currentGrandTotal)],
     ["Total F&B Saat Ini", formatCurrency(getTransactionFnbTotal(transaction))],
-    ["Nilai Void F&B", `-${formatCurrency(orderTotalAmount)}`],
+    ["Nilai Void Terpilih", `-${formatCurrency(selectedVoidAmount)}`],
     ["Total Tagihan Baru", formatCurrency(nextGrandTotal)],
   ].forEach(([labelText, valueText]) => {
     const item = document.createElement("div");
@@ -16861,46 +16916,115 @@ function createTransactionFnbVoidModalElement() {
     details.appendChild(item);
   });
 
-  const orderField = document.createElement("label");
-  orderField.className = "master-form-field";
-  const orderLabel = document.createElement("span");
-  orderLabel.className = "master-form-label";
-  orderLabel.textContent = "Pilih Order F&B yang Ingin Divoid";
+  // Items List Selection Section
+  const listContainer = document.createElement("div");
+  listContainer.className = "master-form-field";
+  const listLabel = document.createElement("span");
+  listLabel.className = "master-form-label";
+  listLabel.textContent = "Daftar Item F&B (Centang item yang ingin divoid/dihapus)";
+  listContainer.appendChild(listLabel);
 
-  const orderSelect = document.createElement("select");
-  orderSelect.className = "master-form-input";
-  orderSelect.dataset.action = "update-transaction-fnb-void";
-  orderSelect.dataset.field = "selectedOrderId";
+  const itemsBox = document.createElement("div");
+  itemsBox.style.display = "flex";
+  itemsBox.style.flexDirection = "column";
+  itemsBox.style.gap = "8px";
+  itemsBox.style.marginTop = "6px";
+  itemsBox.style.maxHeight = "220px";
+  itemsBox.style.overflowY = "auto";
+  itemsBox.style.padding = "10px";
+  itemsBox.style.background = "rgba(0, 0, 0, 0.25)";
+  itemsBox.style.borderRadius = "8px";
+  itemsBox.style.border = "1px solid rgba(255, 255, 255, 0.1)";
 
-  const ordersList = transactionFnbVoidModal.orders || [];
-  if (ordersList.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = transactionFnbVoidModal.selectedOrderId || "";
-    opt.textContent = `${transactionFnbVoidModal.selectedOrderId || "Order F&B"} (${formatCurrency(getTransactionFnbTotal(transaction))})`;
-    orderSelect.appendChild(opt);
+  if (items.length === 0) {
+    const emptyNotice = document.createElement("p");
+    emptyNotice.textContent = "Tidak ada item F&B yang dapat dibatalkan.";
+    emptyNotice.style.color = "#999";
+    itemsBox.appendChild(emptyNotice);
   } else {
-    ordersList.forEach(order => {
-      const opt = document.createElement("option");
-      opt.value = order.order_id;
-      const itemsSummary = Array.isArray(order.items) && order.items.length > 0
-        ? order.items.map(it => `${it.menu_name || it.item_name} (${it.quantity || it.qty}x)`).join(", ")
-        : "F&B Items";
-      opt.textContent = `${order.order_id} - ${itemsSummary} [${formatCurrency(order.order_total)}]`;
-      opt.selected = order.order_id === transactionFnbVoidModal.selectedOrderId;
-      orderSelect.appendChild(opt);
+    items.forEach(item => {
+      const isSelected = selectedIds.has(item.order_item_id);
+      const row = document.createElement("label");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.justifyContent = "space-between";
+      row.style.padding = "8px 10px";
+      row.style.borderRadius = "6px";
+      row.style.cursor = "pointer";
+      row.style.background = isSelected ? "rgba(239, 68, 68, 0.18)" : "rgba(255, 255, 255, 0.05)";
+      row.style.border = isSelected ? "1px solid #ef4444" : "1px solid transparent";
+      row.style.transition = "all 0.2s ease";
+
+      const leftSide = document.createElement("div");
+      leftSide.style.display = "flex";
+      leftSide.style.alignItems = "center";
+      leftSide.style.gap = "10px";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = isSelected;
+      checkbox.dataset.action = "toggle-fnb-void-item";
+      checkbox.dataset.orderItemId = item.order_item_id;
+      checkbox.style.cursor = "pointer";
+      checkbox.style.width = "18px";
+      checkbox.style.height = "18px";
+
+      const itemInfo = document.createElement("div");
+      const name = document.createElement("p");
+      name.style.margin = "0";
+      name.style.fontWeight = "600";
+      name.style.fontSize = "0.95rem";
+      name.textContent = `${item.menu_name} (${item.quantity}x)`;
+
+      const sub = document.createElement("p");
+      sub.style.margin = "0";
+      sub.style.fontSize = "0.8rem";
+      sub.style.color = isSelected ? "#fca5a5" : "#9ca3af";
+      sub.textContent = isSelected ? "⚠️ Akan Dibatalkan (Stok Kembali)" : "✓ Tetap Masuk Tagihan";
+
+      itemInfo.append(name, sub);
+      leftSide.append(checkbox, itemInfo);
+
+      const price = document.createElement("span");
+      price.style.fontWeight = "700";
+      price.style.fontSize = "0.95rem";
+      price.style.color = isSelected ? "#f87171" : "#e5e7eb";
+      price.textContent = formatCurrency(item.subtotal);
+
+      row.append(leftSide, price);
+      itemsBox.appendChild(row);
     });
   }
-  orderField.append(orderLabel, orderSelect);
+  listContainer.appendChild(itemsBox);
+
+  // Remaining Items Preview Notice
+  const remainingPreview = document.createElement("div");
+  remainingPreview.style.fontSize = "0.85rem";
+  remainingPreview.style.marginTop = "6px";
+  remainingPreview.style.padding = "8px 12px";
+  remainingPreview.style.borderRadius = "6px";
+  remainingPreview.style.background = "rgba(59, 130, 246, 0.12)";
+  remainingPreview.style.border = "1px solid rgba(59, 130, 246, 0.3)";
+  remainingPreview.style.color = "#93c5fd";
+
+  if (remainingItems.length > 0) {
+    const names = remainingItems.map(it => `${it.menu_name} (${it.quantity}x)`).join(", ");
+    remainingPreview.textContent = `Sisa Item yang Tetap Ditagihkan: ${names}`;
+  } else if (items.length > 0 && selectedIds.size === items.length) {
+    remainingPreview.textContent = `Seluruh pesanan F&B pada transaksi ini akan dibatalkan penuh.`;
+  } else {
+    remainingPreview.textContent = `Pilih minimal 1 item untuk memproses void.`;
+  }
 
   const reasonField = document.createElement("label");
   reasonField.className = "master-form-field";
   const reasonLabel = document.createElement("span");
   reasonLabel.className = "master-form-label";
-  reasonLabel.textContent = "Alasan Void F&B (Wajib)";
+  reasonLabel.textContent = "Alasan Void Item F&B (Wajib min 5 karakter)";
   const reasonInput = document.createElement("input");
   reasonInput.className = "master-form-input";
   reasonInput.type = "text";
-  reasonInput.placeholder = "Contoh: Pelanggan membatalkan pesanan sebelum botol dibuka";
+  reasonInput.placeholder = "Contoh: Pelanggan membatalkan JW Red Label, Coca Cola tetap";
   reasonInput.dataset.action = "update-transaction-fnb-void";
   reasonInput.dataset.field = "reason";
   reasonInput.value = transactionFnbVoidModal.reason || "";
@@ -16921,12 +17045,12 @@ function createTransactionFnbVoidModalElement() {
   submitButton.dataset.action = "submit-transaction-fnb-void";
   submitButton.dataset.role = "transaction-fnb-void-submit";
   submitButton.disabled = isVoidingTransactionFnb
-    || !transactionFnbVoidModal.selectedOrderId
+    || selectedIds.size === 0
     || String(transactionFnbVoidModal.reason || "").trim().length < 5;
-  submitButton.textContent = isVoidingTransactionFnb ? "Memproses Void..." : "Simpan Void F&B";
+  submitButton.textContent = isVoidingTransactionFnb ? "Memproses..." : `Simpan Void (${selectedIds.size} Item)`;
 
   actions.append(cancelButton, submitButton);
-  dialog.append(title, warning, details, orderField, reasonField, actions);
+  dialog.append(title, warning, details, listContainer, remainingPreview, reasonField, actions);
   overlay.appendChild(dialog);
 
   return overlay;
@@ -16937,15 +17061,22 @@ function submitTransactionFnbVoid() {
     return;
   }
 
+  const selectedCount = (transactionFnbVoidModal.selectedItemIds || []).length;
   const reason = String(transactionFnbVoidModal.reason || "").trim();
-  if (!transactionFnbVoidModal.selectedOrderId || reason.length < 5) {
-    showInlineNotice("Pilih order F&B dan isi alasan pembatalan minimal 5 karakter.", "error");
+
+  if (selectedCount === 0) {
+    showInlineNotice("Pilih minimal 1 item F&B yang ingin dibatalkan.", "error");
+    return;
+  }
+
+  if (reason.length < 5) {
+    showInlineNotice("Isi alasan pembatalan minimal 5 karakter.", "error");
     return;
   }
 
   openAdminPinModal({
     title: "PIN Otorisasi Void F&B",
-    message: `Masukkan PIN Owner/Manager untuk memvoid order ${transactionFnbVoidModal.selectedOrderId} pada transaksi ${transactionFnbVoidModal.transactionId}.`,
+    message: `Masukkan PIN Owner/Manager untuk memvoid ${selectedCount} item F&B pada transaksi ${transactionFnbVoidModal.transactionId}.`,
     requestedAction: "void_transaction_fnb",
     requiredRole: "manager",
     validatePin: false,
@@ -16966,14 +17097,14 @@ async function executeTransactionFnbVoid(adminPin) {
     const data = await postApiAction({
       action: "voidTransactionFnbOrder",
       transaction_id: transactionFnbVoidModal.transactionId,
-      order_id: transactionFnbVoidModal.selectedOrderId,
+      order_item_ids: transactionFnbVoidModal.selectedItemIds,
       reason: String(transactionFnbVoidModal.reason || "").trim(),
       admin_pin: adminPin,
       changed_by: getLoggedInOperatorName(),
     });
 
     if (!data || (data.ok !== true && data.success !== true)) {
-      const message = data?.message || data?.error || "Gagal memvoid order F&B.";
+      const message = data?.message || data?.error || "Gagal memvoid item F&B.";
       showInlineNotice(message, "error");
       if (adminPinModal) {
         adminPinModal = { ...adminPinModal, pin: "", error: message };
@@ -16986,7 +17117,7 @@ async function executeTransactionFnbVoid(adminPin) {
     }
     adminPinModal = null;
     transactionFnbVoidModal = null;
-    showInlineNotice(data.message || "Order F&B berhasil divoid dan stok telah dikembalikan.");
+    showInlineNotice(data.message || "Item F&B berhasil divoid dan stok telah dikembalikan.");
     await Promise.allSettled([
       loadTodayTransactions(),
       loadTodayFnbOrders(),
@@ -17000,7 +17131,7 @@ async function executeTransactionFnbVoid(adminPin) {
     ]);
     return { success: true };
   } catch (error) {
-    const message = error.message || "Terjadi kendala saat memvoid order F&B.";
+    const message = error.message || "Terjadi kendala saat memvoid item F&B.";
     showInlineNotice(message, "error");
     if (adminPinModal) {
       adminPinModal = { ...adminPinModal, pin: "", error: message };
@@ -25608,6 +25739,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "toggle-fnb-void-item") {
+    toggleTransactionFnbVoidItem(button.dataset.orderItemId || "");
+    return;
+  }
+
   if (action === "close-admin-pin-modal") {
     closeAdminPinModal();
     return;
@@ -26663,6 +26799,13 @@ function handleDashboardChange(event) {
     updateTransactionFnbVoidModal(fnbVoidField.dataset.field, fnbVoidField.value);
     syncTransactionFnbVoidModalControls();
     renderRooms();
+    return;
+  }
+
+  const fnbVoidToggle = event.target.closest("[data-action='toggle-fnb-void-item']");
+
+  if (fnbVoidToggle) {
+    toggleTransactionFnbVoidItem(fnbVoidToggle.dataset.orderItemId || "");
     return;
   }
 

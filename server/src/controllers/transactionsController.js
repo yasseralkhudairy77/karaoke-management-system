@@ -114,6 +114,11 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
+
     CREATE TABLE IF NOT EXISTS transaction_correction_logs (
       correction_id VARCHAR(80) PRIMARY KEY,
       transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
@@ -753,8 +758,14 @@ async function voidTransactionFnbOrder(req, res, payload) {
     const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
     const voidedBy = String(payload.changed_by || payload.voided_by || 'Owner').trim();
 
+    let targetOrderItemIds = [];
+    if (Array.isArray(payload.order_item_ids)) {
+      targetOrderItemIds = payload.order_item_ids.map(id => String(id).trim()).filter(Boolean);
+    } else if (payload.order_item_id) {
+      targetOrderItemIds = [String(payload.order_item_id).trim()];
+    }
+
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
-    if (!orderId) throw new Error('order_id wajib diisi.');
     if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
 
     // 1. Validate Owner or Manager PIN
@@ -769,28 +780,47 @@ async function voidTransactionFnbOrder(req, res, payload) {
       throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
     }
 
-    // 3. Fetch Order
-    const orderRes = await client.query('SELECT * FROM fnb_orders WHERE order_id = $1 FOR UPDATE', [orderId]);
-    if (orderRes.rowCount === 0) throw new Error(`Order F&B ${orderId} tidak ditemukan.`);
-    const fnbOrder = orderRes.rows[0];
+    // Determine target orders from transaction
+    const transactionOrderIds = String(oldTransaction.fnb_order_ids || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean);
 
-    if (String(fnbOrder.order_status || '').toLowerCase() === 'cancelled') {
-      throw new Error(`Order F&B ${orderId} sudah dibatalkan sebelumnya.`);
+    // 3. Find items to void
+    let itemsToVoid = [];
+    if (targetOrderItemIds.length > 0) {
+      const itemsRes = await client.query(`
+        SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name AS m_name
+        FROM fnb_order_items foi
+        LEFT JOIN menu m ON foi.menu_id = m.menu_id
+        WHERE foi.order_item_id = ANY($1) AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+      `, [targetOrderItemIds]);
+      itemsToVoid = itemsRes.rows;
+    } else if (orderId) {
+      const itemsRes = await client.query(`
+        SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name AS m_name
+        FROM fnb_order_items foi
+        LEFT JOIN menu m ON foi.menu_id = m.menu_id
+        WHERE foi.order_id = $1 AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+      `, [orderId]);
+      itemsToVoid = itemsRes.rows;
+    } else {
+      throw new Error('order_id atau order_item_ids wajib diisi.');
     }
 
-    const orderTotal = toNumber(fnbOrder.order_total, 0);
+    if (itemsToVoid.length === 0) {
+      throw new Error('Tidak ada item F&B aktif yang ditemukan untuk dibatalkan.');
+    }
 
-    // 4. Restore Inventory Stock for items in this order
-    const itemsRes = await client.query(`
-      SELECT foi.menu_id, foi.quantity, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
-      FROM fnb_order_items foi
-      JOIN menu m ON foi.menu_id = m.menu_id
-      WHERE foi.order_id = $1
-    `, [orderId]);
-
+    let totalVoidedAmount = 0;
     const restoredMovements = [];
+    const affectedOrderIds = new Set();
 
-    for (const item of itemsRes.rows) {
+    // 4. Restore Inventory Stock for each item to void
+    for (const item of itemsToVoid) {
+      affectedOrderIds.add(item.order_id);
+      const itemSubtotal = toNumber(item.subtotal, toNumber(item.price, 0) * toNumber(item.quantity, 1));
+      totalVoidedAmount += itemSubtotal;
       const orderQty = toNumber(item.quantity, 1);
 
       // Direct menu stock tracking
@@ -804,73 +834,124 @@ async function voidTransactionFnbOrder(req, res, payload) {
 
           await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
 
-          const movementId = `MOV-VOID-${transactionId}-${item.stock_item_id}-${Date.now()}`;
+          const movementId = `MOV-VOID-${transactionId}-${item.stock_item_id}-${Date.now()}-${Math.floor(Math.random()*1000)}`;
           await client.query(`
             INSERT INTO stock_movements (
               movement_id, stock_item_id, stock_item_name, movement_type,
               reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
             ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
             ON CONFLICT (idempotency_key) DO NOTHING
-          `, [movementId, item.stock_item_id, inv.stock_item_name, transactionId, qtyReturn, stockBefore, stockAfter, `Void/Restorasi F&B: ${item.menu_name} | ${reason}`, voidedBy]);
+          `, [movementId, item.stock_item_id, inv.stock_item_name, transactionId, qtyReturn, stockBefore, stockAfter, `Void Item: ${item.menu_name} (${orderQty}x) | ${reason}`, voidedBy]);
 
-          restoredMovements.push({ stock_item_id: item.stock_item_id, stock_item_name: inv.stock_item_name, qty_restored: qtyReturn, stock_after: stockAfter });
+          restoredMovements.push({
+            order_item_id: item.order_item_id,
+            menu_name: item.menu_name,
+            stock_item_id: item.stock_item_id,
+            stock_item_name: inv.stock_item_name,
+            qty_restored: qtyReturn,
+            stock_after: stockAfter,
+            subtotal: itemSubtotal
+          });
         }
       }
 
       // Recipe BOM ingredients
-      const recipeRes = await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id]);
-      for (const r of recipeRes.rows) {
-        const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
-        if (recipeInvRes.rowCount > 0) {
-          const rInv = recipeInvRes.rows[0];
-          const recipeReturn = orderQty * toNumber(r.qty_used, 1);
-          const rStockBefore = toNumber(rInv.stock_qty, 0);
-          const rStockAfter = rStockBefore + recipeReturn;
+      if (item.menu_id) {
+        const recipeRes = await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id]);
+        for (const r of recipeRes.rows) {
+          const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+          if (recipeInvRes.rowCount > 0) {
+            const rInv = recipeInvRes.rows[0];
+            const recipeReturn = orderQty * toNumber(r.qty_used, 1);
+            const rStockBefore = toNumber(rInv.stock_qty, 0);
+            const rStockAfter = rStockBefore + recipeReturn;
 
-          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
 
-          const rMovementId = `MOV-VOID-${transactionId}-RECIPE-${r.item_id}-${Date.now()}`;
-          await client.query(`
-            INSERT INTO stock_movements (
-              movement_id, stock_item_id, stock_item_name, movement_type,
-              reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
-            ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
-            ON CONFLICT (idempotency_key) DO NOTHING
-          `, [rMovementId, r.item_id, rInv.stock_item_name, transactionId, recipeReturn, rStockBefore, rStockAfter, `Void BOM Recipe: ${item.menu_name} | ${reason}`, voidedBy]);
+            const rMovementId = `MOV-VOID-${transactionId}-RECIPE-${r.item_id}-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [rMovementId, r.item_id, rInv.stock_item_name, transactionId, recipeReturn, rStockBefore, rStockAfter, `Void BOM Recipe: ${item.menu_name} | ${reason}`, voidedBy]);
 
-          restoredMovements.push({ stock_item_id: r.item_id, stock_item_name: rInv.stock_item_name, qty_restored: recipeReturn, stock_after: rStockAfter });
+            restoredMovements.push({
+              order_item_id: item.order_item_id,
+              menu_name: item.menu_name,
+              stock_item_id: r.item_id,
+              stock_item_name: rInv.stock_item_name,
+              qty_restored: recipeReturn,
+              stock_after: rStockAfter,
+              subtotal: 0
+            });
+          }
         }
+      }
+
+      // Mark this order item as voided
+      await client.query(`
+        UPDATE fnb_order_items
+        SET is_voided = TRUE,
+            void_reason = $1,
+            voided_at = CURRENT_TIMESTAMP,
+            voided_by = $2
+        WHERE order_item_id = $3
+      `, [reason, voidedBy, item.order_item_id]);
+    }
+
+    // 5. Update fnb_orders for all affected orders
+    const allRelevantOrderIds = Array.from(new Set([...transactionOrderIds, ...affectedOrderIds]));
+
+    for (const ordId of allRelevantOrderIds) {
+      const activeItemsRes = await client.query(`
+        SELECT COALESCE(SUM(subtotal), 0) AS remaining_total, COUNT(*)::int AS active_count
+        FROM fnb_order_items
+        WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL)
+      `, [ordId]);
+
+      const remainingTotal = toNumber(activeItemsRes.rows[0]?.remaining_total, 0);
+      const activeCount = activeItemsRes.rows[0]?.active_count || 0;
+
+      if (activeCount === 0) {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_status = 'cancelled',
+              order_total = 0,
+              cancel_reason = $1,
+              cancelled_by = $2,
+              cancelled_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $3
+        `, [reason, voidedBy, ordId]);
+      } else {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_total = $1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $2
+        `, [remainingTotal, ordId]);
       }
     }
 
-    // 5. Update fnb_orders status
-    await client.query(`
-      UPDATE fnb_orders
-      SET order_status = 'cancelled',
-          cancel_reason = $1,
-          cancelled_by = $2,
-          cancelled_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE order_id = $3
-    `, [reason, voidedBy, orderId]);
-
-    // 6. Recalculate Transaction
-    const existingOrderIds = String(oldTransaction.fnb_order_ids || '')
-      .split(',')
-      .map(id => id.trim())
-      .filter(Boolean);
-
-    const remainingOrderIds = existingOrderIds.filter(id => id !== orderId);
-
+    // 6. Recalculate Transaction fnb_total and grand_total
     let newFnbTotal = 0;
-    if (remainingOrderIds.length > 0) {
-      const remainingRes = await client.query(`
-        SELECT COALESCE(SUM(order_total), 0) AS remaining_total
+    if (allRelevantOrderIds.length > 0) {
+      const fnbTotalsRes = await client.query(`
+        SELECT COALESCE(SUM(order_total), 0) AS new_total
         FROM fnb_orders
         WHERE order_id = ANY($1) AND order_status != 'cancelled'
-      `, [remainingOrderIds]);
-      newFnbTotal = toNumber(remainingRes.rows[0]?.remaining_total, 0);
+      `, [allRelevantOrderIds]);
+      newFnbTotal = toNumber(fnbTotalsRes.rows[0]?.new_total, 0);
     }
+
+    // Filter active order IDs that are not cancelled
+    const activeOrderIdsRes = await client.query(`
+      SELECT order_id FROM fnb_orders
+      WHERE order_id = ANY($1) AND order_status != 'cancelled'
+    `, [allRelevantOrderIds]);
+    const remainingActiveOrderIds = activeOrderIdsRes.rows.map(r => r.order_id);
 
     const roomTotal = toNumber(oldTransaction.room_total, 0);
     const lcTotal = toNumber(oldTransaction.lc_total, 0);
@@ -878,6 +959,8 @@ async function voidTransactionFnbOrder(req, res, payload) {
 
     const isGeneralFnbOnly = String(oldTransaction.room_id || '').toUpperCase() === 'FNB-GENERAL';
     const nextPaymentStatus = (isGeneralFnbOnly && newGrandTotal === 0) ? 'cancelled' : oldTransaction.payment_status;
+
+    const voidedNames = itemsToVoid.map(it => `${it.menu_name} (${it.quantity}x)`).join(', ');
 
     const updatedRes = await client.query(`
       UPDATE transactions
@@ -893,10 +976,10 @@ async function voidTransactionFnbOrder(req, res, payload) {
     `, [
       newFnbTotal,
       newGrandTotal,
-      remainingOrderIds.join(','),
+      remainingActiveOrderIds.join(','),
       nextPaymentStatus,
       voidedBy,
-      `Void F&B Order: ${orderId} (-Rp ${orderTotal.toLocaleString('id-ID')}) | ${reason}`,
+      `Void Item F&B: ${voidedNames} (-Rp ${totalVoidedAmount.toLocaleString('id-ID')}) | ${reason}`,
       transactionId
     ]);
     const updatedTransaction = updatedRes.rows[0];
@@ -906,7 +989,7 @@ async function voidTransactionFnbOrder(req, res, payload) {
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
-      ) VALUES ($1, $2, 'fnb_void_correction', $3, $4, $5, $6)
+      ) VALUES ($1, $2, 'fnb_item_void_correction', $3, $4, $5, $6)
     `, [
       `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       transactionId,
@@ -914,15 +997,13 @@ async function voidTransactionFnbOrder(req, res, payload) {
         fnb_total: toNumber(oldTransaction.fnb_total),
         grand_total: toNumber(oldTransaction.grand_total),
         fnb_order_ids: oldTransaction.fnb_order_ids || '',
-        voided_order_id: orderId,
-        voided_order_total: orderTotal
+        voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal }))
       }),
       JSON.stringify({
         fnb_total: newFnbTotal,
         grand_total: newGrandTotal,
-        fnb_order_ids: remainingOrderIds.join(','),
-        voided_order_id: orderId,
-        voided_order_total: orderTotal,
+        fnb_order_ids: remainingActiveOrderIds.join(','),
+        voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal })),
         restored_stock: restoredMovements
       }),
       reason,
@@ -944,24 +1025,26 @@ async function voidTransactionFnbOrder(req, res, payload) {
           error_message = NULL
     `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
 
-    await client.query(`
-      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
-      VALUES ('fnb_orders', $1, 'UPDATE', $2)
-      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
-      SET payload_json = EXCLUDED.payload_json,
-          status = 'pending',
-          attempts = 0,
-          last_attempt_at = NULL,
-          error_message = NULL
-    `, [orderId, JSON.stringify({ order_id: orderId, order_status: 'cancelled', cancel_reason: reason, cancelled_by: voidedBy })]);
+    for (const ordId of affectedOrderIds) {
+      await client.query(`
+        INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+        VALUES ('fnb_orders', $1, 'UPDATE', $2)
+        ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+        SET payload_json = EXCLUDED.payload_json,
+            status = 'pending',
+            attempts = 0,
+            last_attempt_at = NULL,
+            error_message = NULL
+      `, [ordId, JSON.stringify({ order_id: ordId, note: `Item void: ${voidedNames}` })]);
+    }
 
     await client.query('COMMIT');
 
     return successResponse(res, {
-      message: `Order F&B ${orderId} berhasil divoid. Total tagihan dan stok telah disesuaikan.`,
+      message: `Item F&B (${voidedNames}) berhasil divoid. Total tagihan berkurang Rp ${totalVoidedAmount.toLocaleString('id-ID')} dan stok telah dikembalikan.`,
       transaction: serializeTransaction(updatedTransaction),
-      order_id: orderId,
-      voided_amount: orderTotal,
+      voided_amount: totalVoidedAmount,
+      voided_items: itemsToVoid,
       restored_stock: restoredMovements
     });
   } catch (err) {

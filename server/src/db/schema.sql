@@ -315,6 +315,11 @@ CREATE TABLE IF NOT EXISTS fnb_order_items (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
+
 -- 11. Stock Movements & Audits (Stock Opname)
 CREATE TABLE IF NOT EXISTS stock_movements (
     movement_id VARCHAR(50) PRIMARY KEY,

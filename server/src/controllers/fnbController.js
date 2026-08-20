@@ -60,7 +60,8 @@ async function getOpenFnbOrders(req, res, roomId) {
       order.items = itemsRes.rows.map(item => ({
         ...item,
         price: Number(item.price),
-        subtotal: Number(item.subtotal)
+        subtotal: Number(item.subtotal),
+        is_voided: Boolean(item.is_voided)
       }));
     }
 
@@ -76,7 +77,8 @@ async function attachOrderItems(orders) {
     order.items = itemsRes.rows.map(item => ({
       ...item,
       price: Number(item.price || 0),
-      subtotal: Number(item.subtotal || 0)
+      subtotal: Number(item.subtotal || 0),
+      is_voided: Boolean(item.is_voided)
     }));
     order.order_total = Number(order.order_total || 0);
   }
