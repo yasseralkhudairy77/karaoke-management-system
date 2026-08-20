@@ -119,6 +119,10 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
 
+    ALTER TABLE stock_movements ALTER COLUMN movement_id TYPE VARCHAR(120);
+    ALTER TABLE stock_movements ALTER COLUMN reference_id TYPE VARCHAR(100);
+    ALTER TABLE stock_movements ALTER COLUMN idempotency_key TYPE VARCHAR(150);
+
     CREATE TABLE IF NOT EXISTS transaction_correction_logs (
       correction_id VARCHAR(80) PRIMARY KEY,
       transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
@@ -834,7 +838,7 @@ async function voidTransactionFnbOrder(req, res, payload) {
 
           await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
 
-          const movementId = `MOV-VOID-${transactionId}-${item.stock_item_id}-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+          const movementId = `MOV-V-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
           await client.query(`
             INSERT INTO stock_movements (
               movement_id, stock_item_id, stock_item_name, movement_type,
@@ -868,7 +872,7 @@ async function voidTransactionFnbOrder(req, res, payload) {
 
             await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
 
-            const rMovementId = `MOV-VOID-${transactionId}-RECIPE-${r.item_id}-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+            const rMovementId = `MOV-VR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
             await client.query(`
               INSERT INTO stock_movements (
                 movement_id, stock_item_id, stock_item_name, movement_type,

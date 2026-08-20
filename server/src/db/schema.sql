@@ -322,20 +322,24 @@ ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
 
 -- 11. Stock Movements & Audits (Stock Opname)
 CREATE TABLE IF NOT EXISTS stock_movements (
-    movement_id VARCHAR(50) PRIMARY KEY,
+    movement_id VARCHAR(120) PRIMARY KEY,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     stock_item_id VARCHAR(50) REFERENCES inventory(stock_item_id),
     stock_item_name VARCHAR(100) NOT NULL,
     movement_type VARCHAR(20) CHECK (movement_type IN ('in', 'out', 'adjustment')),
     reference_type VARCHAR(30) CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'fnb_order')),
-    reference_id VARCHAR(50),
+    reference_id VARCHAR(100),
     qty_change NUMERIC(12,2) NOT NULL,
     stock_before NUMERIC(12,2) NOT NULL,
     stock_after NUMERIC(12,2) NOT NULL,
     note TEXT,
     cashier_name VARCHAR(100) NOT NULL,
-    idempotency_key VARCHAR(100) UNIQUE
+    idempotency_key VARCHAR(150) UNIQUE
 );
+
+ALTER TABLE stock_movements ALTER COLUMN movement_id TYPE VARCHAR(120);
+ALTER TABLE stock_movements ALTER COLUMN reference_id TYPE VARCHAR(100);
+ALTER TABLE stock_movements ALTER COLUMN idempotency_key TYPE VARCHAR(150);
 
 CREATE TABLE IF NOT EXISTS inventory_audits (
     audit_id VARCHAR(50) PRIMARY KEY,
