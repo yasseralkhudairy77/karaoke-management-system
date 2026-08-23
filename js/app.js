@@ -4345,9 +4345,13 @@ function getFnbMenuClassification(menuItem) {
     };
   }
 
-  const primary = FNB_PRIMARY_CATEGORY_ORDER.includes(rawCategory) && rawCategory !== "favorites"
-    ? rawCategory
-    : rawCategory || "Lainnya";
+  // Master data lama memiliki variasi kapitalisasi seperti Beer, BEER, dan beer.
+  // Gunakan nama kategori utama yang canonical agar filter dan jumlah menu tidak
+  // memecah kategori yang sebenarnya sama, tanpa perlu mengubah data master.
+  const canonicalPrimary = FNB_PRIMARY_CATEGORY_ORDER.find((category) => (
+    category !== "favorites" && category.toLowerCase() === normalizedRaw
+  ));
+  const primary = canonicalPrimary || rawCategory || "Lainnya";
 
   return {
     primary,
