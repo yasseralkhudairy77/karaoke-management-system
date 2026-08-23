@@ -3704,6 +3704,133 @@ textarea.action-confirmation-input {
   }
 }
 
+.operational-audit-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.operational-audit-header,
+.operational-audit-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.operational-audit-header h2,
+.operational-audit-header p,
+.operational-audit-detail-header h3 {
+  margin: 0;
+}
+
+.operational-audit-header p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.operational-audit-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.operational-audit-summary-card {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.operational-audit-summary-card span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.operational-audit-summary-card strong {
+  font-size: 1.12rem;
+}
+
+.operational-audit-summary-card.warning strong { color: var(--warning); }
+.operational-audit-summary-card.danger strong { color: var(--danger); }
+
+.operational-audit-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.operational-audit-risk {
+  white-space: nowrap;
+}
+
+.operational-audit-detail {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(212, 175, 55, 0.32);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.operational-audit-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.operational-audit-detail-facts > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.operational-audit-detail-facts span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.operational-audit-technical-detail pre {
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0b0907;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .operational-audit-summary,
+  .operational-audit-filters,
+  .operational-audit-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .operational-audit-summary,
+  .operational-audit-filters,
+  .operational-audit-detail-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .operational-audit-header,
+  .operational-audit-detail-header {
+    flex-direction: column;
+  }
+}
+
 .menu-price {
   margin: 0;
   color: var(--billing-accent);

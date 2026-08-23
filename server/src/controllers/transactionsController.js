@@ -2,6 +2,7 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
 const { verifyAndUpgradePin } = require('../middleware/auth');
+const { writeOperationalAudit } = require('../services/operationalAuditService');
 
 function toNumber(value, fallback = 0) {
   const numberValue = Number(value);
@@ -391,7 +392,7 @@ async function markTransactionPaid(req, res, payload) {
 
     const grandTotal = roomTotal + fnbTotal + lcTotal;
 
-    await client.query(`
+    const updatedRes = await client.query(`
       UPDATE transactions
       SET payment_status = 'paid',
           payment_method = $1,
@@ -400,15 +401,31 @@ async function markTransactionPaid(req, res, payload) {
           promo_discount = $4,
           grand_total = $5
       WHERE transaction_id = $6
+      RETURNING *
     `, [payment_method, roomTotal, appliedPromoCode, promoDiscount, grandTotal, transaction_id]);
+
+    const updatedTransaction = updatedRes.rows[0];
+    if (appliedPromoCode || promoDiscount > 0) {
+      await writeOperationalAudit(client, {
+        risk_level: 'high', domain: 'transaction', event_type: 'promo_applied',
+        source_action: 'markTransactionPaid',
+        initiated_by: String(payload.changed_by || payload.cashier_name || transaction.cashier_name || 'Kasir'),
+        target_type: 'transaction', target_id: transaction_id, transaction_id,
+        room_id: transaction.room_id, room_name: transaction.room_name,
+        reason: `Promo/Voucher ${appliedPromoCode || prCode}`,
+        amount_before: toNumber(transaction.grand_total),
+        amount_after: grandTotal,
+        old_value: transaction, new_value: updatedTransaction,
+        metadata: { promo_code: appliedPromoCode || prCode, promo_discount: promoDiscount },
+        idempotency_key: `audit:promo:${transaction_id}:${appliedPromoCode || prCode}`
+      });
+    }
 
     await client.query('COMMIT');
 
-    const updatedTrx = await db.query('SELECT * FROM transactions WHERE transaction_id = $1', [transaction_id]);
-
     return successResponse(res, {
       message: `Transaksi ${transaction_id} berhasil ditandai Lunas.`,
-      transaction: serializeTransaction(updatedTrx.rows[0])
+      transaction: serializeTransaction(updatedTransaction)
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK');
@@ -476,11 +493,14 @@ async function updateTransactionDetails(req, res, payload) {
 
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
 
     const trxCheck = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
     if (trxCheck.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxCheck.rows[0];
 
     const fields = [];
+    const changedFields = [];
     const params = [];
     const allowed = {
       payment_method: value => {
@@ -499,6 +519,7 @@ async function updateTransactionDetails(req, res, payload) {
       if (payload[field] !== undefined) {
         params.push(normalizer(payload[field]));
         fields.push(`${field} = $${params.length}`);
+        changedFields.push(field);
       }
     }
 
@@ -511,9 +532,23 @@ async function updateTransactionDetails(req, res, payload) {
       await refreshClosingSnapshotForTransaction(client, updatedTrx.rows[0]);
     }
 
+    const updatedTransaction = updatedTrx.rows[0];
+    const initiatedBy = String(payload.changed_by || payload.cashier_name || oldTransaction.cashier_name || 'Operator').trim();
+    const reason = String(payload.reason || `Perubahan detail transaksi: ${changedFields.join(', ')}`).trim();
+    await writeOperationalAudit(client, {
+      risk_level: changedFields.some(field => ['payment_status', 'room_total', 'fnb_total', 'lc_total', 'grand_total', 'cashier_name'].includes(field)) ? 'critical' : 'medium',
+      domain: 'transaction', event_type: 'transaction_details_updated', source_action: 'updateTransactionDetails',
+      initiated_by: initiatedBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: toNumber(updatedTransaction.grand_total),
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: { changed_fields: changedFields }
+    });
+
     await client.query('COMMIT');
 
-    const serialized = serializeTransaction(updatedTrx.rows[0]);
+    const serialized = serializeTransaction(updatedTransaction);
     return successResponse(res, {
       message: `Metode pembayaran transaksi ${transactionId} berhasil diperbarui ke ${serialized.payment_method ? serialized.payment_method.toUpperCase() : ''}.`,
       transaction: serialized,
@@ -544,7 +579,7 @@ async function correctTransactionPackage(req, res, payload) {
     if (!packageId) throw new Error('package_id wajib diisi.');
     if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
 
-    await validateOwnerPin(adminPin);
+    const authorizationActor = await validateOwnerPin(adminPin);
 
     const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
     if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
@@ -593,13 +628,14 @@ async function correctTransactionPackage(req, res, payload) {
     ]);
     const updatedTransaction = updatedRes.rows[0];
 
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
       ) VALUES ($1, $2, 'package_correction', $3, $4, $5, $6)
     `, [
-      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      correctionId,
       transactionId,
       JSON.stringify({
         booking_mode: oldTransaction.booking_mode || '',
@@ -628,6 +664,16 @@ async function correctTransactionPackage(req, res, payload) {
       reason,
       correctedBy
     ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'package_correction',
+      source_action: 'correctTransactionPackage', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction
+    });
 
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
 
@@ -672,7 +718,7 @@ async function correctTransactionFreeRoom(req, res, payload) {
     if (freeRoomMinutes <= 0) throw new Error('Free room wajib lebih dari 0 menit.');
     if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
 
-    await validateOwnerPin(adminPin);
+    const authorizationActor = await validateOwnerPin(adminPin);
 
     const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
     if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
@@ -727,13 +773,14 @@ async function correctTransactionFreeRoom(req, res, payload) {
     ]);
     const updatedTransaction = updatedRes.rows[0];
 
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
       ) VALUES ($1, $2, 'free_room_correction', $3, $4, $5, $6)
     `, [
-      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      correctionId,
       transactionId,
       JSON.stringify({
         booking_mode: oldTransaction.booking_mode || '',
@@ -762,6 +809,16 @@ async function correctTransactionFreeRoom(req, res, payload) {
       reason,
       correctedBy
     ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'free_room_correction',
+      source_action: 'correctTransactionFreeRoom', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction
+    });
 
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
 
@@ -806,7 +863,7 @@ async function applyTransactionManualDiscount(req, res, payload) {
     if (discountAmount <= 0) throw new Error('Nilai diskon wajib lebih dari Rp 0.');
     if (reason.length < 5) throw new Error('Alasan diskon minimal 5 karakter.');
 
-    await validateOwnerOrManagerPin(adminPin);
+    const authorizationActor = await validateOwnerOrManagerPin(adminPin);
 
     const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
     if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
@@ -868,13 +925,14 @@ async function applyTransactionManualDiscount(req, res, payload) {
     ]);
     const updatedTransaction = updatedRes.rows[0];
 
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
       ) VALUES ($1, $2, 'manual_discount_correction', $3, $4, $5, $6)
     `, [
-      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      correctionId,
       transactionId,
       JSON.stringify({
         room_total: oldRoomTotal,
@@ -902,6 +960,17 @@ async function applyTransactionManualDiscount(req, res, payload) {
       reason,
       correctedBy
     ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'manual_discount_correction',
+      source_action: 'applyTransactionManualDiscount', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: { discount_amount: roomDiscountApplied + fnbDiscountApplied }
+    });
 
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
 
@@ -956,7 +1025,7 @@ async function voidTransactionFnbOrder(req, res, payload) {
     if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
 
     // 1. Validate Owner or Manager PIN
-    await validateOwnerOrManagerPin(adminPin);
+    const authorizationActor = await validateOwnerOrManagerPin(adminPin);
 
     // 2. Fetch Transaction
     const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
@@ -1192,13 +1261,14 @@ async function voidTransactionFnbOrder(req, res, payload) {
     const updatedTransaction = updatedRes.rows[0];
 
     // 7. Audit log in transaction_correction_logs
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
       ) VALUES ($1, $2, 'fnb_item_void_correction', $3, $4, $5, $6)
     `, [
-      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      correctionId,
       transactionId,
       JSON.stringify({
         fnb_total: toNumber(oldTransaction.fnb_total),
@@ -1216,6 +1286,21 @@ async function voidTransactionFnbOrder(req, res, payload) {
       reason,
       voidedBy
     ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'fnb', event_type: 'fnb_item_void_correction',
+      source_action: 'voidTransactionFnbOrder', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: voidedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: newGrandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: {
+        voided_amount: totalVoidedAmount,
+        voided_items: itemsToVoid.map(item => ({ order_item_id: item.order_item_id, menu_name: item.menu_name, quantity: item.quantity })),
+        restored_stock: restoredMovements
+      }
+    });
 
     // 8. Refresh closing snapshot
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
@@ -1263,16 +1348,61 @@ async function voidTransactionFnbOrder(req, res, payload) {
 }
 
 async function deleteTransaction(req, res, payload) {
+  let client;
   try {
-    const transactionId = payload.transaction_id;
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+    const transactionId = String(payload.transaction_id || '').trim();
+    const reason = String(payload.reason || '').trim();
+    const initiatedBy = String(payload.changed_by || 'Operator').trim();
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
-    if (payload.owner_pin) {
-      await validateOwnerPin(payload.owner_pin);
-    }
-    await db.query(`UPDATE transactions SET payment_status = 'cancelled' WHERE transaction_id = $1`, [transactionId]);
-    return successResponse(res, { message: 'Transaksi berhasil dibatalkan.', transaction_id: transactionId });
+    if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
+    if (String(payload.confirmation || '').trim().toUpperCase() !== 'HAPUS') throw new Error('Konfirmasi HAPUS wajib diisi.');
+    const authorizationActor = await validateOwnerPin(String(payload.owner_pin || payload.admin_pin || ''));
+
+    const oldRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (oldRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = oldRes.rows[0];
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') throw new Error('Transaksi sudah dibatalkan.');
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET payment_status = 'cancelled', corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $1, correction_note = $2
+      WHERE transaction_id = $3
+      RETURNING *
+    `, [initiatedBy, reason, transactionId]);
+    const updatedTransaction = updatedRes.rows[0];
+    const correctionId = `TCOR-CANCEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'transaction_cancelled', $3, $4, $5, $6)
+    `, [correctionId, transactionId, oldTransaction, updatedTransaction, reason, initiatedBy]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'critical', domain: 'transaction', event_type: 'transaction_cancelled',
+      source_action: 'deleteTransaction', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: initiatedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: 0,
+      old_value: oldTransaction, new_value: updatedTransaction
+    });
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Transaksi berhasil dibatalkan dan dicatat di audit.',
+      transaction_id: transactionId,
+      transaction: serializeTransaction(updatedTransaction)
+    });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -1472,19 +1602,31 @@ async function updateTransactionLcDurations(req, res, payload) {
     `, [lcTotal, grandTotal, changedBy, reason, transactionId]);
     const updatedTransaction = updatedRes.rows[0];
 
+    const correctionId = `TCOR-LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
         correction_id, transaction_id, correction_type, old_value_json,
         new_value_json, reason, corrected_by
       ) VALUES ($1, $2, 'lc_duration_correction', $3, $4, $5, $6)
     `, [
-      `TCOR-LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      correctionId,
       transactionId,
       JSON.stringify({ lc_total: oldLcTotal, grand_total: oldGrandTotal, items: oldItems }),
       JSON.stringify({ lc_total: lcTotal, grand_total: grandTotal, items: newItems }),
       reason,
       changedBy
     ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'lc', event_type: 'lc_duration_correction',
+      source_action: 'updateTransactionLcDurations', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: changedBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: trx.room_id, room_name: trx.room_name, reason,
+      amount_before: oldGrandTotal, amount_after: grandTotal,
+      old_value: { lc_total: oldLcTotal, grand_total: oldGrandTotal, items: oldItems },
+      new_value: { lc_total: lcTotal, grand_total: grandTotal, items: newItems }
+    });
 
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
     await client.query(`
@@ -1534,6 +1676,8 @@ async function createManualOutageTransaction(req, res, payload) {
     const mode = String(payload.mode || 'room').toLowerCase();
     const roomId = payload.room_id || null;
     const cashierName = payload.cashier_name || 'Kasir Manual';
+    const enteredBy = String(payload.entered_by || cashierName).trim();
+    const sourceReason = String(payload.source_note || payload.reason || payload.note || 'Transaksi manual saat gangguan sistem').trim();
     const paymentMethod = String(payload.payment_method || 'cash').toLowerCase();
     const paymentStatus = String(payload.payment_status || 'paid').toLowerCase();
     const durationMinutes = mode === 'room' ? Number(payload.duration_minutes || 0) : 0;
@@ -1602,6 +1746,30 @@ async function createManualOutageTransaction(req, res, payload) {
         booking_mode, package_id, package_name, package_total
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12, $13, $14, $15, $16, $17, $18, $19, $20)
     `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'manual_outage_transaction',
+      source_action: 'createManualOutageTransaction',
+      initiated_by: enteredBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: mode === 'room' ? roomId : 'FNB-GENERAL', room_name: roomName,
+      reason: sourceReason,
+      amount_before: 0, amount_after: grandTotal,
+      new_value: {
+        mode, room_id: mode === 'room' ? roomId : 'FNB-GENERAL', room_name: roomName,
+        duration_minutes: durationMinutes, room_total: roomTotal, fnb_total: fnbTotal,
+        lc_total: lcTotal, grand_total: grandTotal, payment_method: paymentMethod,
+        payment_status: paymentStatus, package_id: transactionPackageId,
+        package_name: transactionPackageName
+      },
+      metadata: {
+        backdated_start_time: startTime.toISOString(),
+        recorded_cashier_name: cashierName,
+        fnb_item_count: fnbItems.length,
+        lc_count: lcAssignments.length
+      },
+      idempotency_key: `audit:${idempotencyKey}`
+    });
 
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)

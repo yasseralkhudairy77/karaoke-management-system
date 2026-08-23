@@ -10,6 +10,7 @@ const lcController = require('../controllers/lcController');
 const tvController = require('../controllers/tvController');
 const masterDataController = require('../controllers/masterDataController');
 const mirrorController = require('../controllers/mirrorController');
+const auditController = require('../controllers/auditController');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // Helper to handle Apps Script GET actions
@@ -83,6 +84,8 @@ async function handleGetAction(action, req, res) {
       return masterDataController.getCosting(req, res);
     case 'getMasterDataAuditLogs':
       return masterDataController.getMasterDataAuditLogs(req, res);
+    case 'getOperationalAuditReport':
+      return auditController.getOperationalAuditReport(req, res);
     case 'getPackages':
       return masterDataController.getPackages(req, res);
     case 'getPackageDetails':
@@ -140,6 +143,7 @@ async function handlePostAction(action, req, res, payload) {
     case 'getRecipeBomStatus':
     case 'getCosting':
     case 'getMasterDataAuditLogs':
+    case 'getOperationalAuditReport':
     case 'getPackages':
     case 'getPackageDetails':
     case 'getEligiblePackages':

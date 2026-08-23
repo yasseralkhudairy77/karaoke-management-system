@@ -641,6 +641,64 @@ CREATE TABLE IF NOT EXISTS master_data_audit_logs (
     block_reason TEXT
 );
 
+-- Audit operasional terpadu. Tabel ini append-only untuk tindakan non-organik
+-- dan tidak memakai FK cascade agar bukti tetap ada jika data sumber berubah.
+CREATE TABLE IF NOT EXISTS operational_audit_events (
+    event_id VARCHAR(90) PRIMARY KEY,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    operational_date DATE NOT NULL,
+    risk_level VARCHAR(20) NOT NULL DEFAULT 'info',
+    domain VARCHAR(30) NOT NULL,
+    event_type VARCHAR(60) NOT NULL,
+    result VARCHAR(20) NOT NULL DEFAULT 'success',
+    source_action VARCHAR(80),
+    source_table VARCHAR(80),
+    source_record_id VARCHAR(100),
+    initiated_by_id VARCHAR(50),
+    initiated_by_name VARCHAR(100) NOT NULL,
+    initiated_by_role VARCHAR(30),
+    authorized_by_id VARCHAR(50),
+    authorized_by_name VARCHAR(100),
+    authorized_by_role VARCHAR(30),
+    target_type VARCHAR(40),
+    target_id VARCHAR(100),
+    transaction_id VARCHAR(50),
+    session_id VARCHAR(100),
+    order_id VARCHAR(50),
+    room_id VARCHAR(50),
+    room_name VARCHAR(100),
+    reason TEXT,
+    amount_before NUMERIC(14,2),
+    amount_after NUMERIC(14,2),
+    amount_delta NUMERIC(14,2),
+    old_value_json JSONB,
+    new_value_json JSONB,
+    metadata_json JSONB,
+    after_closing BOOLEAN NOT NULL DEFAULT FALSE,
+    idempotency_key VARCHAR(150),
+    reviewed BOOLEAN NOT NULL DEFAULT FALSE,
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by VARCHAR(100),
+    review_note TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operational_audit_source_record
+ON operational_audit_events(source_table, source_record_id)
+WHERE source_table IS NOT NULL AND source_record_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operational_audit_idempotency
+ON operational_audit_events(idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_operational_audit_occurred_at
+ON operational_audit_events(occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_operational_audit_operational_date
+ON operational_audit_events(operational_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_operational_audit_risk
+ON operational_audit_events(risk_level, reviewed, occurred_at DESC);
+
 -- 15. Local -> Cloud Synchronization Outbox Queue (Railway Worker Queue)
 CREATE TABLE IF NOT EXISTS sync_outbox (
     sync_id BIGSERIAL PRIMARY KEY,

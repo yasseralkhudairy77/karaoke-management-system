@@ -988,6 +988,14 @@ let todayRoomTimeLogs = [];
 let todayRoomTimeLogSummary = null;
 let roomTimeLogRoomFilter = "all";
 let isLoadingRoomTimeLogs = false;
+let operationalAuditEvents = [];
+let operationalAuditSummary = null;
+let operationalAuditPeriod = "today";
+let operationalAuditRiskFilter = "all";
+let operationalAuditDomainFilter = "all";
+let operationalAuditOperatorFilter = "";
+let selectedOperationalAuditEventId = "";
+let isLoadingOperationalAudit = false;
 let roomUsagePeriodFilter = "today";
 let roomUsageCustomStartDate = "";
 let roomUsageCustomEndDate = "";
@@ -20351,7 +20359,7 @@ function refreshActiveTabData() {
       }
       break;
     case "audit":
-      loadTodayRoomTimeLogs();
+      loadOperationalAuditReport();
       break;
     case "settings":
       loadSettingsTabData();
@@ -23897,7 +23905,7 @@ function appendDashboardTabContent(panel, tabKey) {
       );
       break;
     case "audit":
-      panel.appendChild(createTodayRoomTimeLogsPanelElement());
+      panel.appendChild(createOperationalAuditPanelElement());
       break;
     case "settings":
       panel.appendChild(createSettingsPanelElement());
@@ -24514,6 +24522,46 @@ async function loadTodayRoomTimeLogs() {
   }
 }
 
+async function loadOperationalAuditReport() {
+  if (!API_BASE_URL.trim()) {
+    operationalAuditEvents = [];
+    operationalAuditSummary = null;
+    return;
+  }
+
+  isLoadingOperationalAudit = true;
+  renderRooms();
+  try {
+    const params = new URLSearchParams({
+      action: "getOperationalAuditReport",
+      period: operationalAuditPeriod,
+      risk_level: operationalAuditRiskFilter,
+      domain: operationalAuditDomainFilter,
+      operator: operationalAuditOperatorFilter.trim(),
+      limit: "200",
+    });
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+    const data = await response.json();
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.message || data?.error || "Gagal memuat audit operasional.");
+    }
+    operationalAuditEvents = Array.isArray(data.events) ? data.events : [];
+    operationalAuditSummary = data.summary || null;
+    if (selectedOperationalAuditEventId && !operationalAuditEvents.some((event) => event.event_id === selectedOperationalAuditEventId)) {
+      selectedOperationalAuditEventId = "";
+    }
+  } catch (error) {
+    console.warn("Gagal memuat audit operasional.", error);
+    operationalAuditEvents = [];
+    operationalAuditSummary = null;
+    showInlineNotice(error.message || "Gagal memuat audit operasional.", "error");
+  } finally {
+    isLoadingOperationalAudit = false;
+    renderRooms();
+  }
+}
+
 async function fetchTodayRoomTimeLogsFromApi() {
   if (!API_BASE_URL.trim()) {
     return {
@@ -24584,6 +24632,207 @@ function getRoomTimeLogActionLabel(actionType) {
   }
 
   return actionType || "-";
+}
+
+function getOperationalAuditRiskLabel(riskLevel) {
+  return ({ critical: "Kritis", high: "Tinggi", medium: "Perhatian", info: "Info" })[riskLevel] || riskLevel || "Info";
+}
+
+function createOperationalAuditRiskBadge(riskLevel) {
+  const normalized = String(riskLevel || "info").toLowerCase();
+  const badge = document.createElement("span");
+  const tone = normalized === "critical" ? "danger" : normalized === "high" ? "warning" : normalized === "medium" ? "info" : "neutral";
+  badge.className = withStatusBadge(`operational-audit-risk ${normalized}`, tone);
+  badge.textContent = getOperationalAuditRiskLabel(normalized);
+  return badge;
+}
+
+function formatOperationalAuditImpact(event) {
+  if (event?.domain === "stock") {
+    const qtyChange = Number(event?.metadata_json?.qty_change);
+    return Number.isFinite(qtyChange) ? `${qtyChange > 0 ? "+" : ""}${formatDecimal(qtyChange)} stok` : "-";
+  }
+  const delta = Number(event?.amount_delta);
+  if (!Number.isFinite(delta) || event?.amount_delta === null || event?.amount_delta === undefined) return "-";
+  return `${delta > 0 ? "+" : ""}${formatCurrency(delta)}`;
+}
+
+function getOperationalAuditTarget(event) {
+  if (event.transaction_id) return event.transaction_id;
+  if (event.room_name || event.room_id) return event.room_name || event.room_id;
+  return event.target_id || "-";
+}
+
+function createOperationalAuditFilter(labelText, action, value, options) {
+  const label = document.createElement("label");
+  label.className = "master-form-field operational-audit-filter";
+  const text = document.createElement("span");
+  text.className = "master-form-label";
+  text.textContent = labelText;
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+  select.dataset.action = action;
+  options.forEach(([optionValue, optionLabel]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    select.appendChild(option);
+  });
+  select.value = value;
+  label.append(text, select);
+  return label;
+}
+
+function createOperationalAuditSummaryCard(labelText, value, tone = "") {
+  const card = document.createElement("article");
+  card.className = `operational-audit-summary-card ${tone}`.trim();
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  const amount = document.createElement("strong");
+  amount.textContent = value;
+  card.append(label, amount);
+  return card;
+}
+
+function createOperationalAuditDetailElement(event) {
+  if (!event) return null;
+  const detail = document.createElement("section");
+  detail.className = "operational-audit-detail";
+  const header = document.createElement("div");
+  header.className = "operational-audit-detail-header";
+  const title = document.createElement("h3");
+  title.textContent = event.action_label || event.event_type || "Detail Audit";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "master-button secondary";
+  close.dataset.action = "close-operational-audit-detail";
+  close.textContent = "Tutup";
+  header.append(title, close);
+
+  const facts = document.createElement("div");
+  facts.className = "operational-audit-detail-facts";
+  [
+    ["Waktu", formatDateTimeLabel(event.occurred_at)],
+    ["Operator", event.initiated_by_name || "-"],
+    ["Otorisasi", event.authorized_by_name || "Tidak memakai otorisasi tambahan"],
+    ["Target", getOperationalAuditTarget(event)],
+    ["Dampak", formatOperationalAuditImpact(event)],
+    ["Setelah Closing", event.after_closing ? "Ya" : "Tidak"],
+    ["Alasan", event.reason || "-"],
+  ].forEach(([labelText, value]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const content = document.createElement("strong");
+    content.textContent = value;
+    item.append(label, content);
+    facts.appendChild(item);
+  });
+
+  const values = document.createElement("details");
+  values.className = "operational-audit-technical-detail";
+  const summary = document.createElement("summary");
+  summary.textContent = "Lihat data sebelum dan sesudah";
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify({ sebelum: event.old_value_json || null, sesudah: event.new_value_json || null }, null, 2);
+  values.append(summary, pre);
+  detail.append(header, facts, values);
+  return detail;
+}
+
+function createOperationalAuditPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "operational-audit-panel";
+  const header = document.createElement("div");
+  header.className = "operational-audit-header";
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h2");
+  title.textContent = "Audit Operasional";
+  const subtitle = document.createElement("p");
+  subtitle.textContent = "Perubahan non-organik oleh kasir, manager, dan owner.";
+  titleGroup.append(title, subtitle);
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "master-button";
+  refresh.dataset.action = "refresh-operational-audit";
+  refresh.disabled = isLoadingOperationalAudit;
+  refresh.textContent = isLoadingOperationalAudit ? "Memuat..." : "Refresh";
+  header.append(titleGroup, refresh);
+
+  const summary = operationalAuditSummary || {};
+  const summaryGrid = document.createElement("div");
+  summaryGrid.className = "operational-audit-summary";
+  summaryGrid.append(
+    createOperationalAuditSummaryCard("Perlu Diperiksa", String(Number(summary.needs_attention || 0)), "warning"),
+    createOperationalAuditSummaryCard("Pengurangan Nilai", formatCurrency(summary.revenue_reduction || 0), "danger"),
+    createOperationalAuditSummaryCard("Setelah Closing", String(Number(summary.after_closing_events || 0)), "danger"),
+    createOperationalAuditSummaryCard("Total Event", String(Number(summary.total_events || 0)))
+  );
+
+  const filters = document.createElement("div");
+  filters.className = "operational-audit-filters";
+  filters.append(
+    createOperationalAuditFilter("Periode", "filter-operational-audit-period", operationalAuditPeriod, [
+      ["today", "Hari Ini"], ["yesterday", "Kemarin"], ["last7days", "7 Hari"], ["thismonth", "Bulan Ini"],
+    ]),
+    createOperationalAuditFilter("Risiko", "filter-operational-audit-risk", operationalAuditRiskFilter, [
+      ["all", "Semua"], ["critical", "Kritis"], ["high", "Tinggi"], ["medium", "Perhatian"], ["info", "Info"],
+    ]),
+    createOperationalAuditFilter("Jenis", "filter-operational-audit-domain", operationalAuditDomainFilter, [
+      ["all", "Semua"], ["transaction", "Transaksi"], ["room", "Room"], ["fnb", "F&B"], ["stock", "Stok"], ["lc", "LC"], ["finance", "Keuangan"], ["closing", "Closing"], ["master_data", "Master Data"],
+    ])
+  );
+  const operatorField = document.createElement("label");
+  operatorField.className = "master-form-field operational-audit-filter";
+  const operatorLabel = document.createElement("span");
+  operatorLabel.className = "master-form-label";
+  operatorLabel.textContent = "Operator";
+  const operatorInput = document.createElement("input");
+  operatorInput.className = "master-form-input";
+  operatorInput.type = "search";
+  operatorInput.placeholder = "Nama kasir, manager, owner";
+  operatorInput.value = operationalAuditOperatorFilter;
+  operatorInput.dataset.action = "filter-operational-audit-operator";
+  operatorField.append(operatorLabel, operatorInput);
+  filters.appendChild(operatorField);
+
+  panel.append(header, summaryGrid, filters);
+  if (isLoadingOperationalAudit && operationalAuditEvents.length === 0) {
+    panel.appendChild(createStateMessage("Memuat audit operasional..."));
+    return panel;
+  }
+
+  const rows = operationalAuditEvents.map((event) => {
+    const detailButton = document.createElement("button");
+    detailButton.type = "button";
+    detailButton.className = "master-button secondary";
+    detailButton.dataset.action = "show-operational-audit-detail";
+    detailButton.dataset.eventId = event.event_id || "";
+    detailButton.textContent = "Detail";
+    const operator = event.authorized_by_name
+      ? `${event.initiated_by_name || "-"} / Otorisasi: ${event.authorized_by_name}`
+      : (event.initiated_by_name || "-");
+    return [
+      formatDateTimeLabel(event.occurred_at),
+      createOperationalAuditRiskBadge(event.risk_level),
+      event.action_label || event.event_type || "-",
+      getOperationalAuditTarget(event),
+      operator,
+      formatOperationalAuditImpact(event),
+      event.reason || "-",
+      detailButton,
+    ];
+  });
+  panel.appendChild(createMasterTable(
+    ["Waktu", "Risiko", "Tindakan", "Transaksi / Room", "Operator", "Dampak", "Alasan", ""],
+    rows,
+    "Belum ada perubahan operasional pada periode ini.",
+    "operationalAudit"
+  ));
+  const selected = operationalAuditEvents.find((event) => event.event_id === selectedOperationalAuditEventId);
+  const detail = createOperationalAuditDetailElement(selected);
+  if (detail) panel.appendChild(detail);
+  return panel;
 }
 
 function getRoomTimeLogEmptyMessage() {
@@ -25161,13 +25410,21 @@ function requestCancelBooking(roomId) {
       ["Pelanggan", room?.customer_name || "-"],
       ["Durasi", formatDurationMinutes(room?.booked_duration_minutes)],
     ],
+    field: {
+      label: "Alasan pembatalan",
+      placeholder: "Contoh: pelanggan membatalkan reservasi",
+      multiline: true,
+      required: true,
+      minLength: 5,
+      errorMessage: "Alasan pembatalan minimal 5 karakter.",
+    },
     confirmLabel: "Ya, Batalkan Booking",
     cancelLabel: "Kembali",
-    onConfirm: () => cancelBooking(roomId),
+    onConfirm: (reason) => cancelBooking(roomId, reason),
   });
 }
 
-async function cancelBooking(roomId) {
+async function cancelBooking(roomId, reason) {
   if (!API_BASE_URL.trim()) return;
   if (isCancellingBooking) return;
   isCancellingBooking = true;
@@ -25176,6 +25433,8 @@ async function cancelBooking(roomId) {
     const data = await postApiAction({
       action: "cancelBooking",
       room_id: roomId,
+      reason: String(reason || "").trim(),
+      changed_by: getLoggedInOperatorName(),
     });
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal membatalkan booking.");
@@ -25746,6 +26005,7 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
       transaction_id: transactionId,
       payment_method: paymentMethod,
       promo_code: promoCode,
+      changed_by: getLoggedInOperatorName(),
     });
 
     if (!data || data.ok !== true) {
@@ -25818,6 +26078,8 @@ async function changeTransactionPaymentMethod(transactionId, newPaymentMethod) {
       action: "updateTransactionDetails",
       transaction_id: transactionId,
       payment_method: normalizedMethod,
+      changed_by: getLoggedInOperatorName(),
+      reason: `Ubah metode pembayaran menjadi ${formatPaymentMethodLabel(normalizedMethod)}`,
     });
 
     if (!data || data.ok !== true) {
@@ -26891,6 +27153,23 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "refresh-operational-audit") {
+    await loadOperationalAuditReport();
+    return;
+  }
+
+  if (action === "show-operational-audit-detail") {
+    selectedOperationalAuditEventId = button.dataset.eventId || "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "close-operational-audit-detail") {
+    selectedOperationalAuditEventId = "";
+    renderRooms();
+    return;
+  }
+
   if (action === "submit-stock-adjustment") {
     await submitStockAdjustment();
     return;
@@ -27409,6 +27688,38 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const auditPeriod = event.target.closest("[data-action='filter-operational-audit-period']");
+  if (auditPeriod) {
+    operationalAuditPeriod = auditPeriod.value || "today";
+    resetPaginationPage("operationalAudit");
+    loadOperationalAuditReport();
+    return;
+  }
+
+  const auditRisk = event.target.closest("[data-action='filter-operational-audit-risk']");
+  if (auditRisk) {
+    operationalAuditRiskFilter = auditRisk.value || "all";
+    resetPaginationPage("operationalAudit");
+    loadOperationalAuditReport();
+    return;
+  }
+
+  const auditDomain = event.target.closest("[data-action='filter-operational-audit-domain']");
+  if (auditDomain) {
+    operationalAuditDomainFilter = auditDomain.value || "all";
+    resetPaginationPage("operationalAudit");
+    loadOperationalAuditReport();
+    return;
+  }
+
+  const auditOperator = event.target.closest("[data-action='filter-operational-audit-operator']");
+  if (auditOperator) {
+    operationalAuditOperatorFilter = auditOperator.value || "";
+    resetPaginationPage("operationalAudit");
+    loadOperationalAuditReport();
+    return;
+  }
+
   const manualField = event.target.closest("[data-action='update-manual-transaction']");
   if (manualField) {
     updateManualTransactionField(manualField.dataset.field || "", manualField.value);
@@ -27743,7 +28054,7 @@ async function initializeDashboard() {
   }
 
   if (activeDashboardTab === "audit" && canAccessDashboardTab("audit")) {
-    initialLoads.push(loadTodayRoomTimeLogs());
+    initialLoads.push(loadOperationalAuditReport());
   }
 
   if (activeDashboardTab === "transactions" && canAccessDashboardTab("transactions")) {

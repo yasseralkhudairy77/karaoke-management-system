@@ -1,6 +1,7 @@
 const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate } = require('../utils/operationalDate');
+const { writeOperationalAudit } = require('../services/operationalAuditService');
 
 function parseSessionPackageMeta(session) {
   const note = String(session?.note || '');
@@ -612,8 +613,10 @@ async function cancelBooking(req, res, payload) {
     client = await db.pool.connect();
     await client.query('BEGIN');
     const roomId = payload.room_id;
-    const reason = payload.reason || 'Booking dibatalkan';
+    const reason = String(payload.reason || '').trim();
+    const cancelledBy = String(payload.changed_by || payload.cashier_name || 'Operator').trim();
     if (!roomId) throw new Error('room_id wajib diisi.');
+    if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
 
     const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
     if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
@@ -639,6 +642,17 @@ async function cancelBooking(req, res, payload) {
       SET status = 'available', start_time = NULL, booked_duration_minutes = 0, scheduled_end_time = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE room_id = $1
     `, [roomId]);
+
+    await writeOperationalAudit(client, {
+      risk_level: room.status === 'paid_waiting_start' ? 'critical' : 'high',
+      domain: 'room', event_type: 'booking_cancelled', source_action: 'cancelBooking',
+      initiated_by: cancelledBy,
+      target_type: 'room', target_id: roomId, room_id: roomId, room_name: room.room_name,
+      reason,
+      old_value: room,
+      new_value: { room_id: roomId, room_name: room.room_name, status: 'available' },
+      metadata: { previous_status: room.status }
+    });
 
     await client.query('COMMIT');
     return successResponse(res, { message: `Booking ${room.room_name} berhasil dibatalkan.` });

@@ -1,6 +1,7 @@
 const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
+const { writeOperationalAudit } = require('../services/operationalAuditService');
 
 const FNB_GENERAL_ROOM_ID = 'FNB-GENERAL';
 const FNB_GENERAL_ROOM_NAME = 'F&B Umum';
@@ -383,11 +384,19 @@ async function saveFnbOrder(req, res, payload) {
 }
 
 async function cancelFnbOrder(req, res, payload) {
+  let client;
   try {
     const { order_id, cancel_reason, cancelled_by = 'Kasir' } = payload;
     if (!order_id) throw new Error('order_id wajib diisi.');
+    client = await db.pool.connect();
+    await client.query('BEGIN');
 
-    await db.query(`
+    const oldRes = await client.query('SELECT * FROM fnb_orders WHERE order_id = $1 FOR UPDATE', [order_id]);
+    if (oldRes.rowCount === 0) throw new Error('Order F&B tidak ditemukan.');
+    const oldOrder = oldRes.rows[0];
+    if (String(oldOrder.order_status || '').toLowerCase() === 'cancelled') throw new Error('Order F&B sudah dibatalkan.');
+
+    const updatedRes = await client.query(`
       UPDATE fnb_orders
       SET order_status = 'cancelled',
           cancel_reason = $1,
@@ -395,11 +404,29 @@ async function cancelFnbOrder(req, res, payload) {
           cancelled_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE order_id = $3
+      RETURNING *
     `, [cancel_reason || 'Dibatalkan kasir', cancelled_by, order_id]);
+
+    const updatedOrder = updatedRes.rows[0];
+    await writeOperationalAudit(client, {
+      risk_level: 'medium', domain: 'fnb', event_type: 'fnb_order_cancelled',
+      source_action: 'cancelFnbOrder', source_table: 'fnb_orders', source_record_id: order_id,
+      initiated_by: cancelled_by,
+      target_type: 'fnb_order', target_id: order_id, order_id,
+      room_id: oldOrder.room_id, room_name: oldOrder.room_name,
+      reason: cancel_reason || 'Dibatalkan kasir',
+      amount_before: Number(oldOrder.order_total || 0), amount_after: 0,
+      old_value: oldOrder, new_value: updatedOrder
+    });
+
+    await client.query('COMMIT');
 
     return successResponse(res, { message: `Order ${order_id} berhasil dibatalkan.` });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 
