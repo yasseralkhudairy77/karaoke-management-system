@@ -358,28 +358,110 @@ async function saveOwnerMirrorSnapshot(snapshot, sourceId = 'happy-song-local') 
     throw new Error('Payload snapshot mirror tidak valid.');
   }
 
-  const result = await db.query(`
-    INSERT INTO owner_mirror_snapshots (
-      source_id, mirror_version, generated_at, generated_at_wib, period,
-      operational_date_start, operational_date_end, payload_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING snapshot_id, source_id, received_at
-  `, [
-    sourceId,
-    snapshot.mirror_version || '',
-    snapshot.generated_at || null,
-    snapshot.generated_at_wib || '',
-    snapshot.period || '',
-    snapshot.operational_date_start || null,
-    snapshot.operational_date_end || null,
-    JSON.stringify(snapshot)
-  ]);
+  const period = snapshot.period || '';
+  const operationalDateStart = snapshot.operational_date_start || null;
+  const operationalDateEnd = snapshot.operational_date_end || null;
+  const payloadJson = JSON.stringify(snapshot);
+  const client = await db.pool.connect();
 
-  return {
-    snapshot_id: result.rows[0].snapshot_id,
-    source_id: result.rows[0].source_id,
-    received_at: iso(result.rows[0].received_at)
-  };
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      `${sourceId}|${period}|${operationalDateStart || ''}|${operationalDateEnd || ''}`
+    ]);
+
+    const existing = await client.query(`
+      SELECT snapshot_id
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND COALESCE(period, '') = COALESCE($2, '')
+        AND COALESCE(operational_date_start, DATE '1900-01-01') = COALESCE($3::date, DATE '1900-01-01')
+        AND COALESCE(operational_date_end, DATE '1900-01-01') = COALESCE($4::date, DATE '1900-01-01')
+      ORDER BY received_at DESC, snapshot_id DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [sourceId, period, operationalDateStart, operationalDateEnd]);
+
+    const result = existing.rowCount > 0
+      ? await client.query(`
+          UPDATE owner_mirror_snapshots
+          SET mirror_version = $2,
+              generated_at = $3,
+              generated_at_wib = $4,
+              period = $5,
+              operational_date_start = $6,
+              operational_date_end = $7,
+              payload_json = $8,
+              received_at = CURRENT_TIMESTAMP
+          WHERE snapshot_id = $1
+          RETURNING snapshot_id, source_id, received_at
+        `, [
+          existing.rows[0].snapshot_id,
+          snapshot.mirror_version || '',
+          snapshot.generated_at || null,
+          snapshot.generated_at_wib || '',
+          period,
+          operationalDateStart,
+          operationalDateEnd,
+          payloadJson
+        ])
+      : await client.query(`
+          INSERT INTO owner_mirror_snapshots (
+            source_id, mirror_version, generated_at, generated_at_wib, period,
+            operational_date_start, operational_date_end, payload_json
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING snapshot_id, source_id, received_at
+        `, [
+          sourceId,
+          snapshot.mirror_version || '',
+          snapshot.generated_at || null,
+          snapshot.generated_at_wib || '',
+          period,
+          operationalDateStart,
+          operationalDateEnd,
+          payloadJson
+        ]);
+
+    const dedupe = await client.query(`
+      WITH ranked AS (
+        SELECT
+          snapshot_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY source_id, COALESCE(period, ''), operational_date_start, operational_date_end
+            ORDER BY received_at DESC, snapshot_id DESC
+          ) AS row_number
+        FROM owner_mirror_snapshots
+        WHERE source_id = $1
+      )
+      DELETE FROM owner_mirror_snapshots target
+      USING ranked
+      WHERE target.snapshot_id = ranked.snapshot_id
+        AND ranked.row_number > 1
+    `, [sourceId]);
+
+    const retentionDays = Math.max(7, parseInt(process.env.OWNER_MIRROR_RETENTION_DAYS || '45', 10) || 45);
+    const retention = await client.query(`
+      DELETE FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND received_at < CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 day')
+    `, [sourceId, retentionDays]);
+
+    await client.query('COMMIT');
+
+    return {
+      snapshot_id: result.rows[0].snapshot_id,
+      source_id: result.rows[0].source_id,
+      received_at: iso(result.rows[0].received_at),
+      deduped_snapshots: dedupe.rowCount || 0,
+      retention_deleted_snapshots: retention.rowCount || 0,
+      retention_days: retentionDays
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', options = {}) {

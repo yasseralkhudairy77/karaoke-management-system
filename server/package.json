@@ -13,6 +13,7 @@
     "db:clear-test-operational-data": "node scripts/clear-test-operational-data.js",
     "mirror:snapshot": "node scripts/export-owner-mirror-snapshot.js",
     "mirror:push": "node scripts/push-owner-mirror-snapshot.js",
+    "mirror:cleanup-cloud": "node scripts/cleanup-owner-mirror-snapshots.js",
     "test": "npm run test:timezone && npm run test:mirror-rollover && npm run test:audit-report && npm run test:coverage && npm run test:contract",
     "test:timezone": "node tests/timezone-boundary.test.js",
     "test:mirror-rollover": "node tests/owner-mirror-rollover.test.js",

@@ -1,10 +1,14 @@
 const assert = require('assert');
 const db = require('../src/db');
-const { getLatestOwnerMirrorSnapshot } = require('../src/services/ownerMirrorService');
+const {
+  getLatestOwnerMirrorSnapshot,
+  saveOwnerMirrorSnapshot
+} = require('../src/services/ownerMirrorService');
 
 async function runOwnerMirrorRolloverTests() {
   console.log('Running Owner Mirror Cutoff Rollover Tests...');
   const originalQuery = db.query;
+  const originalPoolConnect = db.pool.connect;
   let capturedSql = '';
   let capturedParams = [];
 
@@ -50,9 +54,48 @@ async function runOwnerMirrorRolloverTests() {
     const missing = await getLatestOwnerMirrorSnapshot('happy-song-local', { period: 'today' });
     assert.strictEqual(missing.has_snapshot, false);
     console.log('  PASS unmatched operational date remains empty');
+
+    const executedSql = [];
+    const snapshotPayload = {
+      mirror_version: 'owner-mirror-snapshot-v1',
+      period: 'today',
+      operational_date_start: '2026-08-18',
+      operational_date_end: '2026-08-18',
+      summary: { total_transactions: 1 }
+    };
+
+    db.pool.connect = async () => ({
+      query: async (sql) => {
+        executedSql.push(String(sql));
+        if (/SELECT snapshot_id/i.test(sql)) {
+          return { rowCount: 1, rows: [{ snapshot_id: 4321 }] };
+        }
+        if (/UPDATE owner_mirror_snapshots/i.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [{
+              snapshot_id: 4321,
+              source_id: 'happy-song-local',
+              received_at: new Date('2026-08-18T10:00:00+07:00')
+            }]
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+      release: () => {}
+    });
+
+    const saved = await saveOwnerMirrorSnapshot(snapshotPayload, 'happy-song-local');
+    assert.strictEqual(saved.snapshot_id, 4321);
+    assert.ok(executedSql.some(sql => /UPDATE owner_mirror_snapshots/i.test(sql)));
+    assert.ok(executedSql.some(sql => /DELETE FROM owner_mirror_snapshots target/i.test(sql)));
+    assert.ok(executedSql.some(sql => /received_at < CURRENT_TIMESTAMP/i.test(sql)));
+    console.log('  PASS saving same-period mirror snapshot updates existing row and prunes duplicates');
+
     console.log('Owner Mirror Cutoff Rollover Tests passed.');
   } finally {
     db.query = originalQuery;
+    db.pool.connect = originalPoolConnect;
   }
 }
 

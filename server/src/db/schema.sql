@@ -745,6 +745,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(stock_ite
 CREATE INDEX IF NOT EXISTS idx_lc_work_logs_closed_transaction ON lc_work_logs(closed_transaction_id, status);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_latest ON owner_mirror_snapshots(source_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_snapshots(source_id, period, operational_date_start, operational_date_end, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_dedupe ON owner_mirror_snapshots(source_id, COALESCE(period, ''), operational_date_start, operational_date_end, received_at DESC, snapshot_id DESC);
 
 ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'promo';
 ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS used_in_transaction_id VARCHAR(50);
