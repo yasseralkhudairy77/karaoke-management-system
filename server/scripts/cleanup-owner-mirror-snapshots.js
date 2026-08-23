@@ -11,7 +11,8 @@ function parseArgs(argv) {
   const args = {
     apply: false,
     sourceId: process.env.OWNER_MIRROR_SOURCE_ID || 'happy-song-local',
-    retentionDays: parseInt(process.env.OWNER_MIRROR_RETENTION_DAYS || '45', 10) || 45
+    retentionDays: parseInt(process.env.OWNER_MIRROR_RETENTION_DAYS || '45', 10) || 45,
+    batchSize: 500
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -24,10 +25,14 @@ function parseArgs(argv) {
     } else if (arg === '--retention-days') {
       args.retentionDays = parseInt(argv[i + 1] || '', 10) || args.retentionDays;
       i += 1;
+    } else if (arg === '--batch-size') {
+      args.batchSize = parseInt(argv[i + 1] || '', 10) || args.batchSize;
+      i += 1;
     }
   }
 
   args.retentionDays = Math.max(7, args.retentionDays);
+  args.batchSize = Math.min(2000, Math.max(50, args.batchSize));
   return args;
 }
 
@@ -46,6 +51,19 @@ function createClient() {
     password: process.env.PGPASSWORD || 'postgres',
     database: process.env.PGDATABASE || 'happy_song_pos'
   });
+}
+
+async function withClient(fn) {
+  const client = createClient();
+  client.on('error', err => {
+    console.error(`Koneksi database terputus: ${err.message}`);
+  });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 async function tableStats(client, sourceId) {
@@ -90,10 +108,10 @@ async function oldStats(client, sourceId, retentionDays) {
   return result.rows[0].old_rows || 0;
 }
 
-async function cleanup(client, sourceId, retentionDays) {
+async function deleteDuplicateBatch(client, sourceId, batchSize) {
   await client.query('BEGIN');
   try {
-    const dedupe = await client.query(`
+    const result = await client.query(`
       WITH ranked AS (
         SELECT
           snapshot_id,
@@ -103,36 +121,78 @@ async function cleanup(client, sourceId, retentionDays) {
           ) AS row_number
         FROM owner_mirror_snapshots
         WHERE source_id = $1
+      ),
+      deletable AS (
+        SELECT snapshot_id
+        FROM ranked
+        WHERE row_number > 1
+        LIMIT $2
       )
       DELETE FROM owner_mirror_snapshots target
-      USING ranked
-      WHERE target.snapshot_id = ranked.snapshot_id
-        AND ranked.row_number > 1
-    `, [sourceId]);
-
-    const old = await client.query(`
-      DELETE FROM owner_mirror_snapshots
-      WHERE source_id = $1
-        AND received_at < CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 day')
-    `, [sourceId, retentionDays]);
+      USING deletable
+      WHERE target.snapshot_id = deletable.snapshot_id
+    `, [sourceId, batchSize]);
 
     await client.query('COMMIT');
-    return {
-      duplicate_deleted: dedupe.rowCount || 0,
-      old_deleted: old.rowCount || 0
-    };
+    return result.rowCount || 0;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   }
 }
 
+async function deleteOldBatch(client, sourceId, retentionDays, batchSize) {
+  await client.query('BEGIN');
+  try {
+    const result = await client.query(`
+      WITH deletable AS (
+        SELECT snapshot_id
+        FROM owner_mirror_snapshots
+        WHERE source_id = $1
+          AND received_at < CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 day')
+        LIMIT $3
+      )
+      DELETE FROM owner_mirror_snapshots
+      USING deletable
+      WHERE owner_mirror_snapshots.snapshot_id = deletable.snapshot_id
+    `, [sourceId, retentionDays, batchSize]);
+
+    await client.query('COMMIT');
+    return result.rowCount || 0;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+
+async function cleanup(sourceId, retentionDays, batchSize) {
+  let duplicateDeleted = 0;
+  let oldDeleted = 0;
+
+  while (true) {
+    const deleted = await withClient(client => deleteDuplicateBatch(client, sourceId, batchSize));
+    duplicateDeleted += deleted;
+    if (deleted === 0) break;
+    console.log(`Duplicate deleted so far: ${duplicateDeleted}`);
+  }
+
+  while (true) {
+    const deleted = await withClient(client => deleteOldBatch(client, sourceId, retentionDays, batchSize));
+    oldDeleted += deleted;
+    if (deleted === 0) break;
+    console.log(`Old deleted so far: ${oldDeleted}`);
+  }
+
+  return {
+    duplicate_deleted: duplicateDeleted,
+    old_deleted: oldDeleted
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv);
-  const client = createClient();
-  await client.connect();
 
-  try {
+  await withClient(async client => {
     const before = await tableStats(client, args.sourceId);
     const duplicateRows = await duplicateStats(client, args.sourceId);
     const oldRows = await oldStats(client, args.sourceId, args.retentionDays);
@@ -142,6 +202,7 @@ async function main() {
     console.log(`Mode           : ${args.apply ? 'APPLY / DELETE' : 'DRY RUN ONLY'}`);
     console.log(`Source ID      : ${args.sourceId}`);
     console.log(`Retention days : ${args.retentionDays}`);
+    console.log(`Batch size     : ${args.batchSize}`);
     console.log(`Table size     : ${before.table_size}`);
     console.log(`Total rows     : ${before.total_rows}`);
     console.log(`Source rows    : ${before.source_rows}`);
@@ -155,8 +216,11 @@ async function main() {
       console.log('Tidak ada data dihapus. Jalankan ulang dengan --apply jika sudah siap.');
       return;
     }
+  });
 
-    const result = await cleanup(client, args.sourceId, args.retentionDays);
+  const result = await cleanup(args.sourceId, args.retentionDays, args.batchSize);
+
+  await withClient(async client => {
     await client.query('VACUUM ANALYZE owner_mirror_snapshots');
     const after = await tableStats(client, args.sourceId);
     console.log('---------------------------------------------------------');
@@ -165,9 +229,7 @@ async function main() {
     console.log(`Rows after        : ${after.source_rows}`);
     console.log(`Table size after  : ${after.table_size}`);
     console.log('Cleanup selesai.');
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 main().catch(err => {
