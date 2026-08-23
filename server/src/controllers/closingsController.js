@@ -44,6 +44,12 @@ async function saveCashierClosing(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await client.query(`
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) DEFAULT 0;
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
+    `);
     const { cash_actual = 0, note = '', cashier_name = 'Kasir' } = payload;
     const todayOpDate = getOperationalDate();
 
@@ -101,9 +107,10 @@ async function saveCashierClosing(req, res, payload) {
       await client.query(`
         INSERT INTO cashier_closing_transactions (
           closing_id, transaction_id, room_id, room_name, duration_minutes,
-          room_total, fnb_total, lc_total, grand_total, payment_method, payment_status, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      `, [closingId, t.transaction_id, t.room_id, t.room_name, t.duration_minutes, t.room_total, t.fnb_total, t.lc_total, t.grand_total, t.payment_method, t.payment_status, t.created_at]);
+          room_total, fnb_total, lc_total, grand_total, payment_method, payment_status, created_at,
+          promo_discount, manual_discount, manual_discount_room, manual_discount_fnb
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `, [closingId, t.transaction_id, t.room_id, t.room_name, t.duration_minutes, t.room_total, t.fnb_total, t.lc_total, t.grand_total, t.payment_method, t.payment_status, t.created_at, t.promo_discount || 0, t.manual_discount || 0, t.manual_discount_room || 0, t.manual_discount_fnb || 0]);
     }
 
     await client.query(`

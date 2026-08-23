@@ -121,6 +121,9 @@ export function formatReceipt58mm(receiptData, options = {}) {
   if (totals.roomDiscountAmount > 0) {
     pushReceiptField(lines, "Free Room", `-${formatReceiptCurrency(totals.roomDiscountAmount)}`, width);
   }
+  if (totals.manualRoomDiscount > 0) {
+    pushReceiptField(lines, "Disc Mgmt Room", `-${formatReceiptCurrency(totals.manualRoomDiscount)}`, width);
+  }
 
   if (lc.hasLc) {
     lines.push(separator);
@@ -194,10 +197,18 @@ export function formatReceipt58mm(receiptData, options = {}) {
   if (totals.roomDiscountAmount > 0) {
     pushReceiptField(lines, "Free Room", `-${formatReceiptCurrency(totals.roomDiscountAmount)}`, width);
   }
+  if (totals.manualRoomDiscount > 0) {
+    pushReceiptField(lines, "Disc Mgmt Room", `-${formatReceiptCurrency(totals.manualRoomDiscount)}`, width);
+  }
   if (totals.lcTotal > 0) {
     pushReceiptField(lines, "Jasa LC", formatReceiptCurrency(totals.lcTotal), width);
   }
-  pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
+  if (totals.manualFnbDiscount > 0) {
+    pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.grossFnbTotal), width);
+    pushReceiptField(lines, "Disc Mgmt F&B", `-${formatReceiptCurrency(totals.manualFnbDiscount)}`, width);
+  } else {
+    pushReceiptField(lines, "F&B", formatReceiptCurrency(totals.fnbTotal), width);
+  }
   lines.push(strongSeparator);
   lines.push(formatReceiptLine("TOTAL", formatReceiptCurrency(totals.grandTotal), width));
   lines.push(strongSeparator);
@@ -583,17 +594,25 @@ function normalizeTotals(transaction) {
   const promoCode = getText(transaction.promo_code);
   const promoDiscount = getNumber(transaction.promo_discount);
   const roomDiscountAmount = getNumber(transaction.room_discount_amount);
-  const grossRoomTotal = netRoomTotal + promoDiscount + roomDiscountAmount;
+  const manualDiscount = getNumber(transaction.manual_discount);
+  const manualRoomDiscount = getNumber(transaction.manual_discount_room);
+  const manualFnbDiscount = getNumber(transaction.manual_discount_fnb);
+  const grossRoomTotal = netRoomTotal + promoDiscount + roomDiscountAmount + manualRoomDiscount;
+  const grossFnbTotal = fnbTotal + manualFnbDiscount;
 
   return {
     roomTotal: grossRoomTotal,
     netRoomTotal,
     fnbTotal,
+    grossFnbTotal,
     lcTotal,
     grandTotal: grandTotal > 0 ? grandTotal : netRoomTotal + fnbTotal + lcTotal,
     promoCode,
     promoDiscount,
     roomDiscountAmount,
+    manualDiscount,
+    manualRoomDiscount,
+    manualFnbDiscount,
   };
 }
 

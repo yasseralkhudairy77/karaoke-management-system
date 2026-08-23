@@ -37,6 +37,12 @@ function serializeTransaction(row) {
     package_total: Number(row.package_total || 0),
     promo_code: row.promo_code || '',
     promo_discount: Number(row.promo_discount || 0),
+    manual_discount: Number(row.manual_discount || 0),
+    manual_discount_room: Number(row.manual_discount_room || 0),
+    manual_discount_fnb: Number(row.manual_discount_fnb || 0),
+    manual_discount_reason: row.manual_discount_reason || '',
+    manual_discount_by: row.manual_discount_by || '',
+    manual_discount_at: row.manual_discount_at ? new Date(row.manual_discount_at).toISOString() : '',
     corrected_at: row.corrected_at ? new Date(row.corrected_at).toISOString() : '',
     corrected_by: row.corrected_by || '',
     correction_note: row.correction_note || '',
@@ -111,6 +117,12 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_reason TEXT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_by VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_at TIMESTAMPTZ;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 
@@ -133,6 +145,11 @@ async function ensureTransactionCorrectionSchema(client) {
       corrected_by VARCHAR(100) NOT NULL,
       corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
   `);
 }
 
@@ -154,8 +171,12 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
           lc_total = $6,
           grand_total = $7,
           payment_method = $8,
-          payment_status = $9
-      WHERE closing_id = $10 AND transaction_id = $11
+          payment_status = $9,
+          promo_discount = $10,
+          manual_discount = $11,
+          manual_discount_room = $12,
+          manual_discount_fnb = $13
+      WHERE closing_id = $14 AND transaction_id = $15
     `, [
       transaction.room_id,
       transaction.room_name,
@@ -166,6 +187,10 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
       transaction.grand_total,
       transaction.payment_method,
       transaction.payment_status,
+      transaction.promo_discount || 0,
+      transaction.manual_discount || 0,
+      transaction.manual_discount_room || 0,
+      transaction.manual_discount_fnb || 0,
       closingId,
       transaction.transaction_id
     ]);
@@ -312,7 +337,7 @@ async function markTransactionPaid(req, res, payload) {
     let appliedPromoCode = transaction.promo_code || '';
 
     if (prCode) {
-      const grossRoomTotal = existingDiscount > 0 ? roomTotal + existingDiscount : roomTotal;
+      const grossRoomTotal = Math.max(0, roomTotal + existingDiscount);
       const promoRes = await client.query('SELECT * FROM promos WHERE UPPER(promo_code) = $1 LIMIT 1', [prCode]);
 
       if (promoRes.rowCount > 0) {
@@ -740,6 +765,149 @@ async function correctTransactionFreeRoom(req, res, payload) {
     return successResponse(res, {
       message: 'Koreksi free room transaksi berhasil disimpan.',
       transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function applyTransactionManualDiscount(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const discountAmount = Math.max(0, Math.floor(toNumber(payload.discount_amount || payload.manual_discount)));
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.manager_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Manager').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (discountAmount <= 0) throw new Error('Nilai diskon wajib lebih dari Rp 0.');
+    if (reason.length < 5) throw new Error('Alasan diskon minimal 5 karakter.');
+
+    await validateOwnerOrManagerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa diberi diskon.');
+    }
+
+    const oldRoomTotal = toNumber(oldTransaction.room_total);
+    const oldFnbTotal = toNumber(oldTransaction.fnb_total);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const oldManualDiscount = toNumber(oldTransaction.manual_discount);
+    const oldManualDiscountRoom = toNumber(oldTransaction.manual_discount_room);
+    const oldManualDiscountFnb = toNumber(oldTransaction.manual_discount_fnb);
+    const maxDiscount = oldRoomTotal + oldFnbTotal;
+    if (maxDiscount <= 0) {
+      throw new Error('Tidak ada nilai Room/F&B yang bisa dipotong. LC tidak ikut terkena diskon.');
+    }
+    if (discountAmount > maxDiscount) {
+      throw new Error(`Diskon maksimal ${maxDiscount.toLocaleString('id-ID')} karena LC tidak ikut dipotong.`);
+    }
+
+    const roomDiscountApplied = Math.min(oldRoomTotal, discountAmount);
+    const fnbDiscountApplied = Math.min(oldFnbTotal, discountAmount - roomDiscountApplied);
+    const nextRoomTotal = Math.max(0, oldRoomTotal - roomDiscountApplied);
+    const nextFnbTotal = Math.max(0, oldFnbTotal - fnbDiscountApplied);
+    const nextManualDiscount = oldManualDiscount + roomDiscountApplied + fnbDiscountApplied;
+    const nextManualDiscountRoom = oldManualDiscountRoom + roomDiscountApplied;
+    const nextManualDiscountFnb = oldManualDiscountFnb + fnbDiscountApplied;
+    const grandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET room_total = $1,
+          fnb_total = $2,
+          grand_total = $3,
+          manual_discount = $4,
+          manual_discount_room = $5,
+          manual_discount_fnb = $6,
+          manual_discount_reason = $7,
+          manual_discount_by = $8,
+          manual_discount_at = CURRENT_TIMESTAMP,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $8,
+          correction_note = $7
+      WHERE transaction_id = $9
+      RETURNING *
+    `, [
+      nextRoomTotal,
+      nextFnbTotal,
+      grandTotal,
+      nextManualDiscount,
+      nextManualDiscountRoom,
+      nextManualDiscountFnb,
+      reason,
+      correctedBy,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'manual_discount_correction', $3, $4, $5, $6)
+    `, [
+      `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      transactionId,
+      JSON.stringify({
+        room_total: oldRoomTotal,
+        fnb_total: oldFnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total),
+        manual_discount: oldManualDiscount,
+        manual_discount_room: oldManualDiscountRoom,
+        manual_discount_fnb: oldManualDiscountFnb,
+        payment_status: oldTransaction.payment_status || ''
+      }),
+      JSON.stringify({
+        room_total: nextRoomTotal,
+        fnb_total: nextFnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal,
+        manual_discount: nextManualDiscount,
+        manual_discount_room: nextManualDiscountRoom,
+        manual_discount_fnb: nextManualDiscountFnb,
+        discount_amount: roomDiscountApplied + fnbDiscountApplied,
+        room_discount_applied: roomDiscountApplied,
+        fnb_discount_applied: fnbDiscountApplied,
+        payment_status: updatedTransaction.payment_status || ''
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Diskon management berhasil ditambahkan.',
+      transaction: serializeTransaction(updatedTransaction),
+      discount_amount: roomDiscountApplied + fnbDiscountApplied,
+      room_discount_applied: roomDiscountApplied,
+      fnb_discount_applied: fnbDiscountApplied
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
@@ -1442,6 +1610,7 @@ module.exports = {
   updateTransactionDetails,
   correctTransactionPackage,
   correctTransactionFreeRoom,
+  applyTransactionManualDiscount,
   deleteTransaction,
   getTransactionLcEditDetails: getTransactionLcDetails,
   getTransactionLcReceiptDetails: getTransactionLcDetails,

@@ -309,6 +309,34 @@ async function runContractTests() {
       && Number(trx.rows[0]?.fnb_total) === 50000
       && Number(trx.rows[0]?.grand_total) === 425000;
   });
+  await testAction('applyTransactionManualDiscount room first then FNB, LC untouched', 'POST', '/exec', {
+    action: 'applyTransactionManualDiscount',
+    transaction_id: checkoutTransactionId,
+    discount_amount: 250000,
+    reason: 'Diskon management untuk komplain customer',
+    admin_pin: '123456',
+    changed_by: 'TestManager'
+  }, res => res.body.ok === true
+    && res.body.transaction?.room_total === 0
+    && res.body.transaction?.fnb_total === 25000
+    && res.body.transaction?.lc_total === 150000
+    && res.body.transaction?.grand_total === 175000
+    && res.body.transaction?.manual_discount === 250000
+    && res.body.transaction?.manual_discount_room === 225000
+    && res.body.transaction?.manual_discount_fnb === 25000);
+  await testDatabaseState('Manual discount audit keeps LC value intact', async () => {
+    const audit = await db.query("SELECT COUNT(*)::int AS count FROM transaction_correction_logs WHERE transaction_id = $1 AND correction_type = 'manual_discount_correction'", [checkoutTransactionId]);
+    const trx = await db.query('SELECT room_total, fnb_total, lc_total, grand_total, manual_discount, manual_discount_room, manual_discount_fnb FROM transactions WHERE transaction_id = $1', [checkoutTransactionId]);
+    const row = trx.rows[0] || {};
+    return audit.rows[0]?.count === 1
+      && Number(row.room_total) === 0
+      && Number(row.fnb_total) === 25000
+      && Number(row.lc_total) === 150000
+      && Number(row.grand_total) === 175000
+      && Number(row.manual_discount) === 250000
+      && Number(row.manual_discount_room) === 225000
+      && Number(row.manual_discount_fnb) === 25000;
+  });
   await testDatabaseState('owner mirror reuses exact-date snapshot after cutoff rollover', async () => {
     const sourceId = `rollover-test-${Date.now()}`;
     const range = getOperationalDateRange('yesterday');

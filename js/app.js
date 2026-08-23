@@ -835,6 +835,8 @@ let transactionPackageCorrection = null;
 let isSavingTransactionPackageCorrection = false;
 let transactionFreeRoomCorrection = null;
 let isSavingTransactionFreeRoomCorrection = false;
+let transactionManualDiscount = null;
+let isSavingTransactionManualDiscount = false;
 let transactionFnbVoidModal = null;
 let isVoidingTransactionFnb = false;
 let employees = [];
@@ -5803,6 +5805,18 @@ function getTransactionRoomDiscountAmount(transaction) {
   return Number(transaction?.room_discount_amount) || 0;
 }
 
+function getTransactionManualDiscountAmount(transaction) {
+  return Number(transaction?.manual_discount) || 0;
+}
+
+function getTransactionManualRoomDiscountAmount(transaction) {
+  return Number(transaction?.manual_discount_room) || 0;
+}
+
+function getTransactionManualFnbDiscountAmount(transaction) {
+  return Number(transaction?.manual_discount_fnb) || 0;
+}
+
 function getTransactionFnbTotal(transaction) {
   return Number(transaction?.fnb_total) || 0;
 }
@@ -7707,7 +7721,9 @@ function createBillingBreakdownElement(transaction) {
 
   const roomTotal = Number(transaction?.room_total) || 0;
   const promoDiscount = Number(transaction?.promo_discount) || 0;
-  const originalRoomTotal = roomTotal + promoDiscount + getTransactionRoomDiscountAmount(transaction);
+  const manualRoomDiscount = getTransactionManualRoomDiscountAmount(transaction);
+  const manualFnbDiscount = getTransactionManualFnbDiscountAmount(transaction);
+  const originalRoomTotal = roomTotal + promoDiscount + getTransactionRoomDiscountAmount(transaction) + manualRoomDiscount;
 
   const roomUpgradeTotal = Math.max(0, Number(transaction?.room_upgrade_total) || 0);
   const rows = transactionHasPackage(transaction)
@@ -7726,12 +7742,21 @@ function createBillingBreakdownElement(transaction) {
     rows.push(["Free Room Owner", `-${formatCurrency(getTransactionRoomDiscountAmount(transaction))}`]);
   }
 
+  if (manualRoomDiscount > 0) {
+    rows.push(["Diskon Management Room", `-${formatCurrency(manualRoomDiscount)}`]);
+  }
+
   const lcTotal = Number(transaction?.lc_total || 0);
   if (lcTotal > 0) {
     rows.push(["Jasa LC", formatCurrency(lcTotal)]);
   }
 
-  rows.push(["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))]);
+  if (manualFnbDiscount > 0) {
+    rows.push(["Total F&B", formatCurrency(getTransactionFnbTotal(transaction) + manualFnbDiscount)]);
+    rows.push(["Diskon Management F&B", `-${formatCurrency(manualFnbDiscount)}`]);
+  } else {
+    rows.push(["Total F&B", formatCurrency(getTransactionFnbTotal(transaction))]);
+  }
   rows.push(["Total Tagihan Akhir", formatCurrency(getTransactionFinalTotal(transaction)), "total"]);
 
   rows.forEach(([labelText, valueText, type]) => {
@@ -7921,11 +7946,19 @@ function createReceiptPrintElement(transaction) {
   if (Number(receiptData.totals.roomDiscountAmount || 0) > 0) {
     billingRows.push(["Free Room Owner", `-${formatCurrency(receiptData.totals.roomDiscountAmount)}`]);
   }
+  if (Number(receiptData.totals.manualRoomDiscount || 0) > 0) {
+    billingRows.push(["Diskon Management Room", `-${formatCurrency(receiptData.totals.manualRoomDiscount)}`]);
+  }
   if (lcTotal > 0) {
     billingRows.push(["Jasa LC", formatCurrency(lcTotal)]);
   }
 
-  billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal)]);
+  if (Number(receiptData.totals.manualFnbDiscount || 0) > 0) {
+    billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal + receiptData.totals.manualFnbDiscount)]);
+    billingRows.push(["Diskon Management F&B", `-${formatCurrency(receiptData.totals.manualFnbDiscount)}`]);
+  } else {
+    billingRows.push(["Total F&B", formatCurrency(receiptData.totals.fnbTotal)]);
+  }
   billingRows.push(["Total Tagihan Akhir", formatCurrency(receiptData.totals.grandTotal), "total"]);
 
   const billingSection = createReceiptSection("Ringkasan Tagihan", billingRows);
@@ -14428,6 +14461,9 @@ function createTransactionHistoryElement() {
     transactionFreeRoomCorrection
       ? createTransactionFreeRoomCorrectionElement()
       : document.createDocumentFragment(),
+    transactionManualDiscount
+      ? createTransactionManualDiscountElement()
+      : document.createDocumentFragment(),
     transactionFnbVoidModal
       ? createTransactionFnbVoidModalElement()
       : document.createDocumentFragment(),
@@ -14685,9 +14721,16 @@ function createClosingTransactionDetailsSection(details) {
       article.appendChild(time);
     }
 
+    const closingRoomDisplay = Number(transaction.room_total || 0)
+      + Number(transaction.promo_discount || 0)
+      + Number(transaction.room_discount_amount || 0)
+      + Number(transaction.manual_discount_room || 0);
+    const closingFnbDisplay = Number(transaction.fnb_total || 0)
+      + Number(transaction.manual_discount_fnb || 0);
+
     [
-      ["Room", transaction.room_total],
-      ["F&B", transaction.fnb_total],
+      ["Room", closingRoomDisplay],
+      ["F&B", closingFnbDisplay],
       ["LC", transaction.lc_total],
     ].forEach(([label, amount]) => {
       if (Number(amount)) article.appendChild(createClosingReceiptAmountRow(label, amount));
@@ -14703,6 +14746,9 @@ function createClosingTransactionDetailsSection(details) {
 
     if (Number(transaction.promo_discount)) {
       article.appendChild(createClosingReceiptAmountRow("Diskon", -Number(transaction.promo_discount)));
+    }
+    if (Number(transaction.manual_discount)) {
+      article.appendChild(createClosingReceiptAmountRow("Diskon Management", -Number(transaction.manual_discount)));
     }
     article.appendChild(createClosingReceiptAmountRow("Total", transaction.grand_total, "total"));
 
@@ -15447,7 +15493,18 @@ function createTransactionActionsElement(transaction) {
   changeMethodButton.textContent = "Ubah Metode";
   actions.appendChild(changeMethodButton);
 
-  if (getCurrentOperatorRole() === "owner") {
+  const operatorRole = getCurrentOperatorRole();
+  if (operatorRole === "owner" || operatorRole === "manager") {
+    const manualDiscountButton = document.createElement("button");
+    manualDiscountButton.className = "transaction-action-button";
+    manualDiscountButton.type = "button";
+    manualDiscountButton.dataset.action = "open-transaction-manual-discount";
+    manualDiscountButton.dataset.transactionId = transaction?.transaction_id || "";
+    manualDiscountButton.textContent = "Tambah Diskon";
+    actions.appendChild(manualDiscountButton);
+  }
+
+  if (operatorRole === "owner") {
     const correctionButton = document.createElement("button");
     correctionButton.className = "transaction-action-button";
     correctionButton.type = "button";
@@ -16715,6 +16772,277 @@ async function executeTransactionFreeRoomCorrection(ownerPin) {
     return { success: false, message };
   } finally {
     isSavingTransactionFreeRoomCorrection = false;
+    renderRooms();
+  }
+}
+
+function openTransactionManualDiscount(transactionId) {
+  const operatorRole = getCurrentOperatorRole();
+  if (operatorRole !== "owner" && operatorRole !== "manager") {
+    showInlineNotice("Hanya akun Owner atau Manager yang dapat menambah diskon.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+  if (String(transaction.payment_status || "").toLowerCase() === "cancelled") {
+    showInlineNotice("Transaksi yang sudah dibatalkan tidak bisa diberi diskon.", "error");
+    return;
+  }
+
+  transactionManualDiscount = {
+    transactionId,
+    discountAmount: "",
+    reason: "",
+  };
+  renderRooms();
+}
+
+function closeTransactionManualDiscount() {
+  if (isSavingTransactionManualDiscount || isValidatingAdminPin) {
+    return;
+  }
+
+  transactionManualDiscount = null;
+  renderRooms();
+}
+
+function updateTransactionManualDiscount(field, value) {
+  if (!transactionManualDiscount || !["discountAmount", "reason"].includes(field)) {
+    return;
+  }
+
+  transactionManualDiscount = {
+    ...transactionManualDiscount,
+    [field]: field === "discountAmount" ? String(value || "").replace(/[^\d]/g, "") : value,
+  };
+}
+
+function getTransactionManualDiscountPreview() {
+  const transaction = getTransactionById(transactionManualDiscount?.transactionId) || {};
+  const roomTotal = Number(transaction.room_total) || 0;
+  const fnbTotal = Number(transaction.fnb_total) || 0;
+  const lcTotal = Number(transaction.lc_total) || 0;
+  const discountAmount = Math.max(0, Number(transactionManualDiscount?.discountAmount) || 0);
+  const maxDiscount = roomTotal + fnbTotal;
+  const roomDiscountApplied = Math.min(roomTotal, discountAmount);
+  const fnbDiscountApplied = Math.min(fnbTotal, Math.max(0, discountAmount - roomDiscountApplied));
+  const appliedDiscount = roomDiscountApplied + fnbDiscountApplied;
+  const nextRoomTotal = Math.max(0, roomTotal - roomDiscountApplied);
+  const nextFnbTotal = Math.max(0, fnbTotal - fnbDiscountApplied);
+  const nextGrandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
+
+  return {
+    transaction,
+    roomTotal,
+    fnbTotal,
+    lcTotal,
+    discountAmount,
+    maxDiscount,
+    roomDiscountApplied,
+    fnbDiscountApplied,
+    appliedDiscount,
+    nextRoomTotal,
+    nextFnbTotal,
+    nextGrandTotal,
+  };
+}
+
+function syncTransactionManualDiscountControls() {
+  const modal = queryDashboard(".transaction-manual-discount-modal");
+  if (!modal || !transactionManualDiscount) {
+    return;
+  }
+
+  const preview = getTransactionManualDiscountPreview();
+  const submitButton = modal.querySelector("[data-role='transaction-manual-discount-submit']");
+  if (submitButton) {
+    submitButton.disabled = isSavingTransactionManualDiscount
+      || preview.discountAmount <= 0
+      || preview.discountAmount > preview.maxDiscount
+      || String(transactionManualDiscount.reason || "").trim().length < 5;
+  }
+}
+
+function createTransactionManualDiscountElement() {
+  if (!transactionManualDiscount) {
+    return document.createDocumentFragment();
+  }
+
+  const preview = getTransactionManualDiscountPreview();
+  const transaction = preview.transaction || {};
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-manual-discount-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-manual-discount-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-manual-discount-title";
+  title.textContent = "Tambah Diskon Management";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Diskon memotong Room terlebih dahulu, lalu F&B. LC tidak ikut terkena diskon. Bisa digunakan untuk transaksi belum dibayar maupun sudah lunas.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+  [
+    ["ID", transaction.transaction_id],
+    ["Status", getPaymentStatusLabel(transaction.payment_status)],
+    ["Room Saat Ini", formatCurrency(preview.roomTotal)],
+    ["F&B Saat Ini", formatCurrency(preview.fnbTotal)],
+    ["LC Tetap", formatCurrency(preview.lcTotal)],
+    ["Diskon Maksimal", formatCurrency(preview.maxDiscount)],
+    ["Potong Room", `-${formatCurrency(preview.roomDiscountApplied)}`],
+    ["Potong F&B", `-${formatCurrency(preview.fnbDiscountApplied)}`],
+    ["Room Baru", formatCurrency(preview.nextRoomTotal)],
+    ["F&B Baru", formatCurrency(preview.nextFnbTotal)],
+    ["Total Baru", formatCurrency(preview.nextGrandTotal)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const amountField = document.createElement("label");
+  amountField.className = "master-form-field";
+  const amountLabel = document.createElement("span");
+  amountLabel.className = "master-form-label";
+  amountLabel.textContent = "Nominal Diskon";
+  const amountInput = document.createElement("input");
+  amountInput.className = "master-form-input";
+  amountInput.type = "number";
+  amountInput.min = "1";
+  amountInput.max = String(preview.maxDiscount);
+  amountInput.placeholder = "Contoh: 100000";
+  amountInput.dataset.action = "update-transaction-manual-discount";
+  amountInput.dataset.field = "discountAmount";
+  amountInput.value = transactionManualDiscount.discountAmount || "";
+  amountInput.onchange = () => renderRooms();
+  amountField.append(amountLabel, amountInput);
+
+  const reasonField = document.createElement("label");
+  reasonField.className = "master-form-field";
+  const reasonLabel = document.createElement("span");
+  reasonLabel.className = "master-form-label";
+  reasonLabel.textContent = "Alasan Diskon";
+  const reasonInput = document.createElement("input");
+  reasonInput.className = "master-form-input";
+  reasonInput.type = "text";
+  reasonInput.placeholder = "Contoh: Diskon komplain customer, LC tetap dibayar penuh";
+  reasonInput.dataset.action = "update-transaction-manual-discount";
+  reasonInput.dataset.field = "reason";
+  reasonInput.value = transactionManualDiscount.reason || "";
+  reasonField.append(reasonLabel, reasonInput);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-transaction-manual-discount";
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-transaction-manual-discount";
+  submitButton.dataset.role = "transaction-manual-discount-submit";
+  submitButton.disabled = isSavingTransactionManualDiscount
+    || preview.discountAmount <= 0
+    || preview.discountAmount > preview.maxDiscount
+    || String(transactionManualDiscount.reason || "").trim().length < 5;
+  submitButton.textContent = isSavingTransactionManualDiscount ? "Menyimpan..." : "Simpan Diskon";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, amountField, reasonField, actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function submitTransactionManualDiscount() {
+  if (!transactionManualDiscount || isSavingTransactionManualDiscount) {
+    return;
+  }
+
+  const preview = getTransactionManualDiscountPreview();
+  if (preview.discountAmount <= 0 || preview.discountAmount > preview.maxDiscount || String(transactionManualDiscount.reason || "").trim().length < 5) {
+    showInlineNotice("Isi nominal diskon yang valid dan alasan minimal 5 karakter. LC tidak ikut dipotong.", "error");
+    return;
+  }
+
+  openAdminPinModal({
+    title: "PIN Manager/Owner Diskon",
+    message: `Masukkan PIN Manager/Owner untuk menambah diskon transaksi ${transactionManualDiscount.transactionId}.`,
+    requestedAction: "apply_transaction_manual_discount",
+    requiredRole: "manager",
+    validatePin: false,
+    forcePrompt: true,
+    onSuccess: (authData, adminPin) => executeTransactionManualDiscount(adminPin),
+  });
+}
+
+async function executeTransactionManualDiscount(adminPin) {
+  if (!transactionManualDiscount || isSavingTransactionManualDiscount) {
+    return { success: false };
+  }
+
+  isSavingTransactionManualDiscount = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "applyTransactionManualDiscount",
+      transaction_id: transactionManualDiscount.transactionId,
+      discount_amount: Number(transactionManualDiscount.discountAmount) || 0,
+      reason: String(transactionManualDiscount.reason || "").trim(),
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Tambah diskon gagal.";
+      showInlineNotice(message, "error");
+      if (adminPinModal) {
+        adminPinModal = { ...adminPinModal, pin: "", error: message };
+      }
+      return { success: false, message };
+    }
+
+    mergeUpdatedTransactionIntoState(data.transaction);
+    adminPinModal = null;
+    transactionManualDiscount = null;
+    showInlineNotice(data.message || "Diskon management berhasil disimpan.");
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadTodayCashierClosings(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat menambah diskon.";
+    showInlineNotice(message, "error");
+    if (adminPinModal) {
+      adminPinModal = { ...adminPinModal, pin: "", error: message };
+    }
+    return { success: false, message };
+  } finally {
+    isSavingTransactionManualDiscount = false;
     renderRooms();
   }
 }
@@ -25694,6 +26022,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-transaction-manual-discount") {
+    openTransactionManualDiscount(button.dataset.transactionId || "");
+    return;
+  }
+
   if (action === "close-transaction-package-correction") {
     closeTransactionPackageCorrection();
     return;
@@ -25704,6 +26037,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "close-transaction-manual-discount") {
+    closeTransactionManualDiscount();
+    return;
+  }
+
   if (action === "submit-transaction-package-correction") {
     submitTransactionPackageCorrection();
     return;
@@ -25711,6 +26049,11 @@ async function handleRoomAction(event) {
 
   if (action === "submit-transaction-free-room-correction") {
     submitTransactionFreeRoomCorrection();
+    return;
+  }
+
+  if (action === "submit-transaction-manual-discount") {
+    submitTransactionManualDiscount();
     return;
   }
 
@@ -26554,6 +26897,12 @@ function handleDashboardInput(event) {
 
   if (action === "update-transaction-custom-end-date") {
     updateTransactionCustomEndDate(field.value);
+    return;
+  }
+
+  if (action === "update-transaction-manual-discount") {
+    updateTransactionManualDiscount(field.dataset.field || "", field.value);
+    syncTransactionManualDiscountControls();
     return;
   }
 
