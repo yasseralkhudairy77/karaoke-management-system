@@ -130,6 +130,21 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS menu_type_snapshot VARCHAR(30) NOT NULL DEFAULT 'regular';
+    CREATE TABLE IF NOT EXISTS fnb_order_item_components (
+      component_snapshot_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      order_item_id UUID NOT NULL REFERENCES fnb_order_items(order_item_id) ON DELETE CASCADE,
+      order_id VARCHAR(50) NOT NULL REFERENCES fnb_orders(order_id) ON DELETE CASCADE,
+      menu_id VARCHAR(50),
+      item_id VARCHAR(50),
+      component_name VARCHAR(100) NOT NULL,
+      qty_per_menu NUMERIC(12,4) NOT NULL,
+      order_quantity INT NOT NULL,
+      total_qty NUMERIC(12,4) NOT NULL,
+      unit VARCHAR(20) NOT NULL,
+      component_mode VARCHAR(20) NOT NULL DEFAULT 'included',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
 
     ALTER TABLE stock_movements ALTER COLUMN movement_id TYPE VARCHAR(120);
     ALTER TABLE stock_movements ALTER COLUMN reference_id TYPE VARCHAR(100);
@@ -1027,18 +1042,38 @@ async function voidTransactionFnbOrder(req, res, payload) {
         }
       }
 
-      // Recipe BOM ingredients
+      // Komponen paket memakai snapshot transaksi agar perubahan resep master
+      // tidak mengubah jumlah stok yang dikembalikan pada void/refund.
       if (item.menu_id) {
-        const recipeRes = await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id]);
-        for (const r of recipeRes.rows) {
-          const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+        const snapshotRes = await client.query(`
+          SELECT item_id, component_name, total_qty, component_mode
+          FROM fnb_order_item_components
+          WHERE order_item_id = $1
+          ORDER BY created_at ASC, component_snapshot_id ASC
+        `, [item.order_item_id]);
+        const componentRows = snapshotRes.rowCount > 0
+          ? snapshotRes.rows.map(component => ({
+              item_id: component.item_id,
+              component_name: component.component_name,
+              component_mode: component.component_mode,
+              qty_to_restore: toNumber(component.total_qty, 0)
+            }))
+          : (await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id])).rows.map(recipe => ({
+              item_id: recipe.item_id,
+              component_name: recipe.item_id,
+              component_mode: recipe.component_mode || 'included',
+              qty_to_restore: orderQty * toNumber(recipe.qty_used, 1)
+            }));
+
+        for (const component of componentRows) {
+          const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [component.item_id]);
           if (recipeInvRes.rowCount > 0) {
             const rInv = recipeInvRes.rows[0];
-            const recipeReturn = orderQty * toNumber(r.qty_used, 1);
+            const recipeReturn = toNumber(component.qty_to_restore, 0);
             const rStockBefore = toNumber(rInv.stock_qty, 0);
             const rStockAfter = rStockBefore + recipeReturn;
 
-            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
 
             const rMovementId = `MOV-VR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
             await client.query(`
@@ -1047,12 +1082,12 @@ async function voidTransactionFnbOrder(req, res, payload) {
                 reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
               ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
               ON CONFLICT (idempotency_key) DO NOTHING
-            `, [rMovementId, r.item_id, rInv.stock_item_name, transactionId, recipeReturn, rStockBefore, rStockAfter, `Void BOM Recipe: ${item.menu_name} | ${reason}`, voidedBy]);
+            `, [rMovementId, component.item_id, rInv.stock_item_name, transactionId, recipeReturn, rStockBefore, rStockAfter, `Void komponen ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name} | ${reason}`, voidedBy]);
 
             restoredMovements.push({
               order_item_id: item.order_item_id,
               menu_name: item.menu_name,
-              stock_item_id: r.item_id,
+              stock_item_id: component.item_id,
               stock_item_name: rInv.stock_item_name,
               qty_restored: recipeReturn,
               stock_after: rStockAfter,

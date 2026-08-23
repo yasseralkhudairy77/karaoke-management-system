@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=lc-receipt-breakdown-v1";
+import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=fnb-bundle-v1";
 import { printThermalReceipt } from "./printer-adapter.js?v=lc-receipt-breakdown-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -1585,6 +1585,19 @@ async function fetchMenuItemsFromApi() {
       stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
       stock_qty: menuItem.stock_qty !== null && menuItem.stock_qty !== undefined ? Number(menuItem.stock_qty) : null,
       unit: menuItem.unit || "",
+      hpp: Number(menuItem.hpp) || 0,
+      variable_cost_rate: Number(menuItem.variable_cost_rate) || 0,
+      bonus_sales_lc: Number(menuItem.bonus_sales_lc) || 0,
+      menu_type: menuItem.menu_type || "regular",
+      bundle_components: Array.isArray(menuItem.bundle_components)
+        ? menuItem.bundle_components.map((component) => ({
+            item_id: component.item_id || component.stock_item_id || "",
+            component_name: component.component_name || component.stock_item_name || "",
+            qty_used: Number(component.qty_used ?? component.qty_per_menu) || 0,
+            unit: component.unit || "unit",
+            component_mode: component.component_mode || "included",
+          }))
+        : [],
     })),
   };
 }
@@ -4455,6 +4468,27 @@ function setFnbOrderMode(mode) {
 }
 
 function getDynamicMenuStockInfo(menuItem) {
+  if (menuItem?.menu_type === "fnb_bundle") {
+    const components = Array.isArray(menuItem.bundle_components) ? menuItem.bundle_components : [];
+    if (components.length === 0) {
+      return { hasTracking: true, availablePortions: 0, unit: "paket", stockQty: 0 };
+    }
+    const availableByComponent = components.map((component) => {
+      const inventoryItem = (inventoryItems || []).find(
+        (item) => String(item.stock_item_id || "").trim() === String(component.item_id || component.stock_item_id || "").trim()
+      );
+      const requiredQty = Number(component.qty_used ?? component.qty_per_menu) || 0;
+      if (!inventoryItem || requiredQty <= 0 || String(inventoryItem.status || "").toLowerCase() !== "active") return 0;
+      return Math.floor((Number(inventoryItem.stock_qty) || 0) / requiredQty);
+    });
+    return {
+      hasTracking: true,
+      availablePortions: Math.max(0, Math.min(...availableByComponent)),
+      unit: "paket",
+      stockQty: null,
+    };
+  }
+
   if (!menuItem || menuItem.stock_tracking !== "yes" || !menuItem.stock_item_id) {
     return { hasTracking: false, availablePortions: Infinity, unit: "", stockQty: null };
   }
@@ -4533,6 +4567,10 @@ function addMenuItemToCart(menuId) {
       menu_id: menuItem.menu_id,
       menu_name: menuItem.menu_name,
       category: menuItem.category,
+      menu_type: menuItem.menu_type || "regular",
+      bundle_components: Array.isArray(menuItem.bundle_components)
+        ? menuItem.bundle_components.map((component) => ({ ...component }))
+        : [],
       price,
       quantity: 1,
       subtotal: price,
@@ -7861,6 +7899,16 @@ function createBillingFnbOrderElement(order) {
     meta.textContent = `${Number(item?.quantity) || 0} x ${formatCurrency(item?.price)} = ${formatCurrency(item?.subtotal)}`;
 
     info.append(name, meta);
+    if (Array.isArray(item?.bundle_components) && item.bundle_components.length > 0) {
+      const contents = document.createElement("p");
+      contents.className = "billing-fnb-item-meta bundle-components";
+      contents.textContent = item.bundle_components.map((component) => {
+        const totalQty = Number(component.total_qty) || (Number(component.qty_per_menu ?? component.qty_used) || 0) * (Number(item.quantity) || 0);
+        const label = component.component_mode === "bonus" ? "Bonus" : "Termasuk";
+        return `${label}: ${formatDecimal(totalQty)}x ${component.component_name || component.stock_item_name || component.item_id}`;
+      }).join(" | ");
+      info.appendChild(contents);
+    }
     itemElement.appendChild(info);
     items.appendChild(itemElement);
   });
@@ -8227,6 +8275,14 @@ function createReceiptFnbDetailElement(receiptData) {
       meta.textContent = `${Number(item?.quantity) || 0} x ${formatCurrency(item?.price)} = ${formatCurrency(item?.subtotal)}`;
 
       row.append(name, meta);
+      if (Array.isArray(item?.bundleComponents) && item.bundleComponents.length > 0) {
+        const contents = document.createElement("p");
+        contents.className = "receipt-print-meta receipt-print-bundle-components";
+        contents.textContent = item.bundleComponents.map((component) => (
+          `${component.mode === "bonus" ? "Bonus" : "Termasuk"}: ${formatDecimal(component.totalQty)}x ${component.name}`
+        )).join(" | ");
+        row.appendChild(contents);
+      }
       orderElement.appendChild(row);
     });
 
@@ -10837,9 +10893,18 @@ function createMenuCardElement(menuItem) {
 
   info.append(name, meta);
 
+  if (menuItem.menu_type === "fnb_bundle") {
+    const contents = document.createElement("p");
+    contents.className = "menu-bundle-summary";
+    contents.textContent = getMenuBundleSummary(menuItem) || "Isi paket belum dikonfigurasi";
+    info.appendChild(contents);
+  }
+
   const badge = document.createElement("span");
   badge.className = isFavorite ? "menu-category-chip favorite" : "menu-category-chip";
-  badge.textContent = isFavorite ? "Favorit" : (FNB_CATEGORY_LABELS[classification.primary] || classification.primary);
+  badge.textContent = menuItem.menu_type === "fnb_bundle"
+    ? "Paket F&B"
+    : (isFavorite ? "Favorit" : (FNB_CATEGORY_LABELS[classification.primary] || classification.primary));
 
   const price = document.createElement("p");
   price.className = "menu-price";
@@ -11148,6 +11213,16 @@ function createFbCartRowElement(item) {
   meta.textContent = FNB_CATEGORY_LABELS[item.category] || item.category || "Tanpa kategori";
 
   info.append(name, meta);
+  if (Array.isArray(item.bundle_components) && item.bundle_components.length > 0) {
+    const contents = document.createElement("p");
+    contents.className = "fb-cart-meta menu-bundle-summary";
+    contents.textContent = item.bundle_components.map((component) => {
+      const qty = (Number(component.qty_used ?? component.qty_per_menu) || 0) * (Number(item.quantity) || 1);
+      const mode = component.component_mode === "bonus" ? "Bonus" : "Termasuk";
+      return `${mode}: ${formatDecimal(qty)}x ${component.component_name || component.stock_item_name || component.item_id}`;
+    }).join(" | ");
+    info.appendChild(contents);
+  }
 
   const price = document.createElement("p");
   price.className = "fb-cart-price";
@@ -11746,6 +11821,16 @@ function createOpenFnbOrderItemElement(item) {
   meta.textContent = `${Number(item.quantity) || 0} x ${formatCurrency(item.price)}`;
 
   info.append(name, meta);
+  if (Array.isArray(item.bundle_components) && item.bundle_components.length > 0) {
+    const contents = document.createElement("p");
+    contents.className = "open-fnb-item-meta menu-bundle-summary";
+    contents.textContent = item.bundle_components.map((component) => {
+      const qty = Number(component.total_qty) || (Number(component.qty_per_menu ?? component.qty_used) || 0) * (Number(item.quantity) || 1);
+      const mode = component.component_mode === "bonus" ? "Bonus" : "Termasuk";
+      return `${mode}: ${formatDecimal(qty)}x ${component.component_name || component.stock_item_name || component.item_id}`;
+    }).join(" | ");
+    info.appendChild(contents);
+  }
 
   const subtotal = document.createElement("p");
   subtotal.className = "open-fnb-total";
@@ -12009,6 +12094,16 @@ function createTodayFnbOrderItemElement(item) {
   meta.textContent = `${Number(item.quantity) || 0} x ${formatCurrency(item.price)}`;
 
   info.append(name, meta);
+  if (Array.isArray(item.bundle_components) && item.bundle_components.length > 0) {
+    const contents = document.createElement("p");
+    contents.className = "today-fnb-item-meta menu-bundle-summary";
+    contents.textContent = item.bundle_components.map((component) => {
+      const qty = Number(component.total_qty) || (Number(component.qty_per_menu ?? component.qty_used) || 0) * (Number(item.quantity) || 1);
+      const mode = component.component_mode === "bonus" ? "Bonus" : "Termasuk";
+      return `${mode}: ${formatDecimal(qty)}x ${component.component_name || component.stock_item_name || component.item_id}`;
+    }).join(" | ");
+    info.appendChild(contents);
+  }
 
   const subtotal = document.createElement("p");
   subtotal.className = "today-fnb-total";
@@ -17591,6 +17686,8 @@ function openMasterDataForm(type, mode, item = null) {
       menu_id: "",
       menu_name: "",
       category: "",
+      menu_type: "regular",
+      bundle_components: [],
       price: "",
       stock_item_id: "",
       qty_per_unit: "",
@@ -17632,6 +17729,11 @@ function openMasterDataForm(type, mode, item = null) {
       qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
     },
   };
+  if (type === "menu") {
+    const sourceComponents = Array.isArray(item?.bundle_components) ? item.bundle_components : [];
+    masterDataForm.originalValues.bundle_components = sourceComponents.map((component) => ({ ...component }));
+    masterDataForm.values.bundle_components = sourceComponents.map((component) => ({ ...component }));
+  }
   renderRooms();
 }
 
@@ -17652,6 +17754,43 @@ function updateMasterDataForm(field, value) {
       [field]: value,
     },
   };
+
+  if (masterDataForm.type === "menu" && field === "menu_type") {
+    renderRooms();
+  }
+}
+
+function addMenuBundleComponent() {
+  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  const components = Array.isArray(masterDataForm.values.bundle_components)
+    ? masterDataForm.values.bundle_components.slice()
+    : [];
+  components.push({ item_id: "", qty_used: 1, component_mode: "included" });
+  masterDataForm.values.bundle_components = components;
+  renderRooms();
+}
+
+function updateMenuBundleComponent(index, field, value) {
+  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  const components = Array.isArray(masterDataForm.values.bundle_components)
+    ? masterDataForm.values.bundle_components.slice()
+    : [];
+  if (!components[index]) return;
+  components[index] = {
+    ...components[index],
+    [field]: field === "qty_used" ? value : String(value || ""),
+  };
+  masterDataForm.values.bundle_components = components;
+}
+
+function removeMenuBundleComponent(index) {
+  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  const components = Array.isArray(masterDataForm.values.bundle_components)
+    ? masterDataForm.values.bundle_components.slice()
+    : [];
+  components.splice(index, 1);
+  masterDataForm.values.bundle_components = components;
+  renderRooms();
 }
 
 function getMasterDataFormTitle() {
@@ -17710,6 +17849,118 @@ function createMasterField({ label, field, type = "text", options = null, disabl
   return wrapper;
 }
 
+function createMenuBundleComponentsEditor() {
+  const section = document.createElement("section");
+  section.className = "menu-bundle-editor";
+
+  const header = document.createElement("div");
+  header.className = "menu-bundle-editor-header";
+  const heading = document.createElement("div");
+  const title = document.createElement("h4");
+  title.textContent = "Isi Paket F&B";
+  const helper = document.createElement("p");
+  helper.textContent = "Semua komponen tetap mengurangi stok. Mode Bonus hanya mengubah label pada menu dan nota.";
+  heading.append(title, helper);
+
+  const addButton = document.createElement("button");
+  addButton.className = "master-button primary";
+  addButton.type = "button";
+  addButton.dataset.action = "add-menu-bundle-component";
+  addButton.textContent = "+ Tambah Komponen";
+  header.append(heading, addButton);
+  section.appendChild(header);
+
+  const components = Array.isArray(masterDataForm?.values?.bundle_components)
+    ? masterDataForm.values.bundle_components
+    : [];
+
+  if (components.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "menu-bundle-empty";
+    empty.textContent = "Belum ada isi paket. Tambahkan minimal satu item inventory.";
+    section.appendChild(empty);
+    return section;
+  }
+
+  const list = document.createElement("div");
+  list.className = "menu-bundle-component-list";
+  components.forEach((component, index) => {
+    const row = document.createElement("div");
+    row.className = "menu-bundle-component-row";
+
+    const itemField = document.createElement("label");
+    itemField.className = "master-form-field";
+    const itemLabel = document.createElement("span");
+    itemLabel.className = "master-form-label";
+    itemLabel.textContent = "Item Inventory";
+    const itemSelect = document.createElement("select");
+    itemSelect.className = "master-form-input";
+    itemSelect.dataset.action = "update-menu-bundle-component";
+    itemSelect.dataset.index = String(index);
+    itemSelect.dataset.field = "item_id";
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "-- Pilih Item --";
+    itemSelect.appendChild(emptyOption);
+    inventoryItems
+      .filter((item) => String(item.status || "").toLowerCase() === "active")
+      .forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.stock_item_id || "";
+        option.textContent = `${item.stock_item_name || item.stock_item_id} (${item.unit || "unit"})`;
+        itemSelect.appendChild(option);
+      });
+    itemSelect.value = component.item_id || "";
+    itemField.append(itemLabel, itemSelect);
+
+    const qtyField = document.createElement("label");
+    qtyField.className = "master-form-field";
+    const qtyLabel = document.createElement("span");
+    qtyLabel.className = "master-form-label";
+    qtyLabel.textContent = "Jumlah";
+    const qtyInput = document.createElement("input");
+    qtyInput.className = "master-form-input";
+    qtyInput.type = "number";
+    qtyInput.min = "0.0001";
+    qtyInput.step = "0.01";
+    qtyInput.dataset.action = "update-menu-bundle-component";
+    qtyInput.dataset.index = String(index);
+    qtyInput.dataset.field = "qty_used";
+    qtyInput.value = component.qty_used ?? 1;
+    qtyField.append(qtyLabel, qtyInput);
+
+    const modeField = document.createElement("label");
+    modeField.className = "master-form-field";
+    const modeLabel = document.createElement("span");
+    modeLabel.className = "master-form-label";
+    modeLabel.textContent = "Mode";
+    const modeSelect = document.createElement("select");
+    modeSelect.className = "master-form-input";
+    modeSelect.dataset.action = "update-menu-bundle-component";
+    modeSelect.dataset.index = String(index);
+    modeSelect.dataset.field = "component_mode";
+    [["included", "Termasuk Paket"], ["bonus", "Gratis / Bonus"]].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      modeSelect.appendChild(option);
+    });
+    modeSelect.value = component.component_mode || "included";
+    modeField.append(modeLabel, modeSelect);
+
+    const removeButton = document.createElement("button");
+    removeButton.className = "master-button danger menu-bundle-remove";
+    removeButton.type = "button";
+    removeButton.dataset.action = "remove-menu-bundle-component";
+    removeButton.dataset.index = String(index);
+    removeButton.textContent = "Hapus";
+    row.append(itemField, qtyField, modeField, removeButton);
+    list.appendChild(row);
+  });
+  section.appendChild(list);
+  return section;
+}
+
 function createMasterDataFormElement() {
   if (!masterDataForm) {
     return null;
@@ -17763,19 +18014,20 @@ function createMasterDataFormElement() {
     ];
 
     grid.append(
+      createMasterField({
+        label: "Jenis Menu",
+        field: "menu_type",
+        options: [
+          ["regular", "Menu Biasa"],
+          ["fnb_bundle", "Paket F&B"],
+        ],
+      }),
       createMasterField({ label: "Nama Menu", field: "menu_name" }),
       createMasterField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Harga", field: "price", type: "number" }),
       createMasterField({ label: "HPP", field: "hpp", type: "number" }),
       createMasterField({ label: "Var Cost %", field: "variable_cost_rate", type: "number" }),
       createMasterField({ label: "Bonus Sales LC", field: "bonus_sales_lc", type: "number" }),
-      createMasterField({
-        label: "Item Stok Terhubung",
-        field: "stock_item_id",
-        helper: "Pilih item stok dari Inventory yang berkurang saat menu terjual.",
-        options: stockItemOptions,
-      }),
-      createMasterField({ label: "Qty per Unit", field: "qty_per_unit", type: "number" }),
       createMasterField({
         label: "Status",
         field: "status",
@@ -17785,6 +18037,20 @@ function createMasterDataFormElement() {
         ],
       })
     );
+
+    if (String(masterDataForm.values.menu_type || "regular") === "fnb_bundle") {
+      grid.appendChild(createMenuBundleComponentsEditor());
+    } else {
+      grid.append(
+        createMasterField({
+          label: "Item Stok Terhubung",
+          field: "stock_item_id",
+          helper: "Pilih item stok dari Inventory yang berkurang saat menu terjual.",
+          options: stockItemOptions,
+        }),
+        createMasterField({ label: "Qty per Unit", field: "qty_per_unit", type: "number" })
+      );
+    }
   }
 
   if (masterDataForm.type === "inventory") {
@@ -18179,6 +18445,16 @@ function getMenuProfitAnalysis(menuItem) {
   };
 }
 
+function getMenuBundleSummary(menuItem, { includeMode = true } = {}) {
+  const components = Array.isArray(menuItem?.bundle_components) ? menuItem.bundle_components : [];
+  return components.map((component) => {
+    const quantity = formatDecimal(Number(component.qty_used ?? component.qty_per_menu) || 0);
+    const name = component.component_name || component.stock_item_name || component.item_id || "Komponen";
+    const bonus = includeMode && String(component.component_mode || "included") === "bonus" ? " (Bonus)" : "";
+    return `${quantity}x ${name}${bonus}`;
+  }).join(", ");
+}
+
 function createMenuSettingsSection() {
   const query = settingsMenuSearchQuery.trim().toLowerCase();
   const filteredMenuItems = menuItems.filter((menuItem) => {
@@ -18233,6 +18509,8 @@ function createMenuSettingsSection() {
       menuItem.menu_id || "-",
       menuItem.menu_name || "-",
       menuItem.category || "-",
+      menuItem.menu_type === "fnb_bundle" ? "Paket F&B" : "Menu Biasa",
+      menuItem.menu_type === "fnb_bundle" ? (getMenuBundleSummary(menuItem) || "Belum ada komponen") : "-",
       formatCurrency(menuItem.price),
       formatCurrency(profit.hpp),
       `${formatDecimal(profit.variableCostRate)}% / ${formatCurrency(profit.variableCostAmount)}`,
@@ -18248,7 +18526,7 @@ function createMenuSettingsSection() {
     "Pengaturan Menu F&B",
     "Kelola menu aktif/inaktif dan mapping stok.",
     "menu",
-    createMasterTable(["ID", "Menu", "Kategori", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
+    createMasterTable(["ID", "Menu", "Kategori", "Jenis", "Isi Paket", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
     controls
   );
 }
@@ -18602,6 +18880,8 @@ function detectMenuQualityIssues(sourceMenuItems, sourceInventoryItems) {
     const stockItemId = String(menuItem.stock_item_id || "").trim();
     const qtyPerUnit = Number(menuItem.stock_qty_per_unit);
     const mappedInventory = stockItemId ? inventoryMap.get(stockItemId) : null;
+    const isBundle = menuItem.menu_type === "fnb_bundle";
+    const bundleComponents = Array.isArray(menuItem.bundle_components) ? menuItem.bundle_components : [];
 
     if (!menuName.trim()) {
       issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Nama menu kosong", severity: "critical", recommendation: "Edit nama menu" }));
@@ -18635,7 +18915,22 @@ function detectMenuQualityIssues(sourceMenuItems, sourceInventoryItems) {
       }));
     }
 
-    if (!stockItemId) {
+    if (isBundle && bundleComponents.length === 0) {
+      issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Paket F&B tanpa komponen", severity: "critical", recommendation: "Tambahkan isi paket" }));
+    } else if (isBundle) {
+      bundleComponents.forEach((component) => {
+        const componentId = String(component.item_id || component.stock_item_id || "").trim();
+        const componentInventory = inventoryMap.get(componentId);
+        if (!componentInventory) {
+          issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: `Komponen ${componentId || "kosong"} tidak ditemukan`, severity: "critical", recommendation: "Edit isi paket" }));
+        } else if (String(componentInventory.status || "").trim().toLowerCase() === "inactive") {
+          issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: `Komponen ${componentInventory.stock_item_name} inactive`, severity: "critical", recommendation: "Aktifkan inventory atau ganti komponen" }));
+        }
+        if (!Number.isFinite(Number(component.qty_used ?? component.qty_per_menu)) || Number(component.qty_used ?? component.qty_per_menu) <= 0) {
+          issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Jumlah komponen paket tidak valid", severity: "critical", recommendation: "Edit jumlah isi paket" }));
+        }
+      });
+    } else if (!stockItemId) {
       issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Menu tanpa stock item", severity: "warning", recommendation: "Isi stock item jika perlu stok otomatis" }));
     } else if (!mappedInventory) {
       issues.push(createQualityIssue({ type: "menu", id: menuItem.menu_id, name: menuName, issue: "Stock item tidak ditemukan", severity: "critical", recommendation: "Ganti mapping inventory" }));
@@ -18654,15 +18949,20 @@ function detectMenuQualityIssues(sourceMenuItems, sourceInventoryItems) {
 function detectInventoryQualityIssues(sourceInventoryItems, sourceMenuItems) {
   const nameCounts = createNameCountMap(sourceInventoryItems, (item) => item.stock_item_name);
   const menuUsageMap = sourceMenuItems.reduce((map, menuItem) => {
-    const stockItemId = String(menuItem.stock_item_id || "").trim();
+    const stockItemIds = [String(menuItem.stock_item_id || "").trim()];
+    if (menuItem.menu_type === "fnb_bundle" && Array.isArray(menuItem.bundle_components)) {
+      menuItem.bundle_components.forEach((component) => {
+        stockItemIds.push(String(component.item_id || component.stock_item_id || "").trim());
+      });
+    }
 
-    if (stockItemId) {
+    stockItemIds.filter(Boolean).forEach((stockItemId) => {
       if (!map.has(stockItemId)) {
         map.set(stockItemId, []);
       }
 
       map.get(stockItemId).push(menuItem);
-    }
+    });
 
     return map;
   }, new Map());
@@ -19706,6 +20006,14 @@ function buildMasterPayload(authData = null, adminPin = "") {
       menu_id: values.menu_id || "",
       menu_name: values.menu_name || "",
       category: values.category || "",
+      menu_type: values.menu_type || "regular",
+      bundle_components: Array.isArray(values.bundle_components)
+        ? values.bundle_components.map((component) => ({
+            item_id: component.item_id || "",
+            qty_used: Number(component.qty_used),
+            component_mode: component.component_mode || "included",
+          }))
+        : [],
       price: Number(values.price),
       hpp: Number(values.hpp || 0),
       variable_cost_rate: Number(values.variable_cost_rate || 0),
@@ -19753,6 +20061,23 @@ async function submitMasterDataForm() {
     return;
   }
 
+  if (masterDataForm.type === "menu" && masterDataForm.values?.menu_type === "fnb_bundle") {
+    const components = Array.isArray(masterDataForm.values.bundle_components) ? masterDataForm.values.bundle_components : [];
+    if (components.length === 0) {
+      showInlineNotice("Paket F&B wajib memiliki minimal satu komponen.", "error");
+      return;
+    }
+    if (components.some((component) => !component.item_id || !Number.isFinite(Number(component.qty_used)) || Number(component.qty_used) <= 0)) {
+      showInlineNotice("Pilih item inventory dan isi jumlah lebih dari 0 untuk semua komponen paket.", "error");
+      return;
+    }
+    const componentIds = components.map((component) => component.item_id);
+    if (new Set(componentIds).size !== componentIds.length) {
+      showInlineNotice("Item inventory yang sama tidak boleh ditambahkan dua kali.", "error");
+      return;
+    }
+  }
+
   if (isSensitiveMasterDataChange()) {
     openAdminPinModal({
       title: "PIN Manager Master Data",
@@ -19786,7 +20111,11 @@ function isSensitiveMasterDataChange() {
   }
 
   if (masterDataForm.type === "menu") {
-    return (Number(original.price) || 0) !== (Number(values.price) || 0);
+    const originalComponents = JSON.stringify(Array.isArray(original.bundle_components) ? original.bundle_components : []);
+    const nextComponents = JSON.stringify(Array.isArray(values.bundle_components) ? values.bundle_components : []);
+    return (Number(original.price) || 0) !== (Number(values.price) || 0)
+      || String(original.menu_type || "regular") !== String(values.menu_type || "regular")
+      || originalComponents !== nextComponents;
   }
 
   if (masterDataForm.type === "package") {
@@ -25966,6 +26295,16 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "add-menu-bundle-component") {
+    addMenuBundleComponent();
+    return;
+  }
+
+  if (action === "remove-menu-bundle-component") {
+    removeMenuBundleComponent(Number(button.dataset.index));
+    return;
+  }
+
   if (action === "edit-master-data") {
     const item = findMasterItem(button.dataset.masterType, button.dataset.masterId);
 
@@ -26921,6 +27260,11 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-menu-bundle-component") {
+    updateMenuBundleComponent(Number(field.dataset.index), field.dataset.field || "", field.value);
+    return;
+  }
+
   if (action === "filter-settings-menu") {
     settingsMenuSearchQuery = field.value;
     resetPaginationPage("settingsMenu");
@@ -27113,6 +27457,13 @@ function handleDashboardChange(event) {
 
   if (masterField) {
     updateMasterDataForm(masterField.dataset.field, masterField.value);
+    return;
+  }
+
+  const bundleComponentField = event.target.closest("[data-action='update-menu-bundle-component']");
+
+  if (bundleComponentField) {
+    updateMenuBundleComponent(Number(bundleComponentField.dataset.index), bundleComponentField.dataset.field || "", bundleComponentField.value);
     return;
   }
 

@@ -22,6 +22,9 @@ const TEST_ORPHAN_TARGET_ROOM_ID = 'ROOM-TEST-005';
 const TEST_FNB_ROOM_ID = 'ROOM-TEST-FNB';
 const TEST_MENU_ID = 'MENU-TEST-001';
 const TEST_MENU_ID_2 = 'MENU-TEST-002';
+const TEST_BUNDLE_MENU_ID = 'MENU-TEST-BUNDLE-001';
+const TEST_BUNDLE_BEER_STOCK_ID = 'INV-TEST-BUNDLE-BEER';
+const TEST_BUNDLE_FRIES_STOCK_ID = 'INV-TEST-BUNDLE-FRIES';
 const TEST_LC_ID = 'LC-TEST-001';
 const TEST_LC_ID_2 = 'LC-TEST-002';
 const TEST_TV_ID = 'TV-TEST-001';
@@ -85,9 +88,11 @@ async function seedContractData() {
   await db.query(`
     INSERT INTO inventory (stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status)
     VALUES ('INV-TEST-001', 'Stok Red Label Test', 'Liquor', 'bottle', 10, 2, 'active'),
-           ('INV-TEST-002', 'Stok Coca Cola Test', 'Beverage', 'can', 50, 5, 'active')
+           ('INV-TEST-002', 'Stok Coca Cola Test', 'Beverage', 'can', 50, 5, 'active'),
+           ($1, 'Beer Bintang Paket Test', 'Beer', 'botol', 20, 2, 'active'),
+           ($2, 'Kentang Goreng Paket Test', 'Food', 'porsi', 10, 2, 'active')
     ON CONFLICT (stock_item_id) DO UPDATE SET stock_qty = EXCLUDED.stock_qty, status = 'active'
-  `);
+  `, [TEST_BUNDLE_BEER_STOCK_ID, TEST_BUNDLE_FRIES_STOCK_ID]);
 
   await db.query(`
     INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit)
@@ -218,6 +223,92 @@ async function runContractTests() {
 
   await testAction('validateAdminPin invalid rejection', 'POST', '/exec', { action: 'validateAdminPin', pin: '999999' }, res => res.body.ok === false && res.body.code === 'INVALID_ADMIN_PIN');
   await testAction('sendTvCommand mock bridge', 'POST', '/exec', { action: 'sendTvCommand', room_id: TEST_ROOM_ID, tv_action: 'power_on' }, res => res.body.ok === true);
+  await testAction('saveMenuMaster generic F&B bundle', 'POST', '/exec', {
+    action: 'saveMenuMaster',
+    menu_id: TEST_BUNDLE_MENU_ID,
+    menu_name: 'Beer Holic Contract',
+    category: 'Paket F&B',
+    menu_type: 'fnb_bundle',
+    price: 200000,
+    status: 'active',
+    bundle_components: [
+      { item_id: TEST_BUNDLE_BEER_STOCK_ID, qty_used: 3, component_mode: 'included' },
+      { item_id: TEST_BUNDLE_FRIES_STOCK_ID, qty_used: 1, component_mode: 'bonus' }
+    ],
+    changed_by: 'TestOwner'
+  }, res => res.body.ok === true && res.body.menu_type === 'fnb_bundle');
+  await testAction('getMenuItems exposes F&B bundle contents', 'GET', '/exec?action=getMenuItems', null, res => {
+    const bundle = res.body.items?.find(item => item.menu_id === TEST_BUNDLE_MENU_ID);
+    return res.body.ok === true
+      && bundle?.menu_type === 'fnb_bundle'
+      && bundle.bundle_components?.length === 2
+      && bundle.bundle_components.some(component => component.item_id === TEST_BUNDLE_BEER_STOCK_ID && component.qty_used === 3 && component.component_mode === 'included')
+      && bundle.bundle_components.some(component => component.item_id === TEST_BUNDLE_FRIES_STOCK_ID && component.qty_used === 1 && component.component_mode === 'bonus');
+  });
+  let bundleOrderId = '';
+  let bundleOrderItemId = '';
+  let bundleTransactionId = '';
+  await testAction('saveFnbOrder paid F&B bundle snapshots components and charges package price once', 'POST', '/exec', {
+    action: 'saveFnbOrder',
+    room_id: 'FNB-GENERAL',
+    customer_name: 'Pelanggan Paket Test',
+    items: [{ menu_id: TEST_BUNDLE_MENU_ID, quantity: 1 }],
+    payment_method: 'cash',
+    payment_status: 'paid',
+    cashier_name: 'TestKasir',
+    idempotency_key: `IDEM-BUNDLE-${Date.now()}`
+  }, res => {
+    bundleOrderId = res.body.order_id || '';
+    bundleOrderItemId = res.body.items?.[0]?.order_item_id || '';
+    bundleTransactionId = res.body.transaction?.transaction_id || '';
+    return res.body.ok === true
+      && res.body.order_total === 200000
+      && res.body.items?.[0]?.bundle_components?.length === 2
+      && bundleOrderId && bundleOrderItemId && bundleTransactionId;
+  });
+  await testDatabaseState('F&B bundle paid sale deducts 3 beer and 1 fries exactly', async () => {
+    const stock = await db.query('SELECT stock_item_id, stock_qty FROM inventory WHERE stock_item_id = ANY($1)', [[TEST_BUNDLE_BEER_STOCK_ID, TEST_BUNDLE_FRIES_STOCK_ID]]);
+    const byId = Object.fromEntries(stock.rows.map(row => [row.stock_item_id, Number(row.stock_qty)]));
+    const snapshots = await db.query('SELECT item_id, total_qty, component_mode FROM fnb_order_item_components WHERE order_item_id = $1', [bundleOrderItemId]);
+    return byId[TEST_BUNDLE_BEER_STOCK_ID] === 17
+      && byId[TEST_BUNDLE_FRIES_STOCK_ID] === 9
+      && snapshots.rowCount === 2
+      && snapshots.rows.some(row => row.item_id === TEST_BUNDLE_BEER_STOCK_ID && Number(row.total_qty) === 3 && row.component_mode === 'included')
+      && snapshots.rows.some(row => row.item_id === TEST_BUNDLE_FRIES_STOCK_ID && Number(row.total_qty) === 1 && row.component_mode === 'bonus');
+  });
+  await testAction('updateMenuMaster changes future bundle recipe only', 'POST', '/exec', {
+    action: 'updateMenuMaster',
+    menu_id: TEST_BUNDLE_MENU_ID,
+    menu_name: 'Beer Holic Contract',
+    category: 'Paket F&B',
+    menu_type: 'fnb_bundle',
+    price: 200000,
+    status: 'active',
+    bundle_components: [
+      { item_id: TEST_BUNDLE_BEER_STOCK_ID, qty_used: 2, component_mode: 'included' },
+      { item_id: TEST_BUNDLE_FRIES_STOCK_ID, qty_used: 2, component_mode: 'bonus' }
+    ],
+    changed_by: 'TestOwner'
+  }, res => res.body.ok === true);
+  await testAction('getFnbOrdersByIds preserves original bundle snapshot after master edit', 'GET', `/exec?action=getFnbOrdersByIds&order_ids=${encodeURIComponent(bundleOrderId)}`, null, res => {
+    const components = res.body.orders?.[0]?.items?.[0]?.bundle_components || [];
+    return res.body.ok === true
+      && components.some(component => component.item_id === TEST_BUNDLE_BEER_STOCK_ID && component.total_qty === 3)
+      && components.some(component => component.item_id === TEST_BUNDLE_FRIES_STOCK_ID && component.total_qty === 1 && component.component_mode === 'bonus');
+  });
+  await testAction('voidTransactionFnbOrder restores bundle stock from sale snapshot', 'POST', '/exec', {
+    action: 'voidTransactionFnbOrder',
+    transaction_id: bundleTransactionId,
+    order_item_ids: [bundleOrderItemId],
+    reason: 'Contract test pembatalan paket F&B',
+    admin_pin: '123456',
+    changed_by: 'TestOwner'
+  }, res => res.body.ok === true && res.body.voided_amount === 200000 && res.body.restored_stock?.length === 2);
+  await testDatabaseState('Bundle void restores original 3 beer and 1 fries despite changed master recipe', async () => {
+    const stock = await db.query('SELECT stock_item_id, stock_qty FROM inventory WHERE stock_item_id = ANY($1)', [[TEST_BUNDLE_BEER_STOCK_ID, TEST_BUNDLE_FRIES_STOCK_ID]]);
+    const byId = Object.fromEntries(stock.rows.map(row => [row.stock_item_id, Number(row.stock_qty)]));
+    return byId[TEST_BUNDLE_BEER_STOCK_ID] === 20 && byId[TEST_BUNDLE_FRIES_STOCK_ID] === 10;
+  });
   await testAction('saveFnbOrder payload verification', 'POST', '/exec', { action: 'saveFnbOrder', room_id: TEST_FNB_ROOM_ID, items: [{ menu_id: TEST_MENU_ID, quantity: 2 }], idempotency_key: `IDEM-FNB-${Date.now()}` }, res => res.body.ok === true && res.body.order_id);
   await db.query(`
     UPDATE room_sessions

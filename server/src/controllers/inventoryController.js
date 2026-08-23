@@ -136,12 +136,14 @@ async function getRecipeBom(req, res) {
       FROM recipe r
       LEFT JOIN inventory i ON i.stock_item_id = r.item_id
       WHERE r.menu_id = $1
-      ORDER BY r.recipe_id ASC
+      ORDER BY r.sort_order ASC, r.recipe_id ASC
     `, [menuId]);
 
     const recipe = result.rows.map(row => ({
       ...row,
-      qty_used: Number(row.qty_used || 0)
+      qty_used: Number(row.qty_used || 0),
+      component_mode: row.component_mode || 'included',
+      sort_order: Number(row.sort_order || 0)
     }));
     return res.json({ ok: true, success: true, recipe, items: recipe });
   } catch (err) {

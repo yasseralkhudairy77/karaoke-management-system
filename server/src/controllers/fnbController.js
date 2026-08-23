@@ -5,6 +5,50 @@ const { getOperationalDate, getOperationalDateRange } = require('../utils/operat
 const FNB_GENERAL_ROOM_ID = 'FNB-GENERAL';
 const FNB_GENERAL_ROOM_NAME = 'F&B Umum';
 
+let fnbBundleSchemaChecked = false;
+async function ensureFnbBundleSchema(executor = db) {
+  if (fnbBundleSchemaChecked) return;
+  await executor.query(`
+    ALTER TABLE menu ADD COLUMN IF NOT EXISTS menu_type VARCHAR(30) NOT NULL DEFAULT 'regular';
+    ALTER TABLE recipe ADD COLUMN IF NOT EXISTS component_mode VARCHAR(20) NOT NULL DEFAULT 'included';
+    ALTER TABLE recipe ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 1;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS menu_type_snapshot VARCHAR(30) NOT NULL DEFAULT 'regular';
+    CREATE TABLE IF NOT EXISTS fnb_order_item_components (
+      component_snapshot_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      order_item_id UUID NOT NULL REFERENCES fnb_order_items(order_item_id) ON DELETE CASCADE,
+      order_id VARCHAR(50) NOT NULL REFERENCES fnb_orders(order_id) ON DELETE CASCADE,
+      menu_id VARCHAR(50),
+      item_id VARCHAR(50),
+      component_name VARCHAR(100) NOT NULL,
+      qty_per_menu NUMERIC(12,4) NOT NULL,
+      order_quantity INT NOT NULL,
+      total_qty NUMERIC(12,4) NOT NULL,
+      unit VARCHAR(20) NOT NULL,
+      component_mode VARCHAR(20) NOT NULL DEFAULT 'included',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order_item ON fnb_order_item_components(order_item_id);
+    CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order ON fnb_order_item_components(order_id);
+  `);
+  fnbBundleSchemaChecked = true;
+}
+
+function normalizeBundleComponentRow(row) {
+  return {
+    item_id: row.item_id || '',
+    stock_item_id: row.item_id || '',
+    component_name: row.component_name || row.stock_item_name || row.item_id || '',
+    stock_item_name: row.component_name || row.stock_item_name || row.item_id || '',
+    qty_used: Number(row.qty_used ?? row.qty_per_menu ?? 0),
+    qty_per_menu: Number(row.qty_per_menu ?? row.qty_used ?? 0),
+    order_quantity: Number(row.order_quantity || 0),
+    total_qty: Number(row.total_qty || 0),
+    unit: row.unit || 'unit',
+    component_mode: String(row.component_mode || 'included').toLowerCase(),
+    sort_order: Number(row.sort_order || 0)
+  };
+}
+
 async function ensureGeneralFnbRoom(client) {
   await client.query(`
     INSERT INTO rooms (room_id, room_name, status, rate_per_hour)
@@ -15,14 +59,33 @@ async function ensureGeneralFnbRoom(client) {
 
 async function getMenuItems(req, res) {
   try {
+    await ensureFnbBundleSchema();
     const result = await db.query(`
       SELECT 
         menu_id, menu_name, category, price, status, 
         stock_tracking, stock_item_id, stock_qty_per_unit, 
-        bonus_sales_lc, hpp, variable_cost_rate
+        bonus_sales_lc, hpp, variable_cost_rate, menu_type
       FROM menu
       ORDER BY category ASC, menu_name ASC
     `);
+
+    const recipeResult = await db.query(`
+      SELECT r.menu_id, r.item_id, r.qty_used, r.unit, r.component_mode, r.sort_order,
+             i.stock_item_name, i.status AS inventory_status
+      FROM recipe r
+      LEFT JOIN inventory i ON i.stock_item_id = r.item_id
+      JOIN menu m ON m.menu_id = r.menu_id
+      WHERE m.menu_type = 'fnb_bundle'
+      ORDER BY r.menu_id ASC, r.sort_order ASC, r.recipe_id ASC
+    `);
+    const componentsByMenuId = recipeResult.rows.reduce((map, row) => {
+      if (!map[row.menu_id]) map[row.menu_id] = [];
+      map[row.menu_id].push({
+        ...normalizeBundleComponentRow({ ...row, component_name: row.stock_item_name }),
+        inventory_status: row.inventory_status || ''
+      });
+      return map;
+    }, {});
 
     const items = result.rows.map(row => ({
       menu_id: row.menu_id,
@@ -35,7 +98,9 @@ async function getMenuItems(req, res) {
       stock_qty_per_unit: Number(row.stock_qty_per_unit || 1),
       bonus_sales_lc: Number(row.bonus_sales_lc || 0),
       hpp: Number(row.hpp || 0),
-      variable_cost_rate: Number(row.variable_cost_rate || 0)
+      variable_cost_rate: Number(row.variable_cost_rate || 0),
+      menu_type: row.menu_type || 'regular',
+      bundle_components: componentsByMenuId[row.menu_id] || []
     }));
 
     return res.json({ ok: true, success: true, items, menu_items: items });
@@ -46,24 +111,14 @@ async function getMenuItems(req, res) {
 
 async function getOpenFnbOrders(req, res, roomId) {
   try {
+    await ensureFnbBundleSchema();
     const ordersRes = await db.query(`
       SELECT * FROM fnb_orders 
       WHERE ($1::varchar IS NULL OR room_id = $1) AND order_status = 'open'
       ORDER BY created_at ASC
     `, [roomId || null]);
 
-    const orders = ordersRes.rows;
-    for (const order of orders) {
-      const itemsRes = await db.query(`
-        SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC
-      `, [order.order_id]);
-      order.items = itemsRes.rows.map(item => ({
-        ...item,
-        price: Number(item.price),
-        subtotal: Number(item.subtotal),
-        is_voided: Boolean(item.is_voided)
-      }));
-    }
+    const orders = await attachOrderItems(ordersRes.rows);
 
     return res.json({ ok: true, orders });
   } catch (err) {
@@ -72,13 +127,29 @@ async function getOpenFnbOrders(req, res, roomId) {
 }
 
 async function attachOrderItems(orders) {
+  await ensureFnbBundleSchema();
   for (const order of orders) {
     const itemsRes = await db.query('SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [order.order_id]);
+    const itemIds = itemsRes.rows.map(item => item.order_item_id);
+    const componentsResult = itemIds.length > 0
+      ? await db.query(`
+          SELECT * FROM fnb_order_item_components
+          WHERE order_item_id = ANY($1::uuid[])
+          ORDER BY created_at ASC, component_snapshot_id ASC
+        `, [itemIds])
+      : { rows: [] };
+    const componentsByItemId = componentsResult.rows.reduce((map, row) => {
+      if (!map[row.order_item_id]) map[row.order_item_id] = [];
+      map[row.order_item_id].push(normalizeBundleComponentRow(row));
+      return map;
+    }, {});
     order.items = itemsRes.rows.map(item => ({
       ...item,
       price: Number(item.price || 0),
       subtotal: Number(item.subtotal || 0),
-      is_voided: Boolean(item.is_voided)
+      is_voided: Boolean(item.is_voided),
+      menu_type: item.menu_type_snapshot || 'regular',
+      bundle_components: componentsByItemId[item.order_item_id] || []
     }));
     order.order_total = Number(order.order_total || 0);
   }
@@ -118,6 +189,7 @@ async function saveFnbOrder(req, res, payload) {
   let client;
   try {
     client = await db.pool.connect();
+    await ensureFnbBundleSchema(client);
     await client.query('BEGIN');
     const {
       room_id,
@@ -181,7 +253,7 @@ async function saveFnbOrder(req, res, payload) {
       const menuId = itemInput.menu_id;
       const quantity = Math.max(1, parseInt(itemInput.quantity || 1, 10));
 
-      const menuRes = await client.query('SELECT menu_id, menu_name, category, price, status FROM menu WHERE menu_id = $1', [menuId]);
+      const menuRes = await client.query('SELECT menu_id, menu_name, category, price, status, menu_type FROM menu WHERE menu_id = $1', [menuId]);
       if (menuRes.rowCount === 0) {
         throw new Error(`Menu dengan ID ${menuId} tidak ditemukan.`);
       }
@@ -195,13 +267,36 @@ async function saveFnbOrder(req, res, payload) {
       const subtotal = verifiedPrice * quantity;
       orderTotal += subtotal;
 
+      let bundleComponents = [];
+      if (String(dbMenu.menu_type || 'regular').toLowerCase() === 'fnb_bundle') {
+        const componentResult = await client.query(`
+          SELECT r.item_id, r.qty_used, r.unit, r.component_mode, r.sort_order,
+                 i.stock_item_name, i.status AS inventory_status
+          FROM recipe r
+          LEFT JOIN inventory i ON i.stock_item_id = r.item_id
+          WHERE r.menu_id = $1
+          ORDER BY r.sort_order ASC, r.recipe_id ASC
+        `, [dbMenu.menu_id]);
+        if (componentResult.rowCount === 0) throw new Error(`Paket F&B ${dbMenu.menu_name} belum memiliki komponen.`);
+        if (componentResult.rows.some(component => !component.stock_item_name || String(component.inventory_status || '').toLowerCase() !== 'active')) {
+          throw new Error(`Komponen stok paket F&B ${dbMenu.menu_name} tidak lengkap atau tidak aktif.`);
+        }
+        bundleComponents = componentResult.rows.map(component => ({
+          ...normalizeBundleComponentRow({ ...component, component_name: component.stock_item_name }),
+          order_quantity: quantity,
+          total_qty: Number(component.qty_used || 0) * quantity
+        }));
+      }
+
       verifiedItems.push({
         menu_id: dbMenu.menu_id,
         menu_name: dbMenu.menu_name,
         category: dbMenu.category || 'F&B',
         price: verifiedPrice,
         quantity,
-        subtotal
+        subtotal,
+        menu_type: dbMenu.menu_type || 'regular',
+        bundle_components: bundleComponents
       });
     }
 
@@ -219,11 +314,22 @@ async function saveFnbOrder(req, res, payload) {
     `, [orderId, room_id, roomName, sessionId, roomStartTime, orderStatus, orderTotal, cashier_name, note, idempotency_key || null, customer_name || null, effectiveGeneralBillId || null]);
 
     for (const vItem of verifiedItems) {
-      await client.query(`
+      const insertedItem = await client.query(`
         INSERT INTO fnb_order_items (
-          order_id, menu_id, menu_name, category, price, quantity, subtotal
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [orderId, vItem.menu_id, vItem.menu_name, vItem.category, vItem.price, vItem.quantity, vItem.subtotal]);
+          order_id, menu_id, menu_name, category, price, quantity, subtotal, menu_type_snapshot
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING order_item_id
+      `, [orderId, vItem.menu_id, vItem.menu_name, vItem.category, vItem.price, vItem.quantity, vItem.subtotal, vItem.menu_type]);
+      vItem.order_item_id = insertedItem.rows[0].order_item_id;
+
+      for (const component of vItem.bundle_components) {
+        await client.query(`
+          INSERT INTO fnb_order_item_components (
+            order_item_id, order_id, menu_id, item_id, component_name,
+            qty_per_menu, order_quantity, total_qty, unit, component_mode
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `, [vItem.order_item_id, orderId, vItem.menu_id, component.item_id, component.component_name, component.qty_per_menu, vItem.quantity, component.total_qty, component.unit, component.component_mode]);
+      }
     }
 
     let transaction = null;

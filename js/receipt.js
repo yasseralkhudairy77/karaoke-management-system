@@ -181,6 +181,11 @@ export function formatReceipt58mm(receiptData, options = {}) {
             formatReceiptCurrency(item.subtotal),
             width
           ));
+          (item.bundleComponents || []).forEach((component) => {
+            const modeLabel = component.mode === "bonus" ? "Bonus" : "Termasuk";
+            const componentText = `  ${modeLabel}: ${getNumber(component.totalQty)}x ${component.name}`;
+            wrapReceiptText(componentText, width).forEach((line) => lines.push(line));
+          });
         });
       });
     } else {
@@ -524,6 +529,16 @@ function normalizeFnbItems(items) {
     quantity: getNumber(item?.quantity),
     subtotal: getNumber(item?.subtotal),
     createdAt: getText(item?.created_at),
+    bundleComponents: Array.isArray(item?.bundle_components)
+      ? item.bundle_components.map((component) => ({
+          itemId: getText(component?.item_id || component?.stock_item_id),
+          name: getText(component?.component_name || component?.stock_item_name),
+          qtyPerMenu: getNumber(component?.qty_per_menu ?? component?.qty_used),
+          totalQty: getNumber(component?.total_qty) || getNumber(component?.qty_per_menu ?? component?.qty_used) * getNumber(item?.quantity),
+          unit: getText(component?.unit),
+          mode: getText(component?.component_mode || "included").toLowerCase(),
+        }))
+      : [],
   }));
 }
 

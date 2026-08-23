@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS menu (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS menu_type VARCHAR(30) NOT NULL DEFAULT 'regular';
+
 CREATE TABLE IF NOT EXISTS recipe (
     recipe_id VARCHAR(50) PRIMARY KEY,
     menu_id VARCHAR(50) REFERENCES menu(menu_id) ON DELETE CASCADE,
@@ -101,6 +103,9 @@ CREATE TABLE IF NOT EXISTS recipe (
     qty_used NUMERIC(12,4) NOT NULL,
     unit VARCHAR(20) NOT NULL
 );
+
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS component_mode VARCHAR(20) NOT NULL DEFAULT 'included';
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 1;
 
 -- 6. Packages & Promos
 CREATE TABLE IF NOT EXISTS package_master (
@@ -322,6 +327,30 @@ CREATE TABLE IF NOT EXISTS fnb_order_items (
 );
 
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS menu_type_snapshot VARCHAR(30) NOT NULL DEFAULT 'regular';
+
+-- Snapshot komponen paket saat order dibuat. Riwayat, stok, dan nota tidak boleh
+-- berubah ketika resep/menu master diedit di kemudian hari.
+CREATE TABLE IF NOT EXISTS fnb_order_item_components (
+    component_snapshot_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_item_id UUID NOT NULL REFERENCES fnb_order_items(order_item_id) ON DELETE CASCADE,
+    order_id VARCHAR(50) NOT NULL REFERENCES fnb_orders(order_id) ON DELETE CASCADE,
+    menu_id VARCHAR(50),
+    item_id VARCHAR(50),
+    component_name VARCHAR(100) NOT NULL,
+    qty_per_menu NUMERIC(12,4) NOT NULL,
+    order_quantity INT NOT NULL,
+    total_qty NUMERIC(12,4) NOT NULL,
+    unit VARCHAR(20) NOT NULL,
+    component_mode VARCHAR(20) NOT NULL DEFAULT 'included',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order_item
+ON fnb_order_item_components(order_item_id);
+
+CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order
+ON fnb_order_item_components(order_id);
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);

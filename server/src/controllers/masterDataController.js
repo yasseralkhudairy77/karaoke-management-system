@@ -2,12 +2,33 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { verifyAndUpgradePin } = require('../middleware/auth');
 
-async function logMasterAudit(entityType, entityId, entityName, actionType, oldValue, newValue, changedBy, note = '', result = 'success') {
-  await db.query(`
+async function logMasterAudit(entityType, entityId, entityName, actionType, oldValue, newValue, changedBy, note = '', result = 'success', executor = db) {
+  await executor.query(`
     INSERT INTO master_data_audit_logs (
       log_id, entity_type, entity_id, entity_name, action_type, old_value_json, new_value_json, changed_by, note, result
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
   `, [`MDA-${Date.now()}-${Math.floor(Math.random() * 1000)}`, entityType, entityId, entityName, actionType, oldValue || null, newValue || null, changedBy || 'Operator', note, result]);
+}
+
+let fnbBundleSchemaChecked = false;
+async function ensureFnbBundleSchema(executor = db) {
+  if (fnbBundleSchemaChecked) return;
+  await executor.query(`
+    ALTER TABLE menu ADD COLUMN IF NOT EXISTS menu_type VARCHAR(30) NOT NULL DEFAULT 'regular';
+    ALTER TABLE recipe ADD COLUMN IF NOT EXISTS component_mode VARCHAR(20) NOT NULL DEFAULT 'included';
+    ALTER TABLE recipe ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 1;
+  `);
+  fnbBundleSchemaChecked = true;
+}
+
+function normalizeFnbBundleComponents(rawComponents) {
+  if (!Array.isArray(rawComponents)) return [];
+  return rawComponents.map((component, index) => ({
+    item_id: String(component.item_id || component.stock_item_id || '').trim(),
+    qty_used: Number(component.qty_used ?? component.quantity ?? component.qty),
+    component_mode: String(component.component_mode || component.mode || 'included').trim().toLowerCase(),
+    sort_order: index + 1
+  }));
 }
 
 async function getEmployees(req, res) {
@@ -91,20 +112,80 @@ async function saveRoomMaster(req, res, payload) {
 }
 
 async function saveMenuMaster(req, res, payload) {
+  let client;
   try {
-    const menuId = payload.menu_id || `MENU-${Date.now()}`;
-    const stockItemId = payload.stock_item_id || null;
-    const stockTracking = payload.stock_tracking || (stockItemId ? 'yes' : 'no');
+    client = await db.pool.connect();
+    await ensureFnbBundleSchema(client);
+    await client.query('BEGIN');
+
+    const menuId = String(payload.menu_id || '').trim() || `MENU-${Date.now()}`;
+    const menuType = String(payload.menu_type || 'regular').trim().toLowerCase();
+    const bundleComponents = normalizeFnbBundleComponents(payload.bundle_components);
+    const requestedStockItemId = String(payload.stock_item_id || '').trim() || null;
+    const stockItemId = menuType === 'fnb_bundle' ? null : requestedStockItemId;
+    const stockTracking = menuType === 'fnb_bundle'
+      ? 'no'
+      : (payload.stock_tracking || (stockItemId ? 'yes' : 'no'));
     const stockQtyPerUnit = Number(payload.stock_qty_per_unit || payload.qty_per_unit || 1);
-    await db.query(`
-      INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit, bonus_sales_lc, hpp, variable_cost_rate)
-      VALUES ($1, $2, $3, $4, COALESCE($5, 'active'), $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (menu_id) DO UPDATE SET menu_name = EXCLUDED.menu_name, category = EXCLUDED.category, price = EXCLUDED.price, status = EXCLUDED.status, stock_tracking = EXCLUDED.stock_tracking, stock_item_id = EXCLUDED.stock_item_id, stock_qty_per_unit = EXCLUDED.stock_qty_per_unit, bonus_sales_lc = EXCLUDED.bonus_sales_lc, hpp = EXCLUDED.hpp, variable_cost_rate = EXCLUDED.variable_cost_rate, updated_at = CURRENT_TIMESTAMP
-    `, [menuId, payload.menu_name || menuId, payload.category || 'F&B', Number(payload.price || 0), payload.status || 'active', stockTracking, stockItemId, stockQtyPerUnit, Number(payload.bonus_sales_lc || 0), Number(payload.hpp || 0), Number(payload.variable_cost_rate || 0)]);
-    await logMasterAudit('menu', menuId, payload.menu_name || menuId, 'save', null, payload, payload.changed_by || payload.cashier_name);
-    return successResponse(res, { message: 'Master menu berhasil disimpan.', menu_id: menuId });
+
+    if (!['regular', 'fnb_bundle'].includes(menuType)) throw new Error('Jenis menu tidak valid.');
+    if (!String(payload.menu_name || '').trim()) throw new Error('Nama menu wajib diisi.');
+    if (!Number.isFinite(Number(payload.price)) || Number(payload.price) < 0) throw new Error('Harga menu tidak valid.');
+    if (!['active', 'inactive'].includes(String(payload.status || 'active').toLowerCase())) throw new Error('Status menu tidak valid.');
+
+    if (menuType === 'fnb_bundle') {
+      if (bundleComponents.length === 0) throw new Error('Paket F&B wajib memiliki minimal satu komponen.');
+      const componentIds = bundleComponents.map(component => component.item_id);
+      if (componentIds.some(itemId => !itemId)) throw new Error('Semua komponen paket wajib memilih item inventory.');
+      if (new Set(componentIds).size !== componentIds.length) throw new Error('Item inventory yang sama tidak boleh ditambahkan dua kali dalam satu paket.');
+      if (bundleComponents.some(component => !Number.isFinite(component.qty_used) || component.qty_used <= 0)) throw new Error('Jumlah setiap komponen paket harus lebih dari 0.');
+      if (bundleComponents.some(component => !['included', 'bonus'].includes(component.component_mode))) throw new Error('Mode komponen paket tidak valid.');
+
+      const inventoryResult = await client.query(`
+        SELECT stock_item_id, stock_item_name, unit, status
+        FROM inventory
+        WHERE stock_item_id = ANY($1)
+      `, [componentIds]);
+      const inventoryById = new Map(inventoryResult.rows.map(item => [item.stock_item_id, item]));
+      for (const component of bundleComponents) {
+        const inventoryItem = inventoryById.get(component.item_id);
+        if (!inventoryItem) throw new Error(`Item inventory ${component.item_id} tidak ditemukan.`);
+        if (String(inventoryItem.status || '').toLowerCase() !== 'active') throw new Error(`Item inventory ${inventoryItem.stock_item_name} tidak aktif.`);
+        component.item_name = inventoryItem.stock_item_name;
+        component.unit = inventoryItem.unit || 'unit';
+      }
+    }
+
+    const oldRes = await client.query('SELECT * FROM menu WHERE menu_id = $1 FOR UPDATE', [menuId]);
+    const oldValue = oldRes.rows[0] || null;
+
+    await client.query(`
+      INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit, bonus_sales_lc, hpp, variable_cost_rate, menu_type)
+      VALUES ($1, $2, $3, $4, COALESCE($5, 'active'), $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (menu_id) DO UPDATE SET menu_name = EXCLUDED.menu_name, category = EXCLUDED.category, price = EXCLUDED.price, status = EXCLUDED.status, stock_tracking = EXCLUDED.stock_tracking, stock_item_id = EXCLUDED.stock_item_id, stock_qty_per_unit = EXCLUDED.stock_qty_per_unit, bonus_sales_lc = EXCLUDED.bonus_sales_lc, hpp = EXCLUDED.hpp, variable_cost_rate = EXCLUDED.variable_cost_rate, menu_type = EXCLUDED.menu_type, updated_at = CURRENT_TIMESTAMP
+    `, [menuId, String(payload.menu_name).trim(), payload.category || 'F&B', Number(payload.price), payload.status || 'active', stockTracking, stockItemId, stockQtyPerUnit, Number(payload.bonus_sales_lc || 0), Number(payload.hpp || 0), Number(payload.variable_cost_rate || 0), menuType]);
+
+    if (menuType === 'fnb_bundle') {
+      await client.query('DELETE FROM recipe WHERE menu_id = $1', [menuId]);
+      for (const component of bundleComponents) {
+        await client.query(`
+          INSERT INTO recipe (recipe_id, menu_id, item_id, qty_used, unit, component_mode, sort_order)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [`RCP-${Date.now()}-${component.sort_order}-${Math.floor(Math.random() * 10000)}`, menuId, component.item_id, component.qty_used, component.unit, component.component_mode, component.sort_order]);
+      }
+    } else if (String(oldValue?.menu_type || 'regular').toLowerCase() === 'fnb_bundle') {
+      await client.query('DELETE FROM recipe WHERE menu_id = $1', [menuId]);
+    }
+
+    const auditPayload = { ...payload, menu_type: menuType, bundle_components: bundleComponents };
+    await logMasterAudit('menu', menuId, String(payload.menu_name).trim(), oldValue ? 'update' : 'save', oldValue, auditPayload, payload.changed_by || payload.cashier_name, '', 'success', client);
+    await client.query('COMMIT');
+    return successResponse(res, { message: menuType === 'fnb_bundle' ? 'Paket F&B berhasil disimpan.' : 'Master menu berhasil disimpan.', menu_id: menuId, menu_type: menuType });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 

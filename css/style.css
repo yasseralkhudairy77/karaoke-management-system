@@ -1902,6 +1902,52 @@ body::after {
   gap: var(--space-3);
 }
 
+.menu-bundle-editor {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.menu-bundle-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.menu-bundle-editor-header h4,
+.menu-bundle-editor-header p,
+.menu-bundle-empty {
+  margin: 0;
+}
+
+.menu-bundle-editor-header p,
+.menu-bundle-empty,
+.menu-bundle-summary {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.menu-bundle-component-list {
+  display: grid;
+  gap: 10px;
+}
+
+.menu-bundle-component-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.7fr) minmax(150px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.menu-bundle-remove {
+  min-height: 42px;
+}
+
 .master-form-field {
   display: grid;
   gap: 6px;
@@ -3641,6 +3687,21 @@ textarea.action-confirmation-input {
   overflow-wrap: anywhere;
   font-size: 0.86rem;
   font-weight: 800;
+}
+
+.menu-card .menu-bundle-summary {
+  margin: 5px 0 0;
+}
+
+@media (max-width: 760px) {
+  .menu-bundle-editor-header,
+  .menu-bundle-component-row {
+    grid-template-columns: 1fr;
+  }
+
+  .menu-bundle-editor-header {
+    display: grid;
+  }
 }
 
 .menu-price {

@@ -1114,7 +1114,8 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
   if (!fnbOrderIds || fnbOrderIds.length === 0) return { movements: [] };
 
   const itemsRes = await client.query(`
-    SELECT foi.menu_id, foi.quantity, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
+    SELECT foi.order_item_id, foi.menu_id, foi.quantity, foi.menu_type_snapshot,
+           m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
     FROM fnb_order_items foi
     JOIN menu m ON foi.menu_id = m.menu_id
     WHERE foi.order_id = ANY($1)
@@ -1135,7 +1136,7 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
 
         await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
 
-        const movementId = `MOV-${transactionId}-${item.stock_item_id}`;
+        const movementId = `MOV-${transactionId}-${item.order_item_id}-${item.stock_item_id}`;
         await client.query(`
           INSERT INTO stock_movements (
             movement_id, stock_item_id, stock_item_name, movement_type,
@@ -1148,27 +1149,46 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
       }
     }
 
-    const recipeRes = await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id]);
-    for (const r of recipeRes.rows) {
-      const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+    const snapshotRes = await client.query(`
+      SELECT item_id, component_name, total_qty, component_mode
+      FROM fnb_order_item_components
+      WHERE order_item_id = $1
+      ORDER BY created_at ASC, component_snapshot_id ASC
+    `, [item.order_item_id]);
+    const componentRows = snapshotRes.rowCount > 0
+      ? snapshotRes.rows.map(component => ({
+          item_id: component.item_id,
+          component_name: component.component_name,
+          component_mode: component.component_mode,
+          qty_to_deduct: Number(component.total_qty || 0)
+        }))
+      : (await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id])).rows.map(recipe => ({
+          item_id: recipe.item_id,
+          component_name: recipe.item_id,
+          component_mode: recipe.component_mode || 'included',
+          qty_to_deduct: orderQty * Number(recipe.qty_used || 1)
+        }));
+
+    for (const component of componentRows) {
+      const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [component.item_id]);
       if (recipeInvRes.rowCount > 0) {
         const rInv = recipeInvRes.rows[0];
-        const recipeDeduct = orderQty * Number(r.qty_used || 1);
+        const recipeDeduct = Number(component.qty_to_deduct || 0);
         const rStockBefore = Number(rInv.stock_qty || 0);
         const rStockAfter = rStockBefore - recipeDeduct;
 
-        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
 
-        const rMovementId = `MOV-${transactionId}-RECIPE-${r.item_id}`;
+        const rMovementId = `MOV-${transactionId}-${item.order_item_id}-RECIPE-${component.item_id}`;
         await client.query(`
           INSERT INTO stock_movements (
             movement_id, stock_item_id, stock_item_name, movement_type,
             reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
           ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
           ON CONFLICT (idempotency_key) DO NOTHING
-        `, [rMovementId, r.item_id, rInv.stock_item_name, transactionId, -recipeDeduct, rStockBefore, rStockAfter, `Recipe BOM for Menu: ${item.menu_name}`, cashierName]);
+        `, [rMovementId, component.item_id, rInv.stock_item_name, transactionId, -recipeDeduct, rStockBefore, rStockAfter, `Komponen ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name}`, cashierName]);
 
-        movements.push({ stock_item_id: r.item_id, stock_before: rStockBefore, stock_after: rStockAfter });
+        movements.push({ stock_item_id: component.item_id, stock_before: rStockBefore, stock_after: rStockAfter });
       }
     }
   }
