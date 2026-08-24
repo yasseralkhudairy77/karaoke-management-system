@@ -5845,6 +5845,8 @@ function getTransactionTransferAmount(transaction) {
 function getPaymentMethodDetailLabel(transaction) {
   const method = String(transaction?.payment_method || "").toLowerCase();
   if (method !== "split") return formatPaymentMethodLabel(method);
+  const isPaid = String(transaction?.payment_status || "").toLowerCase() === "paid";
+  if (!isPaid) return "Split Bill - nominal diisi saat Tandai Lunas";
   return `Split: Cash ${formatCurrency(getTransactionCashAmount(transaction))} / Transfer ${formatCurrency(getTransactionTransferAmount(transaction))}`;
 }
 
@@ -15734,6 +15736,10 @@ function createTransactionActionsElement(transaction) {
     option.textContent = text;
     select.appendChild(option);
   });
+  const savedPaymentMethod = String(transaction?.payment_method || "").toLowerCase();
+  if (["cash", "transfer", "split"].includes(savedPaymentMethod)) {
+    select.value = savedPaymentMethod;
+  }
 
   const payButton = document.createElement("button");
   payButton.className = "transaction-pay-button";
@@ -26156,10 +26162,11 @@ async function changeTransactionPaymentMethod(transactionId, newPaymentMethod) {
   const transaction = getTransactionById(transactionId)
     || todayTransactions.find((t) => t.transaction_id === transactionId)
     || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null);
-  const paymentPayload = normalizedMethod === "split"
+  const isPaidTransaction = String(transaction?.payment_status || "").toLowerCase() === "paid";
+  const paymentPayload = normalizedMethod === "split" && isPaidTransaction
     ? buildSplitPaymentPayload(transaction)
     : {};
-  if (normalizedMethod === "split" && !paymentPayload) return;
+  if (normalizedMethod === "split" && isPaidTransaction && !paymentPayload) return;
 
   try {
     const data = await postApiAction({
