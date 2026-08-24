@@ -74,7 +74,7 @@ function startServer(port = PORT, bindHost = BIND_HOST) {
     startSyncWorker(parseInt(process.env.SYNC_INTERVAL_MS || '30000', 10));
   }
   if (process.env.DISABLE_OWNER_MIRROR_PUSH_WORKER !== '1') {
-    startOwnerMirrorPushWorker(parseInt(process.env.OWNER_MIRROR_PUSH_INTERVAL_MS || '60000', 10));
+    startOwnerMirrorPushWorker(parseInt(process.env.OWNER_MIRROR_PUSH_INTERVAL_MS || '1800000', 10));
   }
 
   return app.listen(port, bindHost, () => {

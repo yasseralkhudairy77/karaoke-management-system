@@ -73,7 +73,7 @@ async function pushOwnerMirrorSnapshot(periodsOverride = null) {
   }
 }
 
-function startOwnerMirrorPushWorker(intervalMs = 60000) {
+function startOwnerMirrorPushWorker(intervalMs = 1800000) {
   if (pushIntervalHandle) clearInterval(pushIntervalHandle);
 
   const config = getPushConfig();

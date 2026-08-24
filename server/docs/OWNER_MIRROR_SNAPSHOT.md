@@ -75,7 +75,7 @@ OWNER_MIRROR_MODE=local
 OWNER_MIRROR_CLOUD_URL=https://<domain-railway>/exec
 OWNER_MIRROR_TOKEN=<token rahasia yang sama dengan Railway>
 OWNER_MIRROR_SOURCE_ID=happy-song-local
-OWNER_MIRROR_PUSH_INTERVAL_MS=60000
+OWNER_MIRROR_PUSH_INTERVAL_MS=1800000 # 30 menit
 ```
 
 Test push manual dari PC kasir:
