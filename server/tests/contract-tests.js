@@ -428,6 +428,35 @@ async function runContractTests() {
       && Number(row.manual_discount_room) === 225000
       && Number(row.manual_discount_fnb) === 25000;
   });
+  await testAction('markTransactionPaid split bill cash + transfer', 'POST', '/exec', {
+    action: 'markTransactionPaid',
+    transaction_id: checkoutTransactionId,
+    payment_method: 'split',
+    cash_amount: 75000,
+    transfer_amount: 100000,
+    changed_by: 'TestKasir'
+  }, res => res.body.ok === true
+    && res.body.transaction?.payment_status === 'paid'
+    && res.body.transaction?.payment_method === 'split'
+    && Number(res.body.transaction?.cash_amount) === 75000
+    && Number(res.body.transaction?.transfer_amount) === 100000
+    && Number(res.body.transaction?.grand_total) === 175000);
+  await testDatabaseState('Split bill summary allocates cash and transfer without changing grand total', async () => {
+    const trx = await db.query('SELECT payment_method, cash_amount, transfer_amount, grand_total FROM transactions WHERE transaction_id = $1', [checkoutTransactionId]);
+    const today = await requestApi('GET', '/exec?action=getTodayTransactions');
+    const row = trx.rows[0] || {};
+    const transaction = (today.body.transactions || []).find(item => item.transaction_id === checkoutTransactionId) || {};
+    const summary = today.body.summary || {};
+    return row.payment_method === 'split'
+      && Number(row.cash_amount) === 75000
+      && Number(row.transfer_amount) === 100000
+      && Number(row.grand_total) === 175000
+      && Number(transaction.cash_amount) === 75000
+      && Number(transaction.transfer_amount) === 100000
+      && Number(summary.paid_revenue || 0) >= 175000
+      && Number(summary.cash_revenue || 0) >= 75000
+      && Number(summary.transfer_revenue || 0) >= 100000;
+  });
   await testDatabaseState('owner mirror reuses exact-date snapshot after cutoff rollover', async () => {
     const sourceId = `rollover-test-${Date.now()}`;
     const range = getOperationalDateRange('yesterday');

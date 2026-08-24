@@ -5775,6 +5775,10 @@ function getPaymentMethodLabel(method) {
     return "Transfer";
   }
 
+  if (method === "split") {
+    return "Split Bill";
+  }
+
   return "Tidak Dikenal";
 }
 
@@ -5807,6 +5811,10 @@ function formatPaymentMethodLabel(method) {
     return "Transfer";
   }
 
+  if (method === "split") {
+    return "Split Bill";
+  }
+
   return "Tidak Dikenal";
 }
 
@@ -5820,6 +5828,57 @@ function getTransactionFinalTotal(transaction) {
   return (Number(transaction?.room_total) || 0)
     + (Number(transaction?.fnb_total) || 0)
     + (Number(transaction?.lc_total) || 0);
+}
+
+function parseRupiahInput(value) {
+  return Number(String(value || "").replace(/[^\d]/g, "")) || 0;
+}
+
+function getTransactionCashAmount(transaction) {
+  return Number(transaction?.cash_amount || 0);
+}
+
+function getTransactionTransferAmount(transaction) {
+  return Number(transaction?.transfer_amount || 0);
+}
+
+function getPaymentMethodDetailLabel(transaction) {
+  const method = String(transaction?.payment_method || "").toLowerCase();
+  if (method !== "split") return formatPaymentMethodLabel(method);
+  return `Split: Cash ${formatCurrency(getTransactionCashAmount(transaction))} / Transfer ${formatCurrency(getTransactionTransferAmount(transaction))}`;
+}
+
+function buildSplitPaymentPayload(transaction, options = {}) {
+  const total = getTransactionFinalTotal(transaction);
+  const defaultCash = Math.max(0, Math.min(total, getTransactionCashAmount(transaction) || 0));
+  const inferTransferFromServer = Boolean(options.inferTransferFromServer);
+  const input = window.prompt(
+    inferTransferFromServer
+      ? `Split Bill - total tagihan saat ini ${formatCurrency(total)}\nMasukkan nominal CASH yang diterima.\nKarena ada promo/voucher, nominal transfer akan dihitung server dari total akhir setelah promo.`
+      : `Split Bill - total tagihan ${formatCurrency(total)}\nMasukkan nominal CASH yang diterima.\nNominal transfer akan dihitung dari sisa tagihan.`,
+    defaultCash > 0 ? String(Math.round(defaultCash)) : ""
+  );
+
+  if (input === null) return null;
+
+  const cashAmount = parseRupiahInput(input);
+  const transferAmount = total - cashAmount;
+
+  if (cashAmount > total && !inferTransferFromServer) {
+    showInlineNotice("Nominal cash split tidak boleh lebih besar dari total tagihan.", "error");
+    return null;
+  }
+
+  if (cashAmount <= 0 || transferAmount <= 0) {
+    showInlineNotice("Split bill wajib memiliki nominal cash dan transfer lebih dari 0.", "error");
+    return null;
+  }
+
+  if (inferTransferFromServer) {
+    return { cash_amount: cashAmount };
+  }
+
+  return { cash_amount: cashAmount, transfer_amount: transferAmount };
 }
 
 function getTransactionRoomTotal(transaction) {
@@ -6683,7 +6742,7 @@ function createPaymentControlElement(transaction) {
 
     const method = document.createElement("p");
     method.className = "billing-payment-method";
-    method.textContent = getPaymentMethodLabel(transaction?.payment_method);
+    method.textContent = getPaymentMethodDetailLabel(transaction);
 
     payment.append(label, method);
     return payment;
@@ -6704,6 +6763,7 @@ function createPaymentControlElement(transaction) {
   [
     ["cash", "Cash"],
     ["transfer", "Transfer"],
+    ["split", "Split Bill"],
   ].forEach(([value, text]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -8023,10 +8083,15 @@ function createReceiptPrintElement(transaction) {
 
   const billingSection = createReceiptSection("Ringkasan Tagihan", billingRows);
 
-  const paymentSection = createReceiptSection("Status Pembayaran", [
+  const paymentRows = [
     ["Status", getPaymentStatusLabel(receiptData.payment.status)],
     ["Metode Pembayaran", formatPaymentMethodLabel(receiptData.payment.method)],
-  ]);
+  ];
+  if (String(receiptData.payment.method || "").toLowerCase() === "split") {
+    paymentRows.push(["Cash", formatCurrency(getTransactionCashAmount(transaction))]);
+    paymentRows.push(["Transfer", formatCurrency(getTransactionTransferAmount(transaction))]);
+  }
+  const paymentSection = createReceiptSection("Status Pembayaran", paymentRows);
 
   const footer = document.createElement("footer");
   footer.className = "receipt-print-footer";
@@ -15526,7 +15591,7 @@ function createTransactionRowElement(transaction) {
     ["F&B", formatCurrency(getTransactionFnbTotal(transaction))],
     ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction)), getTransactionFnbTotal(transaction) > 0 ? "transaction-has-fnb" : ""],
     ["Status", formatPaymentStatusLabel(transaction?.payment_status), statusClass],
-    ["Metode Bayar", formatPaymentMethodLabel(transaction?.payment_method)],
+    ["Metode Bayar", getPaymentMethodDetailLabel(transaction)],
     ["Aksi", "", "transaction-actions-cell"],
   ].forEach(([labelText, valueText, modifierClass]) => {
     const item = document.createElement("div");
@@ -15662,6 +15727,7 @@ function createTransactionActionsElement(transaction) {
   [
     ["cash", "Cash"],
     ["transfer", "Transfer"],
+    ["split", "Split Bill"],
   ].forEach(([value, text]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -25969,6 +26035,13 @@ function requestMarkTransactionPaid(transactionId, paymentMethod, promoCode = ""
     return;
   }
 
+  let paymentPayload = {};
+  const splitTransferInferredByServer = paymentMethod === "split" && Boolean(promoCode);
+  if (paymentMethod === "split") {
+    paymentPayload = buildSplitPaymentPayload(transaction, { inferTransferFromServer: splitTransferInferredByServer });
+    if (!paymentPayload) return;
+  }
+
   openActionConfirmation({
     tone: "success",
     title: "Konfirmasi Pembayaran",
@@ -25976,13 +26049,19 @@ function requestMarkTransactionPaid(transactionId, paymentMethod, promoCode = ""
     details: [
       ["ID Transaksi", transaction.transaction_id || transactionId],
       ["Room", transaction.room_name || transaction.room_id || "-"],
-      ["Metode", paymentMethod === "transfer" ? "Transfer / QRIS" : "Cash"],
+      ["Metode", formatPaymentMethodLabel(paymentMethod)],
+      ...(paymentMethod === "split"
+        ? [
+            ["Cash", formatCurrency(paymentPayload.cash_amount)],
+            ["Transfer", splitTransferInferredByServer ? "Dihitung setelah promo/voucher" : formatCurrency(paymentPayload.transfer_amount)],
+          ]
+        : []),
       ["Promo", promoCode || "-"],
       ["Total", formatCurrency(getTransactionFinalTotal(transaction))],
     ],
     confirmLabel: "Ya, Tandai Lunas",
     cancelLabel: "Periksa Lagi",
-    onConfirm: () => markTransactionPaid(transactionId, paymentMethod, promoCode, options),
+    onConfirm: () => markTransactionPaid(transactionId, paymentMethod, promoCode, { ...options, paymentPayload }),
   });
 }
 
@@ -26005,6 +26084,7 @@ async function markTransactionPaid(transactionId, paymentMethod, promoCode = "",
       transaction_id: transactionId,
       payment_method: paymentMethod,
       promo_code: promoCode,
+      ...(options.paymentPayload || {}),
       changed_by: getLoggedInOperatorName(),
     });
 
@@ -26059,6 +26139,7 @@ function openChangePaymentMethodModal(transactionId) {
       options: [
         ["cash", "Cash (Tunai)"],
         ["transfer", "Transfer / QRIS"],
+        ["split", "Split Bill"],
       ],
       value: currentMethod,
     },
@@ -26072,12 +26153,20 @@ async function changeTransactionPaymentMethod(transactionId, newPaymentMethod) {
   if (!transactionId) return;
 
   const normalizedMethod = String(newPaymentMethod || "cash").toLowerCase();
+  const transaction = getTransactionById(transactionId)
+    || todayTransactions.find((t) => t.transaction_id === transactionId)
+    || (lastTransaction?.transaction_id === transactionId ? lastTransaction : null);
+  const paymentPayload = normalizedMethod === "split"
+    ? buildSplitPaymentPayload(transaction)
+    : {};
+  if (normalizedMethod === "split" && !paymentPayload) return;
 
   try {
     const data = await postApiAction({
       action: "updateTransactionDetails",
       transaction_id: transactionId,
       payment_method: normalizedMethod,
+      ...paymentPayload,
       changed_by: getLoggedInOperatorName(),
       reason: `Ubah metode pembayaran menjadi ${formatPaymentMethodLabel(normalizedMethod)}`,
     });

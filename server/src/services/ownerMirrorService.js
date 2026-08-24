@@ -10,6 +10,20 @@ function money(value) {
   return Number(value || 0);
 }
 
+function getPaymentBreakdown(row) {
+  const paymentStatus = String(row?.payment_status || '').toLowerCase();
+  const paymentMethod = String(row?.payment_method || '').toLowerCase();
+  const grandTotal = money(row?.grand_total || 0);
+  const cashAmount = money(row?.cash_amount || 0);
+  const transferAmount = money(row?.transfer_amount || 0);
+
+  if (paymentStatus !== 'paid') return { cash_amount: 0, transfer_amount: 0 };
+  if (paymentMethod === 'split') return { cash_amount: cashAmount, transfer_amount: transferAmount };
+  if (paymentMethod === 'cash') return { cash_amount: cashAmount > 0 ? cashAmount : grandTotal, transfer_amount: 0 };
+  if (paymentMethod === 'transfer' || paymentMethod === 'qris') return { cash_amount: 0, transfer_amount: transferAmount > 0 ? transferAmount : grandTotal };
+  return { cash_amount: 0, transfer_amount: 0 };
+}
+
 async function getOpenFnbOrders() {
   const ordersRes = await db.query(`
     SELECT *
@@ -236,7 +250,9 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     };
   });
 
-  const transactions = transactionsRes.rows.map(transaction => ({
+  const transactions = transactionsRes.rows.map(transaction => {
+    const paymentBreakdown = getPaymentBreakdown(transaction);
+    return {
     transaction_id: transaction.transaction_id,
     room_id: transaction.room_id,
     room_name: transaction.room_name,
@@ -252,6 +268,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     fnb_order_ids: transaction.fnb_order_ids || '',
     payment_method: transaction.payment_method || '',
     payment_status: transaction.payment_status || '',
+    cash_amount: paymentBreakdown.cash_amount,
+    transfer_amount: paymentBreakdown.transfer_amount,
     cashier_name: transaction.cashier_name || '',
     booking_mode: transaction.booking_mode || '',
     package_id: transaction.package_id || '',
@@ -279,7 +297,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
       : [],
     operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
     created_at: iso(transaction.created_at)
-  }));
+  };
+  });
 
   const fnbSoldSummary = await buildFnbSoldSummary(transactionsRes.rows);
 
@@ -294,8 +313,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     if (transaction.payment_status === 'paid') {
       acc.paid_transactions += 1;
       acc.paid_revenue += grandTotal;
-      if (transaction.payment_method === 'cash') acc.cash_revenue += grandTotal;
-      else acc.transfer_revenue += grandTotal;
+      if (transaction.cash_amount > 0) acc.cash_revenue += money(transaction.cash_amount);
+      if (transaction.transfer_amount > 0) acc.transfer_revenue += money(transaction.transfer_amount);
     } else {
       acc.unpaid_transactions += 1;
       acc.unpaid_revenue += grandTotal;

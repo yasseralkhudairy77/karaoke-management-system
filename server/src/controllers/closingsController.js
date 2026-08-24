@@ -2,6 +2,25 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
 
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function getPaymentBreakdown(row) {
+  const paymentStatus = String(row?.payment_status || '').toLowerCase();
+  const paymentMethod = String(row?.payment_method || '').toLowerCase();
+  const grandTotal = toNumber(row?.grand_total || 0);
+  const cashAmount = toNumber(row?.cash_amount || 0);
+  const transferAmount = toNumber(row?.transfer_amount || 0);
+
+  if (paymentStatus !== 'paid') return { cash_amount: 0, transfer_amount: 0 };
+  if (paymentMethod === 'split') return { cash_amount: cashAmount, transfer_amount: transferAmount };
+  if (paymentMethod === 'cash') return { cash_amount: cashAmount > 0 ? cashAmount : grandTotal, transfer_amount: 0 };
+  if (paymentMethod === 'transfer' || paymentMethod === 'qris') return { cash_amount: 0, transfer_amount: transferAmount > 0 ? transferAmount : grandTotal };
+  return { cash_amount: 0, transfer_amount: 0 };
+}
+
 async function getTodayCashierClosings(req, res) {
   try {
     const { period, start_date, end_date } = req.query;
@@ -49,6 +68,8 @@ async function saveCashierClosing(req, res, payload) {
       ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
       ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
       ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
+      ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
     `);
     const { cash_actual = 0, note = '', cashier_name = 'Kasir' } = payload;
     const todayOpDate = getOperationalDate();
@@ -76,12 +97,14 @@ async function saveCashierClosing(req, res, payload) {
         totalRevenue += gTotal;
         paidTrx++;
         paidRevenue += gTotal;
-        if (t.payment_method === 'cash') {
+        const breakdown = getPaymentBreakdown(t);
+        if (breakdown.cash_amount > 0) {
           cashTrx++;
-          cashExpected += gTotal;
-        } else {
+          cashExpected += breakdown.cash_amount;
+        }
+        if (breakdown.transfer_amount > 0) {
           transferTrx++;
-          transferRevenue += gTotal;
+          transferRevenue += breakdown.transfer_amount;
         }
       } else if (t.payment_status === 'unpaid') {
         totalRevenue += gTotal;
@@ -108,9 +131,29 @@ async function saveCashierClosing(req, res, payload) {
         INSERT INTO cashier_closing_transactions (
           closing_id, transaction_id, room_id, room_name, duration_minutes,
           room_total, fnb_total, lc_total, grand_total, payment_method, payment_status, created_at,
-          promo_discount, manual_discount, manual_discount_room, manual_discount_fnb
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-      `, [closingId, t.transaction_id, t.room_id, t.room_name, t.duration_minutes, t.room_total, t.fnb_total, t.lc_total, t.grand_total, t.payment_method, t.payment_status, t.created_at, t.promo_discount || 0, t.manual_discount || 0, t.manual_discount_room || 0, t.manual_discount_fnb || 0]);
+          promo_discount, manual_discount, manual_discount_room, manual_discount_fnb,
+          cash_amount, transfer_amount
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      `, [
+        closingId,
+        t.transaction_id,
+        t.room_id,
+        t.room_name,
+        t.duration_minutes,
+        t.room_total,
+        t.fnb_total,
+        t.lc_total,
+        t.grand_total,
+        t.payment_method,
+        t.payment_status,
+        t.created_at,
+        t.promo_discount || 0,
+        t.manual_discount || 0,
+        t.manual_discount_room || 0,
+        t.manual_discount_fnb || 0,
+        getPaymentBreakdown(t).cash_amount,
+        getPaymentBreakdown(t).transfer_amount
+      ]);
     }
 
     await client.query(`

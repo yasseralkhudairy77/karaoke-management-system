@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     lc_total NUMERIC(12,2) NOT NULL DEFAULT 0,
     grand_total NUMERIC(12,2) NOT NULL DEFAULT 0,
     fnb_order_ids TEXT,
-    payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'qris', 'transfer', '')),
+    payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', '')),
     payment_status VARCHAR(30) DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid', 'paid', 'cancelled')),
     cashier_name VARCHAR(100) NOT NULL,
     operational_date DATE NOT NULL,
@@ -259,6 +259,11 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_by VARCHAR(100
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_at TIMESTAMPTZ;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_method_check;
+ALTER TABLE transactions ADD CONSTRAINT transactions_payment_method_check
+CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', ''));
 
 CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     correction_id VARCHAR(80) PRIMARY KEY,
@@ -542,6 +547,8 @@ ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS promo_discount
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS cashier_closing_fnb_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

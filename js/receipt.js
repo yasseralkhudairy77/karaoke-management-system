@@ -220,6 +220,10 @@ export function formatReceipt58mm(receiptData, options = {}) {
 
   lines.push(centerReceiptText("PEMBAYARAN", width));
   pushReceiptField(lines, "Metode", formatPaymentMethod(payment.method), width);
+  if (getText(payment.method).toLowerCase() === "split") {
+    pushReceiptField(lines, "Cash", formatReceiptCurrency(payment.cashAmount), width);
+    pushReceiptField(lines, "Transfer", formatReceiptCurrency(payment.transferAmount), width);
+  }
   lines.push(centerReceiptText(formatPaymentStatusBlock(payment.status), width));
   lines.push(separator);
 
@@ -325,6 +329,10 @@ function formatPaymentMethod(method) {
 
   if (normalizedMethod === "qris") {
     return "QRIS";
+  }
+
+  if (normalizedMethod === "split") {
+    return "SPLIT";
   }
 
   return normalizedMethod ? normalizedMethod.toUpperCase() : "-";
@@ -582,6 +590,8 @@ function normalizePayment(transaction) {
   return {
     status: getText(transaction.payment_status),
     method: getText(transaction.payment_method),
+    cashAmount: getNumber(transaction.cash_amount),
+    transferAmount: getNumber(transaction.transfer_amount),
   };
 }
 

@@ -9,12 +9,97 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(numberValue) ? numberValue : fallback;
 }
 
+function money(value) {
+  return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
+}
+
+function getPaymentBreakdown(row) {
+  const paymentStatus = String(row?.payment_status || '').toLowerCase();
+  const paymentMethod = String(row?.payment_method || '').toLowerCase();
+  const grandTotal = money(row?.grand_total || 0);
+  const storedCash = money(row?.cash_amount || 0);
+  const storedTransfer = money(row?.transfer_amount || 0);
+
+  if (paymentStatus !== 'paid') {
+    return { cash_amount: 0, transfer_amount: 0 };
+  }
+
+  if (paymentMethod === 'split') {
+    return {
+      cash_amount: storedCash,
+      transfer_amount: storedTransfer
+    };
+  }
+
+  if (paymentMethod === 'cash') {
+    return {
+      cash_amount: storedCash > 0 ? storedCash : grandTotal,
+      transfer_amount: 0
+    };
+  }
+
+  if (paymentMethod === 'transfer' || paymentMethod === 'qris') {
+    return {
+      cash_amount: 0,
+      transfer_amount: storedTransfer > 0 ? storedTransfer : grandTotal
+    };
+  }
+
+  return { cash_amount: 0, transfer_amount: 0 };
+}
+
+function normalizePaymentMethod(value) {
+  const method = String(value || 'cash').toLowerCase().trim();
+  if (method === 'qris') return 'transfer';
+  if (['cash', 'transfer', 'split'].includes(method)) return method;
+  throw new Error('Metode pembayaran wajib cash, transfer, atau split.');
+}
+
+function normalizePaymentBreakdown(paymentMethod, grandTotal, payload = {}) {
+  const total = money(grandTotal);
+  const method = normalizePaymentMethod(paymentMethod);
+
+  if (method === 'cash') {
+    return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
+  }
+
+  if (method === 'transfer') {
+    return { payment_method: 'transfer', cash_amount: 0, transfer_amount: total };
+  }
+
+  const rawCash = payload.cash_amount ?? payload.cashAmount ?? payload.cash_payment ?? payload.cashPayment ?? 0;
+  const rawTransfer = payload.transfer_amount ?? payload.transferAmount ?? payload.transfer_payment ?? payload.transferPayment ?? 0;
+  let cashAmount = money(rawCash);
+  let transferAmount = money(rawTransfer);
+
+  if (cashAmount > 0 && transferAmount <= 0) {
+    transferAmount = money(total - cashAmount);
+  } else if (transferAmount > 0 && cashAmount <= 0) {
+    cashAmount = money(total - transferAmount);
+  }
+
+  if (cashAmount <= 0 || transferAmount <= 0) {
+    throw new Error('Split bill wajib memiliki nominal cash dan transfer lebih dari 0.');
+  }
+
+  if (money(cashAmount + transferAmount) !== total) {
+    throw new Error(`Total split bill harus sama dengan total tagihan (${total}).`);
+  }
+
+  return {
+    payment_method: 'split',
+    cash_amount: cashAmount,
+    transfer_amount: transferAmount
+  };
+}
+
 function serializeTransaction(row) {
   if (!row) return null;
   let roomJourney = row.room_journey_json || [];
   if (typeof roomJourney === 'string') {
     try { roomJourney = JSON.parse(roomJourney); } catch (_) { roomJourney = []; }
   }
+  const paymentBreakdown = getPaymentBreakdown(row);
   return {
     transaction_id: row.transaction_id,
     room_id: row.room_id,
@@ -30,6 +115,8 @@ function serializeTransaction(row) {
     fnb_order_ids: row.fnb_order_ids || '',
     payment_method: row.payment_method,
     payment_status: row.payment_status,
+    cash_amount: paymentBreakdown.cash_amount,
+    transfer_amount: paymentBreakdown.transfer_amount,
     cashier_name: row.cashier_name,
     operational_date: row.operational_date ? row.operational_date.toISOString().split('T')[0] : '',
     booking_mode: row.booking_mode || '',
@@ -126,6 +213,11 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_at TIMESTAMPTZ;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_method_check;
+    ALTER TABLE transactions ADD CONSTRAINT transactions_payment_method_check
+    CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', ''));
 
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
     ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
@@ -166,6 +258,8 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
   `);
 }
 
@@ -188,11 +282,13 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
           grand_total = $7,
           payment_method = $8,
           payment_status = $9,
-          promo_discount = $10,
-          manual_discount = $11,
-          manual_discount_room = $12,
-          manual_discount_fnb = $13
-      WHERE closing_id = $14 AND transaction_id = $15
+          cash_amount = $10,
+          transfer_amount = $11,
+          promo_discount = $12,
+          manual_discount = $13,
+          manual_discount_room = $14,
+          manual_discount_fnb = $15
+      WHERE closing_id = $16 AND transaction_id = $17
     `, [
       transaction.room_id,
       transaction.room_name,
@@ -203,6 +299,8 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
       transaction.grand_total,
       transaction.payment_method,
       transaction.payment_status,
+      transaction.cash_amount || 0,
+      transaction.transfer_amount || 0,
       transaction.promo_discount || 0,
       transaction.manual_discount || 0,
       transaction.manual_discount_room || 0,
@@ -212,19 +310,35 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
     ]);
 
     const summary = await client.query(`
+      WITH payment_rows AS (
+        SELECT *,
+          CASE
+            WHEN payment_status <> 'paid' THEN 0
+            WHEN payment_method = 'split' THEN COALESCE(cash_amount, 0)
+            WHEN payment_method = 'cash' THEN grand_total
+            ELSE 0
+          END AS cash_component,
+          CASE
+            WHEN payment_status <> 'paid' THEN 0
+            WHEN payment_method = 'split' THEN COALESCE(transfer_amount, 0)
+            WHEN payment_method <> 'cash' THEN grand_total
+            ELSE 0
+          END AS transfer_component
+        FROM cashier_closing_transactions
+        WHERE closing_id = $1
+      )
       SELECT
         COUNT(*)::int AS total_transactions,
         COUNT(*) FILTER (WHERE payment_status = 'paid')::int AS paid_transactions,
         COUNT(*) FILTER (WHERE payment_status = 'unpaid')::int AS unpaid_transactions,
-        COUNT(*) FILTER (WHERE payment_status = 'paid' AND payment_method = 'cash')::int AS cash_transactions,
-        COUNT(*) FILTER (WHERE payment_status = 'paid' AND payment_method <> 'cash')::int AS transfer_transactions,
+        COUNT(*) FILTER (WHERE cash_component > 0)::int AS cash_transactions,
+        COUNT(*) FILTER (WHERE transfer_component > 0)::int AS transfer_transactions,
         COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid'), 0) AS paid_revenue,
-        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid' AND payment_method = 'cash'), 0) AS cash_expected,
-        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid' AND payment_method <> 'cash'), 0) AS transfer_revenue,
+        COALESCE(SUM(cash_component), 0) AS cash_expected,
+        COALESCE(SUM(transfer_component), 0) AS transfer_revenue,
         COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'unpaid'), 0) AS unpaid_revenue,
         COALESCE(SUM(grand_total), 0) AS total_revenue
-      FROM cashier_closing_transactions
-      WHERE closing_id = $1
+      FROM payment_rows
     `, [closingId]);
     const s = summary.rows[0] || {};
 
@@ -289,12 +403,14 @@ async function getTodayTransactions(req, res) {
         totalRevenuePaid += transactionTotal;
         totalRevenueAll += transactionTotal;
 
-        if (t.payment_method === 'cash') {
+        const breakdown = getPaymentBreakdown(t);
+        if (breakdown.cash_amount > 0) {
           cashTransactions += 1;
-          cashRevenue += transactionTotal;
-        } else {
+          cashRevenue += breakdown.cash_amount;
+        }
+        if (breakdown.transfer_amount > 0) {
           transferTransactions += 1;
-          transferRevenue += transactionTotal;
+          transferRevenue += breakdown.transfer_amount;
         }
       } else if (t.payment_status === 'unpaid') {
         unpaidTransactions += 1;
@@ -391,6 +507,7 @@ async function markTransactionPaid(req, res, payload) {
     }
 
     const grandTotal = roomTotal + fnbTotal + lcTotal;
+    const paymentBreakdown = normalizePaymentBreakdown(payment_method, grandTotal, payload);
 
     const updatedRes = await client.query(`
       UPDATE transactions
@@ -399,10 +516,21 @@ async function markTransactionPaid(req, res, payload) {
           room_total = $2,
           promo_code = $3,
           promo_discount = $4,
-          grand_total = $5
-      WHERE transaction_id = $6
+          grand_total = $5,
+          cash_amount = $6,
+          transfer_amount = $7
+      WHERE transaction_id = $8
       RETURNING *
-    `, [payment_method, roomTotal, appliedPromoCode, promoDiscount, grandTotal, transaction_id]);
+    `, [
+      paymentBreakdown.payment_method,
+      roomTotal,
+      appliedPromoCode,
+      promoDiscount,
+      grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      transaction_id
+    ]);
 
     const updatedTransaction = updatedRes.rows[0];
     if (appliedPromoCode || promoDiscount > 0) {
@@ -416,7 +544,7 @@ async function markTransactionPaid(req, res, payload) {
         amount_before: toNumber(transaction.grand_total),
         amount_after: grandTotal,
         old_value: transaction, new_value: updatedTransaction,
-        metadata: { promo_code: appliedPromoCode || prCode, promo_discount: promoDiscount },
+        metadata: { promo_code: appliedPromoCode || prCode, promo_discount: promoDiscount, payment_breakdown: paymentBreakdown },
         idempotency_key: `audit:promo:${transaction_id}:${appliedPromoCode || prCode}`
       });
     }
@@ -503,10 +631,6 @@ async function updateTransactionDetails(req, res, payload) {
     const changedFields = [];
     const params = [];
     const allowed = {
-      payment_method: value => {
-        const val = String(value || '').toLowerCase().trim();
-        return ['transfer', 'qris'].includes(val) ? 'transfer' : 'cash';
-      },
       payment_status: value => String(value || '').toLowerCase(),
       room_total: value => Number(value || 0),
       fnb_total: value => Number(value || 0),
@@ -521,6 +645,27 @@ async function updateTransactionDetails(req, res, payload) {
         fields.push(`${field} = $${params.length}`);
         changedFields.push(field);
       }
+    }
+
+    const nextGrandTotal = payload.grand_total !== undefined
+      ? Number(payload.grand_total || 0)
+      : Number(oldTransaction.grand_total || 0);
+    const nextPaymentStatus = payload.payment_status !== undefined
+      ? String(payload.payment_status || '').toLowerCase()
+      : String(oldTransaction.payment_status || '').toLowerCase();
+    if (payload.payment_method !== undefined || payload.cash_amount !== undefined || payload.transfer_amount !== undefined) {
+      const breakdown = nextPaymentStatus === 'paid'
+        ? normalizePaymentBreakdown(payload.payment_method || oldTransaction.payment_method || 'cash', nextGrandTotal, payload)
+        : { payment_method: normalizePaymentMethod(payload.payment_method || oldTransaction.payment_method || 'cash'), cash_amount: 0, transfer_amount: 0 };
+      params.push(breakdown.payment_method);
+      fields.push(`payment_method = $${params.length}`);
+      if (!changedFields.includes('payment_method')) changedFields.push('payment_method');
+      params.push(breakdown.cash_amount);
+      fields.push(`cash_amount = $${params.length}`);
+      if (!changedFields.includes('cash_amount')) changedFields.push('cash_amount');
+      params.push(breakdown.transfer_amount);
+      fields.push(`transfer_amount = $${params.length}`);
+      if (!changedFields.includes('transfer_amount')) changedFields.push('transfer_amount');
     }
 
     if (fields.length === 0) throw new Error('Tidak ada field transaksi yang diperbarui.');
