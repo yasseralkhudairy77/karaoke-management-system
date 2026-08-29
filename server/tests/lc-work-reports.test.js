@@ -93,6 +93,7 @@ async function testReportAggregation() {
   assert.strictEqual(karin.lc_id, 'LC-024');
   assert.strictEqual(karin.rate_per_room, 175000);
   assert.strictEqual(karin.total_sessions, 2);
+  assert.strictEqual(karin.total_duration_minutes, 180);
   assert.strictEqual(karin.room_earning_total, 525000);
   assert.strictEqual(karin.sales_bonus_total, 20000);
   assert.strictEqual(karin.gross_earning_total, 545000);

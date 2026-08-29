@@ -9233,7 +9233,7 @@ textarea.action-confirmation-input {
 
 .lc-report-print-summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }

@@ -21556,6 +21556,7 @@ function getLcReportPrintSummary(reports = getSortedLcWorkReports()) {
   return reports.reduce((summary, report) => {
     summary.total_lcs += 1;
     summary.total_sessions += Number(report.total_sessions || 0);
+    summary.total_duration_minutes += getLcReportDurationMinutes(report);
     summary.room_earning_total += Number(report.room_earning_total ?? report.total_earnings) || 0;
     summary.sales_bonus_total += Number(report.sales_bonus_total || 0);
     summary.gross_earning_total += Number(report.gross_earning_total ?? report.total_earnings) || 0;
@@ -21563,10 +21564,32 @@ function getLcReportPrintSummary(reports = getSortedLcWorkReports()) {
   }, {
     total_lcs: 0,
     total_sessions: 0,
+    total_duration_minutes: 0,
     room_earning_total: 0,
     sales_bonus_total: 0,
     gross_earning_total: 0,
   });
+}
+
+function getLcReportDurationMinutes(report) {
+  const directValue = Number(report?.total_duration_minutes);
+  if (Number.isFinite(directValue) && directValue > 0) {
+    return Math.round(directValue);
+  }
+
+  const logs = Array.isArray(report?.logs) ? report.logs : [];
+  return logs.reduce((total, log) => {
+    const status = String(log?.status || "").trim().toLowerCase();
+    if (!["closed", "done", "paid"].includes(status)) {
+      return total;
+    }
+    return total + (Math.round(Number(log?.duration_minutes) || 0));
+  }, 0);
+}
+
+function formatLcReportDuration(minutes) {
+  const totalMinutes = Math.max(0, Math.round(Number(minutes) || 0));
+  return totalMinutes > 0 ? formatDurationMinutes(totalMinutes) : "0 menit";
 }
 
 function createLcPanelElement() {
@@ -22034,6 +22057,7 @@ function createLcReportsSubTabElement() {
       <th>Nama Panggilan</th>
       <th>Tarif per Jam</th>
       <th style="text-align: center;">Total Sesi / Job</th>
+      <th>Total Jam Kerja</th>
       <th>Gaji Room</th>
       <th>Bonus Penjualan</th>
       <th>Total Pendapatan</th>
@@ -22061,6 +22085,7 @@ function createLcReportsSubTabElement() {
       <td>${escapeHtml(rep.lc_name)}</td>
       <td>${formatCurrency(rep.rate_per_room)}</td>
       <td style="text-align: center;">${rep.total_sessions}</td>
+      <td>${formatLcReportDuration(getLcReportDurationMinutes(rep))}</td>
       <td>${formatCurrency(rep.room_earning_total ?? rep.total_earnings)}</td>
       <td>${formatCurrency(rep.sales_bonus_total || 0)}</td>
       <td><strong>${formatCurrency(rep.gross_earning_total ?? rep.total_earnings)}</strong></td>
@@ -22190,6 +22215,7 @@ function createLcReportPrintPreviewElement() {
   summaryGrid.append(
     createLcReportPrintMetric("LC di Laporan", `${summary.total_lcs} LC`),
     createLcReportPrintMetric("Total Sesi", `${summary.total_sessions} sesi`),
+    createLcReportPrintMetric("Total Jam Kerja", formatLcReportDuration(summary.total_duration_minutes)),
     createLcReportPrintMetric("Gaji Room", formatCurrency(summary.room_earning_total)),
     createLcReportPrintMetric("Bonus Penjualan", formatCurrency(summary.sales_bonus_total)),
     createLcReportPrintMetric("Total Pendapatan", formatCurrency(summary.gross_earning_total))
@@ -22206,6 +22232,7 @@ function createLcReportPrintPreviewElement() {
           <th>ID LC</th>
           <th>Nama</th>
           <th>Total Sesi</th>
+          <th>Total Jam Kerja</th>
           <th>Gaji Room</th>
           <th>Bonus</th>
           <th>Total</th>
@@ -22218,6 +22245,7 @@ function createLcReportPrintPreviewElement() {
             <td>${escapeHtml(report.lc_id || "-")}</td>
             <td>${escapeHtml(report.lc_name || "-")}</td>
             <td>${Number(report.total_sessions || 0).toLocaleString("id-ID")} sesi</td>
+            <td>${formatLcReportDuration(getLcReportDurationMinutes(report))}</td>
             <td>${formatCurrency(report.room_earning_total ?? report.total_earnings)}</td>
             <td>${formatCurrency(report.sales_bonus_total || 0)}</td>
             <td><strong>${formatCurrency(report.gross_earning_total ?? report.total_earnings)}</strong></td>
@@ -22237,7 +22265,7 @@ function createLcReportPrintPreviewElement() {
     const logs = Array.isArray(report.logs) ? report.logs : [];
     const bonusLogs = Array.isArray(report.sales_bonus_logs) ? report.sales_bonus_logs : [];
     group.innerHTML = `
-      <h4>${escapeHtml(report.lc_id || "-")} - ${escapeHtml(report.lc_name || "-")}</h4>
+      <h4>${escapeHtml(report.lc_id || "-")} - ${escapeHtml(report.lc_name || "-")} | ${Number(report.total_sessions || 0).toLocaleString("id-ID")} sesi | ${formatLcReportDuration(getLcReportDurationMinutes(report))}</h4>
       <table>
         <thead>
           <tr>
@@ -23538,7 +23566,7 @@ function createLcDetailLogsOverlay() {
   infoText.style.margin = "0";
   infoText.style.fontSize = "14px";
   infoText.style.color = "var(--muted)";
-  infoText.textContent = `${selectedLcDetailForLogs.lc_id} · ${selectedLcDetailForLogs.total_sessions} sesi · Gaji Room ${formatCurrency(selectedLcDetailForLogs.room_earning_total ?? selectedLcDetailForLogs.total_earnings)} + Bonus ${formatCurrency(selectedLcDetailForLogs.sales_bonus_total || 0)} = Total ${formatCurrency(selectedLcDetailForLogs.gross_earning_total ?? selectedLcDetailForLogs.total_earnings)}`;
+  infoText.textContent = `${selectedLcDetailForLogs.lc_id} · ${selectedLcDetailForLogs.total_sessions} sesi · ${formatLcReportDuration(getLcReportDurationMinutes(selectedLcDetailForLogs))} kerja · Gaji Room ${formatCurrency(selectedLcDetailForLogs.room_earning_total ?? selectedLcDetailForLogs.total_earnings)} + Bonus ${formatCurrency(selectedLcDetailForLogs.sales_bonus_total || 0)} = Total ${formatCurrency(selectedLcDetailForLogs.gross_earning_total ?? selectedLcDetailForLogs.total_earnings)}`;
 
   const workTitle = document.createElement("h4");
   workTitle.style.margin = "4px 0 0";

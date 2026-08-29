@@ -12,6 +12,9 @@ assert(appSource.includes('normalized === "paid"'));
 assert(appSource.includes('textContent = "Download PDF"'));
 assert(appSource.includes('function createLcReportPrintPreviewElement()'));
 assert(appSource.includes('function printLcReport()'));
+assert(appSource.includes('function getLcReportDurationMinutes(report)'));
+assert(appSource.includes('function formatLcReportDuration(minutes)'));
+assert(appSource.includes('Total Jam Kerja'));
 assert(appSource.includes('Dokumen ini dibuat dari database PostgreSQL lokal'));
 
 assert(styleSource.includes('.lc-report-print'));

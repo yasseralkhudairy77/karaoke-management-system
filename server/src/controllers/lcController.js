@@ -233,6 +233,7 @@ async function getLcWorkReports(req, res) {
         lc_name: lc.lc_name || '',
         rate_per_room: toNumber(lc.rate_per_hour ?? lc.rate_per_room),
         total_sessions: 0,
+        total_duration_minutes: 0,
         room_earning_total: 0,
         sales_bonus_total: 0,
         gross_earning_total: 0,
@@ -251,6 +252,7 @@ async function getLcWorkReports(req, res) {
           lc_name: row.lc_name || `LC ${lcId}`,
           rate_per_room: toNumber(row.rate_per_hour),
           total_sessions: 0,
+          total_duration_minutes: 0,
           room_earning_total: 0,
           sales_bonus_total: 0,
           gross_earning_total: 0,
@@ -281,6 +283,7 @@ async function getLcWorkReports(req, res) {
       report.logs.push(log);
       if (['done', 'closed', 'paid'].includes(String(row.status || '').toLowerCase())) {
         report.total_sessions += 1;
+        report.total_duration_minutes += log.duration_minutes;
         report.room_earning_total += log.rate;
       }
     }
@@ -294,6 +297,7 @@ async function getLcWorkReports(req, res) {
           lc_name: row.lc_name || `LC ${lcId}`,
           rate_per_room: 0,
           total_sessions: 0,
+          total_duration_minutes: 0,
           room_earning_total: 0,
           sales_bonus_total: 0,
           gross_earning_total: 0,
