@@ -853,6 +853,7 @@ let isLoadingLcWorkReports = false;
 let lcWorkReportsError = "";
 let lcWorkReportsRequestSequence = 0;
 let lcWorkReportsAbortController = null;
+let lcReportPrintVisible = false;
 let activeLcSubTab = "master";
 let lcMasterPage = 1;
 let lcReportsPage = 1;
@@ -4237,6 +4238,30 @@ function hideOwnerReportPrintPreview() {
 }
 
 function printOwnerReport() {
+  if (typeof window === "undefined" || typeof window.print !== "function") {
+    showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
+    return;
+  }
+
+  window.print();
+}
+
+function showLcReportPrintPreview() {
+  if (lcWorkReports.length === 0) {
+    showInlineNotice("Belum ada data laporan LC untuk dicetak.", "error");
+    return;
+  }
+
+  lcReportPrintVisible = true;
+  renderDashboardGlobal();
+}
+
+function hideLcReportPrintPreview() {
+  lcReportPrintVisible = false;
+  renderDashboardGlobal();
+}
+
+function printLcReport() {
   if (typeof window === "undefined" || typeof window.print !== "function") {
     showInlineNotice("Fitur cetak tidak tersedia di browser ini.", "error");
     return;
@@ -21493,6 +21518,57 @@ function getSortedLcWorkReports() {
   return reports;
 }
 
+function getLcWorkStatusDisplay(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "active") {
+    return { text: "Aktif", className: "badge badge-primary" };
+  }
+  if (normalized === "closed" || normalized === "done") {
+    return { text: "Selesai", className: "badge badge-success" };
+  }
+  if (normalized === "paid") {
+    return { text: "Sudah Dibayar", className: "badge badge-success" };
+  }
+  if (normalized === "cancelled" || normalized === "canceled") {
+    return { text: "Batal", className: "badge badge-danger" };
+  }
+  return { text: status ? String(status) : "-", className: "badge badge-secondary" };
+}
+
+function getLcReportPeriodLabel() {
+  if (lcReportPeriod === "custom") {
+    return `${lcReportStartDate || "-"} s/d ${lcReportEndDate || "-"}`;
+  }
+
+  const labels = {
+    today: "Hari Ini",
+    yesterday: "Kemarin",
+    this_week: "Minggu Ini",
+    last_week: "Minggu Lalu",
+    this_month: "Bulan Ini",
+    last_month: "Bulan Lalu",
+  };
+
+  return labels[lcReportPeriod] || lcReportPeriod || "Hari Ini";
+}
+
+function getLcReportPrintSummary(reports = getSortedLcWorkReports()) {
+  return reports.reduce((summary, report) => {
+    summary.total_lcs += 1;
+    summary.total_sessions += Number(report.total_sessions || 0);
+    summary.room_earning_total += Number(report.room_earning_total ?? report.total_earnings) || 0;
+    summary.sales_bonus_total += Number(report.sales_bonus_total || 0);
+    summary.gross_earning_total += Number(report.gross_earning_total ?? report.total_earnings) || 0;
+    return summary;
+  }, {
+    total_lcs: 0,
+    total_sessions: 0,
+    room_earning_total: 0,
+    sales_bonus_total: 0,
+    gross_earning_total: 0,
+  });
+}
+
 function createLcPanelElement() {
   const panel = document.createElement("section");
   panel.className = "lc-panel erp-card";
@@ -21903,7 +21979,20 @@ function createLcReportsSubTabElement() {
     lcReportEndDate = endInput.value;
     await loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
   };
-  toolbar.appendChild(applyBtn);
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "erp-btn erp-btn-secondary";
+  printBtn.style.padding = "8px 16px";
+  printBtn.style.alignSelf = "flex-end";
+  printBtn.style.fontWeight = "bold";
+  printBtn.textContent = "Download PDF";
+  printBtn.disabled = isLoadingLcWorkReports || lcWorkReports.length === 0;
+  printBtn.onclick = () => {
+    showLcReportPrintPreview();
+  };
+
+  toolbar.append(applyBtn, printBtn);
   container.appendChild(toolbar);
 
   if (isLoadingLcWorkReports) {
@@ -22057,6 +22146,181 @@ function createLcFinanceMetric(label, value, accent = false) {
 
   item.append(text, amount);
   return item;
+}
+
+function createLcReportPrintMetric(label, value) {
+  const item = document.createElement("div");
+  item.className = "lc-report-print-metric";
+
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+
+  item.append(labelEl, valueEl);
+  return item;
+}
+
+function createLcReportPrintPreviewElement() {
+  const reports = getSortedLcWorkReports();
+  const summary = getLcReportPrintSummary(reports);
+  const print = document.createElement("section");
+  print.className = "lc-report-print";
+  print.setAttribute("aria-labelledby", "lc-report-print-title");
+
+  const header = document.createElement("header");
+  header.className = "lc-report-print-header";
+  header.innerHTML = `
+    <div>
+      <p class="lc-report-print-brand">HAPPY SONG KARAOKE</p>
+      <h2 id="lc-report-print-title">Laporan Kerja & Gaji LC</h2>
+      <p class="lc-report-print-meta">Periode: ${escapeHtml(getLcReportPeriodLabel())}</p>
+    </div>
+    <div class="lc-report-print-stamp">
+      <span>Dicetak</span>
+      <strong>${escapeHtml(formatDateTimeLabel(new Date()))} WIB</strong>
+      <span>Operator</span>
+      <strong>${escapeHtml(getLoggedInOperatorName() || "-")} (${escapeHtml(getOperatorRoleLabel(getCurrentOperatorRole()))})</strong>
+    </div>
+  `;
+
+  const summaryGrid = document.createElement("div");
+  summaryGrid.className = "lc-report-print-summary";
+  summaryGrid.append(
+    createLcReportPrintMetric("LC di Laporan", `${summary.total_lcs} LC`),
+    createLcReportPrintMetric("Total Sesi", `${summary.total_sessions} sesi`),
+    createLcReportPrintMetric("Gaji Room", formatCurrency(summary.room_earning_total)),
+    createLcReportPrintMetric("Bonus Penjualan", formatCurrency(summary.sales_bonus_total)),
+    createLcReportPrintMetric("Total Pendapatan", formatCurrency(summary.gross_earning_total))
+  );
+
+  const recapSection = document.createElement("section");
+  recapSection.className = "lc-report-print-section";
+  recapSection.innerHTML = `
+    <h3>Rekap Per LC</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>No</th>
+          <th>ID LC</th>
+          <th>Nama</th>
+          <th>Total Sesi</th>
+          <th>Gaji Room</th>
+          <th>Bonus</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${reports.map((report, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(report.lc_id || "-")}</td>
+            <td>${escapeHtml(report.lc_name || "-")}</td>
+            <td>${Number(report.total_sessions || 0).toLocaleString("id-ID")} sesi</td>
+            <td>${formatCurrency(report.room_earning_total ?? report.total_earnings)}</td>
+            <td>${formatCurrency(report.sales_bonus_total || 0)}</td>
+            <td><strong>${formatCurrency(report.gross_earning_total ?? report.total_earnings)}</strong></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
+  const detailSection = document.createElement("section");
+  detailSection.className = "lc-report-print-section";
+  detailSection.innerHTML = `<h3>Rincian Sesi & Bonus</h3>`;
+
+  reports.forEach((report) => {
+    const group = document.createElement("section");
+    group.className = "lc-report-print-detail";
+    const logs = Array.isArray(report.logs) ? report.logs : [];
+    const bonusLogs = Array.isArray(report.sales_bonus_logs) ? report.sales_bonus_logs : [];
+    group.innerHTML = `
+      <h4>${escapeHtml(report.lc_id || "-")} - ${escapeHtml(report.lc_name || "-")}</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>ID Log</th>
+            <th>Sesi / Room</th>
+            <th>Durasi</th>
+            <th>Tarif/Jam</th>
+            <th>Gaji</th>
+            <th>Status</th>
+            <th>Waktu Mulai</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${logs.length > 0 ? logs.map((log) => {
+            const statusDisplay = getLcWorkStatusDisplay(log.status);
+            return `
+              <tr>
+                <td>${escapeHtml(log.log_id || "-")}</td>
+                <td>${escapeHtml(log.session_id || log.room_name || log.room_id || "-")}</td>
+                <td>${Number(log.duration_minutes || 0).toLocaleString("id-ID")} menit</td>
+                <td>${formatCurrency(log.rate_per_hour || log.rate_per_room || 0)}</td>
+                <td>${formatCurrency(log.rate || 0)}</td>
+                <td>${escapeHtml(statusDisplay.text)}</td>
+                <td>${escapeHtml(formatDateTimeLabel(log.created_at))}</td>
+              </tr>
+            `;
+          }).join("") : `<tr><td colspan="7" class="lc-report-print-empty">Tidak ada sesi pada periode ini.</td></tr>`}
+        </tbody>
+      </table>
+      <table class="lc-report-print-bonus">
+        <thead>
+          <tr>
+            <th>Waktu</th>
+            <th>Menu</th>
+            <th>Order / Transaksi</th>
+            <th>Qty</th>
+            <th>Bonus/Item</th>
+            <th>Total Bonus</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bonusLogs.length > 0 ? bonusLogs.map((bonusLog) => `
+            <tr>
+              <td>${escapeHtml(formatDateTimeLabel(bonusLog.created_at))}</td>
+              <td>${escapeHtml(bonusLog.menu_name || bonusLog.menu_id || "-")}</td>
+              <td>${escapeHtml(bonusLog.order_id || bonusLog.transaction_id || "-")}</td>
+              <td>${Number(bonusLog.quantity || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
+              <td>${formatCurrency(bonusLog.bonus_per_item || 0)}</td>
+              <td>${formatCurrency(bonusLog.bonus_total || 0)}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="6" class="lc-report-print-empty">Tidak ada bonus penjualan pada periode ini.</td></tr>`}
+        </tbody>
+      </table>
+    `;
+    detailSection.appendChild(group);
+  });
+
+  const footer = document.createElement("p");
+  footer.className = "lc-report-print-footer";
+  footer.textContent = "Dokumen ini dibuat dari database PostgreSQL lokal berdasarkan periode operasional yang dipilih.";
+
+  const actions = document.createElement("div");
+  actions.className = "lc-report-print-actions";
+
+  const printButton = document.createElement("button");
+  printButton.type = "button";
+  printButton.className = "closing-print-button";
+  printButton.textContent = "Cetak / Save PDF";
+  printButton.onclick = () => {
+    printLcReport();
+  };
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "closing-print-button secondary";
+  closeButton.textContent = "Tutup";
+  closeButton.onclick = () => {
+    hideLcReportPrintPreview();
+  };
+
+  actions.append(printButton, closeButton);
+  print.append(header, summaryGrid, recapSection, detailSection, footer, actions);
+  return print;
 }
 
 function createLcFinanceSubTabElement() {
@@ -23312,14 +23576,13 @@ function createLcDetailLogsOverlay() {
   } else {
     logs.forEach(log => {
       const tr = document.createElement("tr");
-      const statusText = log.status === "active" ? "Aktif" : (log.status === "done" ? "Selesai" : "Batal");
-      const statusClass = log.status === "active" ? "badge badge-primary" : (log.status === "done" ? "badge badge-success" : "badge badge-danger");
+      const statusDisplay = getLcWorkStatusDisplay(log.status);
 
       tr.innerHTML = `
         <td><small>${log.log_id}</small></td>
         <td><small>${log.session_id}</small></td>
         <td>${formatCurrency(log.rate)}</td>
-        <td><span class="${statusClass}">${statusText}</span></td>
+        <td><span class="${statusDisplay.className}">${statusDisplay.text}</span></td>
         <td><small>${formatDateTimeLabel(log.created_at)}</small></td>
       `;
       tbody.appendChild(tr);
@@ -23427,6 +23690,10 @@ function renderDashboardGlobal() {
 
   if (ownerReportPrintVisible) {
     fragment.appendChild(createOwnerReportPrintPreviewElement());
+  }
+
+  if (lcReportPrintVisible) {
+    fragment.appendChild(createLcReportPrintPreviewElement());
   }
 
   if (cashierClosingConfirmationVisible) {

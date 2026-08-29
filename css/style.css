@@ -9162,10 +9162,157 @@ textarea.action-confirmation-input {
   }
 }
 
+.lc-report-print {
+  position: fixed;
+  inset: 18px;
+  z-index: 1200;
+  overflow: auto;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 28px;
+  font-family: Arial, sans-serif;
+}
+
+.lc-report-print-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 2px solid #111111;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+}
+
+.lc-report-print-brand {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #7a5b12;
+}
+
+.lc-report-print h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 24px;
+}
+
+.lc-report-print h3 {
+  margin: 0 0 10px;
+  color: #111111;
+  font-size: 16px;
+}
+
+.lc-report-print h4 {
+  margin: 18px 0 8px;
+  color: #111111;
+  font-size: 14px;
+}
+
+.lc-report-print-meta,
+.lc-report-print-footer {
+  margin: 6px 0 0;
+  color: #555555;
+  font-size: 12px;
+}
+
+.lc-report-print-stamp {
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  text-align: right;
+  font-size: 12px;
+  color: #555555;
+}
+
+.lc-report-print-stamp strong {
+  color: #111111;
+}
+
+.lc-report-print-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.lc-report-print-metric {
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 10px;
+  background: #f7f8fa;
+}
+
+.lc-report-print-metric span {
+  display: block;
+  color: #555555;
+  font-size: 11px;
+}
+
+.lc-report-print-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: #111111;
+  font-size: 15px;
+}
+
+.lc-report-print-section {
+  margin-top: 18px;
+}
+
+.lc-report-print table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.lc-report-print th,
+.lc-report-print td {
+  border: 1px solid #d8dee8;
+  padding: 6px 7px;
+  text-align: left;
+  vertical-align: top;
+  color: #111111;
+}
+
+.lc-report-print th {
+  background: #f0f2f5;
+  font-weight: 800;
+}
+
+.lc-report-print-detail {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.lc-report-print-bonus {
+  margin-top: 6px;
+}
+
+.lc-report-print-empty {
+  color: #666666;
+  text-align: center;
+}
+
+.lc-report-print-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
 @media print {
   @page {
     size: 58mm auto;
     margin: 0;
+  }
+
+  @page lc-report-page {
+    size: A4 landscape;
+    margin: 10mm;
   }
 
   body * {
@@ -9176,6 +9323,8 @@ textarea.action-confirmation-input {
   .closing-print *,
   .owner-report-print,
   .owner-report-print *,
+  .lc-report-print,
+  .lc-report-print *,
   .receipt-print,
   .receipt-print * {
     visibility: visible;
@@ -9183,6 +9332,7 @@ textarea.action-confirmation-input {
 
   .closing-print,
   .owner-report-print,
+  .lc-report-print,
   .receipt-print {
     position: absolute;
     left: 0;
@@ -9192,6 +9342,19 @@ textarea.action-confirmation-input {
     color: #000000;
     box-shadow: none;
     border: none;
+  }
+
+  .lc-report-print {
+    box-sizing: border-box;
+    page: lc-report-page;
+    width: 100%;
+    min-height: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    border-radius: 0;
+    font-family: Arial, sans-serif;
+    font-size: 11px;
   }
 
   .receipt-print {
@@ -9253,6 +9416,9 @@ textarea.action-confirmation-input {
   .closing-print-section,
   .closing-print-signatures,
   .owner-report-print-section,
+  .lc-report-print-header,
+  .lc-report-print-section,
+  .lc-report-print-metric,
   .receipt-print-header,
   .receipt-print-reprint-notice,
   .receipt-print-section,
@@ -9266,6 +9432,13 @@ textarea.action-confirmation-input {
 
   .closing-print-title,
   .closing-print-section h3,
+  .lc-report-print h2,
+  .lc-report-print h3,
+  .lc-report-print h4,
+  .lc-report-print th,
+  .lc-report-print td,
+  .lc-report-print-metric strong,
+  .lc-report-print-stamp strong,
   .closing-print-value,
   .closing-print-note,
   .closing-print-signature-line,
@@ -9283,6 +9456,11 @@ textarea.action-confirmation-input {
   .closing-print-subtitle,
   .closing-print-label,
   .closing-print-helper,
+  .lc-report-print-brand,
+  .lc-report-print-meta,
+  .lc-report-print-footer,
+  .lc-report-print-metric span,
+  .lc-report-print-stamp,
   .receipt-print-brand,
   .receipt-print-meta,
   .receipt-print-reprint-detail,
@@ -9293,6 +9471,7 @@ textarea.action-confirmation-input {
 
   .closing-print-actions,
   .owner-report-print .closing-print-actions,
+  .lc-report-print-actions,
   .receipt-print-actions {
     display: none;
   }

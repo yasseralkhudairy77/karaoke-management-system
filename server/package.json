@@ -14,11 +14,12 @@
     "mirror:snapshot": "node scripts/export-owner-mirror-snapshot.js",
     "mirror:push": "node scripts/push-owner-mirror-snapshot.js",
     "mirror:cleanup-cloud": "node scripts/cleanup-owner-mirror-snapshots.js",
-    "test": "npm run test:timezone && npm run test:mirror-rollover && npm run test:audit-report && npm run test:lc-report && npm run test:coverage && npm run test:contract",
+    "test": "npm run test:timezone && npm run test:mirror-rollover && npm run test:audit-report && npm run test:lc-report && npm run test:lc-report-print-ui && npm run test:coverage && npm run test:contract",
     "test:timezone": "node tests/timezone-boundary.test.js",
     "test:mirror-rollover": "node tests/owner-mirror-rollover.test.js",
     "test:audit-report": "node tests/operational-audit-report.test.js",
     "test:lc-report": "node tests/lc-work-reports.test.js",
+    "test:lc-report-print-ui": "node tests/lc-report-print-ui.test.js",
     "test:contract": "node tests/contract-tests.js",
     "test:coverage": "node tests/action-coverage.test.js"
   },
