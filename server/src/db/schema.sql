@@ -115,11 +115,16 @@ CREATE TABLE IF NOT EXISTS package_master (
     package_type VARCHAR(50) DEFAULT 'room_fnb_bundle',
     selling_price NUMERIC(12,2) NOT NULL,
     duration_minutes INT NOT NULL,
+    included_lc_count INT NOT NULL DEFAULT 0,
+    included_lc_duration_minutes INT NOT NULL DEFAULT 0,
     valid_day_type VARCHAR(20) DEFAULT 'all' CHECK (valid_day_type IN ('all', 'weekday', 'weekend')),
     status VARCHAR(20) DEFAULT 'active',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
+ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_duration_minutes INT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS package_details (
     package_detail_id VARCHAR(50) PRIMARY KEY,
@@ -420,6 +425,11 @@ CREATE TABLE IF NOT EXISTS lc_work_logs (
     duration_minutes INT NOT NULL,
     rate_per_hour NUMERIC(12,2) NOT NULL,
     rate NUMERIC(12,2) NOT NULL,
+    customer_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    included_minutes INT NOT NULL DEFAULT 0,
+    extra_minutes INT NOT NULL DEFAULT 0,
+    billing_source VARCHAR(30) NOT NULL DEFAULT 'regular',
+    package_id VARCHAR(50),
     status VARCHAR(30) DEFAULT 'active' CHECK (status IN ('active', 'done', 'closed', 'paid', 'cancelled')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     closed_at TIMESTAMPTZ,
@@ -430,6 +440,11 @@ CREATE TABLE IF NOT EXISTS lc_work_logs (
 );
 
 ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS closed_transaction_id VARCHAR(50) REFERENCES transactions(transaction_id);
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS customer_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS included_minutes INT NOT NULL DEFAULT 0;
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS lc_sales_bonus_logs (
     bonus_log_id VARCHAR(50) PRIMARY KEY,

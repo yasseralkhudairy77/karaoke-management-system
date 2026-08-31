@@ -552,18 +552,20 @@ function normalizeFnbItems(items) {
 
 function normalizeLcDetails(details, lcTotal) {
   const safeDetails = details && typeof details === "object" ? details : null;
-  const rawItems = Array.isArray(safeDetails?.lc_logs)
-    ? safeDetails.lc_logs
-    : Array.isArray(safeDetails?.items)
-      ? safeDetails.items
-      : [];
+  const rawItems = Array.isArray(safeDetails?.customer_items)
+    ? safeDetails.customer_items
+    : Array.isArray(safeDetails?.lc_logs)
+      ? safeDetails.lc_logs
+      : Array.isArray(safeDetails?.items)
+        ? safeDetails.items
+        : [];
   const items = rawItems.map((item) => ({
     lcId: getText(item?.lc_id || item?.lcId),
     name: getText(item?.lc_name || item?.name || item?.lc_id || item?.lcId),
-    durationMinutes: getNumber(item?.duration_minutes || item?.durationMinutes),
+    durationMinutes: getNumber(item?.extra_minutes || item?.duration_minutes || item?.durationMinutes),
     ratePerHour: getNumber(item?.rate_per_hour || item?.ratePerHour),
-    amount: getNumber(item?.rate || item?.amount),
-  }));
+    amount: getNumber(item?.customer_charge_amount || item?.amount || item?.rate),
+  })).filter((item) => item.amount > 0);
   const itemTotal = items.reduce((total, item) => total + item.amount, 0);
   const rawAdjustment = safeDetails?.billing_adjustment;
   const explicitAdjustment = Number(rawAdjustment);

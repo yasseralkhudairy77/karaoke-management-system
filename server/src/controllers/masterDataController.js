@@ -21,6 +21,16 @@ async function ensureFnbBundleSchema(executor = db) {
   fnbBundleSchemaChecked = true;
 }
 
+let packageLcSchemaChecked = false;
+async function ensurePackageLcSchema(executor = db) {
+  if (packageLcSchemaChecked) return;
+  await executor.query(`
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_duration_minutes INT NOT NULL DEFAULT 0;
+  `);
+  packageLcSchemaChecked = true;
+}
+
 function normalizeFnbBundleComponents(rawComponents) {
   if (!Array.isArray(rawComponents)) return [];
   return rawComponents.map((component, index) => ({
@@ -246,10 +256,13 @@ async function saveLcMaster(req, res, payload) {
 
 async function savePackageMaster(req, res, payload) {
   try {
+    await ensurePackageLcSchema();
     const packageId = String(payload.package_id || '').trim() || `PKG-${Date.now()}`;
     const packageName = String(payload.package_name || packageId).trim();
     const sellingPrice = Number(payload.selling_price || 0);
     const durationMinutes = Number(payload.duration_minutes || 60);
+    const includedLcCount = Math.max(0, Math.floor(Number(payload.included_lc_count || payload.lc_included_count || 0)));
+    const includedLcDurationMinutes = Math.max(0, Math.floor(Number(payload.included_lc_duration_minutes || payload.lc_included_duration_minutes || 0)));
     const validDayType = String(payload.valid_day_type || 'all').trim().toLowerCase();
     const status = String(payload.status || 'active').trim().toLowerCase();
     const packageType = String(payload.package_type || 'room_fnb_bundle').trim().toLowerCase();
@@ -266,14 +279,17 @@ async function savePackageMaster(req, res, payload) {
     await db.query(`
       INSERT INTO package_master (
         package_id, package_name, package_category, package_type,
-        selling_price, duration_minutes, valid_day_type, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        selling_price, duration_minutes, included_lc_count,
+        included_lc_duration_minutes, valid_day_type, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (package_id) DO UPDATE SET
         package_name = EXCLUDED.package_name,
         package_category = EXCLUDED.package_category,
         package_type = EXCLUDED.package_type,
         selling_price = EXCLUDED.selling_price,
         duration_minutes = EXCLUDED.duration_minutes,
+        included_lc_count = EXCLUDED.included_lc_count,
+        included_lc_duration_minutes = EXCLUDED.included_lc_duration_minutes,
         valid_day_type = EXCLUDED.valid_day_type,
         status = EXCLUDED.status,
         updated_at = CURRENT_TIMESTAMP
@@ -284,6 +300,8 @@ async function savePackageMaster(req, res, payload) {
       packageType,
       sellingPrice,
       Math.floor(durationMinutes),
+      includedLcCount,
+      includedLcDurationMinutes,
       validDayType,
       status
     ]);
@@ -451,14 +469,42 @@ async function bulkImportPackages(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensurePackageLcSchema(client);
     const packages = Array.isArray(payload.packages) ? payload.packages : [];
     for (const pkg of packages) {
       if (!pkg.package_id) continue;
+      const includedLcCount = Math.max(0, Math.floor(Number(pkg.included_lc_count || pkg.lc_included_count || 0)));
+      const includedLcDurationMinutes = Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || pkg.lc_included_duration_minutes || 0)));
       await client.query(`
-        INSERT INTO package_master (package_id, package_name, package_category, package_type, selling_price, duration_minutes, valid_day_type, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'active'))
-        ON CONFLICT (package_id) DO UPDATE SET package_name = EXCLUDED.package_name, package_category = EXCLUDED.package_category, package_type = EXCLUDED.package_type, selling_price = EXCLUDED.selling_price, duration_minutes = EXCLUDED.duration_minutes, valid_day_type = EXCLUDED.valid_day_type, status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP
-      `, [pkg.package_id, pkg.package_name || pkg.package_id, pkg.package_category || '', pkg.package_type || 'room_fnb_bundle', Number(pkg.selling_price || 0), Number(pkg.duration_minutes || 60), pkg.valid_day_type || 'all', pkg.status || 'active']);
+        INSERT INTO package_master (
+          package_id, package_name, package_category, package_type,
+          selling_price, duration_minutes, included_lc_count,
+          included_lc_duration_minutes, valid_day_type, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 'active'))
+        ON CONFLICT (package_id) DO UPDATE SET
+          package_name = EXCLUDED.package_name,
+          package_category = EXCLUDED.package_category,
+          package_type = EXCLUDED.package_type,
+          selling_price = EXCLUDED.selling_price,
+          duration_minutes = EXCLUDED.duration_minutes,
+          included_lc_count = EXCLUDED.included_lc_count,
+          included_lc_duration_minutes = EXCLUDED.included_lc_duration_minutes,
+          valid_day_type = EXCLUDED.valid_day_type,
+          status = EXCLUDED.status,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        pkg.package_id,
+        pkg.package_name || pkg.package_id,
+        pkg.package_category || '',
+        pkg.package_type || 'room_fnb_bundle',
+        Number(pkg.selling_price || 0),
+        Number(pkg.duration_minutes || 60),
+        includedLcCount,
+        includedLcDurationMinutes,
+        pkg.valid_day_type || 'all',
+        pkg.status || 'active'
+      ]);
     }
     await client.query('COMMIT');
     return successResponse(res, { message: 'Import paket berhasil diproses.', imported_count: packages.length });
@@ -546,10 +592,14 @@ async function validateAdminPin(req, res, payload) {
 
 async function getPackages(req, res) {
   try {
+    await ensurePackageLcSchema();
     const result = await db.query('SELECT * FROM package_master WHERE status = \'active\' ORDER BY package_name ASC');
     const packages = result.rows.map(p => ({
       ...p,
-      selling_price: Number(p.selling_price)
+      selling_price: Number(p.selling_price),
+      duration_minutes: Number(p.duration_minutes || 0),
+      included_lc_count: Number(p.included_lc_count || 0),
+      included_lc_duration_minutes: Number(p.included_lc_duration_minutes || 0)
     }));
     return res.json({ ok: true, success: true, packages });
   } catch (err) {
@@ -559,6 +609,7 @@ async function getPackages(req, res) {
 
 async function getPackageDetails(req, res) {
   try {
+    await ensurePackageLcSchema();
     const packageId = req.query.package_id || req.query.packageId || '';
     if (!packageId) throw new Error('package_id wajib diisi.');
 
@@ -583,7 +634,9 @@ async function getPackageDetails(req, res) {
       package: {
         ...pkg,
         selling_price: Number(pkg.selling_price || 0),
-        duration_minutes: Number(pkg.duration_minutes || 0)
+        duration_minutes: Number(pkg.duration_minutes || 0),
+        included_lc_count: Number(pkg.included_lc_count || 0),
+        included_lc_duration_minutes: Number(pkg.included_lc_duration_minutes || 0)
       },
       details,
       package_details: details
@@ -601,6 +654,7 @@ function getDayType(dateInput) {
 
 async function getEligiblePackages(req, res) {
   try {
+    await ensurePackageLcSchema();
     const durationMinutes = Number(req.query.duration_minutes || req.query.durationMinutes || 0);
     const bookingDate = req.query.booking_date || req.query.bookingDate || new Date().toISOString();
     const dayType = getDayType(bookingDate);
@@ -619,7 +673,9 @@ async function getEligiblePackages(req, res) {
       packages: result.rows.map(pkg => ({
         ...pkg,
         selling_price: Number(pkg.selling_price || 0),
-        duration_minutes: Number(pkg.duration_minutes || 0)
+        duration_minutes: Number(pkg.duration_minutes || 0),
+        included_lc_count: Number(pkg.included_lc_count || 0),
+        included_lc_duration_minutes: Number(pkg.included_lc_duration_minutes || 0)
       }))
     });
   } catch (err) {

@@ -316,9 +316,43 @@ function buildLcAssignmentsPayloadForRoom(room) {
 }
 
 function calculateLcCharge(durationMinutes, ratePerHour) {
-  const duration = Math.max(1, Math.round(Number(durationMinutes) || 0));
+  const duration = Math.round(Number(durationMinutes) || 0);
   const rate = Number(ratePerHour) || 0;
+  if (duration <= 0 || rate <= 0) {
+    return 0;
+  }
   return Math.ceil(duration / 60) * rate;
+}
+
+function getPackageLcIncludedRule(room) {
+  const pkg = getPackageForRoom(room);
+  return {
+    includedCount: Math.max(0, Math.floor(Number(pkg?.included_lc_count || room?.included_lc_count || 0))),
+    includedDurationMinutes: Math.max(0, Math.floor(Number(pkg?.included_lc_duration_minutes || room?.included_lc_duration_minutes || 0))),
+  };
+}
+
+function calculateLcCustomerChargeForRoom(room, lcItems) {
+  const rule = getPackageLcIncludedRule(room);
+  return lcItems.map((item, index) => {
+    const durationMinutes = Math.max(1, Math.round(Number(item.durationMinutes) || 0));
+    const ratePerHour = Number(item.ratePerHour || item.rate || 0);
+    const includedMinutes = index < rule.includedCount
+      ? Math.min(durationMinutes, rule.includedDurationMinutes)
+      : 0;
+    const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
+    const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
+    const customerCharge = calculateLcCharge(extraMinutes, ratePerHour);
+    return {
+      ...item,
+      durationMinutes,
+      ratePerHour,
+      includedMinutes,
+      extraMinutes,
+      payableAmount,
+      customerCharge,
+    };
+  });
 }
 
 function formatLcDurationShort(minutes) {
@@ -7385,11 +7419,15 @@ function getLcDurationEditorPreview() {
 
   const newWorkLogTotal = (details.lc_logs || []).reduce((total, log) => {
     const duration = Number(lcDurationEditor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60;
-    return total + calculateLcCharge(duration, log.rate_per_hour);
+    const includedMinutes = Math.max(0, Number(log.included_minutes || 0));
+    const chargeDuration = String(log.billing_source || "").startsWith("package")
+      ? Math.max(0, duration - includedMinutes)
+      : duration;
+    return total + calculateLcCharge(chargeDuration, log.rate_per_hour);
   }, 0);
   const oldLcTotal = Number(details.current_lc_total) || 0;
-  // Hak LC dibayar penuh dari seluruh work log. Promo/paket dan selisih
-  // historis tidak boleh menjadi potongan tersembunyi pada total LC.
+  // Preview ini mengikuti tagihan customer. Hak LC tetap dihitung penuh
+  // dari work log di backend dan laporan payroll.
   const newLcTotal = Math.max(0, newWorkLogTotal);
   const oldGrandTotal = Number(details.current_grand_total) || 0;
   const newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
@@ -7619,9 +7657,13 @@ function createLcDurationEditorElement() {
     const amount = document.createElement("div");
     amount.className = "lc-duration-editor-amount";
     const amountLabel = document.createElement("span");
-    amountLabel.textContent = "Biaya";
+    amountLabel.textContent = String(log.billing_source || "").startsWith("package") ? "Tagihan Extra" : "Biaya";
     const amountValue = document.createElement("strong");
-    amountValue.textContent = formatCurrency(calculateLcCharge(currentDuration, log.rate_per_hour));
+    const includedMinutes = Math.max(0, Number(log.included_minutes || 0));
+    const chargeDuration = String(log.billing_source || "").startsWith("package")
+      ? Math.max(0, currentDuration - includedMinutes)
+      : currentDuration;
+    amountValue.textContent = formatCurrency(calculateLcCharge(chargeDuration, log.rate_per_hour));
     amount.append(amountLabel, amountValue);
 
     row.append(identity, durationField, amount);
@@ -10007,22 +10049,35 @@ function createPaymentSelectionElement(room) {
   const activeLcIds = selectedLcIdsForRoom[room.room_id] || [];
 
   let lcFeeTotal = 0;
+  let lcPayableTotal = 0;
+  let lcPreviewDetails = [];
   if (activeLcIds && activeLcIds.length > 0) {
     // Hitung rata-rata tarif dari semua LC aktif (untuk preview slot PENDING)
     const activeLcList = lcs.filter(l => l.status === "active");
     const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
     const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
 
-    activeLcIds.forEach(id => {
+    const rawLcDetails = activeLcIds.map(id => {
       const lcDuration = getLcDurationForRoom(room, id);
       if (id === "PENDING") {
-        lcFeeTotal += calculateLcCharge(lcDuration, avgRate);
-      } else {
-        const found = lcs.find(l => l.lc_id === id);
-        const rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
-        lcFeeTotal += calculateLcCharge(lcDuration, rate);
+        return {
+          id,
+          name: "LC (Belum Dipilih)",
+          durationMinutes: lcDuration,
+          ratePerHour: avgRate,
+        };
       }
+      const found = lcs.find(l => l.lc_id === id);
+      return {
+        id,
+        name: found ? found.lc_name : id,
+        durationMinutes: lcDuration,
+        ratePerHour: found ? (Number(found.rate_per_room) || avgRate) : avgRate,
+      };
     });
+    lcPreviewDetails = calculateLcCustomerChargeForRoom(room, rawLcDetails);
+    lcFeeTotal = lcPreviewDetails.reduce((sum, item) => sum + item.customerCharge, 0);
+    lcPayableTotal = lcPreviewDetails.reduce((sum, item) => sum + item.payableAmount, 0);
   }
 
   let activeGrandTotal = roomPrepayCharge + lcFeeTotal + fnbTotal;
@@ -10058,7 +10113,7 @@ function createPaymentSelectionElement(room) {
   lcRow.style.fontSize = "0.85rem";
   lcRow.style.color = "rgba(255, 255, 255, 0.8)";
   
-  if (lcFeeTotal > 0) {
+  if (lcPayableTotal > 0) {
     const mainLcRow = document.createElement("div");
     mainLcRow.style.display = "flex";
     mainLcRow.style.justifyContent = "space-between";
@@ -10073,28 +10128,14 @@ function createPaymentSelectionElement(room) {
     breakdownList.style.fontSize = "0.75rem";
     breakdownList.style.color = "rgba(255, 255, 255, 0.6)";
 
-    const activeLcList = lcs.filter(l => l.status === "active");
-    const rates = activeLcList.map(l => Number(l.rate_per_room) || 0).filter(r => r > 0);
-    const avgRate = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-
-    activeLcIds.forEach((id, index) => {
-      let lcName = "";
-      let rate = 0;
-      if (id === "PENDING") {
-        lcName = `LC ${index + 1} (Belum Dipilih)`;
-        rate = avgRate;
-      } else {
-        const found = lcs.find(l => l.lc_id === id);
-        lcName = found ? found.lc_name : `LC ${index + 1}`;
-        rate = found ? (Number(found.rate_per_room) || avgRate) : avgRate;
-      }
-      const lcDuration = getLcDurationForRoom(room, id);
-      const itemCost = calculateLcCharge(lcDuration, rate);
-      
+    lcPreviewDetails.forEach((item) => {
       const itemRow = document.createElement("div");
       itemRow.style.display = "flex";
       itemRow.style.justifyContent = "space-between";
-      itemRow.innerHTML = `<span>- ${lcName} (${formatCurrency(rate)}/jam x ${formatLcDurationShort(lcDuration)})</span> <span>${formatCurrency(itemCost)}</span>`;
+      const includedText = item.includedMinutes > 0
+        ? `, ${formatLcDurationShort(item.includedMinutes)} included`
+        : "";
+      itemRow.innerHTML = `<span>- ${item.name} (${formatCurrency(item.ratePerHour)}/jam x ${formatLcDurationShort(item.durationMinutes)}${includedText})</span> <span>${formatCurrency(item.customerCharge)}</span>`;
       breakdownList.appendChild(itemRow);
     });
     
@@ -17820,6 +17861,8 @@ function openMasterDataForm(type, mode, item = null) {
       package_type: "room_fnb_bundle",
       selling_price: "",
       duration_minutes: "",
+      included_lc_count: "0",
+      included_lc_duration_minutes: "0",
       valid_day_type: "all",
       status: "active",
     },
@@ -18206,6 +18249,8 @@ function createMasterDataFormElement() {
       }),
       createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" }),
       createMasterField({ label: "Durasi Menit", field: "duration_minutes", type: "number" }),
+      createMasterField({ label: "Jumlah LC Included", field: "included_lc_count", type: "number", helper: "Isi 0 bila paket tidak menanggung LC." }),
+      createMasterField({ label: "Durasi LC Included / Orang", field: "included_lc_duration_minutes", type: "number", helper: "Contoh 120 untuk 2 jam per LC." }),
       createMasterField({
         label: "Berlaku Hari",
         field: "valid_day_type",
@@ -18793,6 +18838,9 @@ function createPackageSettingsSection() {
     pkg.package_category || "-",
     formatCurrency(pkg.selling_price || 0),
     `${Number(pkg.duration_minutes) || 0} menit`,
+    Number(pkg.included_lc_count || 0) > 0 && Number(pkg.included_lc_duration_minutes || 0) > 0
+      ? `${Number(pkg.included_lc_count)} LC x ${formatDurationMinutes(Number(pkg.included_lc_duration_minutes))}`
+      : "-",
     pkg.valid_day_type || "-",
     getMasterStatusBadge(pkg.status),
     createPackageMasterActions(pkg),
@@ -18802,7 +18850,7 @@ function createPackageSettingsSection() {
   content.className = "settings-package-content";
   content.append(
     createMasterTable(
-      ["ID", "Paket", "Kategori", "Harga", "Durasi", "Hari", "Status", "Aksi"],
+      ["ID", "Paket", "Kategori", "Harga", "Durasi", "LC Included", "Hari", "Status", "Aksi"],
       rows,
       "Paket tidak ditemukan.",
       "settingsPackages"
@@ -20143,6 +20191,8 @@ function buildMasterPayload(authData = null, adminPin = "") {
       package_type: values.package_type || "room_fnb_bundle",
       selling_price: Number(values.selling_price),
       duration_minutes: Number(values.duration_minutes),
+      included_lc_count: Number(values.included_lc_count || 0),
+      included_lc_duration_minutes: Number(values.included_lc_duration_minutes || 0),
       valid_day_type: values.valid_day_type || "all",
       status: values.status || "active",
     };
@@ -20233,6 +20283,8 @@ function isSensitiveMasterDataChange() {
 
     return (Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)
       || (Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)
+      || (Number(original.included_lc_count) || 0) !== (Number(values.included_lc_count) || 0)
+      || (Number(original.included_lc_duration_minutes) || 0) !== (Number(values.included_lc_duration_minutes) || 0)
       || originalStatus !== nextStatus;
   }
 
@@ -20276,6 +20328,13 @@ function getSensitiveMasterDataAction() {
 
     if ((Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)) {
       return "edit_package_duration";
+    }
+
+    if (
+      (Number(original.included_lc_count) || 0) !== (Number(values.included_lc_count) || 0)
+      || (Number(original.included_lc_duration_minutes) || 0) !== (Number(values.included_lc_duration_minutes) || 0)
+    ) {
+      return "update_package";
     }
 
     return "update_package";
@@ -24801,16 +24860,18 @@ function saveSessionLcSelection(roomId) {
     return;
   }
 
-  const lcDetails = selectedIds.map((lcId) => {
+  const lcDetails = calculateLcCustomerChargeForRoom(room, selectedIds.map((lcId) => {
     const lc = lcs.find((item) => item.lc_id === lcId);
     const durationMinutes = normalizeLcDurationMinutesForRoom(room, pendingLcDurations[lcId]);
-    const charge = calculateLcCharge(durationMinutes, Number(lc?.rate_per_room) || 0);
+    const ratePerHour = Number(lc?.rate_per_room) || 0;
     return {
       name: lc?.lc_name || lcId,
       durationMinutes,
-      charge,
+      ratePerHour,
     };
-  });
+  }));
+  const totalCustomerCharge = lcDetails.reduce((sum, item) => sum + item.customerCharge, 0);
+  const totalPayable = lcDetails.reduce((sum, item) => sum + item.payableAmount, 0);
   openActionConfirmation({
     tone: "warning",
     title: "Konfirmasi Pilihan LC",
@@ -24819,7 +24880,8 @@ function saveSessionLcSelection(roomId) {
       ["Room", room.room_name || roomId],
       ["LC", lcDetails.map((item) => item.name).join(", ")],
       ["Durasi", lcDetails.map((item) => `${item.name}: ${formatDurationMinutes(item.durationMinutes)}`).join(", ")],
-      ["Total LC", formatCurrency(lcDetails.reduce((sum, item) => sum + item.charge, 0))],
+      ["Tagihan LC Customer", formatCurrency(totalCustomerCharge)],
+      ["Hak LC Internal", formatCurrency(totalPayable)],
     ],
     confirmLabel: "Simpan Pilihan LC",
     cancelLabel: "Periksa Lagi",

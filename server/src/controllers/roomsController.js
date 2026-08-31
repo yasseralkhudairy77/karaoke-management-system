@@ -12,6 +12,87 @@ function parseSessionPackageMeta(session) {
   return { packageId, packageName, packageTotal };
 }
 
+function toMoneyNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function calculateLcCharge(durationMinutes, ratePerHour) {
+  const duration = Math.max(0, Math.round(Number(durationMinutes) || 0));
+  const rate = Math.max(0, Number(ratePerHour) || 0);
+  if (duration <= 0 || rate <= 0) return 0;
+  return Math.ceil(duration / 60) * rate;
+}
+
+let packageLcBillingSchemaChecked = false;
+async function ensurePackageLcBillingSchema(client) {
+  if (packageLcBillingSchemaChecked) return;
+  await client.query(`
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_duration_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS customer_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS included_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+  `);
+  packageLcBillingSchemaChecked = true;
+}
+
+async function getPackageLcRule(client, packageId) {
+  if (!packageId) {
+    return { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+  }
+  const pkgRes = await client.query(`
+    SELECT package_id, included_lc_count, included_lc_duration_minutes
+    FROM package_master
+    WHERE package_id = $1
+    LIMIT 1
+  `, [packageId]);
+  const pkg = pkgRes.rows[0] || {};
+  return {
+    package_id: pkg.package_id || packageId,
+    included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
+    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+  };
+}
+
+function allocatePackageLcBilling(lcRows, packageRule) {
+  const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
+  const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+
+  return lcRows.map((row, index) => {
+    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || 0)));
+    const ratePerHour = toMoneyNumber(row.rate_per_hour);
+    const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
+    const hasPackageRule = Boolean(packageRule?.package_id);
+    const includedMinutes = index < includedCount
+      ? Math.min(durationMinutes, includedDuration)
+      : 0;
+    const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
+    const customerChargeAmount = calculateLcCharge(extraMinutes, ratePerHour);
+    const billingSource = includedMinutes > 0
+      ? (extraMinutes > 0 ? 'package_partial' : 'package_included')
+      : hasPackageRule
+        ? 'extra_charge'
+        : 'regular';
+
+    return {
+      ...row,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      rate_per_room: ratePerHour,
+      rate: payableAmount,
+      payable_amount: payableAmount,
+      customer_charge_amount: customerChargeAmount,
+      included_minutes: includedMinutes,
+      extra_minutes: extraMinutes,
+      billing_source: billingSource,
+      package_id: packageRule?.package_id || null
+    };
+  });
+}
+
 function stripSessionPackageMeta(note) {
   return String(note || '')
     .split('|')
@@ -144,6 +225,7 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
 
 async function getRooms(req, res) {
   try {
+    await ensurePackageLcBillingSchema(db);
     const result = await db.query(`
       SELECT 
         room_id, room_name, status, start_time, 
@@ -227,10 +309,28 @@ async function getRooms(req, res) {
     `);
 
     const sessionByRoom = new Map();
+    const packageIds = new Set();
     for (const session of activeSessionsRes.rows) {
       if (!sessionByRoom.has(session.room_id)) {
         sessionByRoom.set(session.room_id, session);
+        const pkgMeta = parseSessionPackageMeta(session);
+        if (pkgMeta.packageId) packageIds.add(pkgMeta.packageId);
       }
+    }
+
+    const packagesById = new Map();
+    if (packageIds.size > 0) {
+      const packageRes = await db.query(`
+        SELECT package_id, included_lc_count, included_lc_duration_minutes
+        FROM package_master
+        WHERE package_id = ANY($1::varchar[])
+      `, [Array.from(packageIds)]);
+      packageRes.rows.forEach(pkg => {
+        packagesById.set(pkg.package_id, {
+          included_lc_count: Number(pkg.included_lc_count || 0),
+          included_lc_duration_minutes: Number(pkg.included_lc_duration_minutes || 0)
+        });
+      });
     }
 
     const rooms = result.rows.map(r => {
@@ -247,13 +347,18 @@ async function getRooms(req, res) {
       let packageId = '';
       let packageName = '';
       let packageTotal = 0;
+      let includedLcCount = 0;
+      let includedLcDurationMinutes = 0;
 
       if (r.status !== 'available' && r.status !== 'cleaning' && activeSession && activeSession.booking_mode === 'package') {
         const pkgMeta = parseSessionPackageMeta(activeSession);
+        const pkgLcRule = packagesById.get(pkgMeta.packageId) || {};
         bookingMode = 'package';
         packageId = pkgMeta.packageId;
         packageName = pkgMeta.packageName;
         packageTotal = pkgMeta.packageTotal;
+        includedLcCount = Number(pkgLcRule.included_lc_count || 0);
+        includedLcDurationMinutes = Number(pkgLcRule.included_lc_duration_minutes || 0);
       }
 
       return {
@@ -264,6 +369,8 @@ async function getRooms(req, res) {
         package_id: packageId,
         package_name: packageName,
         package_total: packageTotal,
+        included_lc_count: includedLcCount,
+        included_lc_duration_minutes: includedLcDurationMinutes,
         start_time: r.start_time ? new Date(r.start_time).toISOString() : "",
         booked_duration_minutes: r.booked_duration_minutes || 0,
         scheduled_end_time: r.scheduled_end_time ? new Date(r.scheduled_end_time).toISOString() : "",
@@ -1215,6 +1322,7 @@ async function closeSession(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensurePackageLcBillingSchema(client);
     const roomId = payload.room_id;
     const cashierName = payload.cashier_name || 'Kasir';
     const idempotencyKey = payload.idempotency_key || null;
@@ -1291,7 +1399,9 @@ async function closeSession(req, res, payload) {
     }
 
     const lcRes = await client.query(`
-      SELECT log_id, session_id, room_id, room_name, lc_id, lc_name, duration_minutes, rate_per_hour, rate, status, created_at
+      SELECT
+        log_id, session_id, room_id, room_name, lc_id, lc_name,
+        duration_minutes, rate_per_hour, rate, status, created_at
       FROM lc_work_logs
       WHERE closed_at IS NULL AND status != 'cancelled'
         AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
@@ -1302,21 +1412,28 @@ async function closeSession(req, res, payload) {
       map.set(row.lc_id, row);
       return map;
     }, new Map()).values());
+    const packageLcRule = bookingMode === 'package'
+      ? await getPackageLcRule(client, transactionPackageId)
+      : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+    const allocatedLcRows = allocatePackageLcBilling(uniqueLcRows, packageLcRule);
     let lcTotal = 0;
-    uniqueLcRows.forEach(r => { lcTotal += Number(r.rate || 0); });
-    const lcLogsForReceipt = uniqueLcRows.map(row => ({
+    let lcPayableTotal = 0;
+    allocatedLcRows.forEach(r => {
+      lcTotal += Number(r.customer_charge_amount || 0);
+      lcPayableTotal += Number(r.payable_amount || r.rate || 0);
+    });
+    const lcLogsForReceipt = allocatedLcRows.map(row => ({
       ...row,
-      duration_minutes: Number(row.duration_minutes || 0),
-      rate_per_hour: Number(row.rate_per_hour || 0),
-      rate_per_room: Number(row.rate_per_hour || 0),
-      rate: Number(row.rate || 0),
       created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
     }));
     const lcDetails = {
       detail_available: lcLogsForReceipt.length > 0,
       lc_logs: lcLogsForReceipt,
       items: lcLogsForReceipt,
-      item_total: lcLogsForReceipt.reduce((total, row) => total + Number(row.rate || 0), 0),
+      customer_items: lcLogsForReceipt.filter(row => Number(row.customer_charge_amount || 0) > 0),
+      item_total: lcLogsForReceipt.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0),
+      payable_total: lcPayableTotal,
+      included_total: lcPayableTotal - lcTotal,
       billing_adjustment: 0,
       total: lcTotal
     };
@@ -1338,10 +1455,42 @@ async function closeSession(req, res, payload) {
       UPDATE lc_work_logs
       SET closed_at = CURRENT_TIMESTAMP,
           closed_transaction_id = $1,
-          status = 'closed'
+          status = 'closed',
+          rate = data.rate,
+          customer_charge_amount = data.customer_charge_amount,
+          included_minutes = data.included_minutes,
+          extra_minutes = data.extra_minutes,
+          billing_source = data.billing_source,
+          package_id = data.package_id
+      FROM (
+        SELECT *
+        FROM jsonb_to_recordset($4::jsonb) AS x(
+          log_id varchar,
+          rate numeric,
+          customer_charge_amount numeric,
+          included_minutes int,
+          extra_minutes int,
+          billing_source varchar,
+          package_id varchar
+        )
+      ) AS data
       WHERE closed_at IS NULL AND status != 'cancelled'
         AND ($2::varchar IS NOT NULL AND session_id = $2 OR session_id IS NULL AND room_id = $3)
-    `, [transactionId, activeSession?.session_id || null, roomId]);
+        AND lc_work_logs.log_id = data.log_id
+    `, [
+      transactionId,
+      activeSession?.session_id || null,
+      roomId,
+      JSON.stringify(allocatedLcRows.map(row => ({
+        log_id: row.log_id,
+        rate: row.payable_amount,
+        customer_charge_amount: row.customer_charge_amount,
+        included_minutes: row.included_minutes,
+        extra_minutes: row.extra_minutes,
+        billing_source: row.billing_source,
+        package_id: row.package_id || null
+      })))
+    ]);
 
     await client.query(`
       UPDATE rooms 

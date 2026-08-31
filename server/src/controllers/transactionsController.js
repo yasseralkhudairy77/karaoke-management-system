@@ -13,6 +13,104 @@ function money(value) {
   return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 }
 
+function calculateLcCharge(durationMinutes, ratePerHour) {
+  const duration = Math.max(0, Math.round(Number(durationMinutes) || 0));
+  const rate = Math.max(0, Number(ratePerHour) || 0);
+  if (duration <= 0 || rate <= 0) return 0;
+  return Math.ceil(duration / 60) * rate;
+}
+
+let packageLcBillingSchemaChecked = false;
+async function ensurePackageLcBillingSchema(executor = db) {
+  if (packageLcBillingSchemaChecked) return;
+  await executor.query(`
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_duration_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS customer_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS included_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+  `);
+  packageLcBillingSchemaChecked = true;
+}
+
+async function getPackageLcRule(executor, packageId) {
+  if (!packageId) {
+    return { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+  }
+  const pkgRes = await executor.query(`
+    SELECT package_id, included_lc_count, included_lc_duration_minutes
+    FROM package_master
+    WHERE package_id = $1
+    LIMIT 1
+  `, [packageId]);
+  const pkg = pkgRes.rows[0] || {};
+  return {
+    package_id: pkg.package_id || packageId,
+    included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
+    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+  };
+}
+
+function allocatePackageLcBilling(lcRows, packageRule) {
+  const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
+  const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+
+  return lcRows.map((row, index) => {
+    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || 0)));
+    const ratePerHour = Math.max(0, Number(row.rate_per_hour || 0));
+    const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
+    const hasPackageRule = Boolean(packageRule?.package_id);
+    const includedMinutes = index < includedCount ? Math.min(durationMinutes, includedDuration) : 0;
+    const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
+    const customerChargeAmount = calculateLcCharge(extraMinutes, ratePerHour);
+    const billingSource = includedMinutes > 0
+      ? (extraMinutes > 0 ? 'package_partial' : 'package_included')
+      : hasPackageRule
+        ? 'extra_charge'
+        : 'regular';
+
+    return {
+      ...row,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      rate_per_room: ratePerHour,
+      rate: payableAmount,
+      payable_amount: payableAmount,
+      customer_charge_amount: customerChargeAmount,
+      included_minutes: includedMinutes,
+      extra_minutes: extraMinutes,
+      billing_source: billingSource,
+      package_id: packageRule?.package_id || null
+    };
+  });
+}
+
+function normalizeLcBillingRow(row, transactionIsPackage = false) {
+  const payableAmount = Number(row.rate || 0);
+  const storedCustomerCharge = Number(row.customer_charge_amount || 0);
+  const billingSource = String(row.billing_source || '').trim();
+  const customerChargeAmount = storedCustomerCharge > 0 || billingSource.startsWith('package')
+    ? storedCustomerCharge
+    : transactionIsPackage
+      ? 0
+      : payableAmount;
+
+  return {
+    ...row,
+    duration_minutes: Number(row.duration_minutes || 0),
+    rate_per_hour: Number(row.rate_per_hour || 0),
+    rate_per_room: Number(row.rate_per_hour || 0),
+    rate: payableAmount,
+    payable_amount: payableAmount,
+    customer_charge_amount: customerChargeAmount,
+    included_minutes: Number(row.included_minutes || 0),
+    extra_minutes: Number(row.extra_minutes || row.duration_minutes || 0),
+    billing_source: billingSource || (customerChargeAmount < payableAmount ? 'package_included' : 'regular')
+  };
+}
+
 function getPaymentBreakdown(row) {
   const paymentStatus = String(row?.payment_status || '').toLowerCase();
   const paymentMethod = String(row?.payment_method || '').toLowerCase();
@@ -1553,6 +1651,7 @@ async function deleteTransaction(req, res, payload) {
 
 async function getTransactionLcDetails(req, res) {
   try {
+    await ensurePackageLcBillingSchema();
     const transactionId = req.query.transaction_id || '';
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
     const trxRes = await db.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
@@ -1582,17 +1681,25 @@ async function getTransactionLcDetails(req, res) {
       map.set(row.lc_id, row);
       return map;
     }, new Map()).values());
-    const logs = uniqueRows.map(row => ({
-      ...row,
-      duration_minutes: Number(row.duration_minutes || 0),
-      rate_per_hour: Number(row.rate_per_hour || 0),
-      rate_per_room: Number(row.rate_per_hour || 0),
-      rate: Number(row.rate || 0),
+    const lcTotal = Number(trx.lc_total || 0);
+    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    let logs = uniqueRows.map(row => ({
+      ...normalizeLcBillingRow(row, transactionIsPackage),
       created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
       closed_at: row.closed_at ? new Date(row.closed_at).toISOString() : ''
     }));
-    const itemTotal = logs.reduce((total, row) => total + Number(row.rate || 0), 0);
-    const lcTotal = Number(trx.lc_total || 0);
+    const hasStoredPackageBilling = logs.some(row => String(row.billing_source || '').startsWith('package') || Number(row.customer_charge_amount || 0) > 0);
+    if (lcTotal > 0 && !hasStoredPackageBilling) {
+      logs = logs.map(row => ({
+        ...row,
+        customer_charge_amount: Number(row.rate || 0),
+        extra_minutes: Number(row.duration_minutes || 0),
+        included_minutes: 0,
+        billing_source: 'regular'
+      }));
+    }
+    const itemTotal = logs.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0);
+    const payableTotal = logs.reduce((total, row) => total + Number(row.payable_amount || row.rate || 0), 0);
     const payrollLocked = uniqueRows.some(row => Boolean(row.payroll_id));
     const cancelled = String(trx.payment_status || '').toLowerCase() === 'cancelled';
     const canEdit = uniqueRows.length > 0 && !payrollLocked && !cancelled;
@@ -1607,7 +1714,10 @@ async function getTransactionLcDetails(req, res) {
       detail_available: logs.length > 0,
       lc_logs: logs,
       items: logs,
+      customer_items: logs.filter(row => Number(row.customer_charge_amount || 0) > 0),
       item_total: itemTotal,
+      payable_total: payableTotal,
+      included_total: payableTotal - itemTotal,
       billing_adjustment: lcTotal - itemTotal,
       total: lcTotal
     };
@@ -1637,6 +1747,7 @@ async function updateTransactionLcDurations(req, res, payload) {
   try {
     client = await db.pool.connect();
     await client.query('BEGIN');
+    await ensurePackageLcBillingSchema(client);
     const transactionId = String(payload.transaction_id || '').trim();
     const updates = Array.isArray(payload.assignments)
       ? payload.assignments
@@ -1704,7 +1815,11 @@ async function updateTransactionLcDurations(req, res, payload) {
       rate: Number(row.rate || 0)
     }));
 
-    let lcTotal = 0;
+    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    const packageRule = transactionIsPackage
+      ? await getPackageLcRule(client, trx.package_id || '')
+      : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+    const editedLogs = [];
     const newItems = [];
     for (const log of uniqueLogs) {
       const item = updates.find(update => (
@@ -1717,20 +1832,52 @@ async function updateTransactionLcDurations(req, res, payload) {
       }
       const hourlyRate = Number(log.rate_per_hour || 0);
       if (hourlyRate <= 0) throw new Error(`Tarif historis ${log.lc_name || log.lc_id} tidak valid.`);
-      const rate = Math.ceil(duration / 60) * hourlyRate;
-      lcTotal += rate;
+      editedLogs.push({
+        ...log,
+        duration_minutes: duration,
+        rate_per_hour: hourlyRate
+      });
+    }
+
+    const allocatedItems = allocatePackageLcBilling(editedLogs, packageRule);
+    let lcTotal = 0;
+    for (const item of allocatedItems) {
+      lcTotal += Number(item.customer_charge_amount || 0);
       await client.query(`
         UPDATE lc_work_logs
-        SET duration_minutes = $1, rate_per_hour = $2, rate = $3
-        WHERE log_id = $4 AND closed_transaction_id = $5 AND status <> 'cancelled'
-      `, [duration, hourlyRate, rate, log.log_id, transactionId]);
+        SET duration_minutes = $1,
+            rate_per_hour = $2,
+            rate = $3,
+            customer_charge_amount = $4,
+            included_minutes = $5,
+            extra_minutes = $6,
+            billing_source = $7,
+            package_id = $8
+        WHERE log_id = $9 AND closed_transaction_id = $10 AND status <> 'cancelled'
+      `, [
+        item.duration_minutes,
+        item.rate_per_hour,
+        item.payable_amount,
+        item.customer_charge_amount,
+        item.included_minutes,
+        item.extra_minutes,
+        item.billing_source,
+        item.package_id,
+        item.log_id,
+        transactionId
+      ]);
       newItems.push({
-        log_id: log.log_id,
-        lc_id: log.lc_id,
-        lc_name: log.lc_name,
-        duration_minutes: duration,
-        rate_per_hour: hourlyRate,
-        rate
+        log_id: item.log_id,
+        lc_id: item.lc_id,
+        lc_name: item.lc_name,
+        duration_minutes: item.duration_minutes,
+        rate_per_hour: item.rate_per_hour,
+        rate: item.payable_amount,
+        payable_amount: item.payable_amount,
+        customer_charge_amount: item.customer_charge_amount,
+        included_minutes: item.included_minutes,
+        extra_minutes: item.extra_minutes,
+        billing_source: item.billing_source
       });
     }
 
