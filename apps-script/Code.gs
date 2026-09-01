@@ -8970,12 +8970,21 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
       result.total_revenue_paid += amount;
       result.paid_revenue += amount;
 
-      if (paymentMethod === "cash") {
-        result.cash_revenue += amount;
+      var cashAmount = 0;
+      var transferAmount = 0;
+      if (paymentMethod === "split") {
+        cashAmount = Number(transaction.cash_amount || 0);
+        transferAmount = Number(transaction.transfer_amount || 0);
+      } else if (paymentMethod === "cash") {
+        cashAmount = amount;
+      } else if (paymentMethod === "transfer" || paymentMethod === "qris") {
+        transferAmount = amount;
       }
-
-      if (paymentMethod === "transfer") {
-        result.transfer_revenue += amount;
+      if (cashAmount > 0) {
+        result.cash_revenue += cashAmount;
+      }
+      if (transferAmount > 0) {
+        result.transfer_revenue += transferAmount;
       }
     }
 
@@ -13539,14 +13548,23 @@ function calculateCashierClosingSummary_() {
       summary.paid_transactions += 1;
       summary.paid_revenue += amount;
 
-      if (paymentMethod === "cash") {
-        summary.cash_transactions += 1;
-        summary.cash_expected += amount;
+      var cashAmount = 0;
+      var transferAmount = 0;
+      if (paymentMethod === "split") {
+        cashAmount = Number(transaction.cash_amount || 0);
+        transferAmount = Number(transaction.transfer_amount || 0);
+      } else if (paymentMethod === "cash") {
+        cashAmount = amount;
+      } else if (paymentMethod === "transfer" || paymentMethod === "qris") {
+        transferAmount = amount;
       }
-
-      if (paymentMethod === "transfer") {
+      if (cashAmount > 0) {
+        summary.cash_transactions += 1;
+        summary.cash_expected += cashAmount;
+      }
+      if (transferAmount > 0) {
         summary.transfer_transactions += 1;
-        summary.transfer_revenue += amount;
+        summary.transfer_revenue += transferAmount;
       }
     }
 

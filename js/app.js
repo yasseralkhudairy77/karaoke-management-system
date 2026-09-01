@@ -6083,11 +6083,45 @@ async function loadFnbDetailsForTransaction(transaction) {
   }
 }
 
+function getTransactionPaymentBreakdownForSummary(transaction) {
+  const paymentStatus = String(transaction?.payment_status || "").toLowerCase();
+  const paymentMethod = String(transaction?.payment_method || "").toLowerCase();
+  const total = getTransactionFinalTotal(transaction);
+  const storedCash = getTransactionCashAmount(transaction);
+  const storedTransfer = getTransactionTransferAmount(transaction);
+
+  if (paymentStatus !== "paid") {
+    return { cashAmount: 0, transferAmount: 0 };
+  }
+
+  if (paymentMethod === "split") {
+    return {
+      cashAmount: storedCash,
+      transferAmount: storedTransfer,
+    };
+  }
+
+  if (paymentMethod === "cash") {
+    return {
+      cashAmount: storedCash > 0 ? storedCash : total,
+      transferAmount: 0,
+    };
+  }
+
+  if (paymentMethod === "transfer" || paymentMethod === "qris") {
+    return {
+      cashAmount: 0,
+      transferAmount: storedTransfer > 0 ? storedTransfer : total,
+    };
+  }
+
+  return { cashAmount: 0, transferAmount: 0 };
+}
+
 function calculateCashierRevenueSummary(transactions) {
   return transactions.reduce((summary, transaction) => {
     const transactionTotal = getTransactionFinalTotal(transaction);
-    const paymentStatus = transaction?.payment_status || "";
-    const paymentMethod = transaction?.payment_method || "";
+    const paymentStatus = String(transaction?.payment_status || "").toLowerCase();
 
     summary.totalRevenue += transactionTotal;
 
@@ -6095,13 +6129,14 @@ function calculateCashierRevenueSummary(transactions) {
       summary.paidRevenue += transactionTotal;
       summary.paidCount += 1;
 
-      if (paymentMethod === "cash") {
-        summary.cashRevenue += transactionTotal;
+      const breakdown = getTransactionPaymentBreakdownForSummary(transaction);
+      if (breakdown.cashAmount > 0) {
+        summary.cashRevenue += breakdown.cashAmount;
         summary.cashCount += 1;
       }
 
-      if (paymentMethod === "transfer") {
-        summary.transferRevenue += transactionTotal;
+      if (breakdown.transferAmount > 0) {
+        summary.transferRevenue += breakdown.transferAmount;
         summary.transferCount += 1;
       }
     }
@@ -6189,8 +6224,7 @@ function createCashierRevenueSummaryElement(summary) {
 function calculateCashierClosingPreview(transactions) {
   const preview = transactions.reduce((result, transaction) => {
     const transactionTotal = getTransactionFinalTotal(transaction);
-    const paymentStatus = transaction?.payment_status || "";
-    const paymentMethod = transaction?.payment_method || "";
+    const paymentStatus = String(transaction?.payment_status || "").toLowerCase();
 
     result.totalTransactions += 1;
     result.totalRevenue += transactionTotal;
@@ -6199,14 +6233,15 @@ function calculateCashierClosingPreview(transactions) {
       result.paidTransactions += 1;
       result.paidRevenue += transactionTotal;
 
-      if (paymentMethod === "cash") {
+      const breakdown = getTransactionPaymentBreakdownForSummary(transaction);
+      if (breakdown.cashAmount > 0) {
         result.cashTransactions += 1;
-        result.cashExpected += transactionTotal;
+        result.cashExpected += breakdown.cashAmount;
       }
 
-      if (paymentMethod === "transfer") {
+      if (breakdown.transferAmount > 0) {
         result.transferTransactions += 1;
-        result.transferRevenue += transactionTotal;
+        result.transferRevenue += breakdown.transferAmount;
       }
     }
 
