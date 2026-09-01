@@ -6018,7 +6018,23 @@ function getReceiptFnbOrders(transaction) {
 }
 
 function transactionHasLcForReceipt(transaction) {
-  return Number(transaction?.lc_total) > 0;
+  if (Number(transaction?.lc_total) > 0) {
+    return true;
+  }
+  if (transaction?.lc_details) {
+    const raw = transaction.lc_details.lc_logs || transaction.lc_details.items || transaction.lc_details.customer_items;
+    if (Array.isArray(raw) && raw.length > 0) return true;
+  }
+  const transactionId = transaction?.transaction_id || "";
+  if (transactionId && transactionLcReceiptDetails[transactionId]) {
+    const cached = transactionLcReceiptDetails[transactionId];
+    const raw = cached.lc_logs || cached.items || cached.customer_items;
+    return Boolean(cached.has_lc || (Array.isArray(raw) && raw.length > 0));
+  }
+  if (transactionId && (transaction?.booking_mode === "package" || transaction?.session_id || transaction?.room_id)) {
+    return true;
+  }
+  return false;
 }
 
 function getReceiptLcDetails(transaction) {
@@ -8269,7 +8285,19 @@ function createReceiptLcDetailElement(receiptData) {
 
       const meta = document.createElement("p");
       meta.className = "receipt-print-note";
-      meta.textContent = `Durasi: ${formatLcDurationShort(item.durationMinutes)} | Tarif: ${formatCurrency(item.ratePerHour)}/jam`;
+
+      let metaText = `Durasi: ${formatLcDurationShort(item.durationMinutes)}`;
+      if (item.includedMinutes > 0 && item.extraMinutes > 0) {
+        metaText += ` (${formatLcDurationShort(item.includedMinutes)} included, ${formatLcDurationShort(item.extraMinutes)} extra)`;
+      } else if (item.includedMinutes > 0 && item.extraMinutes === 0) {
+        metaText += ` (Termasuk Paket)`;
+      } else if (item.billingSource === "extra_charge") {
+        metaText += ` (Extra LC)`;
+      }
+      if (item.ratePerHour > 0) {
+        metaText += ` | Tarif: ${formatCurrency(item.ratePerHour)}/jam`;
+      }
+      meta.textContent = metaText;
 
       itemElement.append(heading, meta);
       section.appendChild(itemElement);

@@ -138,7 +138,23 @@ export function formatReceipt58mm(receiptData, options = {}) {
           lines.push(line);
         });
         pushReceiptField(lines, "  Durasi", formatReceiptDuration(item.durationMinutes), width);
-        pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+
+        if (item.includedMinutes > 0 && item.extraMinutes > 0) {
+          pushReceiptField(lines, "  Paket", `${formatReceiptDuration(item.includedMinutes)} included`, width);
+          pushReceiptField(lines, "  Extra Jam", formatReceiptDuration(item.extraMinutes), width);
+          pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+        } else if (item.includedMinutes > 0 && item.extraMinutes === 0) {
+          pushReceiptField(lines, "  Status", "Termasuk Paket", width);
+          if (item.ratePerHour > 0) {
+            pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+          }
+        } else if (item.billingSource === "extra_charge") {
+          pushReceiptField(lines, "  Status", "Extra LC", width);
+          pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+        } else {
+          pushReceiptField(lines, "  Tarif", `${formatReceiptCurrency(item.ratePerHour)}/jam`, width);
+        }
+
         pushReceiptField(lines, "  Tagihan", formatReceiptCurrency(item.amount), width);
       });
 
@@ -552,20 +568,37 @@ function normalizeFnbItems(items) {
 
 function normalizeLcDetails(details, lcTotal) {
   const safeDetails = details && typeof details === "object" ? details : null;
-  const rawItems = Array.isArray(safeDetails?.customer_items)
-    ? safeDetails.customer_items
-    : Array.isArray(safeDetails?.lc_logs)
-      ? safeDetails.lc_logs
-      : Array.isArray(safeDetails?.items)
-        ? safeDetails.items
+  const rawItems = Array.isArray(safeDetails?.lc_logs)
+    ? safeDetails.lc_logs
+    : Array.isArray(safeDetails?.items)
+      ? safeDetails.items
+      : Array.isArray(safeDetails?.customer_items)
+        ? safeDetails.customer_items
         : [];
-  const items = rawItems.map((item) => ({
-    lcId: getText(item?.lc_id || item?.lcId),
-    name: getText(item?.lc_name || item?.name || item?.lc_id || item?.lcId),
-    durationMinutes: getNumber(item?.extra_minutes || item?.duration_minutes || item?.durationMinutes),
-    ratePerHour: getNumber(item?.rate_per_hour || item?.ratePerHour),
-    amount: getNumber(item?.customer_charge_amount || item?.amount || item?.rate),
-  })).filter((item) => item.amount > 0);
+  const items = rawItems.map((item) => {
+    const durationMinutes = getNumber(item?.duration_minutes ?? item?.durationMinutes);
+    const includedMinutes = getNumber(item?.included_minutes ?? item?.includedMinutes);
+    const extraMinutes = getNumber(item?.extra_minutes ?? (durationMinutes > includedMinutes ? durationMinutes - includedMinutes : 0));
+    const ratePerHour = getNumber(item?.rate_per_hour ?? item?.ratePerHour);
+    const payableAmount = getNumber(item?.payable_amount ?? item?.rate ?? item?.payableAmount);
+    const rawCustomerCharge = item?.customer_charge_amount ?? item?.amount;
+    const amount = rawCustomerCharge !== undefined && rawCustomerCharge !== null
+      ? getNumber(rawCustomerCharge)
+      : (includedMinutes > 0 ? 0 : payableAmount);
+    const billingSource = getText(item?.billing_source || item?.billingSource || (includedMinutes > 0 ? "package_included" : "regular")).toLowerCase();
+
+    return {
+      lcId: getText(item?.lc_id || item?.lcId),
+      name: getText(item?.lc_name || item?.name || item?.lc_id || item?.lcId),
+      durationMinutes: durationMinutes || (includedMinutes + extraMinutes),
+      includedMinutes,
+      extraMinutes,
+      ratePerHour,
+      payableAmount,
+      amount,
+      billingSource,
+    };
+  }).filter((item) => item.name || item.lcId);
   const itemTotal = items.reduce((total, item) => total + item.amount, 0);
   const rawAdjustment = safeDetails?.billing_adjustment;
   const explicitAdjustment = Number(rawAdjustment);
@@ -577,9 +610,9 @@ function normalizeLcDetails(details, lcTotal) {
     : getNumber(lcTotal) - itemTotal;
 
   return {
-    hasLc: getNumber(lcTotal) > 0,
+    hasLc: items.length > 0 || getNumber(lcTotal) > 0,
     detailLoaded: safeDetails !== null,
-    detailAvailable: safeDetails?.detail_available !== false && items.length > 0,
+    detailAvailable: safeDetails?.detail_available !== false && (items.length > 0 || getNumber(lcTotal) > 0),
     items,
     itemTotal,
     billingAdjustment,
