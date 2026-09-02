@@ -255,28 +255,73 @@ async function saveLcMaster(req, res, payload) {
 }
 
 async function savePackageMaster(req, res, payload) {
+  let client;
   try {
     await ensurePackageLcSchema();
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
     const packageId = String(payload.package_id || '').trim() || `PKG-${Date.now()}`;
     const packageName = String(payload.package_name || packageId).trim();
+    const packageType = String(payload.package_type || 'room_fnb_bundle').trim().toLowerCase();
     const sellingPrice = Number(payload.selling_price || 0);
-    const durationMinutes = Number(payload.duration_minutes || 60);
-    const includedLcCount = Math.max(0, Math.floor(Number(payload.included_lc_count || payload.lc_included_count || 0)));
-    const includedLcDurationMinutes = Math.max(0, Math.floor(Number(payload.included_lc_duration_minutes || payload.lc_included_duration_minutes || 0)));
+    const durationMinutes = packageType === 'fnb_bundle'
+      ? Math.max(0, Math.floor(Number(payload.duration_minutes || 0)))
+      : Math.max(1, Math.floor(Number(payload.duration_minutes || 60)));
+    const includedLcCount = packageType === 'fnb_bundle'
+      ? 0
+      : Math.max(0, Math.floor(Number(payload.included_lc_count || payload.lc_included_count || 0)));
+    const includedLcDurationMinutes = packageType === 'fnb_bundle'
+      ? 0
+      : Math.max(0, Math.floor(Number(payload.included_lc_duration_minutes || payload.lc_included_duration_minutes || 0)));
     const validDayType = String(payload.valid_day_type || 'all').trim().toLowerCase();
     const status = String(payload.status || 'active').trim().toLowerCase();
-    const packageType = String(payload.package_type || 'room_fnb_bundle').trim().toLowerCase();
+    const rawComponents = payload.bundle_components || payload.components || payload.details || [];
+    const bundleComponents = normalizeFnbBundleComponents(rawComponents);
 
     if (!packageName) throw new Error('Nama paket wajib diisi.');
     if (!Number.isFinite(sellingPrice) || sellingPrice < 0) throw new Error('Harga paket tidak valid.');
-    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) throw new Error('Durasi paket harus lebih dari 0 menit.');
+    if (packageType !== 'fnb_bundle' && (!Number.isFinite(durationMinutes) || durationMinutes <= 0)) {
+      throw new Error('Durasi paket room harus lebih dari 0 menit.');
+    }
     if (!['all', 'weekday', 'weekend'].includes(validDayType)) throw new Error('Berlaku hari tidak valid.');
     if (!['active', 'inactive'].includes(status)) throw new Error('Status paket tidak valid.');
 
-    const oldRes = await db.query('SELECT * FROM package_master WHERE package_id = $1', [packageId]);
+    if (packageType === 'fnb_bundle' && bundleComponents.length === 0) {
+      throw new Error('Paket F&B Bundle wajib memiliki minimal satu komponen item.');
+    }
+
+    if (bundleComponents.length > 0) {
+      const componentIds = bundleComponents.map(c => c.item_id).filter(Boolean);
+      if (new Set(componentIds).size !== componentIds.length) {
+        throw new Error('Item inventory yang sama tidak boleh ditambahkan dua kali dalam satu paket.');
+      }
+      if (bundleComponents.some(c => !Number.isFinite(c.qty_used) || c.qty_used <= 0)) {
+        throw new Error('Jumlah setiap komponen paket harus lebih dari 0.');
+      }
+
+      const invRes = await client.query(`
+        SELECT stock_item_id, stock_item_name, unit, status
+        FROM inventory
+        WHERE stock_item_id = ANY($1)
+      `, [componentIds]);
+      const invMap = new Map(invRes.rows.map(item => [item.stock_item_id, item]));
+
+      for (const component of bundleComponents) {
+        const invItem = invMap.get(component.item_id);
+        if (!invItem) throw new Error(`Item inventory ${component.item_id} tidak ditemukan.`);
+        if (String(invItem.status || '').toLowerCase() !== 'active') {
+          throw new Error(`Item inventory ${invItem.stock_item_name} tidak aktif.`);
+        }
+        component.item_name = invItem.stock_item_name;
+        component.unit = invItem.unit || 'unit';
+      }
+    }
+
+    const oldRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 FOR UPDATE', [packageId]);
     const oldValue = oldRes.rows[0] || null;
 
-    await db.query(`
+    await client.query(`
       INSERT INTO package_master (
         package_id, package_name, package_category, package_type,
         selling_price, duration_minutes, included_lc_count,
@@ -296,20 +341,111 @@ async function savePackageMaster(req, res, payload) {
     `, [
       packageId,
       packageName,
-      payload.package_category || '',
+      payload.package_category || (packageType === 'fnb_bundle' ? 'Paket F&B' : 'Room Package'),
       packageType,
       sellingPrice,
-      Math.floor(durationMinutes),
+      durationMinutes,
       includedLcCount,
       includedLcDurationMinutes,
       validDayType,
       status
     ]);
 
-    await logMasterAudit('package', packageId, packageName, oldValue ? 'update' : 'save', oldValue, payload, payload.changed_by || payload.cashier_name, payload.note || '');
-    return successResponse(res, { message: 'Master paket berhasil disimpan.', package_id: packageId });
+    await client.query('DELETE FROM package_details WHERE package_id = $1', [packageId]);
+    for (let i = 0; i < bundleComponents.length; i++) {
+      const comp = bundleComponents[i];
+      const detailId = `PKD-${Date.now()}-${i + 1}-${Math.floor(Math.random() * 1000)}`;
+      const isChoice = comp.component_mode === 'bonus';
+      await client.query(`
+        INSERT INTO package_details (
+          package_detail_id, package_id, line_no, component_type,
+          component_ref_id, component_name, qty, unit, hpp,
+          additional_price, cost_amount, is_choice, note
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `, [
+        detailId,
+        packageId,
+        i + 1,
+        'inventory',
+        comp.item_id,
+        comp.item_name || comp.item_id,
+        comp.qty_used,
+        comp.unit || 'unit',
+        0,
+        0,
+        0,
+        isChoice,
+        comp.component_mode === 'bonus' ? 'Bonus / Gratis' : 'Termasuk Paket'
+      ]);
+    }
+
+    if (packageType === 'fnb_bundle') {
+      await ensureFnbBundleSchema(client);
+      await client.query(`
+        INSERT INTO menu (
+          menu_id, menu_name, category, price, status,
+          stock_tracking, stock_item_id, stock_qty_per_unit,
+          bonus_sales_lc, hpp, variable_cost_rate, menu_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (menu_id) DO UPDATE SET
+          menu_name = EXCLUDED.menu_name,
+          category = EXCLUDED.category,
+          price = EXCLUDED.price,
+          status = EXCLUDED.status,
+          stock_tracking = EXCLUDED.stock_tracking,
+          stock_item_id = EXCLUDED.stock_item_id,
+          stock_qty_per_unit = EXCLUDED.stock_qty_per_unit,
+          bonus_sales_lc = EXCLUDED.bonus_sales_lc,
+          hpp = EXCLUDED.hpp,
+          variable_cost_rate = EXCLUDED.variable_cost_rate,
+          menu_type = EXCLUDED.menu_type,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        packageId,
+        packageName,
+        payload.package_category || 'Paket F&B',
+        sellingPrice,
+        status,
+        'no',
+        null,
+        1,
+        0,
+        0,
+        0,
+        'fnb_bundle'
+      ]);
+
+      await client.query('DELETE FROM recipe WHERE menu_id = $1', [packageId]);
+      for (const comp of bundleComponents) {
+        await client.query(`
+          INSERT INTO recipe (
+            recipe_id, menu_id, item_id, qty_used, unit, component_mode, sort_order
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [
+          `RCP-${Date.now()}-${comp.sort_order}-${Math.floor(Math.random() * 10000)}`,
+          packageId,
+          comp.item_id,
+          comp.qty_used,
+          comp.unit,
+          comp.component_mode || 'included',
+          comp.sort_order
+        ]);
+      }
+    }
+
+    const auditPayload = { ...payload, package_type: packageType, bundle_components: bundleComponents };
+    await logMasterAudit('package', packageId, packageName, oldValue ? 'update' : 'save', oldValue, auditPayload, payload.changed_by || payload.cashier_name, payload.note || '', 'success', client);
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: packageType === 'fnb_bundle' ? 'Paket F&B Bundle berhasil disimpan.' : 'Paket Room All-In berhasil disimpan.',
+      package_id: packageId,
+      package_type: packageType
+    });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -594,13 +730,49 @@ async function getPackages(req, res) {
   try {
     await ensurePackageLcSchema();
     const result = await db.query('SELECT * FROM package_master WHERE status = \'active\' ORDER BY package_name ASC');
-    const packages = result.rows.map(p => ({
-      ...p,
-      selling_price: Number(p.selling_price),
-      duration_minutes: Number(p.duration_minutes || 0),
-      included_lc_count: Number(p.included_lc_count || 0),
-      included_lc_duration_minutes: Number(p.included_lc_duration_minutes || 0)
-    }));
+    const detailsRes = await db.query(`
+      SELECT pd.*
+      FROM package_details pd
+      JOIN package_master pm ON pm.package_id = pd.package_id
+      WHERE pm.status = 'active'
+      ORDER BY pd.package_id ASC, pd.line_no ASC
+    `);
+
+    const detailsByPackage = new Map();
+    for (const d of detailsRes.rows) {
+      if (!detailsByPackage.has(d.package_id)) {
+        detailsByPackage.set(d.package_id, []);
+      }
+      detailsByPackage.get(d.package_id).push({
+        ...d,
+        qty: Number(d.qty || 0),
+        hpp: Number(d.hpp || 0),
+        additional_price: Number(d.additional_price || 0),
+        cost_amount: Number(d.cost_amount || 0)
+      });
+    }
+
+    const packages = result.rows.map(p => {
+      const details = detailsByPackage.get(p.package_id) || [];
+      const bundle_components = details.map((d, idx) => ({
+        item_id: d.component_ref_id,
+        item_name: d.component_name,
+        qty_used: d.qty,
+        unit: d.unit,
+        component_mode: d.is_choice ? 'bonus' : (String(d.note || '').toLowerCase().includes('bonus') ? 'bonus' : 'included'),
+        sort_order: d.line_no || idx + 1
+      }));
+      return {
+        ...p,
+        selling_price: Number(p.selling_price),
+        duration_minutes: Number(p.duration_minutes || 0),
+        included_lc_count: Number(p.included_lc_count || 0),
+        included_lc_duration_minutes: Number(p.included_lc_duration_minutes || 0),
+        details,
+        package_details: details,
+        bundle_components
+      };
+    });
     return res.json({ ok: true, success: true, packages });
   } catch (err) {
     return errorResponse(res, err.message);
@@ -628,6 +800,15 @@ async function getPackageDetails(req, res) {
       cost_amount: Number(detail.cost_amount || 0)
     }));
 
+    const bundle_components = details.map((detail, idx) => ({
+      item_id: detail.component_ref_id,
+      item_name: detail.component_name,
+      qty_used: detail.qty,
+      unit: detail.unit,
+      component_mode: detail.is_choice ? 'bonus' : (String(detail.note || '').toLowerCase().includes('bonus') ? 'bonus' : 'included'),
+      sort_order: detail.line_no || idx + 1
+    }));
+
     return res.json({
       ok: true,
       success: true,
@@ -639,7 +820,8 @@ async function getPackageDetails(req, res) {
         included_lc_duration_minutes: Number(pkg.included_lc_duration_minutes || 0)
       },
       details,
-      package_details: details
+      package_details: details,
+      bundle_components
     });
   } catch (err) {
     return errorResponse(res, err.message);

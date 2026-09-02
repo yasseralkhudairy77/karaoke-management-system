@@ -18575,8 +18575,27 @@ function openMasterDataForm(type, mode, item = null) {
       qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
     },
   };
-  if (type === "menu") {
-    const sourceComponents = Array.isArray(item?.bundle_components) ? item.bundle_components : [];
+  if (type === "menu" || type === "package") {
+    let sourceComponents = Array.isArray(item?.bundle_components) ? item.bundle_components : [];
+    if (sourceComponents.length === 0 && Array.isArray(item?.details) && item.details.length > 0) {
+      sourceComponents = item.details.map((d, idx) => ({
+        item_id: d.component_ref_id || d.item_id || "",
+        item_name: d.component_name || d.item_name || "",
+        qty_used: Number(d.qty || 1),
+        unit: d.unit || "unit",
+        component_mode: d.is_choice ? "bonus" : (String(d.note || "").toLowerCase().includes("bonus") ? "bonus" : "included"),
+        sort_order: d.line_no || idx + 1,
+      }));
+    } else if (sourceComponents.length === 0 && item?.package_id && packageDetailsByPackageId[item.package_id]) {
+      sourceComponents = packageDetailsByPackageId[item.package_id].map((d, idx) => ({
+        item_id: d.component_ref_id || d.item_id || "",
+        item_name: d.component_name || d.item_name || "",
+        qty_used: Number(d.qty || 1),
+        unit: d.unit || "unit",
+        component_mode: d.is_choice ? "bonus" : (String(d.note || "").toLowerCase().includes("bonus") ? "bonus" : "included"),
+        sort_order: d.line_no || idx + 1,
+      }));
+    }
     masterDataForm.originalValues.bundle_components = sourceComponents.map((component) => ({ ...component }));
     masterDataForm.values.bundle_components = sourceComponents.map((component) => ({ ...component }));
   }
@@ -18601,13 +18620,13 @@ function updateMasterDataForm(field, value) {
     },
   };
 
-  if (masterDataForm.type === "menu" && field === "menu_type") {
+  if ((masterDataForm.type === "menu" && field === "menu_type") || (masterDataForm.type === "package" && field === "package_type")) {
     renderRooms();
   }
 }
 
 function addMenuBundleComponent() {
-  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  if (!masterDataForm || (masterDataForm.type !== "menu" && masterDataForm.type !== "package")) return;
   const components = Array.isArray(masterDataForm.values.bundle_components)
     ? masterDataForm.values.bundle_components.slice()
     : [];
@@ -18617,7 +18636,7 @@ function addMenuBundleComponent() {
 }
 
 function updateMenuBundleComponent(index, field, value) {
-  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  if (!masterDataForm || (masterDataForm.type !== "menu" && masterDataForm.type !== "package")) return;
   const components = Array.isArray(masterDataForm.values.bundle_components)
     ? masterDataForm.values.bundle_components.slice()
     : [];
@@ -18630,7 +18649,7 @@ function updateMenuBundleComponent(index, field, value) {
 }
 
 function removeMenuBundleComponent(index) {
-  if (!masterDataForm || masterDataForm.type !== "menu") return;
+  if (!masterDataForm || (masterDataForm.type !== "menu" && masterDataForm.type !== "package")) return;
   const components = Array.isArray(masterDataForm.values.bundle_components)
     ? masterDataForm.values.bundle_components.slice()
     : [];
@@ -18921,39 +18940,54 @@ function createMasterDataFormElement() {
   }
 
   if (masterDataForm.type === "package") {
+    const isFnbBundle = String(masterDataForm.values.package_type || "room_fnb_bundle").toLowerCase() === "fnb_bundle";
+
     if (masterDataForm.mode === "edit") {
       grid.appendChild(createMasterField({ label: "ID Paket", field: "package_id", disabled: true }));
     } else {
       grid.appendChild(createMasterField({
         label: "ID Paket",
         field: "package_id",
-        helper: "Boleh dikosongkan; sistem akan membuat ID otomatis. Untuk rapi bisa isi manual, contoh PKG-BATAVIA-3.",
+        helper: "Boleh dikosongkan; sistem akan membuat ID otomatis. Contoh PKG-TWIN-HENNESSY.",
       }));
     }
 
     grid.append(
       createMasterField({ label: "Nama Paket", field: "package_name" }),
-      createMasterField({ label: "Kategori", field: "package_category", helper: "Contoh: Batavia, VIP, Executive." }),
+      createMasterField({
+        label: "Kategori",
+        field: "package_category",
+        helper: isFnbBundle ? "Contoh: Twin Package, Beer Bucket, Combo Snack." : "Contoh: Batavia, VIP, Executive."
+      }),
       createMasterField({
         label: "Tipe Paket",
         field: "package_type",
         options: [
-          ["room_fnb_bundle", "Room + F&B Bundle"],
+          ["fnb_bundle", "Paket F&B Bundle (Twin Botol / Makanan & Minuman)"],
+          ["room_fnb_bundle", "Paket Room All-In (Room + F&B + LC)"],
         ],
       }),
-      createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" }),
-      createMasterField({ label: "Durasi Menit", field: "duration_minutes", type: "number" }),
-      createMasterField({ label: "Jumlah LC Included", field: "included_lc_count", type: "number", helper: "Isi 0 bila paket tidak menanggung LC." }),
-      createMasterField({ label: "Durasi LC Included / Orang", field: "included_lc_duration_minutes", type: "number", helper: "Contoh 120 untuk 2 jam per LC." }),
-      createMasterField({
-        label: "Berlaku Hari",
-        field: "valid_day_type",
-        options: [
-          ["all", "Semua Hari"],
-          ["weekday", "Weekday"],
-          ["weekend", "Weekend"],
-        ],
-      }),
+      createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" })
+    );
+
+    if (!isFnbBundle) {
+      grid.append(
+        createMasterField({ label: "Durasi Menit", field: "duration_minutes", type: "number" }),
+        createMasterField({ label: "Jumlah LC Included", field: "included_lc_count", type: "number", helper: "Isi 0 bila paket tidak menanggung LC." }),
+        createMasterField({ label: "Durasi LC Included / Orang", field: "included_lc_duration_minutes", type: "number", helper: "Contoh 120 untuk 2 jam per LC." }),
+        createMasterField({
+          label: "Berlaku Hari",
+          field: "valid_day_type",
+          options: [
+            ["all", "Semua Hari"],
+            ["weekday", "Weekday"],
+            ["weekend", "Weekend"],
+          ],
+        })
+      );
+    }
+
+    grid.append(
       createMasterField({
         label: "Status",
         field: "status",
@@ -18963,6 +18997,8 @@ function createMasterDataFormElement() {
         ],
       })
     );
+
+    grid.appendChild(createMenuBundleComponentsEditor());
   }
 
   const actions = document.createElement("div");
@@ -19512,6 +19548,34 @@ function createPackageDetailsElement() {
   return wrapper;
 }
 
+function getPackageTypeBadge(packageType) {
+  const isFnb = String(packageType || "").toLowerCase() === "fnb_bundle";
+  const badge = document.createElement("span");
+  badge.className = withStatusBadge("master-status-badge", isFnb ? "info" : "success");
+  badge.textContent = isFnb ? "Paket F&B" : "Room All-In";
+  return badge;
+}
+
+function getPackageBundleSummary(pkg) {
+  const components = Array.isArray(pkg?.bundle_components) && pkg.bundle_components.length > 0
+    ? pkg.bundle_components
+    : Array.isArray(pkg?.package_details) && pkg.package_details.length > 0
+      ? pkg.package_details
+      : (packageDetailsByPackageId[pkg?.package_id] || []);
+
+  if (!components || components.length === 0) {
+    return "-";
+  }
+
+  return components.map((comp) => {
+    const name = comp.component_name || comp.item_name || comp.item_id || comp.component_ref_id || "Item";
+    const qty = Number(comp.qty_used ?? comp.qty ?? 1);
+    const unit = comp.unit ? ` ${comp.unit}` : "";
+    const mode = (comp.component_mode === "bonus" || comp.is_choice) ? " (Bonus)" : "";
+    return `${qty}${unit} ${name}${mode}`.trim();
+  }).join(", ");
+}
+
 function createPackageSettingsSection() {
   const query = settingsPackageSearchQuery.trim().toLowerCase();
   const filteredPackages = query
@@ -19526,25 +19590,30 @@ function createPackageSettingsSection() {
     ].join(" ").toLowerCase().includes(query))
     : packages;
 
-  const rows = filteredPackages.map((pkg) => [
-    pkg.package_id || "-",
-    pkg.package_name || "-",
-    pkg.package_category || "-",
-    formatCurrency(pkg.selling_price || 0),
-    `${Number(pkg.duration_minutes) || 0} menit`,
-    Number(pkg.included_lc_count || 0) > 0 && Number(pkg.included_lc_duration_minutes || 0) > 0
-      ? `${Number(pkg.included_lc_count)} LC x ${formatDurationMinutes(Number(pkg.included_lc_duration_minutes))}`
-      : "-",
-    pkg.valid_day_type || "-",
-    getMasterStatusBadge(pkg.status),
-    createPackageMasterActions(pkg),
-  ]);
+  const rows = filteredPackages.map((pkg) => {
+    const isFnb = String(pkg.package_type || "").toLowerCase() === "fnb_bundle";
+    return [
+      pkg.package_id || "-",
+      pkg.package_name || "-",
+      pkg.package_category || "-",
+      getPackageTypeBadge(pkg.package_type),
+      getPackageBundleSummary(pkg),
+      formatCurrency(pkg.selling_price || 0),
+      isFnb ? "-" : `${Number(pkg.duration_minutes) || 0} menit`,
+      !isFnb && Number(pkg.included_lc_count || 0) > 0 && Number(pkg.included_lc_duration_minutes || 0) > 0
+        ? `${Number(pkg.included_lc_count)} LC x ${formatDurationMinutes(Number(pkg.included_lc_duration_minutes))}`
+        : "-",
+      pkg.valid_day_type || "-",
+      getMasterStatusBadge(pkg.status),
+      createPackageMasterActions(pkg),
+    ];
+  });
 
   const content = document.createElement("div");
   content.className = "settings-package-content";
   content.append(
     createMasterTable(
-      ["ID", "Paket", "Kategori", "Harga", "Durasi", "LC Included", "Hari", "Status", "Aksi"],
+      ["ID", "Paket", "Kategori", "Jenis", "Isi Paket", "Harga", "Durasi", "LC Included", "Hari", "Status", "Aksi"],
       rows,
       "Paket tidak ditemukan.",
       "settingsPackages"
@@ -19554,7 +19623,7 @@ function createPackageSettingsSection() {
 
   return createSettingsSection(
     "Pengaturan Paket",
-    "Kelola master paket dasar. Isi/komponen paket masih read-only pada tahap ini.",
+    "Kelola seluruh master paket, baik Paket F&B Bundle (Twin Botol / Combo Snack) maupun Paket Room Karaoke All-In beserta isi komponennya.",
     "package",
     content,
     createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
@@ -20876,6 +20945,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
   }
 
   if (masterDataForm.type === "package") {
+    const isFnbBundle = String(values.package_type || "room_fnb_bundle").toLowerCase() === "fnb_bundle";
     return {
       ...accessPayload,
       action: isEdit ? "updatePackageMaster" : "savePackageMaster",
@@ -20884,10 +20954,17 @@ function buildMasterPayload(authData = null, adminPin = "") {
       package_category: values.package_category || "",
       package_type: values.package_type || "room_fnb_bundle",
       selling_price: Number(values.selling_price),
-      duration_minutes: Number(values.duration_minutes),
-      included_lc_count: Number(values.included_lc_count || 0),
-      included_lc_duration_minutes: Number(values.included_lc_duration_minutes || 0),
+      duration_minutes: isFnbBundle ? 0 : Number(values.duration_minutes || 60),
+      included_lc_count: isFnbBundle ? 0 : Number(values.included_lc_count || 0),
+      included_lc_duration_minutes: isFnbBundle ? 0 : Number(values.included_lc_duration_minutes || 0),
       valid_day_type: values.valid_day_type || "all",
+      bundle_components: Array.isArray(values.bundle_components)
+        ? values.bundle_components.map((component) => ({
+            item_id: component.item_id || "",
+            qty_used: Number(component.qty_used),
+            component_mode: component.component_mode || "included",
+          }))
+        : [],
       status: values.status || "active",
     };
   }
@@ -20927,6 +21004,24 @@ async function submitMasterDataForm() {
     const componentIds = components.map((component) => component.item_id);
     if (new Set(componentIds).size !== componentIds.length) {
       showInlineNotice("Item inventory yang sama tidak boleh ditambahkan dua kali.", "error");
+      return;
+    }
+  }
+
+  if (masterDataForm.type === "package") {
+    const isFnb = String(masterDataForm.values?.package_type || "room_fnb_bundle").toLowerCase() === "fnb_bundle";
+    const components = Array.isArray(masterDataForm.values.bundle_components) ? masterDataForm.values.bundle_components : [];
+    if (isFnb && components.length === 0) {
+      showInlineNotice("Paket F&B Bundle wajib memiliki minimal satu komponen item.", "error");
+      return;
+    }
+    if (components.some((component) => !component.item_id || !Number.isFinite(Number(component.qty_used)) || Number(component.qty_used) <= 0)) {
+      showInlineNotice("Pilih item inventory dan isi jumlah lebih dari 0 untuk semua komponen paket.", "error");
+      return;
+    }
+    const componentIds = components.map((component) => component.item_id).filter(Boolean);
+    if (new Set(componentIds).size !== componentIds.length) {
+      showInlineNotice("Item inventory yang sama tidak boleh ditambahkan dua kali dalam satu paket.", "error");
       return;
     }
   }
@@ -20974,11 +21069,15 @@ function isSensitiveMasterDataChange() {
   if (masterDataForm.type === "package") {
     const originalStatus = String(original.status || "").trim().toLowerCase();
     const nextStatus = String(values.status || "").trim().toLowerCase();
+    const originalComponents = JSON.stringify(Array.isArray(original.bundle_components) ? original.bundle_components : []);
+    const nextComponents = JSON.stringify(Array.isArray(values.bundle_components) ? values.bundle_components : []);
 
     return (Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)
       || (Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)
       || (Number(original.included_lc_count) || 0) !== (Number(values.included_lc_count) || 0)
       || (Number(original.included_lc_duration_minutes) || 0) !== (Number(values.included_lc_duration_minutes) || 0)
+      || String(original.package_type || "room_fnb_bundle") !== String(values.package_type || "room_fnb_bundle")
+      || originalComponents !== nextComponents
       || originalStatus !== nextStatus;
   }
 
