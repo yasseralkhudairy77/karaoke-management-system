@@ -2080,7 +2080,7 @@ body::after {
 
 .master-table {
   width: 100%;
-  min-width: 820px;
+  min-width: 680px;
   border-collapse: collapse;
 }
 
@@ -2102,10 +2102,85 @@ body::after {
   font-size: 0.76rem;
   font-weight: 900;
   text-transform: uppercase;
+  background: #19130d;
+}
+
+.master-table th:last-child,
+.master-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: #16110b;
+  box-shadow: -4px 0 10px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  z-index: 2;
+  white-space: nowrap;
+}
+
+.master-table tbody tr:hover td:last-child {
+  background: #241a10;
 }
 
 .master-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.package-title-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+}
+
+.package-cell-name {
+  font-size: 0.94rem;
+  font-weight: 800;
+  color: #fff6e5;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.package-cell-meta {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.package-duration-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.package-cell-lc-meta {
+  font-size: 0.76rem;
+  color: #78f7c6;
+  font-weight: 700;
+}
+
+.package-price-text {
+  color: var(--gold-strong);
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.master-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.master-row-actions .master-button.primary {
+  background: var(--gold);
+  color: #120d07;
+  font-weight: 800;
+}
+
+.master-row-actions .master-button.primary:hover {
+  background: var(--gold-strong);
+  color: #000;
 }
 
 @media (max-width: 767px) {

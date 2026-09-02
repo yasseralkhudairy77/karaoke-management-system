@@ -19462,33 +19462,85 @@ function getPackageComponentLabel(type) {
   return labels[normalized] || type || "-";
 }
 
-function createPackageDetailButton(pkg) {
-  const actions = document.createElement("div");
-  actions.className = "master-row-actions";
+function createPackageTitleCell(pkg) {
+  const wrap = document.createElement("div");
+  wrap.className = "package-title-cell";
 
+  const title = document.createElement("strong");
+  title.className = "package-cell-name";
+  title.textContent = pkg.package_name || "-";
+
+  const meta = document.createElement("div");
+  meta.className = "package-cell-meta";
+  const metaParts = [
+    pkg.package_id ? pkg.package_id : "",
+    pkg.package_category ? pkg.package_category : "",
+    pkg.valid_day_type && pkg.valid_day_type !== "all" ? (pkg.valid_day_type === "weekend" ? "Weekend" : "Weekday") : "",
+  ].filter(Boolean);
+  meta.textContent = metaParts.join(" • ");
+
+  wrap.append(title, meta);
+  return wrap;
+}
+
+function createPackageDurationCell(pkg) {
+  const isFnb = String(pkg.package_type || "").toLowerCase() === "fnb_bundle";
+  if (isFnb) {
+    const span = document.createElement("span");
+    span.style.color = "var(--muted)";
+    span.textContent = "-";
+    return span;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "package-duration-cell";
+
+  const duration = document.createElement("strong");
+  duration.textContent = `${Number(pkg.duration_minutes) || 0} menit`;
+  wrap.appendChild(duration);
+
+  if (Number(pkg.included_lc_count || 0) > 0 && Number(pkg.included_lc_duration_minutes || 0) > 0) {
+    const lcMeta = document.createElement("small");
+    lcMeta.className = "package-cell-lc-meta";
+    lcMeta.textContent = `${Number(pkg.included_lc_count)} LC Included (${formatDurationMinutes(Number(pkg.included_lc_duration_minutes))})`;
+    wrap.appendChild(lcMeta);
+  }
+
+  return wrap;
+}
+
+function createPackagePriceCell(pkg) {
+  const priceEl = document.createElement("strong");
+  priceEl.className = "package-price-text";
+  priceEl.textContent = formatCurrency(pkg.selling_price || 0);
+  return priceEl;
+}
+
+function createPackageDetailButton(pkg) {
   const button = document.createElement("button");
   button.className = pkg.package_id === selectedSettingsPackageId ? "master-button primary" : "master-button";
   button.type = "button";
   button.dataset.action = "view-settings-package-detail";
   button.dataset.packageId = pkg.package_id || "";
   button.disabled = !pkg.package_id || isLoadingPackageDetails;
-  button.textContent = pkg.package_id === selectedSettingsPackageId ? "Terbuka" : "Detail";
-
-  actions.appendChild(button);
-  return actions;
+  button.textContent = pkg.package_id === selectedSettingsPackageId ? "Tutup Isi" : "Isi Paket";
+  return button;
 }
 
 function createPackageMasterActions(pkg) {
-  const actions = createPackageDetailButton(pkg);
+  const actions = document.createElement("div");
+  actions.className = "master-row-actions";
 
   const editButton = document.createElement("button");
-  editButton.className = "master-button";
+  editButton.className = "master-button primary";
   editButton.type = "button";
   editButton.dataset.action = "edit-master-data";
   editButton.dataset.masterType = "package";
   editButton.dataset.masterId = pkg.package_id || "";
   editButton.disabled = !pkg.package_id;
   editButton.textContent = "Edit";
+
+  const detailButton = createPackageDetailButton(pkg);
 
   const deactivateButton = document.createElement("button");
   deactivateButton.className = "master-button danger";
@@ -19499,13 +19551,13 @@ function createPackageMasterActions(pkg) {
   deactivateButton.disabled = !pkg.package_id || String(pkg.status || "").trim().toLowerCase() === "inactive";
   deactivateButton.textContent = deactivateButton.disabled ? "Nonaktif" : "Nonaktifkan";
 
-  actions.append(editButton, deactivateButton);
+  actions.append(editButton, detailButton, deactivateButton);
   return actions;
 }
 
 function createPackageDetailsElement() {
   if (!selectedSettingsPackageId) {
-    return createStateMessage("Pilih Detail pada salah satu paket untuk melihat isi paket.");
+    return createStateMessage("Klik 'Isi Paket' pada salah satu baris paket untuk melihat rincian komponen.");
   }
 
   const selectedPackage = packages.find((pkg) => pkg.package_id === selectedSettingsPackageId);
@@ -19516,8 +19568,8 @@ function createPackageDetailsElement() {
   const title = document.createElement("h4");
   title.className = "settings-section-title";
   title.textContent = selectedPackage
-    ? `Isi Paket: ${selectedPackage.package_name}`
-    : `Isi Paket: ${selectedSettingsPackageId}`;
+    ? `Rincian Isi Paket: ${selectedPackage.package_name}`
+    : `Rincian Isi Paket: ${selectedSettingsPackageId}`;
 
   if (isLoadingPackageDetails) {
     wrapper.append(title, createStateMessage("Memuat detail paket..."));
@@ -19531,7 +19583,7 @@ function createPackageDetailsElement() {
     detail.component_ref_id || "-",
     `${formatDecimal(detail.qty)} ${detail.unit || ""}`.trim(),
     formatCurrency(detail.hpp || detail.cost_amount || 0),
-    detail.is_choice ? "Pilihan" : "Included",
+    detail.is_choice ? "Pilihan / Bonus" : "Included",
     detail.note || "-",
   ]);
 
@@ -19556,26 +19608,6 @@ function getPackageTypeBadge(packageType) {
   return badge;
 }
 
-function getPackageBundleSummary(pkg) {
-  const components = Array.isArray(pkg?.bundle_components) && pkg.bundle_components.length > 0
-    ? pkg.bundle_components
-    : Array.isArray(pkg?.package_details) && pkg.package_details.length > 0
-      ? pkg.package_details
-      : (packageDetailsByPackageId[pkg?.package_id] || []);
-
-  if (!components || components.length === 0) {
-    return "-";
-  }
-
-  return components.map((comp) => {
-    const name = comp.component_name || comp.item_name || comp.item_id || comp.component_ref_id || "Item";
-    const qty = Number(comp.qty_used ?? comp.qty ?? 1);
-    const unit = comp.unit ? ` ${comp.unit}` : "";
-    const mode = (comp.component_mode === "bonus" || comp.is_choice) ? " (Bonus)" : "";
-    return `${qty}${unit} ${name}${mode}`.trim();
-  }).join(", ");
-}
-
 function createPackageSettingsSection() {
   const query = settingsPackageSearchQuery.trim().toLowerCase();
   const filteredPackages = query
@@ -19590,30 +19622,20 @@ function createPackageSettingsSection() {
     ].join(" ").toLowerCase().includes(query))
     : packages;
 
-  const rows = filteredPackages.map((pkg) => {
-    const isFnb = String(pkg.package_type || "").toLowerCase() === "fnb_bundle";
-    return [
-      pkg.package_id || "-",
-      pkg.package_name || "-",
-      pkg.package_category || "-",
-      getPackageTypeBadge(pkg.package_type),
-      getPackageBundleSummary(pkg),
-      formatCurrency(pkg.selling_price || 0),
-      isFnb ? "-" : `${Number(pkg.duration_minutes) || 0} menit`,
-      !isFnb && Number(pkg.included_lc_count || 0) > 0 && Number(pkg.included_lc_duration_minutes || 0) > 0
-        ? `${Number(pkg.included_lc_count)} LC x ${formatDurationMinutes(Number(pkg.included_lc_duration_minutes))}`
-        : "-",
-      pkg.valid_day_type || "-",
-      getMasterStatusBadge(pkg.status),
-      createPackageMasterActions(pkg),
-    ];
-  });
+  const rows = filteredPackages.map((pkg) => [
+    createPackageTitleCell(pkg),
+    getPackageTypeBadge(pkg.package_type),
+    createPackagePriceCell(pkg),
+    createPackageDurationCell(pkg),
+    getMasterStatusBadge(pkg.status),
+    createPackageMasterActions(pkg),
+  ]);
 
   const content = document.createElement("div");
   content.className = "settings-package-content";
   content.append(
     createMasterTable(
-      ["ID", "Paket", "Kategori", "Jenis", "Isi Paket", "Harga", "Durasi", "LC Included", "Hari", "Status", "Aksi"],
+      ["Paket & Kategori", "Jenis", "Harga", "Durasi / LC", "Status", "Aksi"],
       rows,
       "Paket tidak ditemukan.",
       "settingsPackages"
@@ -19623,7 +19645,7 @@ function createPackageSettingsSection() {
 
   return createSettingsSection(
     "Pengaturan Paket",
-    "Kelola seluruh master paket, baik Paket F&B Bundle (Twin Botol / Combo Snack) maupun Paket Room Karaoke All-In beserta isi komponennya.",
+    "Kelola seluruh master paket (F&B Bundle & Room All-In). Klik tombol Edit untuk mengubah harga atau isi komponen.",
     "package",
     content,
     createSettingsSearchControl("Cari Paket", settingsPackageSearchQuery, "filter-settings-package", "Cari nama paket, kategori, ID, status, atau catatan")
