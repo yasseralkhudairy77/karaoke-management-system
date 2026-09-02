@@ -1870,6 +1870,14 @@ async function selectSettingsPackage(packageId) {
     return;
   }
 
+  // Jika paket yang sama sedang aktif diklik kembali, tutup rincian isi paket
+  if (selectedSettingsPackageId === normalizedPackageId) {
+    selectedSettingsPackageId = "";
+    resetPaginationPage("settingsPackageDetails");
+    renderRooms();
+    return;
+  }
+
   selectedSettingsPackageId = normalizedPackageId;
 
   if (packageDetailsByPackageId[normalizedPackageId]) {
@@ -20538,6 +20546,11 @@ async function submitDeleteMasterData() {
   }
 
   const isPackage = deleteMasterConfirmation.type === "package";
+  if (isPackage) {
+    await executeDeleteMasterData("", null);
+    return;
+  }
+
   openAdminPinModal({
     title: isPackage ? "PIN Manager Nonaktifkan Paket" : "PIN Manager Delete Permanen",
     message: isPackage
@@ -21089,18 +21102,7 @@ function isSensitiveMasterDataChange() {
   }
 
   if (masterDataForm.type === "package") {
-    const originalStatus = String(original.status || "").trim().toLowerCase();
-    const nextStatus = String(values.status || "").trim().toLowerCase();
-    const originalComponents = JSON.stringify(Array.isArray(original.bundle_components) ? original.bundle_components : []);
-    const nextComponents = JSON.stringify(Array.isArray(values.bundle_components) ? values.bundle_components : []);
-
-    return (Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)
-      || (Number(original.duration_minutes) || 0) !== (Number(values.duration_minutes) || 0)
-      || (Number(original.included_lc_count) || 0) !== (Number(values.included_lc_count) || 0)
-      || (Number(original.included_lc_duration_minutes) || 0) !== (Number(values.included_lc_duration_minutes) || 0)
-      || String(original.package_type || "room_fnb_bundle") !== String(values.package_type || "room_fnb_bundle")
-      || originalComponents !== nextComponents
-      || originalStatus !== nextStatus;
+    return false;
   }
 
   return false;
@@ -21182,6 +21184,11 @@ async function executeMasterDataSubmit(authData = null, adminPin = "") {
     return;
   }
 
+  const savedMasterType = masterDataForm.type;
+  const targetPackageId = savedMasterType === "package"
+    ? String(masterDataForm.values?.package_id || "").trim()
+    : "";
+
   isSavingMasterData = true;
   renderRooms();
 
@@ -21191,6 +21198,8 @@ async function executeMasterDataSubmit(authData = null, adminPin = "") {
     if (!data || (data.ok !== true && data.success !== true)) {
       throw new Error(data?.message || data?.error || "Gagal menyimpan master data.");
     }
+
+    const resolvedPackageId = targetPackageId || String(data.package_id || "").trim();
 
     showInlineNotice(data.message || "Master data berhasil disimpan.");
     masterDataForm = null;
@@ -21202,6 +21211,19 @@ async function executeMasterDataSubmit(authData = null, adminPin = "") {
       loadRooms(),
       loadPackages(),
     ]);
+
+    if (savedMasterType === "package" && resolvedPackageId) {
+      selectedSettingsPackageId = resolvedPackageId;
+      try {
+        const latestDetails = await fetchPackageDetailsFromApi(resolvedPackageId);
+        packageDetailsByPackageId = {
+          ...packageDetailsByPackageId,
+          [resolvedPackageId]: latestDetails,
+        };
+      } catch (detailError) {
+        console.warn("Gagal memuat rincian paket otomatis:", detailError);
+      }
+    }
   } catch (error) {
     showInlineNotice(error.message || "Gagal menyimpan master data.", "error");
   } finally {
@@ -27850,6 +27872,18 @@ async function handleRoomAction(event) {
     if (!item) {
       showInlineNotice("Data master tidak ditemukan.", "error");
       return;
+    }
+
+    if (button.dataset.masterType === "package" && item.package_id && !packageDetailsByPackageId[item.package_id]) {
+      try {
+        const details = await fetchPackageDetailsFromApi(item.package_id);
+        packageDetailsByPackageId = {
+          ...packageDetailsByPackageId,
+          [item.package_id]: details,
+        };
+      } catch (err) {
+        console.warn("Gagal memuat detail paket untuk form edit:", err);
+      }
     }
 
     openMasterDataForm(button.dataset.masterType, "edit", item);
