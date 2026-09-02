@@ -9304,6 +9304,162 @@ textarea.action-confirmation-input {
   margin-top: 20px;
 }
 
+/* F&B Sales Report Print Styles */
+.fnb-report-print {
+  position: fixed;
+  inset: 18px;
+  z-index: 1200;
+  overflow: auto;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 28px;
+  font-family: Arial, sans-serif;
+}
+
+.fnb-report-print-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 2px solid #111111;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+}
+
+.fnb-report-print-brand {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #7a5b12;
+}
+
+.fnb-report-print h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 24px;
+}
+
+.fnb-report-print h3 {
+  margin: 0 0 10px;
+  color: #111111;
+  font-size: 16px;
+}
+
+.fnb-report-print-meta,
+.fnb-report-print-footer {
+  margin: 6px 0 0;
+  color: #555555;
+  font-size: 12px;
+}
+
+.fnb-report-print-stamp {
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  text-align: right;
+  font-size: 12px;
+  color: #555555;
+}
+
+.fnb-report-print-stamp strong {
+  color: #111111;
+}
+
+.fnb-report-print-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.fnb-report-print-metric {
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 10px;
+  background: #f7f8fa;
+}
+
+.fnb-report-print-metric span {
+  display: block;
+  color: #555555;
+  font-size: 11px;
+}
+
+.fnb-report-print-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: #111111;
+  font-size: 15px;
+}
+
+.fnb-report-print-section {
+  margin-top: 18px;
+}
+
+.fnb-report-print table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.fnb-report-print th,
+.fnb-report-print td {
+  border: 1px solid #d8dee8;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.fnb-report-print th {
+  background: #f0f2f5;
+  font-weight: bold;
+}
+
+.fnb-report-print-empty {
+  color: #666666;
+  text-align: center;
+}
+
+.fnb-report-print-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.fnb-report-signature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-top: 36px;
+  text-align: center;
+  break-inside: avoid;
+}
+
+.fnb-report-signature-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 60px;
+}
+
+.fnb-report-signature-box span {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333333;
+}
+
+.fnb-report-signature-box strong {
+  font-size: 12px;
+  border-top: 1px solid #333333;
+  padding-top: 4px;
+  width: 80%;
+  color: #111111;
+}
+
 @media print {
   @page {
     size: 58mm auto;
@@ -9312,6 +9468,11 @@ textarea.action-confirmation-input {
 
   @page lc-report-page {
     size: A4 landscape;
+    margin: 10mm;
+  }
+
+  @page fnb-report-page {
+    size: A4 portrait;
     margin: 10mm;
   }
 
@@ -9325,6 +9486,8 @@ textarea.action-confirmation-input {
   .owner-report-print *,
   .lc-report-print,
   .lc-report-print *,
+  .fnb-report-print,
+  .fnb-report-print *,
   .receipt-print,
   .receipt-print * {
     visibility: visible;
@@ -9333,6 +9496,7 @@ textarea.action-confirmation-input {
   .closing-print,
   .owner-report-print,
   .lc-report-print,
+  .fnb-report-print,
   .receipt-print {
     position: absolute;
     left: 0;
@@ -9426,6 +9590,12 @@ textarea.action-confirmation-input {
   .receipt-print-row,
   .receipt-print-lc-item,
   .receipt-print-fnb-item {
+  .receipt-print-reprint-notice,
+  .receipt-print-section,
+  .receipt-print-footer,
+  .receipt-print-row,
+  .receipt-print-lc-item,
+  .receipt-print-fnb-item {
     border-color: #d0d0d0;
     background: #ffffff;
   }
@@ -9439,6 +9609,12 @@ textarea.action-confirmation-input {
   .lc-report-print td,
   .lc-report-print-metric strong,
   .lc-report-print-stamp strong,
+  .fnb-report-print h2,
+  .fnb-report-print h3,
+  .fnb-report-print th,
+  .fnb-report-print td,
+  .fnb-report-print-metric strong,
+  .fnb-report-print-stamp strong,
   .closing-print-value,
   .closing-print-note,
   .closing-print-signature-line,
@@ -9461,6 +9637,11 @@ textarea.action-confirmation-input {
   .lc-report-print-footer,
   .lc-report-print-metric span,
   .lc-report-print-stamp,
+  .fnb-report-print-brand,
+  .fnb-report-print-meta,
+  .fnb-report-print-footer,
+  .fnb-report-print-metric span,
+  .fnb-report-print-stamp,
   .receipt-print-brand,
   .receipt-print-meta,
   .receipt-print-reprint-detail,
@@ -9472,13 +9653,8 @@ textarea.action-confirmation-input {
   .closing-print-actions,
   .owner-report-print .closing-print-actions,
   .lc-report-print-actions,
+  .fnb-report-print-actions,
   .receipt-print-actions {
-    display: none;
-  }
-
-  .closing-print-section--equal,
-  .closing-print-section--positive,
-  .closing-print-section--negative {
     background: #ffffff;
   }
 

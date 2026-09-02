@@ -529,33 +529,173 @@ async function settleGeneralFnbBill(req, res, payload) {
 
 async function getTodayFnbSalesReport(req, res) {
   try {
-    const { period, start_date, end_date } = req.query;
+    const { period, start_date, end_date, category, status } = req.query;
     const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
 
-    const itemRes = await db.query(`
-      SELECT
-        foi.menu_id,
-        foi.menu_name,
-        foi.category,
-        SUM(foi.quantity) AS quantity,
-        SUM(foi.subtotal) AS subtotal
-      FROM fnb_order_items foi
-      JOIN fnb_orders fo ON fo.order_id = foi.order_id
-      WHERE DATE(fo.created_at AT TIME ZONE 'Asia/Jakarta') >= $1
-        AND DATE(fo.created_at AT TIME ZONE 'Asia/Jakarta') <= $2
-        AND fo.order_status <> 'cancelled'
-      GROUP BY foi.menu_id, foi.menu_name, foi.category
-      ORDER BY subtotal DESC
-    `, [startDate, endDate]);
+    const queryParams = [startDate, endDate];
+    const orderStatusFilter = status === 'all'
+      ? "AND fo.order_status <> 'cancelled'"
+      : "AND fo.order_status = 'billed'";
 
-    const items = itemRes.rows.map(row => ({
-      ...row,
-      quantity: Number(row.quantity || 0),
-      subtotal: Number(row.subtotal || 0)
+    let categoryFilter = '';
+    if (category && category !== 'all') {
+      queryParams.push(category);
+      categoryFilter = `AND foi.category = $${queryParams.length}`;
+    }
+
+    const [itemsResult, lowStockResult] = await Promise.all([
+      db.query(`
+        SELECT
+          foi.order_item_id,
+          foi.order_id,
+          fo.room_id,
+          fo.room_name,
+          fo.customer_name,
+          fo.cashier_name,
+          fo.order_status,
+          fo.created_at AS order_created_at,
+          foi.menu_id,
+          foi.menu_name,
+          foi.category,
+          foi.price,
+          foi.quantity,
+          foi.subtotal,
+          foi.menu_type_snapshot
+        FROM fnb_order_items foi
+        JOIN fnb_orders fo ON fo.order_id = foi.order_id
+        WHERE (((fo.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
+          AND (((fo.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) <= $2::date
+          ${orderStatusFilter}
+          AND COALESCE(foi.is_voided, FALSE) = FALSE
+          ${categoryFilter}
+        ORDER BY foi.category ASC, foi.menu_name ASC, fo.created_at DESC
+      `, queryParams),
+      db.query(`
+        SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status
+        FROM inventory
+        WHERE status = 'active' AND (stock_qty <= min_stock OR stock_qty < 0)
+        ORDER BY stock_qty ASC
+      `)
+    ]);
+
+    const menuMap = new Map();
+    const categoryMap = new Map();
+    const distinctOrderIds = new Set();
+    let totalFnbSales = 0;
+    let totalItemsSold = 0;
+
+    for (const row of itemsResult.rows) {
+      distinctOrderIds.add(row.order_id);
+      const menuId = row.menu_id || row.menu_name;
+      const qty = Number(row.quantity || 0);
+      const subtotal = Number(row.subtotal || 0);
+      const price = Number(row.price || 0);
+      const cat = row.category || 'Lainnya';
+
+      totalFnbSales += subtotal;
+      totalItemsSold += qty;
+
+      if (!menuMap.has(menuId)) {
+        menuMap.set(menuId, {
+          menu_id: row.menu_id || '',
+          menu_name: row.menu_name,
+          category: cat,
+          price: price,
+          quantity: 0,
+          quantity_sold: 0,
+          subtotal: 0,
+          gross_sales: 0,
+          order_count: 0,
+          orders_set: new Set(),
+          orders: []
+        });
+      }
+      const menuEntry = menuMap.get(menuId);
+      menuEntry.quantity += qty;
+      menuEntry.quantity_sold += qty;
+      menuEntry.subtotal += subtotal;
+      menuEntry.gross_sales += subtotal;
+      menuEntry.orders_set.add(row.order_id);
+      menuEntry.orders.push({
+        order_id: row.order_id,
+        room_id: row.room_id,
+        room_name: row.room_name,
+        customer_name: row.customer_name || '',
+        cashier_name: row.cashier_name || '',
+        order_status: row.order_status,
+        created_at: row.order_created_at,
+        quantity: qty,
+        price: price,
+        subtotal: subtotal
+      });
+
+      if (!categoryMap.has(cat)) {
+        categoryMap.set(cat, {
+          category: cat,
+          total_quantity: 0,
+          total_sales: 0,
+          item_count: 0
+        });
+      }
+      const catEntry = categoryMap.get(cat);
+      catEntry.total_quantity += qty;
+      catEntry.total_sales += subtotal;
+      catEntry.item_count += 1;
+    }
+
+    const items = Array.from(menuMap.values()).map(item => {
+      const { orders_set, ...rest } = item;
+      return {
+        ...rest,
+        order_count: orders_set.size
+      };
+    }).sort((a, b) => b.subtotal - a.subtotal);
+
+    const categorySummary = Array.from(categoryMap.values()).sort((a, b) => b.total_sales - a.total_sales);
+
+    let topMenuName = '-';
+    let topMenuQuantity = 0;
+    if (items.length > 0) {
+      const topByQty = [...items].sort((a, b) => b.quantity_sold - a.quantity_sold)[0];
+      topMenuName = topByQty.menu_name;
+      topMenuQuantity = topByQty.quantity_sold;
+    }
+
+    const lowStockItems = lowStockResult.rows.map(row => ({
+      stock_item_id: row.stock_item_id,
+      stock_item_name: row.stock_item_name,
+      category: row.category,
+      unit: row.unit,
+      current_stock: Number(row.stock_qty || 0),
+      min_stock: Number(row.min_stock || 0)
     }));
-    const total = items.reduce((sum, item) => sum + item.subtotal, 0);
 
-    return res.json({ ok: true, success: true, items, total_sales: total, operational_date_start: startDate, operational_date_end: endDate });
+    const lowStockCount = lowStockItems.filter(item => item.current_stock <= item.min_stock && item.current_stock >= 0).length;
+    const negativeStockCount = lowStockItems.filter(item => item.current_stock < 0).length;
+
+    const summary = {
+      total_fnb_orders: distinctOrderIds.size,
+      total_items_sold: totalItemsSold,
+      total_fnb_sales: totalFnbSales,
+      top_menu_name: topMenuName,
+      top_menu_quantity: topMenuQuantity,
+      low_stock_count: lowStockCount,
+      negative_stock_count: negativeStockCount
+    };
+
+    return res.json({
+      ok: true,
+      success: true,
+      summary,
+      items,
+      menu_sales: items,
+      category_summary: categorySummary,
+      low_stock_items: lowStockItems,
+      total_sales: totalFnbSales,
+      operational_date_start: startDate,
+      operational_date_end: endDate,
+      period: period || 'today'
+    });
   } catch (err) {
     return errorResponse(res, err.message);
   }
@@ -570,4 +710,5 @@ module.exports = {
   cancelFnbOrder,
   settleGeneralFnbBill,
   getTodayFnbSalesReport,
+  getFnbSalesReport: getTodayFnbSalesReport
 };

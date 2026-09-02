@@ -33,6 +33,7 @@ async function handleGetAction(action, req, res) {
     case 'getTodayFnbOrders':
       return fnbController.getTodayFnbOrders(req, res);
     case 'getTodayFnbSalesReport':
+    case 'getFnbSalesReport':
       return fnbController.getTodayFnbSalesReport(req, res);
     case 'getFnbOrdersByIds':
       return fnbController.getFnbOrdersByIds(req, res);

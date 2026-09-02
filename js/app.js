@@ -927,8 +927,18 @@ let isLoadingInventoryAudits = false;
 let isSavingInventoryAudit = false;
 let todayFnbSalesSummary = null;
 let todayFnbMenuSales = [];
+let fnbCategorySummary = [];
 let lowStockReportItems = [];
 let isLoadingFnbSalesReport = false;
+let fnbSalesReportError = "";
+let fnbReportPeriod = "today";
+let fnbReportStartDate = "";
+let fnbReportEndDate = "";
+let fnbReportCategory = "all";
+let fnbReportStatus = "billed";
+let fnbReportPage = 1;
+let selectedFnbMenuForLogs = null;
+let fnbReportPrintPreviewVisible = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
@@ -2539,29 +2549,68 @@ async function loadOwnerDashboardSummary() {
   }
 }
 
-async function loadTodayFnbSalesReport() {
-  todayFnbSalesSummary = null;
+async function loadTodayFnbSalesReport(
+  period = fnbReportPeriod,
+  startDate = fnbReportStartDate,
+  endDate = fnbReportEndDate,
+  category = fnbReportCategory,
+  status = fnbReportStatus
+) {
+  fnbReportPeriod = period || "today";
+  fnbReportStartDate = startDate || "";
+  fnbReportEndDate = endDate || "";
+  fnbReportCategory = category || "all";
+  fnbReportStatus = status || "billed";
 
   if (!API_BASE_URL.trim()) {
+    todayFnbSalesSummary = null;
     todayFnbMenuSales = [];
+    fnbCategorySummary = [];
     lowStockReportItems = [];
     renderRooms();
     return;
   }
 
   isLoadingFnbSalesReport = true;
+  fnbSalesReportError = "";
   renderRooms();
 
   try {
-    const data = await fetchTodayFnbSalesReportFromApi();
+    const params = new URLSearchParams({
+      action: "getTodayFnbSalesReport",
+      period: fnbReportPeriod,
+      status: fnbReportStatus,
+      _: String(Date.now()),
+    });
+    if (fnbReportPeriod === "custom") {
+      if (fnbReportStartDate) params.set("start_date", fnbReportStartDate);
+      if (fnbReportEndDate) params.set("end_date", fnbReportEndDate);
+    }
+    if (fnbReportCategory && fnbReportCategory !== "all") {
+      params.set("category", fnbReportCategory);
+    }
+
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`Server laporan F&B merespons status ${response.status}.`);
+    }
+
+    const data = await response.json();
+    if (!data || (data.ok !== true && data.success !== true)) {
+      throw new Error(data?.error || data?.message || "Respons laporan F&B tidak valid.");
+    }
 
     todayFnbSalesSummary = data.summary || null;
-    todayFnbMenuSales = Array.isArray(data.menu_sales) ? data.menu_sales : [];
+    todayFnbMenuSales = Array.isArray(data.items) ? data.items : (Array.isArray(data.menu_sales) ? data.menu_sales : []);
+    fnbCategorySummary = Array.isArray(data.category_summary) ? data.category_summary : [];
     lowStockReportItems = Array.isArray(data.low_stock_items) ? data.low_stock_items : [];
+    fnbReportPage = 1;
   } catch (error) {
     console.warn("Gagal memuat laporan penjualan F&B.", error);
+    fnbSalesReportError = error.message || "Gagal memuat laporan penjualan F&B.";
     todayFnbSalesSummary = null;
     todayFnbMenuSales = [];
+    fnbCategorySummary = [];
     lowStockReportItems = [];
   } finally {
     isLoadingFnbSalesReport = false;
@@ -2574,6 +2623,7 @@ async function fetchTodayFnbSalesReportFromApi() {
     return {
       summary: null,
       menu_sales: [],
+      category_summary: [],
       low_stock_items: [],
     };
   }
@@ -2587,13 +2637,14 @@ async function fetchTodayFnbSalesReportFromApi() {
 
   const data = await response.json();
 
-  if (!data || data.ok !== true) {
+  if (!data || (data.ok !== true && data.success !== true)) {
     throw new Error(data?.error || "API response is invalid.");
   }
 
   return {
     summary: data.summary || null,
-    menu_sales: Array.isArray(data.menu_sales) ? data.menu_sales : [],
+    menu_sales: Array.isArray(data.items) ? data.items : (Array.isArray(data.menu_sales) ? data.menu_sales : []),
+    category_summary: Array.isArray(data.category_summary) ? data.category_summary : [],
     low_stock_items: Array.isArray(data.low_stock_items) ? data.low_stock_items : [],
   };
 }
@@ -14411,6 +14462,17 @@ function createOwnerDashboardElement() {
   return section;
 }
 
+function getFnbReportPeriodLabel() {
+  if (fnbReportPeriod === "today" || !fnbReportPeriod) return "Shift Aktif (Hari Ini)";
+  if (fnbReportPeriod === "yesterday") return "Kemarin (1 Shift Kemarin)";
+  if (fnbReportPeriod === "last7days") return "7 Hari Terakhir";
+  if (fnbReportPeriod === "thismonth") return "Bulan Ini";
+  if (fnbReportPeriod === "custom") {
+    return `${fnbReportStartDate || "Awal"} s/d ${fnbReportEndDate || "Akhir"}`;
+  }
+  return fnbReportPeriod;
+}
+
 function createTodayFnbSalesReportPanelElement() {
   const panel = document.createElement("section");
   panel.className = "fnb-sales-report-panel";
@@ -14424,26 +14486,169 @@ function createTodayFnbSalesReportPanelElement() {
   const title = document.createElement("h2");
   title.className = "fnb-sales-report-title";
   title.id = "fnb-sales-report-title";
-  title.textContent = "Laporan F&B - Shift Aktif";
+  title.textContent = "Laporan Penjualan Barang F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "fnb-sales-report-subtitle";
-  subtitle.textContent = "Ringkasan penjualan F&B billed shift aktif dan rekomendasi restock stok rendah. Mengikuti tanggal operasional karaoke.";
+  subtitle.textContent = "Rekapitulasi penjualan makanan & minuman berdasarkan jam operasional karaoke (cut-off 10:00 WIB).";
 
   titleGroup.append(title, subtitle);
+  header.appendChild(titleGroup);
 
-  const actions = document.createElement("div");
-  actions.className = "fnb-sales-report-actions";
+  const toolbar = document.createElement("div");
+  toolbar.className = "erp-filter-toolbar";
+  toolbar.style.display = "flex";
+  toolbar.style.flexWrap = "wrap";
+  toolbar.style.gap = "10px";
+  toolbar.style.alignItems = "flex-end";
+  toolbar.style.marginTop = "12px";
+  toolbar.style.marginBottom = "16px";
 
-  const refreshButton = document.createElement("button");
-  refreshButton.className = "fnb-sales-report-button";
-  refreshButton.type = "button";
-  refreshButton.dataset.action = "refresh-fnb-sales-report";
-  refreshButton.disabled = isLoadingFnbSalesReport || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingFnbSalesReport ? "Memuat..." : "Refresh Laporan F&B";
+  const periodField = document.createElement("div");
+  periodField.style.display = "flex";
+  periodField.style.flexDirection = "column";
+  periodField.style.gap = "4px";
+  const periodLbl = document.createElement("label");
+  periodLbl.style.fontSize = "12px";
+  periodLbl.style.fontWeight = "bold";
+  periodLbl.textContent = "Periode:";
+  const periodSelect = document.createElement("select");
+  periodSelect.className = "duration-custom-input";
+  [
+    ["today", "Shift Aktif (Hari Ini)"],
+    ["yesterday", "Kemarin"],
+    ["last7days", "7 Hari Terakhir"],
+    ["thismonth", "Bulan Ini"],
+    ["custom", "Pilih Tanggal (Custom)"],
+  ].forEach(([val, lbl]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = val === fnbReportPeriod;
+    periodSelect.appendChild(opt);
+  });
+  periodField.append(periodLbl, periodSelect);
+  toolbar.appendChild(periodField);
 
-  actions.appendChild(refreshButton);
-  header.append(titleGroup, actions);
+  const customGroup = document.createElement("div");
+  customGroup.style.display = fnbReportPeriod === "custom" ? "flex" : "none";
+  customGroup.style.gap = "8px";
+
+  const startField = document.createElement("div");
+  startField.style.display = "flex";
+  startField.style.flexDirection = "column";
+  startField.style.gap = "4px";
+  const startLbl = document.createElement("label");
+  startLbl.style.fontSize = "12px";
+  startLbl.style.fontWeight = "bold";
+  startLbl.textContent = "Mulai:";
+  const startInput = document.createElement("input");
+  startInput.type = "date";
+  startInput.className = "duration-custom-input";
+  startInput.value = fnbReportStartDate;
+  startField.append(startLbl, startInput);
+
+  const endField = document.createElement("div");
+  endField.style.display = "flex";
+  endField.style.flexDirection = "column";
+  endField.style.gap = "4px";
+  const endLbl = document.createElement("label");
+  endLbl.style.fontSize = "12px";
+  endLbl.style.fontWeight = "bold";
+  endLbl.textContent = "Sampai:";
+  const endInput = document.createElement("input");
+  endInput.type = "date";
+  endInput.className = "duration-custom-input";
+  endInput.value = fnbReportEndDate;
+  endField.append(endLbl, endInput);
+
+  customGroup.append(startField, endField);
+  toolbar.appendChild(customGroup);
+
+  periodSelect.onchange = (e) => {
+    fnbReportPeriod = e.target.value;
+    customGroup.style.display = fnbReportPeriod === "custom" ? "flex" : "none";
+  };
+
+  const catField = document.createElement("div");
+  catField.style.display = "flex";
+  catField.style.flexDirection = "column";
+  catField.style.gap = "4px";
+  const catLbl = document.createElement("label");
+  catLbl.style.fontSize = "12px";
+  catLbl.style.fontWeight = "bold";
+  catLbl.textContent = "Kategori:";
+  const catSelect = document.createElement("select");
+  catSelect.className = "duration-custom-input";
+  [
+    ["all", "Semua Kategori"],
+    ["Food", "Food"],
+    ["Beverage", "Beverage"],
+    ["Beer", "Beer"],
+    ["Spirit", "Spirit"],
+    ["Anggur", "Anggur"],
+    ["Cigarette", "Rokok"],
+  ].forEach(([val, lbl]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = val === fnbReportCategory;
+    catSelect.appendChild(opt);
+  });
+  catField.append(catLbl, catSelect);
+  toolbar.appendChild(catField);
+
+  const statusField = document.createElement("div");
+  statusField.style.display = "flex";
+  statusField.style.flexDirection = "column";
+  statusField.style.gap = "4px";
+  const statusLbl = document.createElement("label");
+  statusLbl.style.fontSize = "12px";
+  statusLbl.style.fontWeight = "bold";
+  statusLbl.textContent = "Status Order:";
+  const statusSelect = document.createElement("select");
+  statusSelect.className = "duration-custom-input";
+  [
+    ["billed", "Hanya Billed / Lunas"],
+    ["all", "Semua (Termasuk Open)"],
+  ].forEach(([val, lbl]) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = val === fnbReportStatus;
+    statusSelect.appendChild(opt);
+  });
+  statusField.append(statusLbl, statusSelect);
+  toolbar.appendChild(statusField);
+
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  applyBtn.style.padding = "8px 16px";
+  applyBtn.style.alignSelf = "flex-end";
+  applyBtn.style.fontWeight = "bold";
+  applyBtn.textContent = isLoadingFnbSalesReport ? "Memuat..." : "Terapkan Filter";
+  applyBtn.onclick = async () => {
+    fnbReportStartDate = startInput.value;
+    fnbReportEndDate = endInput.value;
+    fnbReportCategory = catSelect.value;
+    fnbReportStatus = statusSelect.value;
+    await loadTodayFnbSalesReport(fnbReportPeriod, fnbReportStartDate, fnbReportEndDate, fnbReportCategory, fnbReportStatus);
+  };
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "erp-btn erp-btn-secondary";
+  printBtn.style.padding = "8px 16px";
+  printBtn.style.alignSelf = "flex-end";
+  printBtn.style.fontWeight = "bold";
+  printBtn.textContent = "🖨️ Download / Cetak PDF";
+  printBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
+  printBtn.onclick = () => {
+    showFnbReportPrintPreview();
+  };
+
+  toolbar.append(applyBtn, printBtn);
 
   const summary = todayFnbSalesSummary || {
     total_fnb_orders: 0,
@@ -14454,17 +14659,27 @@ function createTodayFnbSalesReportPanelElement() {
     low_stock_count: 0,
     negative_stock_count: 0,
   };
-  const topMenuLabel = summary.top_menu_name
+  const topMenuLabel = summary.top_menu_name && summary.top_menu_name !== "-"
     ? `${summary.top_menu_name} (${Number(summary.top_menu_quantity) || 0})`
     : "-";
 
   panel.append(
     header,
+    toolbar,
     createOperationalShiftNoteElement("shift-period-note"),
     createFnbSalesReportSummaryElement(summary, topMenuLabel),
+    createFnbCategorySummaryElement(fnbCategorySummary),
     createFnbMenuSalesSectionElement(),
     createLowStockReportSectionElement()
   );
+
+  if (selectedFnbMenuForLogs) {
+    panel.appendChild(createFnbDetailLogsOverlay());
+  }
+
+  if (fnbReportPrintPreviewVisible) {
+    panel.appendChild(createFnbReportPrintPreviewElement());
+  }
 
   return panel;
 }
@@ -14474,9 +14689,9 @@ function createFnbSalesReportSummaryElement(summary, topMenuLabel) {
   grid.className = "fnb-sales-report-summary";
 
   [
-    ["Total Order F&B", Number(summary.total_fnb_orders) || 0],
-    ["Total Item Terjual", Number(summary.total_items_sold) || 0],
-    ["Omzet F&B Shift Aktif", formatCurrency(summary.total_fnb_sales)],
+    ["Total Omzet F&B", formatCurrency(summary.total_fnb_sales)],
+    ["Total Item Terjual", `${Number(summary.total_items_sold) || 0} item`],
+    ["Total Transaksi", `${Number(summary.total_fnb_orders) || 0} order`],
     ["Menu Terlaris", topMenuLabel],
     ["Stok Rendah", Number(summary.low_stock_count) || 0],
     ["Stok Minus", Number(summary.negative_stock_count) || 0],
@@ -14499,6 +14714,53 @@ function createFnbSalesReportSummaryElement(summary, topMenuLabel) {
   return grid;
 }
 
+function createFnbCategorySummaryElement(categorySummary = []) {
+  if (!Array.isArray(categorySummary) || categorySummary.length === 0) {
+    return document.createDocumentFragment();
+  }
+
+  const section = document.createElement("section");
+  section.className = "fnb-category-summary-section";
+  section.style.margin = "16px 0";
+
+  const title = document.createElement("h3");
+  title.style.fontSize = "14px";
+  title.style.fontWeight = "bold";
+  title.style.marginBottom = "8px";
+  title.textContent = "Rekapitulasi Penjualan per Kategori";
+
+  const grid = document.createElement("div");
+  grid.style.display = "flex";
+  grid.style.flexWrap = "wrap";
+  grid.style.gap = "10px";
+
+  categorySummary.forEach((cat) => {
+    const pill = document.createElement("div");
+    pill.style.backgroundColor = "var(--bg)";
+    pill.style.border = "1px solid var(--border)";
+    pill.style.borderRadius = "var(--radius-sm)";
+    pill.style.padding = "8px 12px";
+    pill.style.display = "flex";
+    pill.style.flexDirection = "column";
+    pill.style.gap = "2px";
+
+    const label = document.createElement("span");
+    label.style.fontSize = "11px";
+    label.style.color = "var(--muted)";
+    label.textContent = `${FNB_CATEGORY_ICONS[cat.category] || "📦"} ${cat.category}`;
+
+    const value = document.createElement("strong");
+    value.style.fontSize = "13px";
+    value.textContent = `${formatCurrency(cat.total_sales)} (${Number(cat.total_quantity).toLocaleString("id-ID")} terjual)`;
+
+    pill.append(label, value);
+    grid.appendChild(pill);
+  });
+
+  section.append(title, grid);
+  return section;
+}
+
 function createFnbMenuSalesSectionElement() {
   const section = document.createElement("section");
   section.className = "fnb-sales-report-section";
@@ -14507,62 +14769,431 @@ function createFnbMenuSalesSectionElement() {
   const title = document.createElement("h3");
   title.className = "fnb-sales-report-section-title";
   title.id = "fnb-menu-sales-title";
-  title.textContent = "Penjualan per Menu";
-
-  const list = document.createElement("div");
-  list.className = "fnb-menu-sales-list";
+  title.textContent = "Rincian Penjualan per Barang";
 
   if (isLoadingFnbSalesReport) {
-    list.appendChild(createStateMessage("Memuat laporan penjualan F&B..."));
-  } else if (todayFnbMenuSales.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "fnb-sales-report-empty";
-    empty.textContent = "Belum ada penjualan F&B pada shift aktif.";
-    list.appendChild(empty);
-  } else {
-    const paginatedMenuSales = getPaginatedSlice("fnbMenuSales", todayFnbMenuSales);
-    paginatedMenuSales.items.forEach((menuSale) => {
-      list.appendChild(createFnbMenuSalesRowElement(menuSale));
-    });
-    list.appendChild(createPaginationControlsElement("fnbMenuSales", todayFnbMenuSales.length));
+    section.append(title, createStateMessage("Memuat laporan penjualan F&B..."));
+    return section;
   }
 
-  section.append(title, list);
+  if (fnbSalesReportError) {
+    section.append(title, createStateMessage(fnbSalesReportError, "error"));
+    return section;
+  }
+
+  if (todayFnbMenuSales.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "fnb-sales-report-empty";
+    empty.textContent = "Tidak ada transaksi penjualan F&B pada periode yang dipilih.";
+    section.append(title, empty);
+    return section;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th style="width: 40px; text-align: center;">No</th>
+      <th>Kode Menu</th>
+      <th>Nama Barang</th>
+      <th>Kategori</th>
+      <th style="text-align: right;">Harga Jual</th>
+      <th style="text-align: center;">Qty Terjual</th>
+      <th style="text-align: right;">Total Omzet</th>
+      <th style="text-align: center; width: 110px;">Aksi</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(todayFnbMenuSales.length / itemsPerPage);
+  if (fnbReportPage > totalPages && totalPages > 0) {
+    fnbReportPage = totalPages;
+  }
+  const startIndex = (fnbReportPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedSales = todayFnbMenuSales.slice(startIndex, endIndex);
+
+  paginatedSales.forEach((sale, index) => {
+    const tr = document.createElement("tr");
+    const qty = Number(sale.quantity_sold ?? sale.quantity ?? 0);
+    const subtotal = Number(sale.gross_sales ?? sale.subtotal ?? 0);
+    const price = Number(sale.price || 0);
+
+    tr.innerHTML = `
+      <td style="text-align: center;">${startIndex + index + 1}</td>
+      <td><strong>${escapeHtml(sale.menu_id || "-")}</strong></td>
+      <td><strong>${escapeHtml(sale.menu_name || "-")}</strong></td>
+      <td>${escapeHtml(sale.category || "-")}</td>
+      <td style="text-align: right;">${formatCurrency(price)}</td>
+      <td style="text-align: center;"><strong>${qty.toLocaleString("id-ID")}</strong></td>
+      <td style="text-align: right;"><strong>${formatCurrency(subtotal)}</strong></td>
+      <td style="text-align: center;">
+        <button type="button" class="erp-btn erp-btn-secondary btn-detail-fnb-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
+      </td>
+    `;
+
+    tr.querySelector(".btn-detail-fnb-logs").onclick = () => {
+      selectedFnbMenuForLogs = sale;
+      renderRooms();
+    };
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  section.append(title, tableWrapper);
+
+  if (totalPages > 1) {
+    const pagination = document.createElement("div");
+    pagination.className = "erp-pagination";
+    pagination.style.display = "flex";
+    pagination.style.justifyContent = "center";
+    pagination.style.alignItems = "center";
+    pagination.style.gap = "12px";
+    pagination.style.marginTop = "12px";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "erp-btn erp-btn-secondary";
+    prevBtn.textContent = "«";
+    prevBtn.disabled = fnbReportPage === 1;
+    prevBtn.onclick = () => {
+      fnbReportPage--;
+      renderRooms();
+    };
+
+    const label = document.createElement("span");
+    label.style.fontSize = "14px";
+    label.textContent = `Halaman ${fnbReportPage} dari ${totalPages}`;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "erp-btn erp-btn-secondary";
+    nextBtn.textContent = "»";
+    nextBtn.disabled = fnbReportPage === totalPages;
+    nextBtn.onclick = () => {
+      fnbReportPage++;
+      renderRooms();
+    };
+
+    pagination.append(prevBtn, label, nextBtn);
+    section.appendChild(pagination);
+  }
 
   return section;
 }
 
-function createFnbMenuSalesRowElement(menuSale) {
-  const row = document.createElement("article");
-  row.className = "fnb-menu-sales-row";
+function createFnbDetailLogsOverlay() {
+  if (!selectedFnbMenuForLogs) return document.createDocumentFragment();
 
-  const info = document.createElement("div");
+  const overlay = document.createElement("div");
+  overlay.className = "lc-overlay active";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.65)";
+  overlay.style.zIndex = "1100";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.padding = "20px";
 
-  const name = document.createElement("h4");
-  name.className = "fnb-menu-sales-name";
-  name.textContent = menuSale.menu_name || menuSale.menu_id || "-";
+  const modal = document.createElement("div");
+  modal.className = "lc-modal-card";
+  modal.style.backgroundColor = "var(--surface)";
+  modal.style.borderRadius = "var(--radius-md)";
+  modal.style.border = "1px solid var(--border)";
+  modal.style.maxWidth = "750px";
+  modal.style.width = "100%";
+  modal.style.maxHeight = "85vh";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+  modal.style.padding = "20px";
+  modal.style.boxShadow = "var(--shadow-lg)";
 
-  const meta = document.createElement("p");
-  meta.className = "fnb-menu-sales-meta";
-  meta.textContent = menuSale.category || "-";
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "14px";
+  header.style.borderBottom = "1px solid var(--border)";
+  header.style.paddingBottom = "10px";
 
-  info.append(name, meta);
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "16px";
+  title.textContent = `Rincian Pesanan: ${selectedFnbMenuForLogs.menu_name}`;
 
-  const qty = document.createElement("p");
-  qty.className = "fnb-menu-sales-qty";
-  qty.textContent = String(Number(menuSale.quantity_sold) || 0);
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.textContent = "✕";
+  closeBtn.onclick = () => {
+    selectedFnbMenuForLogs = null;
+    renderRooms();
+  };
 
-  const sales = document.createElement("p");
-  sales.className = "fnb-menu-sales-total";
-  sales.textContent = formatCurrency(menuSale.gross_sales);
+  header.append(title, closeBtn);
 
-  const orders = document.createElement("p");
-  orders.className = "fnb-menu-sales-orders";
-  orders.textContent = `${Number(menuSale.order_count) || 0} order`;
+  const metaBox = document.createElement("div");
+  metaBox.style.display = "flex";
+  metaBox.style.flexWrap = "wrap";
+  metaBox.style.gap = "16px";
+  metaBox.style.marginBottom = "14px";
+  metaBox.style.fontSize = "13px";
+  metaBox.style.color = "var(--muted)";
+  metaBox.innerHTML = `
+    <span>Kategori: <strong>${escapeHtml(selectedFnbMenuForLogs.category || "-")}</strong></span>
+    <span>Harga: <strong>${formatCurrency(selectedFnbMenuForLogs.price)}</strong></span>
+    <span>Total Terjual: <strong>${Number(selectedFnbMenuForLogs.quantity_sold || selectedFnbMenuForLogs.quantity || 0).toLocaleString("id-ID")}</strong></span>
+    <span>Total Omzet: <strong style="color: var(--gold);">${formatCurrency(selectedFnbMenuForLogs.gross_sales || selectedFnbMenuForLogs.subtotal)}</strong></span>
+  `;
 
-  row.append(info, qty, sales, orders);
+  const body = document.createElement("div");
+  body.style.overflowY = "auto";
+  body.style.flex = "1";
 
-  return row;
+  const orders = Array.isArray(selectedFnbMenuForLogs.orders) ? selectedFnbMenuForLogs.orders : [];
+  if (orders.length === 0) {
+    const empty = document.createElement("p");
+    empty.style.textAlign = "center";
+    empty.style.color = "var(--muted)";
+    empty.style.padding = "20px";
+    empty.textContent = "Tidak ada rincian transaksi tersedia.";
+    body.appendChild(empty);
+  } else {
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th style="width: 35px; text-align: center;">No</th>
+          <th>Waktu Order</th>
+          <th>No Order</th>
+          <th>Ruangan / Pemesan</th>
+          <th>Kasir</th>
+          <th style="text-align: center;">Qty</th>
+          <th style="text-align: right;">Subtotal</th>
+          <th style="text-align: center;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orders.map((ord, idx) => `
+          <tr>
+            <td style="text-align: center;">${idx + 1}</td>
+            <td>${escapeHtml(formatDateTimeLabel(ord.created_at))}</td>
+            <td><strong>${escapeHtml(ord.order_id || "-")}</strong></td>
+            <td>${escapeHtml(ord.customer_name ? `${ord.room_name} (${ord.customer_name})` : ord.room_name || "-")}</td>
+            <td>${escapeHtml(ord.cashier_name || "-")}</td>
+            <td style="text-align: center;"><strong>${Number(ord.quantity || 0).toLocaleString("id-ID")}</strong></td>
+            <td style="text-align: right;">${formatCurrency(ord.subtotal)}</td>
+            <td style="text-align: center;"><span class="app-badge">${escapeHtml(ord.order_status || "billed")}</span></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    body.appendChild(table);
+  }
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "flex-end";
+  footer.style.marginTop = "14px";
+  footer.style.paddingTop = "10px";
+  footer.style.borderTop = "1px solid var(--border)";
+
+  const closeActionBtn = document.createElement("button");
+  closeActionBtn.type = "button";
+  closeActionBtn.className = "erp-btn erp-btn-secondary";
+  closeActionBtn.textContent = "Tutup";
+  closeActionBtn.onclick = () => {
+    selectedFnbMenuForLogs = null;
+    renderRooms();
+  };
+  footer.appendChild(closeActionBtn);
+
+  modal.append(header, metaBox, body, footer);
+  overlay.appendChild(modal);
+
+  return overlay;
+}
+
+function showFnbReportPrintPreview() {
+  fnbReportPrintPreviewVisible = true;
+  renderRooms();
+}
+
+function createFnbReportPrintMetric(label, value) {
+  const item = document.createElement("div");
+  item.className = "fnb-report-print-metric";
+
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+
+  item.append(labelEl, valueEl);
+  return item;
+}
+
+function createFnbReportPrintPreviewElement() {
+  const print = document.createElement("section");
+  print.className = "fnb-report-print";
+  print.setAttribute("aria-labelledby", "fnb-report-print-title");
+
+  const header = document.createElement("header");
+  header.className = "fnb-report-print-header";
+  header.innerHTML = `
+    <div>
+      <p class="fnb-report-print-brand">HAPPY SONG KARAOKE</p>
+      <h2 id="fnb-report-print-title">Laporan Penjualan Barang F&B</h2>
+      <p class="fnb-report-print-meta">Periode: ${escapeHtml(getFnbReportPeriodLabel())}</p>
+    </div>
+    <div class="fnb-report-print-stamp">
+      <span>Dicetak</span>
+      <strong>${escapeHtml(formatDateTimeLabel(new Date()))} WIB</strong>
+      <span>Operator</span>
+      <strong>${escapeHtml(getLoggedInOperatorName() || "-")} (${escapeHtml(getOperatorRoleLabel(getCurrentOperatorRole()))})</strong>
+    </div>
+  `;
+
+  const summary = todayFnbSalesSummary || {
+    total_fnb_orders: 0,
+    total_items_sold: 0,
+    total_fnb_sales: 0,
+    top_menu_name: "-",
+    top_menu_quantity: 0
+  };
+  const topMenuLabel = summary.top_menu_name && summary.top_menu_name !== "-"
+    ? `${summary.top_menu_name} (${Number(summary.top_menu_quantity) || 0} terjual)`
+    : "-";
+
+  const summaryGrid = document.createElement("div");
+  summaryGrid.className = "fnb-report-print-summary";
+  summaryGrid.append(
+    createFnbReportPrintMetric("Total Omzet F&B", formatCurrency(summary.total_fnb_sales)),
+    createFnbReportPrintMetric("Total Item Terjual", `${Number(summary.total_items_sold).toLocaleString("id-ID")} pcs/botol`),
+    createFnbReportPrintMetric("Total Transaksi / Order", `${Number(summary.total_fnb_orders).toLocaleString("id-ID")} order`),
+    createFnbReportPrintMetric("Menu Terlaris", topMenuLabel)
+  );
+
+  const catSection = document.createElement("section");
+  catSection.className = "fnb-report-print-section";
+  catSection.innerHTML = `
+    <h3>Rekap Penjualan per Kategori</h3>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 40px; text-align: center;">No</th>
+          <th>Kategori</th>
+          <th style="text-align: center;">Total Item Terjual</th>
+          <th style="text-align: right;">Total Omzet</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${fnbCategorySummary.length > 0 ? fnbCategorySummary.map((cat, idx) => `
+          <tr>
+            <td style="text-align: center;">${idx + 1}</td>
+            <td><strong>${escapeHtml(cat.category || "-")}</strong></td>
+            <td style="text-align: center;">${Number(cat.total_quantity || 0).toLocaleString("id-ID")}</td>
+            <td style="text-align: right;"><strong>${formatCurrency(cat.total_sales)}</strong></td>
+          </tr>
+        `).join("") : `<tr><td colspan="4" class="fnb-report-print-empty">Tidak ada rekap kategori.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+
+  const itemSection = document.createElement("section");
+  itemSection.className = "fnb-report-print-section";
+  itemSection.innerHTML = `
+    <h3>Rekapitulasi Penjualan Barang</h3>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 40px; text-align: center;">No</th>
+          <th>Kode Menu</th>
+          <th>Nama Barang</th>
+          <th>Kategori</th>
+          <th style="text-align: right;">Harga Satuan</th>
+          <th style="text-align: center;">Qty Terjual</th>
+          <th style="text-align: right;">Total Omzet</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${todayFnbMenuSales.length > 0 ? todayFnbMenuSales.map((sale, idx) => `
+          <tr>
+            <td style="text-align: center;">${idx + 1}</td>
+            <td>${escapeHtml(sale.menu_id || "-")}</td>
+            <td><strong>${escapeHtml(sale.menu_name || "-")}</strong></td>
+            <td>${escapeHtml(sale.category || "-")}</td>
+            <td style="text-align: right;">${formatCurrency(sale.price)}</td>
+            <td style="text-align: center;"><strong>${Number(sale.quantity_sold ?? sale.quantity ?? 0).toLocaleString("id-ID")}</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(sale.gross_sales ?? sale.subtotal ?? 0)}</strong></td>
+          </tr>
+        `).join("") : `<tr><td colspan="7" class="fnb-report-print-empty">Tidak ada data penjualan barang.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+
+  const signatureSection = document.createElement("section");
+  signatureSection.className = "fnb-report-signature-grid";
+  signatureSection.innerHTML = `
+    <div class="fnb-report-signature-box">
+      <span>Dibuat Oleh,</span>
+      <strong>${escapeHtml(getLoggedInOperatorName() || "Kasir / Bar")}</strong>
+    </div>
+    <div class="fnb-report-signature-box">
+      <span>Diperiksa Oleh,</span>
+      <strong>Manager Operasional</strong>
+    </div>
+    <div class="fnb-report-signature-box">
+      <span>Diketahui Oleh,</span>
+      <strong>Owner</strong>
+    </div>
+  `;
+
+  const footer = document.createElement("p");
+  footer.className = "fnb-report-print-footer";
+  footer.textContent = "Dokumen resmi Happy Song Karaoke Management System. Dicetak otomatis dari database PostgreSQL lokal.";
+
+  const actions = document.createElement("div");
+  actions.className = "fnb-report-print-actions";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.textContent = "Tutup Preview";
+  closeBtn.onclick = () => {
+    fnbReportPrintPreviewVisible = false;
+    renderRooms();
+  };
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printBtn.style.fontWeight = "bold";
+  printBtn.textContent = "🖨️ Cetak Sekarang";
+  printBtn.onclick = () => {
+    window.print();
+  };
+
+  actions.append(closeBtn, printBtn);
+
+  print.append(header, summaryGrid, catSection, itemSection, signatureSection, footer, actions);
+
+  return print;
 }
 
 function createLowStockReportSectionElement() {
@@ -20542,6 +21173,8 @@ function refreshActiveTabData() {
         loadOpenFnbOrders();
       } else if (activeFnbSubTab === "history") {
         loadTodayFnbOrders();
+      } else if (activeFnbSubTab === "report") {
+        loadTodayFnbSalesReport();
       } else {
         loadInventoryItems();
       }
@@ -23919,7 +24552,8 @@ function createFnbSubNavElement() {
   [
     ["order", "🛒 Pesan Menu", "Input order F&B baru untuk room"],
     ["open", "⏳ Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
-    ["history", "📜 Riwayat F&B", "Lihat rekapan penjualan F&B hari ini"],
+    ["history", "📜 Riwayat F&B", "Lihat seluruh transaksi pesanan F&B"],
+    ["report", "📊 Laporan Penjualan", "Rekapitulasi penjualan barang F&B dan cetak laporan"],
   ].forEach(([key, label, description]) => {
     const button = document.createElement("button");
     button.className = activeFnbSubTab === key
@@ -24359,6 +24993,8 @@ function appendDashboardTabContent(panel, tabKey) {
           panel.appendChild(createOpenFnbOrdersPanelElement());
         } else if (activeFnbSubTab === "history") {
           panel.appendChild(createTodayFnbOrdersPanelElement());
+        } else if (activeFnbSubTab === "report") {
+          panel.appendChild(createTodayFnbSalesReportPanelElement());
         }
         break;
       }
@@ -27250,7 +27886,7 @@ async function handleRoomAction(event) {
 
   if (action === "switch-fnb-subtab") {
     const subtab = button.dataset.fnbSubtab;
-    if (subtab && ["order", "open", "history"].includes(subtab)) {
+    if (subtab && ["order", "open", "history", "report"].includes(subtab)) {
       activeFnbSubTab = subtab;
       renderDashboardTabPanels();
       refreshActiveTabData();
