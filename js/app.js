@@ -13074,90 +13074,112 @@ function createTodayStockMovementsPanelElement() {
 
 function createInboundGoodsPanelElement() {
   const panel = document.createElement("section");
-  panel.className = "inventory-panel erp-inbound-view";
-  panel.style.maxWidth = "900px";
-  panel.style.margin = "0 auto";
+  panel.className = "inbound-goods-view";
+  panel.style.cssText = "display: block; width: 100%; max-width: 1050px; margin: 16px auto; padding: 0 10px;";
 
-  const header = document.createElement("div");
-  header.className = "inventory-header erp-header";
-  header.style.marginBottom = "20px";
+  // Header Title & Subtitle in a clean vertical block
+  const headerBlock = document.createElement("div");
+  headerBlock.style.cssText = "margin-bottom: 24px;";
 
   const title = document.createElement("h2");
-  title.className = "inventory-title";
-  title.style.display = "flex";
-  title.style.alignItems = "center";
-  title.style.gap = "10px";
-  title.innerHTML = `<span>📥</span> Catat Barang Masuk (Penerimaan dari Supplier)`;
+  title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
+  title.innerHTML = `<span style="font-size: 26px;">📥</span> Catat Barang Masuk (Penerimaan dari Supplier)`;
 
   const subtitle = document.createElement("p");
-  subtitle.className = "inventory-subtitle";
-  subtitle.textContent = "Catat barang / botol yang baru tiba di outlet. Masukkan nomor surat jalan atau nota toko agar running balance tercatat resmi.";
+  subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
+  subtitle.textContent = "Catat fisik barang / botol yang baru tiba dari distributor. Masukkan nomor Surat Jalan atau Nota Toko agar running balance dan audit stok tercatat resmi.";
 
-  header.append(title, subtitle);
-  panel.appendChild(header);
+  headerBlock.append(title, subtitle);
+  panel.appendChild(headerBlock);
 
-  // Form Container
-  const formCard = document.createElement("div");
-  formCard.className = "stock-adjustment-form";
-  formCard.style.cssText = "background: var(--surface, #1e1e24); padding: 20px; border-radius: 12px; border: 1px solid var(--border, #333); box-shadow: var(--shadow-sm);";
+  // Card 1: Dokumen Pengiriman
+  const docCard = document.createElement("div");
+  docCard.style.cssText = "background: rgba(30, 30, 36, 0.95); border: 1px solid rgba(212, 160, 49, 0.3); border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);";
 
-  // Top Info Fields Grid: No Surat Jalan, Supplier, Catatan
+  const docTitle = document.createElement("h3");
+  docTitle.style.cssText = "margin: 0 0 16px 0; font-size: 15px; font-weight: 700; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.5px;";
+  docTitle.textContent = "📄 1. Informasi Surat Jalan & Toko / Distributor";
+  docCard.appendChild(docTitle);
+
   const infoGrid = document.createElement("div");
-  infoGrid.style.cssText = "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px;";
+  infoGrid.style.cssText = "display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px;";
 
-  // 1. Reference
+  // 1. Reference ID
   const refGroup = document.createElement("div");
-  refGroup.innerHTML = `<label style="font-weight: bold; font-size: 13px; color: var(--text-muted, #aaa); display: block; margin-bottom: 6px;">No. Surat Jalan / Nota</label>`;
+  refGroup.innerHTML = `<label style="font-weight: 600; font-size: 13px; color: #d1d5db; display: block; margin-bottom: 8px;">No. Surat Jalan / Nota / Bon <span style="color: #ef4444;">*</span></label>`;
   const refInput = document.createElement("input");
-  refInput.className = "erp-input";
-  refInput.style.cssText = "width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border, #444); background: var(--bg-card, #25252b); color: #fff;";
+  refInput.type = "text";
+  refInput.style.cssText = "width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: #121216; color: #fff; font-size: 14px; outline: none; transition: border 0.2s;";
   refInput.placeholder = "Contoh: SJ-7721 / NOTA-0409";
   refInput.value = inboundGoodsForm.reference_id;
   refInput.oninput = (e) => { inboundGoodsForm.reference_id = e.target.value; };
+  refInput.onfocus = () => { refInput.style.borderColor = "#fbbf24"; };
+  refInput.onblur = () => { refInput.style.borderColor = "rgba(255,255,255,0.15)"; };
   refGroup.appendChild(refInput);
 
   // 2. Supplier
   const suppGroup = document.createElement("div");
-  suppGroup.innerHTML = `<label style="font-weight: bold; font-size: 13px; color: var(--text-muted, #aaa); display: block; margin-bottom: 6px;">Nama Supplier / Toko</label>`;
+  suppGroup.innerHTML = `<label style="font-weight: 600; font-size: 13px; color: #d1d5db; display: block; margin-bottom: 8px;">Nama Toko / Supplier / Distributor <span style="color: #ef4444;">*</span></label>`;
   const suppInput = document.createElement("input");
-  suppInput.className = "erp-input";
-  suppInput.style.cssText = "width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border, #444); background: var(--bg-card, #25252b); color: #fff;";
-  suppInput.placeholder = "Contoh: Orang Tua / Distributor Jaya";
+  suppInput.type = "text";
+  suppInput.style.cssText = "width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: #121216; color: #fff; font-size: 14px; outline: none; transition: border 0.2s;";
+  suppInput.placeholder = "Contoh: Orang Tua / PT Sejahtera";
   suppInput.value = inboundGoodsForm.supplier_name;
   suppInput.oninput = (e) => { inboundGoodsForm.supplier_name = e.target.value; };
+  suppInput.onfocus = () => { suppInput.style.borderColor = "#fbbf24"; };
+  suppInput.onblur = () => { suppInput.style.borderColor = "rgba(255,255,255,0.15)"; };
   suppGroup.appendChild(suppInput);
 
   // 3. Notes
   const noteGroup = document.createElement("div");
-  noteGroup.innerHTML = `<label style="font-weight: bold; font-size: 13px; color: var(--text-muted, #aaa); display: block; margin-bottom: 6px;">Keterangan Tambahan (Opsional)</label>`;
+  noteGroup.innerHTML = `<label style="font-weight: 600; font-size: 13px; color: #d1d5db; display: block; margin-bottom: 8px;">Keterangan Tambahan (Opsional)</label>`;
   const noteInput = document.createElement("input");
-  noteInput.className = "erp-input";
-  noteInput.style.cssText = "width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border, #444); background: var(--bg-card, #25252b); color: #fff;";
+  noteInput.type = "text";
+  noteInput.style.cssText = "width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: #121216; color: #fff; font-size: 14px; outline: none; transition: border 0.2s;";
   noteInput.placeholder = "Contoh: Kiriman malam / restock kulkas";
   noteInput.value = inboundGoodsForm.notes;
   noteInput.oninput = (e) => { inboundGoodsForm.notes = e.target.value; };
+  noteInput.onfocus = () => { noteInput.style.borderColor = "#fbbf24"; };
+  noteInput.onblur = () => { noteInput.style.borderColor = "rgba(255,255,255,0.15)"; };
   noteGroup.appendChild(noteInput);
 
   infoGrid.append(refGroup, suppGroup, noteGroup);
-  formCard.appendChild(infoGrid);
+  docCard.appendChild(infoGrid);
+  panel.appendChild(docCard);
 
-  // Table of Items
-  const itemsSectionTitle = document.createElement("h4");
-  itemsSectionTitle.style.cssText = "font-size: 15px; margin: 16px 0 10px 0; display: flex; justify-content: space-between; align-items: center;";
-  itemsSectionTitle.innerHTML = `<span>Daftar Barang yang Masuk</span>`;
-  formCard.appendChild(itemsSectionTitle);
+  // Card 2: Daftar Barang yang Masuk
+  const itemsCard = document.createElement("div");
+  itemsCard.style.cssText = "background: rgba(30, 30, 36, 0.95); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);";
+
+  const itemsHeader = document.createElement("div");
+  itemsHeader.style.cssText = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;";
+
+  const itemsTitle = document.createElement("h3");
+  itemsTitle.style.cssText = "margin: 0; font-size: 15px; font-weight: 700; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px;";
+  itemsTitle.textContent = "📦 2. Rincian Barang yang Diterima";
+
+  const itemCountBadge = document.createElement("span");
+  itemCountBadge.style.cssText = "background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.3);";
+  itemCountBadge.textContent = `${inboundGoodsForm.items.length} Baris Barang`;
+
+  itemsHeader.append(itemsTitle, itemCountBadge);
+  itemsCard.appendChild(itemsHeader);
+
+  // Table wrapper
+  const tableWrap = document.createElement("div");
+  tableWrap.style.cssText = "overflow-x: auto; margin-bottom: 16px;";
 
   const table = document.createElement("table");
-  table.className = "erp-table";
-  table.style.cssText = "width: 100%; margin-bottom: 16px; border-collapse: collapse;";
+  table.style.cssText = "width: 100%; border-collapse: separate; border-spacing: 0 8px; font-size: 14px;";
   table.innerHTML = `
     <thead>
-      <tr style="border-bottom: 1px solid var(--border, #444); text-align: left;">
-        <th style="width: 40px; padding: 8px;">No</th>
-        <th style="padding: 8px;">Pilih Barang</th>
-        <th style="width: 140px; padding: 8px; text-align: center;">Jumlah Masuk</th>
-        <th style="width: 100px; padding: 8px; text-align: center;">Satuan</th>
-        <th style="width: 60px; padding: 8px; text-align: center;">Aksi</th>
+      <tr style="color: #9ca3af; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; text-align: left;">
+        <th style="padding: 10px; width: 44px; text-align: center;">No</th>
+        <th style="padding: 10px; min-width: 280px;">Nama Barang</th>
+        <th style="padding: 10px; width: 140px; text-align: center;">Sisa di Rak</th>
+        <th style="padding: 10px; width: 150px; text-align: center;">Jumlah Masuk</th>
+        <th style="padding: 10px; width: 100px; text-align: center;">Satuan</th>
+        <th style="padding: 10px; width: 60px; text-align: center;">Hapus</th>
       </tr>
     </thead>
   `;
@@ -13165,29 +13187,28 @@ function createInboundGoodsPanelElement() {
   const tbody = document.createElement("tbody");
   inboundGoodsForm.items.forEach((itemRow, index) => {
     const tr = document.createElement("tr");
-    tr.style.borderBottom = "1px solid rgba(255,255,255,0.05)";
+    tr.style.cssText = "background: #18181e; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);";
 
     // No
     const tdNo = document.createElement("td");
-    tdNo.style.padding = "8px";
+    tdNo.style.cssText = "padding: 12px 10px; text-align: center; font-weight: 700; color: #9ca3af; border-top-left-radius: 8px; border-bottom-left-radius: 8px;";
     tdNo.textContent = index + 1;
 
-    // Item select
+    // Dropdown Barang
     const tdItem = document.createElement("td");
-    tdItem.style.padding = "8px";
+    tdItem.style.cssText = "padding: 12px 10px;";
     const select = document.createElement("select");
-    select.className = "erp-select";
-    select.style.cssText = "width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border, #444); background: var(--bg-card, #25252b); color: #fff;";
-
+    select.style.cssText = "width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: #121216; color: #fff; font-size: 14px; outline: none;";
+    
     const emptyOpt = document.createElement("option");
     emptyOpt.value = "";
-    emptyOpt.textContent = "-- Pilih Barang --";
+    emptyOpt.textContent = "-- Pilih Barang dari Gudang --";
     select.appendChild(emptyOpt);
 
     (inventoryItems || []).forEach(inv => {
       const opt = document.createElement("option");
       opt.value = inv.stock_item_id;
-      opt.textContent = `${inv.stock_item_name} (Sisa di rak: ${Number(inv.stock_qty || 0)} ${inv.unit || ''})`;
+      opt.textContent = `${inv.stock_item_name || inv.stock_item_id}`;
       if (inv.stock_item_id === itemRow.stock_item_id) opt.selected = true;
       select.appendChild(opt);
     });
@@ -13198,13 +13219,23 @@ function createInboundGoodsPanelElement() {
     };
     tdItem.appendChild(select);
 
-    // Qty
+    // Sisa di rak saat ini
+    const selectedInv = (inventoryItems || []).find(i => i.stock_item_id === itemRow.stock_item_id);
+    const tdCurrent = document.createElement("td");
+    tdCurrent.style.cssText = "padding: 12px 10px; text-align: center;";
+    if (selectedInv) {
+      tdCurrent.innerHTML = `<span style="background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 6px; font-weight: 600; color: #e5e7eb;">${Number(selectedInv.stock_qty || 0)} ${selectedInv.unit || ''}</span>`;
+    } else {
+      tdCurrent.innerHTML = `<span style="color: #6b7280;">-</span>`;
+    }
+
+    // Input Jumlah Masuk
     const tdQty = document.createElement("td");
-    tdQty.style.padding = "8px";
+    tdQty.style.cssText = "padding: 12px 10px; text-align: center;";
     const qtyInput = document.createElement("input");
     qtyInput.type = "number";
     qtyInput.min = "1";
-    qtyInput.style.cssText = "width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border, #444); background: var(--bg-card, #25252b); color: #fff; text-align: center; font-weight: bold;";
+    qtyInput.style.cssText = "width: 100%; box-sizing: border-box; padding: 10px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.4); background: #121216; color: #10b981; font-weight: 800; font-size: 16px; text-align: center; outline: none;";
     qtyInput.placeholder = "0";
     qtyInput.value = itemRow.quantity;
     qtyInput.oninput = (e) => {
@@ -13212,19 +13243,21 @@ function createInboundGoodsPanelElement() {
     };
     tdQty.appendChild(qtyInput);
 
-    // Unit
-    const selectedInv = (inventoryItems || []).find(i => i.stock_item_id === itemRow.stock_item_id);
+    // Satuan
     const tdUnit = document.createElement("td");
-    tdUnit.style.cssText = "padding: 8px; text-align: center; color: var(--text-muted, #aaa);";
+    tdUnit.style.cssText = "padding: 12px 10px; text-align: center; color: #9ca3af; font-weight: 600;";
     tdUnit.textContent = selectedInv ? (selectedInv.unit || "botol") : "-";
 
-    // Delete row
+    // Hapus baris
     const tdDel = document.createElement("td");
-    tdDel.style.cssText = "padding: 8px; text-align: center;";
+    tdDel.style.cssText = "padding: 12px 10px; text-align: center; border-top-right-radius: 8px; border-bottom-right-radius: 8px;";
     const delBtn = document.createElement("button");
     delBtn.type = "button";
-    delBtn.style.cssText = "background: transparent; border: none; color: #ef4444; font-size: 16px; cursor: pointer; padding: 4px 8px;";
-    delBtn.textContent = "✕";
+    delBtn.title = "Hapus baris ini";
+    delBtn.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; width: 34px; height: 34px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s;";
+    delBtn.innerHTML = "✕";
+    delBtn.onmouseenter = () => { delBtn.style.background = "#ef4444"; delBtn.style.color = "#fff"; };
+    delBtn.onmouseleave = () => { delBtn.style.background = "rgba(239, 68, 68, 0.1)"; delBtn.style.color = "#ef4444"; };
     delBtn.onclick = () => {
       if (inboundGoodsForm.items.length > 1) {
         inboundGoodsForm.items.splice(index, 1);
@@ -13235,35 +13268,50 @@ function createInboundGoodsPanelElement() {
     };
     tdDel.appendChild(delBtn);
 
-    tr.append(tdNo, tdItem, tdQty, tdUnit, tdDel);
+    tr.append(tdNo, tdItem, tdCurrent, tdQty, tdUnit, tdDel);
     tbody.appendChild(tr);
   });
 
   table.appendChild(tbody);
-  formCard.appendChild(table);
+  tableWrap.appendChild(table);
+  itemsCard.appendChild(tableWrap);
 
-  // Add row button
+  // Tombol Tambah Baris
   const addRowBtn = document.createElement("button");
   addRowBtn.type = "button";
-  addRowBtn.className = "erp-btn-secondary";
-  addRowBtn.style.cssText = "padding: 8px 14px; border-radius: 6px; cursor: pointer; border: 1px dashed var(--border, #555); background: rgba(255,255,255,0.05); color: #fff; font-size: 13px; margin-bottom: 24px;";
-  addRowBtn.innerHTML = `+ Tambah Baris Barang Lagi`;
+  addRowBtn.style.cssText = "display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 8px; cursor: pointer; border: 1px dashed rgba(212, 160, 49, 0.6); background: rgba(212, 160, 49, 0.08); color: #fbbf24; font-size: 14px; font-weight: 700; transition: all 0.2s;";
+  addRowBtn.innerHTML = `<span style="font-size: 16px;">+</span> Tambah Baris Barang Lagi`;
+  addRowBtn.onmouseenter = () => { addRowBtn.style.background = "rgba(212, 160, 49, 0.2)"; };
+  addRowBtn.onmouseleave = () => { addRowBtn.style.background = "rgba(212, 160, 49, 0.08)"; };
   addRowBtn.onclick = () => {
     inboundGoodsForm.items.push({ stock_item_id: "", quantity: "" });
     renderRooms();
   };
-  formCard.appendChild(addRowBtn);
+  itemsCard.appendChild(addRowBtn);
+  panel.appendChild(itemsCard);
 
-  // Submit button
+  // Tombol Simpan Besar
   const submitBtn = document.createElement("button");
   submitBtn.type = "button";
-  submitBtn.className = "erp-btn-primary";
-  submitBtn.style.cssText = "display: block; width: 100%; padding: 14px; border-radius: 8px; background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: bold; font-size: 15px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);";
+  submitBtn.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 16px 24px; border-radius: 10px; background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: 800; font-size: 16px; border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35); transition: transform 0.15s, box-shadow 0.15s;";
   submitBtn.disabled = isSavingInboundGoods;
-  submitBtn.innerHTML = isSavingInboundGoods ? "Menyimpan ke Gudang..." : `📥 Simpan & Masukkan ke Stok Gudang`;
+  submitBtn.innerHTML = isSavingInboundGoods
+    ? `<span>⏳</span> Menyimpan ke Database Gudang...`
+    : `<span style="font-size: 18px;">📥</span> Simpan & Masukkan ke Stok Gudang`;
+
+  submitBtn.onmouseenter = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "translateY(-1px)"; };
+  submitBtn.onmouseleave = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "none"; };
 
   submitBtn.onclick = async () => {
     const validItems = inboundGoodsForm.items.filter(row => row.stock_item_id && Number(row.quantity) > 0);
+    if (!inboundGoodsForm.reference_id.trim()) {
+      showInlineNotice("Nomor Surat Jalan / Nota Toko wajib diisi sebagai dokumen bukti.", "error");
+      return;
+    }
+    if (!inboundGoodsForm.supplier_name.trim()) {
+      showInlineNotice("Nama Supplier / Toko wajib diisi.", "error");
+      return;
+    }
     if (validItems.length === 0) {
       showInlineNotice("Pilih minimal 1 barang dan isi jumlah masuk dengan benar.", "error");
       return;
@@ -13275,9 +13323,9 @@ function createInboundGoodsPanelElement() {
     try {
       const payload = {
         action: "receiveGoodsBatch",
-        reference_id: inboundGoodsForm.reference_id,
-        supplier_name: inboundGoodsForm.supplier_name,
-        notes: inboundGoodsForm.notes,
+        reference_id: inboundGoodsForm.reference_id.trim(),
+        supplier_name: inboundGoodsForm.supplier_name.trim(),
+        notes: inboundGoodsForm.notes.trim(),
         cashier_name: getLoggedInOperatorName() || "Admin Gudang",
         items: validItems.map(row => ({
           stock_item_id: row.stock_item_id,
@@ -13287,7 +13335,7 @@ function createInboundGoodsPanelElement() {
 
       const res = await postApiAction(payload);
       if (res && (res.ok === true || res.success === true)) {
-        showInlineNotice(res.message || "Barang masuk berhasil disimpan!", "success");
+        showInlineNotice(res.message || "Barang masuk berhasil disimpan ke stok gudang!", "success");
         inboundGoodsForm = {
           reference_id: "",
           supplier_name: "",
@@ -13307,35 +13355,28 @@ function createInboundGoodsPanelElement() {
     }
   };
 
-  formCard.appendChild(submitBtn);
-  panel.appendChild(formCard);
-
+  panel.appendChild(submitBtn);
   return panel;
 }
 
 function createStockConsumptionPanelElement() {
   const panel = document.createElement("section");
-  panel.className = "inventory-panel erp-consumption-view";
-  panel.style.maxWidth = "1100px";
-  panel.style.margin = "0 auto";
+  panel.className = "erp-consumption-view";
+  panel.style.cssText = "display: block; width: 100%; max-width: 1050px; margin: 16px auto; padding: 0 10px;";
 
-  const header = document.createElement("div");
-  header.className = "inventory-header erp-header";
-  header.style.marginBottom = "20px";
+  const headerBlock = document.createElement("div");
+  headerBlock.style.cssText = "margin-bottom: 24px;";
 
   const title = document.createElement("h2");
-  title.className = "inventory-title";
-  title.style.display = "flex";
-  title.style.alignItems = "center";
-  title.style.gap = "10px";
-  title.innerHTML = `<span>📤</span> Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)`;
+  title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
+  title.innerHTML = `<span style="font-size: 26px;">📤</span> Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)`;
 
   const subtitle = document.createElement("p");
-  subtitle.className = "inventory-subtitle";
-  subtitle.textContent = "Audit fisik harian untuk staf gudang: bandingkan jumlah fisik yang berkurang di rak dengan total pesanan yang tercatat di kasir.";
+  subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
+  subtitle.textContent = "Audit fisik harian untuk staf gudang: bandingkan jumlah fisik botol yang berkurang di rak dengan total pesanan yang tercatat di kasir.";
 
-  header.append(title, subtitle);
-  panel.appendChild(header);
+  headerBlock.append(title, subtitle);
+  panel.appendChild(headerBlock);
 
   // We reuse createFnbPhysicalConsumptionSectionElement!
   panel.appendChild(createFnbPhysicalConsumptionSectionElement(fnbPhysicalConsumption));
