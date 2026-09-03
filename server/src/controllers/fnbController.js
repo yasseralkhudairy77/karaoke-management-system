@@ -543,7 +543,15 @@ async function getTodayFnbSalesReport(req, res) {
       categoryFilter = `AND foi.category = $${queryParams.length}`;
     }
 
-    const [itemsResult, lowStockResult] = await Promise.all([
+    const [
+      itemsResult,
+      lowStockResult,
+      roomPackagesResult,
+      bundleComponentsResult,
+      packageDetailsResult,
+      inventoryMasterResult,
+      menuMasterResult
+    ] = await Promise.all([
       db.query(`
         SELECT
           foi.order_item_id,
@@ -575,6 +583,54 @@ async function getTodayFnbSalesReport(req, res) {
         FROM inventory
         WHERE status = 'active' AND (stock_qty <= min_stock OR stock_qty < 0)
         ORDER BY stock_qty ASC
+      `),
+      db.query(`
+        SELECT
+          t.transaction_id,
+          t.room_id,
+          t.room_name,
+          t.cashier_name,
+          t.payment_status,
+          t.created_at AS order_created_at,
+          t.package_id,
+          t.package_name,
+          t.package_total
+        FROM transactions t
+        WHERE (((t.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
+          AND (((t.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) <= $2::date
+          AND t.payment_status = 'paid'
+          AND t.package_id IS NOT NULL AND t.package_id <> ''
+        ORDER BY t.created_at DESC
+      `, [startDate, endDate]),
+      db.query(`
+        SELECT
+          foic.order_item_id,
+          foic.item_id,
+          foic.component_name,
+          foic.total_qty,
+          foic.component_mode
+        FROM fnb_order_item_components foic
+        JOIN fnb_order_items foi ON foic.order_item_id = foi.order_item_id
+        JOIN fnb_orders fo ON fo.order_id = foi.order_id
+        WHERE (((fo.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
+          AND (((fo.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) <= $2::date
+          ${orderStatusFilter}
+          AND COALESCE(foi.is_voided, FALSE) = FALSE
+      `, [startDate, endDate]),
+      db.query(`
+        SELECT package_id, component_ref_id, component_name, qty, unit
+        FROM package_details
+        WHERE component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `),
+      db.query(`
+        SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status
+        FROM inventory
+        WHERE (status = 'active' OR status IS NULL OR status = '')
+        ORDER BY category ASC, stock_item_name ASC
+      `),
+      db.query(`
+        SELECT menu_id, stock_tracking, stock_item_id, stock_qty_per_unit, menu_type
+        FROM menu
       `)
     ]);
 
@@ -643,6 +699,69 @@ async function getTodayFnbSalesReport(req, res) {
       catEntry.item_count += 1;
     }
 
+    // Process Room Packages if category filter allows
+    const includeRoomPackages = !category || category === 'all' || category.toLowerCase().includes('paket');
+    if (includeRoomPackages && roomPackagesResult.rows.length > 0) {
+      for (const row of roomPackagesResult.rows) {
+        distinctOrderIds.add(row.transaction_id);
+        const pkgKey = row.package_id || row.package_name;
+        const qty = 1;
+        const subtotal = Number(row.package_total || 0);
+        const price = Number(row.package_total || 0);
+        const cat = 'Paket Room';
+
+        totalFnbSales += subtotal;
+        totalItemsSold += qty;
+
+        if (!menuMap.has(pkgKey)) {
+          menuMap.set(pkgKey, {
+            menu_id: row.package_id || '',
+            menu_name: row.package_name || row.package_id,
+            category: cat,
+            price: price,
+            quantity: 0,
+            quantity_sold: 0,
+            subtotal: 0,
+            gross_sales: 0,
+            order_count: 0,
+            orders_set: new Set(),
+            orders: []
+          });
+        }
+        const pkgEntry = menuMap.get(pkgKey);
+        pkgEntry.quantity += qty;
+        pkgEntry.quantity_sold += qty;
+        pkgEntry.subtotal += subtotal;
+        pkgEntry.gross_sales += subtotal;
+        pkgEntry.orders_set.add(row.transaction_id);
+        pkgEntry.orders.push({
+          order_id: row.transaction_id,
+          room_id: row.room_id,
+          room_name: row.room_name,
+          customer_name: '',
+          cashier_name: row.cashier_name || '',
+          order_status: 'paid',
+          created_at: row.order_created_at,
+          quantity: qty,
+          price: price,
+          subtotal: subtotal
+        });
+
+        if (!categoryMap.has(cat)) {
+          categoryMap.set(cat, {
+            category: cat,
+            total_quantity: 0,
+            total_sales: 0,
+            item_count: 0
+          });
+        }
+        const catEntry = categoryMap.get(cat);
+        catEntry.total_quantity += qty;
+        catEntry.total_sales += subtotal;
+        catEntry.item_count += 1;
+      }
+    }
+
     const items = Array.from(menuMap.values()).map(item => {
       const { orders_set, ...rest } = item;
       return {
@@ -652,6 +771,68 @@ async function getTodayFnbSalesReport(req, res) {
     }).sort((a, b) => b.subtotal - a.subtotal);
 
     const categorySummary = Array.from(categoryMap.values()).sort((a, b) => b.total_sales - a.total_sales);
+
+    // Build Physical Inventory Consumption Audit (Zero-Leakage Tracking)
+    const consumptionMap = new Map();
+    for (const inv of (inventoryMasterResult.rows || [])) {
+      consumptionMap.set(inv.stock_item_id, {
+        stock_item_id: inv.stock_item_id,
+        stock_item_name: inv.stock_item_name,
+        category: inv.category || 'General',
+        unit: inv.unit || 'unit',
+        current_stock: Number(inv.stock_qty || 0),
+        ala_carte_qty: 0,
+        package_qty: 0,
+        total_consumed: 0
+      });
+    }
+
+    // 1. Ala Carte item tracking
+    const menuMasterMap = new Map((menuMasterResult.rows || []).map(m => [m.menu_id, m]));
+    for (const row of itemsResult.rows) {
+      if (row.menu_type_snapshot !== 'fnb_bundle') {
+        const mInfo = menuMasterMap.get(row.menu_id);
+        if (mInfo && mInfo.stock_tracking === 'yes' && mInfo.stock_item_id && consumptionMap.has(mInfo.stock_item_id)) {
+          const entry = consumptionMap.get(mInfo.stock_item_id);
+          const consumed = Number(row.quantity || 0) * Number(mInfo.stock_qty_per_unit || 1);
+          entry.ala_carte_qty += consumed;
+          entry.total_consumed += consumed;
+        }
+      }
+    }
+
+    // 2. F&B Bundle components tracking
+    for (const comp of (bundleComponentsResult.rows || [])) {
+      if (consumptionMap.has(comp.item_id)) {
+        const entry = consumptionMap.get(comp.item_id);
+        const consumed = Number(comp.total_qty || 0);
+        entry.package_qty += consumed;
+        entry.total_consumed += consumed;
+      }
+    }
+
+    // 3. Room Package components tracking
+    const packageDetailsByPkg = (packageDetailsResult.rows || []).reduce((map, row) => {
+      if (!map[row.package_id]) map[row.package_id] = [];
+      map[row.package_id].push(row);
+      return map;
+    }, {});
+
+    for (const row of (roomPackagesResult.rows || [])) {
+      const components = packageDetailsByPkg[row.package_id] || [];
+      for (const comp of components) {
+        if (consumptionMap.has(comp.component_ref_id)) {
+          const entry = consumptionMap.get(comp.component_ref_id);
+          const consumed = Number(comp.qty || 1);
+          entry.package_qty += consumed;
+          entry.total_consumed += consumed;
+        }
+      }
+    }
+
+    const physicalConsumption = Array.from(consumptionMap.values())
+      .filter(item => item.total_consumed > 0)
+      .sort((a, b) => b.total_consumed - a.total_consumed);
 
     let topMenuName = '-';
     let topMenuQuantity = 0;
@@ -690,6 +871,7 @@ async function getTodayFnbSalesReport(req, res) {
       items,
       menu_sales: items,
       category_summary: categorySummary,
+      physical_consumption: physicalConsumption,
       low_stock_items: lowStockItems,
       total_sales: totalFnbSales,
       operational_date_start: startDate,

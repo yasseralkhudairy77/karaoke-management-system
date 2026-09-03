@@ -955,6 +955,7 @@ let isSavingInventoryAudit = false;
 let todayFnbSalesSummary = null;
 let todayFnbMenuSales = [];
 let fnbCategorySummary = [];
+let fnbPhysicalConsumption = [];
 let lowStockReportItems = [];
 let isLoadingFnbSalesReport = false;
 let fnbSalesReportError = "";
@@ -2638,6 +2639,7 @@ async function loadTodayFnbSalesReport(
     todayFnbSalesSummary = data.summary || null;
     todayFnbMenuSales = Array.isArray(data.items) ? data.items : (Array.isArray(data.menu_sales) ? data.menu_sales : []);
     fnbCategorySummary = Array.isArray(data.category_summary) ? data.category_summary : [];
+    fnbPhysicalConsumption = Array.isArray(data.physical_consumption) ? data.physical_consumption : [];
     lowStockReportItems = Array.isArray(data.low_stock_items) ? data.low_stock_items : [];
     fnbReportPage = 1;
   } catch (error) {
@@ -2646,6 +2648,7 @@ async function loadTodayFnbSalesReport(
     todayFnbSalesSummary = null;
     todayFnbMenuSales = [];
     fnbCategorySummary = [];
+    fnbPhysicalConsumption = [];
     lowStockReportItems = [];
   } finally {
     isLoadingFnbSalesReport = false;
@@ -14770,6 +14773,7 @@ function createTodayFnbSalesReportPanelElement() {
     createFnbSalesReportSummaryElement(summary, topMenuLabel),
     createFnbCategorySummaryElement(fnbCategorySummary),
     createFnbMenuSalesSectionElement(),
+    createFnbPhysicalConsumptionSectionElement(fnbPhysicalConsumption),
     createLowStockReportSectionElement()
   );
 
@@ -15294,6 +15298,93 @@ function createFnbReportPrintPreviewElement() {
   print.append(header, summaryGrid, catSection, itemSection, signatureSection, footer, actions);
 
   return print;
+}
+
+function createFnbPhysicalConsumptionSectionElement(items = []) {
+  const section = document.createElement("section");
+  section.className = "fnb-sales-report-section";
+  section.style.margin = "20px 0";
+
+  const headerDiv = document.createElement("div");
+  headerDiv.style.marginBottom = "12px";
+
+  const title = document.createElement("h3");
+  title.className = "fnb-sales-report-section-title";
+  title.style.display = "flex";
+  title.style.alignItems = "center";
+  title.style.gap = "8px";
+  title.innerHTML = `<span>📦</span> Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)`;
+
+  const subtitle = document.createElement("p");
+  subtitle.style.fontSize = "12px";
+  subtitle.style.color = "var(--muted, #888)";
+  subtitle.style.margin = "4px 0 0 0";
+  subtitle.textContent = "Menghitung total barang/bahan baku fisik yang keluar dari gudang (penjualan satuan + keluar via paket F&B/Room) disandingkan dengan sisa stok fisik aktual.";
+
+  headerDiv.append(title, subtitle);
+  section.appendChild(headerDiv);
+
+  if (!Array.isArray(items) || items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "fnb-sales-report-empty";
+    empty.textContent = "Belum ada pergerakan/konsumsi barang fisik pada periode yang dipilih.";
+    section.appendChild(empty);
+    return section;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const table = document.createElement("table");
+  table.className = "erp-table";
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th style="width: 40px; text-align: center;">No</th>
+      <th>Kode SKU</th>
+      <th>Nama Barang Fisik</th>
+      <th>Kategori</th>
+      <th style="text-align: center;">Satuan</th>
+      <th style="text-align: center;">Terjual Satuan</th>
+      <th style="text-align: center;">Keluar via Paket</th>
+      <th style="text-align: center;">Total Fisik Keluar</th>
+      <th style="text-align: center;">Sisa Stok Fisik</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  items.forEach((item, index) => {
+    const tr = document.createElement("tr");
+    const alaCarte = Number(item.ala_carte_qty || 0);
+    const packageQty = Number(item.package_qty || 0);
+    const totalOut = Number(item.total_consumed || 0);
+    const stockCurrent = Number(item.current_stock || 0);
+
+    const isLowStock = stockCurrent <= 5;
+    const stockBadgeClass = stockCurrent <= 0 ? "erp-badge critical" : (isLowStock ? "erp-badge warning" : "erp-badge success");
+
+    tr.innerHTML = `
+      <td style="text-align: center;">${index + 1}</td>
+      <td><strong>${escapeHtml(item.stock_item_id || "-")}</strong></td>
+      <td><strong>${escapeHtml(item.stock_item_name || "-")}</strong></td>
+      <td>${escapeHtml(item.category || "-")}</td>
+      <td style="text-align: center;">${escapeHtml(item.unit || "unit")}</td>
+      <td style="text-align: center;">${alaCarte.toLocaleString("id-ID")}</td>
+      <td style="text-align: center; color: #4ade80;"><strong>${packageQty.toLocaleString("id-ID")}</strong></td>
+      <td style="text-align: center; font-size: 14px;"><strong>${totalOut.toLocaleString("id-ID")}</strong></td>
+      <td style="text-align: center;"><span class="${stockBadgeClass}" style="padding: 2px 8px; border-radius: 4px; font-weight: bold;">${stockCurrent.toLocaleString("id-ID")} ${escapeHtml(item.unit || "")}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  section.appendChild(tableWrapper);
+
+  return section;
 }
 
 function createLowStockReportSectionElement() {

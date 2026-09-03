@@ -27,7 +27,8 @@
     "test:split-bill-summary": "node tests/split-bill-summary-ui.test.js",
     "test:inventory-status": "node tests/inventory-stock-status.test.js",
     "test:package-separation": "node tests/inventory-package-separation.test.js",
-    "test:reset-inventory": "node tests/reset-inventory-stock.test.js"
+    "test:reset-inventory": "node tests/reset-inventory-stock.test.js",
+    "test:universal-package-linking": "node tests/universal-package-linking.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

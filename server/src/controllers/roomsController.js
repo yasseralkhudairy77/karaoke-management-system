@@ -657,6 +657,10 @@ async function payAndStartSession(req, res, payload) {
       await deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashierName);
     }
 
+    if (transactionPackageId) {
+      await deductStockForRoomPackage(client, transactionPackageId, transactionPackageName, transactionId, cashierName);
+    }
+
     const opDate = getOperationalDate(now);
     const grandTotal = roomTotal + fnbTotal;
 
@@ -1317,6 +1321,57 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
   return { movements };
 }
 
+async function deductStockForRoomPackage(client, packageId, packageName, transactionId, cashierName) {
+  if (!packageId) return { movements: [] };
+
+  const detailsRes = await client.query(`
+    SELECT component_ref_id, component_name, qty, unit, is_choice, note
+    FROM package_details
+    WHERE package_id = $1 AND (component_type = 'inventory' OR component_type = 'fnb' OR component_type IS NULL)
+      AND component_ref_id IS NOT NULL AND component_ref_id <> ''
+  `, [packageId]);
+
+  const movements = [];
+
+  for (const comp of detailsRes.rows) {
+    const stockItemId = comp.component_ref_id;
+    const qtyDeduct = Number(comp.qty || 1);
+    if (!stockItemId || qtyDeduct <= 0) continue;
+
+    const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+    if (invRes.rowCount > 0) {
+      const inv = invRes.rows[0];
+      const stockBefore = Number(inv.stock_qty || 0);
+      const stockAfter = stockBefore - qtyDeduct;
+
+      await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+      const movementId = `MOV-${transactionId}-PKG-${stockItemId}`;
+      await client.query(`
+        INSERT INTO stock_movements (
+          movement_id, stock_item_id, stock_item_name, movement_type,
+          reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+        ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [
+        movementId,
+        stockItemId,
+        inv.stock_item_name,
+        transactionId,
+        -qtyDeduct,
+        stockBefore,
+        stockAfter,
+        `Komponen Room Package: ${packageName || packageId} - ${comp.component_name || inv.stock_item_name}`,
+        cashierName
+      ]);
+
+      movements.push({ stock_item_id: stockItemId, stock_before: stockBefore, stock_after: stockAfter });
+    }
+  }
+
+  return { movements };
+}
+
 async function closeSession(req, res, payload) {
   let client;
   try {
@@ -1396,6 +1451,10 @@ async function closeSession(req, res, payload) {
       `, [fnbOrderIds]);
 
       await deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashierName);
+    }
+
+    if (transactionPackageId) {
+      await deductStockForRoomPackage(client, transactionPackageId, transactionPackageName, transactionId, cashierName);
     }
 
     const lcRes = await client.query(`
@@ -1892,4 +1951,5 @@ module.exports = {
   correctActiveRoomDuration,
   previewSessionPricing,
   deductStockForFnbOrders,
+  deductStockForRoomPackage,
 };
