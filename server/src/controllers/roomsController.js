@@ -1325,18 +1325,25 @@ async function deductStockForRoomPackage(client, packageId, packageName, transac
   if (!packageId) return { movements: [] };
 
   const detailsRes = await client.query(`
-    SELECT component_ref_id, component_name, qty, unit, is_choice, note
+    SELECT component_ref_id, component_name, qty, unit, is_choice, note, component_type
     FROM package_details
-    WHERE package_id = $1 AND (component_type = 'inventory' OR component_type = 'fnb' OR component_type IS NULL)
+    WHERE package_id = $1
       AND component_ref_id IS NOT NULL AND component_ref_id <> ''
   `, [packageId]);
 
   const movements = [];
 
   for (const comp of detailsRes.rows) {
-    const stockItemId = comp.component_ref_id;
+    let stockItemId = comp.component_ref_id;
     const qtyDeduct = Number(comp.qty || 1);
     if (!stockItemId || qtyDeduct <= 0) continue;
+
+    if (comp.component_type === 'menu') {
+      const menuRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
+      if (menuRes.rowCount > 0 && menuRes.rows[0].stock_item_id) {
+        stockItemId = menuRes.rows[0].stock_item_id;
+      }
+    }
 
     const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
     if (invRes.rowCount > 0) {
