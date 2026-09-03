@@ -102,6 +102,10 @@ async function auditAndCleanInventory(options = { dryRun: true }) {
   } catch (err) {
     console.error('❌ Error during inventory audit:', err.message);
     throw err;
+  } finally {
+    if (db.pool) {
+      await db.pool.end().catch(() => {});
+    }
   }
 }
 
@@ -109,7 +113,10 @@ if (require.main === module) {
   const isExecute = process.argv.includes('--execute');
   auditAndCleanInventory({ dryRun: !isExecute })
     .then(() => process.exit(0))
-    .catch(() => process.exit(1));
+    .catch((err) => {
+      console.error('\n❌ Eksekusi terhenti:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = auditAndCleanInventory;
