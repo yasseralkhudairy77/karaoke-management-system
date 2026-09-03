@@ -57,7 +57,7 @@ const ROLE_REPORT_SUB_TABS = {
   cashier: ["cashier"],
   receptionist: [],
 };
-const FNB_PRIMARY_CATEGORY_ORDER = ["favorites", "Food", "Beverage", "Beer", "Spirit", "Anggur", "Cigarette"];
+const FNB_PRIMARY_CATEGORY_ORDER = ["favorites", "Paket F&B", "Food", "Beverage", "Beer", "Spirit", "Anggur", "Cigarette"];
 const FNB_SPIRIT_SUBCATEGORY_ORDER = [
   "Cognac",
   "Vodka",

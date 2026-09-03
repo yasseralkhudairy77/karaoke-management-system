@@ -14,11 +14,23 @@ function getInventoryStatus(stockQty, minStock) {
 
 async function getInventoryItems(req, res) {
   try {
+    const statusParam = req.query?.status;
+    let whereClause = '';
+    const params = [];
+    if (statusParam === 'all') {
+      whereClause = '';
+    } else if (statusParam === 'inactive') {
+      whereClause = "WHERE status = 'inactive'";
+    } else {
+      whereClause = "WHERE (status = 'active' OR status IS NULL OR status = '')";
+    }
+
     const result = await db.query(`
       SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status, updated_at
       FROM inventory
+      ${whereClause}
       ORDER BY category ASC, stock_item_name ASC
-    `);
+    `, params);
 
     const items = result.rows.map(row => {
       const stockQty = Number(row.stock_qty || 0);
