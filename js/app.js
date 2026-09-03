@@ -21828,6 +21828,8 @@ function refreshActiveTabData() {
         loadInventoryAudits();
       } else if (activeStockSubTab === "movements") {
         loadTodayStockMovements();
+      } else if (activeStockSubTab === "consumption") {
+        loadTodayFnbSalesReport();
       } else {
         loadInventoryItems();
       }
@@ -28631,13 +28633,16 @@ async function handleRoomAction(event) {
 
   if (action === "switch-stock-subtab") {
     const subtab = button.dataset.stockSubtab;
-    if (subtab && ["position", "opname", "movements"].includes(subtab)) {
+    if (subtab && ["position", "inbound", "consumption", "movements", "opname"].includes(subtab)) {
       activeStockSubTab = subtab;
       renderDashboardTabPanels();
       if (subtab === "opname") {
         await loadInventoryAudits();
       } else if (subtab === "movements") {
         await loadTodayStockMovements();
+      } else if (subtab === "consumption") {
+        await loadTodayFnbSalesReport();
+        renderDashboardTabPanels();
       } else {
         await loadInventoryItems();
       }
@@ -29859,6 +29864,10 @@ async function initializeDashboard() {
       initialLoads.push(loadInventoryAudits());
     } else if (activeStockSubTab === "movements") {
       initialLoads.push(loadTodayStockMovements());
+    } else if (activeStockSubTab === "consumption") {
+      initialLoads.push(loadTodayFnbSalesReport());
+    } else {
+      initialLoads.push(loadInventoryItems());
     }
   }
 
