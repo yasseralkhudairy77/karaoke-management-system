@@ -2185,11 +2185,16 @@ function submitAddInventoryItem() {
     return;
   }
 
+  const operatorRole = getCurrentOperatorRole();
+  const requiredRole = (operatorRole === "inventory" || operatorRole === "manager" || operatorRole === "owner")
+    ? "staff"
+    : "manager";
+
   openAdminPinModal({
-    title: "PIN Manager Tambah Item F&B",
-    message: "Masukkan PIN owner/manager untuk mendaftarkan item F&B baru.",
+    title: "Konfirmasi PIN Tambah Item F&B",
+    message: "Masukkan PIN Anda untuk mendaftarkan item F&B baru ke sistem.",
     requestedAction: "add_inventory_item",
-    requiredRole: "manager",
+    requiredRole: requiredRole,
     onSuccess: async (authData, adminPin) => {
       await executeAddInventoryItemSubmit(adminPin);
     }
@@ -12478,10 +12483,10 @@ function createInventoryPanelElement() {
   title.id = "inventory-title";
   title.textContent = "Material Management & Stok";
 
-  const canManageMaster = ["owner", "manager"].includes(getCurrentOperatorRole());
+  const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
 
   if (getCurrentOperatorRole() === "inventory") {
-    subtitle.textContent = "Posisi fisik barang di rak & kulkas (Hanya Baca / Monitoring). Untuk input barang masuk dari supplier, silakan gunakan menu Catat Barang Masuk.";
+    subtitle.textContent = "Posisi fisik barang di rak & kulkas. Untuk input barang masuk harian dari supplier, silakan gunakan menu Catat Barang Masuk.";
   }
 
   titleGroup.append(title, subtitle);
