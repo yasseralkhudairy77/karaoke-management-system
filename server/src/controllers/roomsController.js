@@ -213,12 +213,24 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
     }
   }
 
+  const billableMinutes = (session.billable_room_minutes !== null && session.billable_room_minutes !== undefined)
+    ? Math.max(0, Number(session.billable_room_minutes))
+    : totalMinutes;
+  const freeMinutes = Math.max(0, totalMinutes - billableMinutes);
+
+  if (!isPackage && freeMinutes > 0) {
+    const freeAmount = (freeMinutes / 60) * baseRate;
+    regularTotal = Math.max(0, regularTotal - freeAmount);
+  }
+
   return {
     segments,
     roomTotal: isPackage
       ? Math.ceil(Number(packageMeta.packageTotal || 0) + upgradeTotal)
       : Math.ceil(regularTotal),
     upgradeTotal: Math.ceil(upgradeTotal),
+    billableMinutes,
+    freeMinutes,
     packageMeta
   };
 }
@@ -422,9 +434,15 @@ async function startSession(req, res, payload) {
     }
 
     let bookingMode = 'regular';
-    let billableMinutes = durationMinutes;
+    let billableMinutes = (payload.billable_minutes !== undefined && payload.billable_minutes !== null)
+      ? parseInt(payload.billable_minutes, 10)
+      : durationMinutes;
+    let promoNote = payload.promo_note || '';
     let packageIncludedMinutes = 0;
     let note = payload.customer_name ? `customer_name=${payload.customer_name}` : '';
+    if (promoNote) {
+      note = [note, `promo=${promoNote}`, `free_room_minutes=${Math.max(0, durationMinutes - billableMinutes)}`].filter(Boolean).join(' | ');
+    }
 
     if (packageId) {
       const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
@@ -524,9 +542,15 @@ async function prepareRoomSession(req, res, payload) {
     if (room.status !== 'available') throw new Error('Ruangan tidak tersedia untuk dibuat booking.');
 
     let bookingMode = 'regular';
-    let billableMinutes = durationMinutes;
+    let billableMinutes = (payload.billable_minutes !== undefined && payload.billable_minutes !== null)
+      ? parseInt(payload.billable_minutes, 10)
+      : durationMinutes;
+    let promoNote = payload.promo_note || '';
     let packageIncludedMinutes = 0;
     let note = customerName ? `customer_name=${customerName}` : '';
+    if (promoNote) {
+      note = [note, `promo=${promoNote}`, `free_room_minutes=${Math.max(0, durationMinutes - billableMinutes)}`].filter(Boolean).join(' | ');
+    }
 
     if (packageId) {
       const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
@@ -664,14 +688,20 @@ async function payAndStartSession(req, res, payload) {
     const opDate = getOperationalDate(now);
     const grandTotal = roomTotal + fnbTotal;
 
+    const billableRoomMinutes = session.billable_room_minutes !== null && session.billable_room_minutes !== undefined
+      ? Number(session.billable_room_minutes)
+      : durationMinutes;
+    const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+
     await client.query(`
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time,
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
         grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
-        booking_mode, package_id, package_name, package_total
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15, $16, $17, $18, $19)
-    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
+        booking_mode, package_id, package_name, package_total,
+        billable_room_minutes, free_room_minutes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, billableRoomMinutes, freeRoomMinutes]);
 
     await client.query(`
       UPDATE room_sessions
@@ -1507,15 +1537,21 @@ async function closeSession(req, res, payload) {
     const grandTotal = roomTotal + fnbTotal + lcTotal;
     const opDate = getOperationalDate(endTime);
 
+    const billableRoomMinutes = activeSession?.billable_room_minutes !== null && activeSession?.billable_room_minutes !== undefined
+      ? Number(activeSession.billable_room_minutes)
+      : durationMinutes;
+    const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+
     // CRITICAL: Postpaid flow produces payment_status = 'unpaid'
     await client.query(`
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time,
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
         grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
-        booking_mode, package_id, package_name, package_total, room_upgrade_total, room_journey_json
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19, $20, $21)
-    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney)]);
+        booking_mode, package_id, package_name, package_total, room_upgrade_total, room_journey_json,
+        billable_room_minutes, free_room_minutes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney), billableRoomMinutes, freeRoomMinutes]);
 
     await client.query(`
       UPDATE lc_work_logs
@@ -1592,8 +1628,8 @@ async function closeSession(req, res, payload) {
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
         duration_minutes: durationMinutes,
-        billable_room_minutes: durationMinutes,
-        free_room_minutes: 0,
+        billable_room_minutes: billableRoomMinutes,
+        free_room_minutes: freeRoomMinutes,
         rate_per_hour: ratePerHour,
         room_total: roomTotal,
         fnb_total: fnbTotal,

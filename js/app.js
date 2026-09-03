@@ -9414,6 +9414,31 @@ function createDurationSelectionElement(room) {
       options.appendChild(button);
     });
 
+    // Tombol Cepat Promo: Beli 2 Jam Gratis 1 Jam (Total 3 Jam)
+    const promoButton = document.createElement("button");
+    promoButton.className = "duration-option-button duration-promo-2plus1";
+    promoButton.type = "button";
+    promoButton.dataset.action = "prepare-room-session-duration";
+    promoButton.dataset.roomId = room.room_id;
+    promoButton.dataset.durationMinutes = "180";
+    promoButton.dataset.billableMinutes = "120";
+    promoButton.dataset.promoNote = "PROMO 2+1 (Bayar 2 Jam Gratis 1 Jam)";
+    promoButton.disabled = isPreparingRoomSession;
+    promoButton.style.gridColumn = "1 / -1";
+    promoButton.style.padding = "10px 8px";
+    promoButton.style.background = "linear-gradient(135deg, #b45309, #d97706)";
+    promoButton.style.color = "#ffffff";
+    promoButton.style.fontWeight = "bold";
+    promoButton.style.fontSize = "13px";
+    promoButton.style.border = "1px solid #f59e0b";
+    promoButton.style.borderRadius = "var(--radius-sm, 6px)";
+    promoButton.style.boxShadow = "0 2px 8px rgba(217, 119, 6, 0.35)";
+    promoButton.style.cursor = "pointer";
+    promoButton.innerHTML = isPreparingRoomSession
+      ? "Menyiapkan Promo..."
+      : `🎁 <strong>PROMO: 2 Jam + 1 Jam Free</strong> (3 Jam)`;
+    options.appendChild(promoButton);
+
     const custom = document.createElement("div");
     custom.className = "duration-custom";
 
@@ -26655,7 +26680,7 @@ async function startSession(roomId, durationMinutes) {
   }
 }
 
-async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "") {
+async function prepareRoomSession(roomId, durationMinutes, customerName = "", packageId = "", billableMinutes = null, promoNote = "") {
   if (!API_BASE_URL.trim()) {
     showInlineNotice("API belum dikonfigurasi. Isi URL server dulu di config.js.", "error");
     return;
@@ -26682,6 +26707,8 @@ async function prepareRoomSession(roomId, durationMinutes, customerName = "", pa
       action: "prepareRoomSession",
       room_id: roomId,
       duration_minutes: selectedDuration,
+      billable_minutes: billableMinutes !== null && billableMinutes !== undefined ? Number(billableMinutes) : selectedDuration,
+      promo_note: promoNote || "",
       dev_test_duration: canUseDevShortSessions(),
       payment_method: "",
       cashier_name: getLoggedInOperatorName(),
@@ -28706,7 +28733,9 @@ async function handleRoomAction(event) {
 
   if (action === "prepare-room-session-duration") {
     const roomId = button.dataset.roomId || "";
-    await prepareRoomSession(roomId, Number(button.dataset.durationMinutes), customerNameInput);
+    const billableMinutes = button.dataset.billableMinutes ? Number(button.dataset.billableMinutes) : null;
+    const promoNote = button.dataset.promoNote || "";
+    await prepareRoomSession(roomId, Number(button.dataset.durationMinutes), customerNameInput, "", billableMinutes, promoNote);
     customerNameInput = "";
     delete selectedLcIdsForRoom[roomId];
     delete selectedLcDurationsForRoom[roomId];

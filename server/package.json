@@ -28,7 +28,8 @@
     "test:inventory-status": "node tests/inventory-stock-status.test.js",
     "test:package-separation": "node tests/inventory-package-separation.test.js",
     "test:reset-inventory": "node tests/reset-inventory-stock.test.js",
-    "test:universal-package-linking": "node tests/universal-package-linking.test.js"
+    "test:universal-package-linking": "node tests/universal-package-linking.test.js",
+    "test:promo-room": "node tests/promo-room-2plus1.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
