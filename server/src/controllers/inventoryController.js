@@ -2,6 +2,16 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDateRange } = require('../utils/operationalDate');
 
+function getInventoryStatus(stockQty, minStock) {
+  if (stockQty < 0) {
+    return 'negative';
+  }
+  if (stockQty <= minStock) {
+    return 'low';
+  }
+  return 'safe';
+}
+
 async function getInventoryItems(req, res) {
   try {
     const result = await db.query(`
@@ -10,18 +20,40 @@ async function getInventoryItems(req, res) {
       ORDER BY category ASC, stock_item_name ASC
     `);
 
-    const items = result.rows.map(row => ({
-      stock_item_id: row.stock_item_id,
-      stock_item_name: row.stock_item_name,
-      category: row.category,
-      unit: row.unit,
-      stock_qty: Number(row.stock_qty || 0),
-      min_stock: Number(row.min_stock || 0),
-      status: row.status,
-      updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : ""
-    }));
+    const items = result.rows.map(row => {
+      const stockQty = Number(row.stock_qty || 0);
+      const minStock = Number(row.min_stock || 0);
+      return {
+        stock_item_id: row.stock_item_id,
+        stock_item_name: row.stock_item_name,
+        category: row.category,
+        unit: row.unit,
+        stock_qty: stockQty,
+        min_stock: minStock,
+        status: row.status,
+        stock_status: getInventoryStatus(stockQty, minStock),
+        updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : ""
+      };
+    });
 
-    return res.json({ ok: true, success: true, items });
+    const summary = items.reduce((acc, item) => {
+      acc.total_items += 1;
+      if (item.stock_status === 'negative') {
+        acc.negative_items += 1;
+      } else if (item.stock_status === 'low') {
+        acc.low_items += 1;
+      } else {
+        acc.safe_items += 1;
+      }
+      return acc;
+    }, {
+      total_items: 0,
+      safe_items: 0,
+      low_items: 0,
+      negative_items: 0
+    });
+
+    return res.json({ ok: true, success: true, items, summary });
   } catch (err) {
     return errorResponse(res, err.message);
   }
@@ -72,11 +104,14 @@ async function adjustInventoryStock(req, res, payload) {
     `, [movementId, stock_item_id, item.stock_item_name, movementType, (stockAfter - stockBefore), stockBefore, stockAfter, note, cashier_name]);
 
     await client.query('COMMIT');
+    const finalStockStatus = getInventoryStatus(stockAfter, Number(item.min_stock || 0));
     return successResponse(res, {
       message: `Stok ${item.stock_item_name} berhasil disesuaikan.`,
       stock_item_id,
       stock_before: stockBefore,
-      stock_after: stockAfter
+      stock_after: stockAfter,
+      status: finalStockStatus,
+      stock_status: finalStockStatus
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -279,6 +314,7 @@ async function approveInventoryAudit(req, res, payload) {
 
 module.exports = {
   getInventoryItems,
+  getInventoryStatus,
   getTodayStockMovements,
   getRecipeBom,
   getInventoryAudits,

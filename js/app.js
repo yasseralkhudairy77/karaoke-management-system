@@ -768,6 +768,32 @@ function getFnbOrderStatusTone(status) {
   return "neutral";
 }
 
+function resolveInventoryItemStockStatus(item) {
+  if (item && (item.stock_status === "safe" || item.stock_status === "low" || item.stock_status === "negative")) {
+    return item.stock_status;
+  }
+  const qty = Number(item?.stock_qty || 0);
+  const min = Number(item?.min_stock || 0);
+  if (qty < 0) {
+    return "negative";
+  }
+  if (qty <= min) {
+    return "low";
+  }
+  return "safe";
+}
+
+function normalizeInventoryItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.map((item) => ({
+    ...item,
+    stock_status: resolveInventoryItemStockStatus(item),
+  }));
+}
+
 function getInventoryStockStatusTone(status) {
   if (status === "safe") {
     return "success";
@@ -1669,7 +1695,7 @@ async function loadInventoryItems() {
   try {
     const data = await fetchInventoryItemsFromApi();
 
-    inventoryItems = Array.isArray(data.items) ? data.items : [];
+    inventoryItems = normalizeInventoryItems(data.items);
     inventorySummary = data.summary || null;
   } catch (error) {
     console.warn("Gagal memuat stok F&B.", error);
@@ -1776,7 +1802,7 @@ async function loadSettingsData(options = {}) {
 
     rooms = normalizeRooms(latestRooms);
     menuItems = Array.isArray(menuData.menu_items) ? menuData.menu_items : [];
-    inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
+    inventoryItems = normalizeInventoryItems(inventoryData.items);
     inventorySummary = inventoryData.summary || null;
     employees = Array.isArray(employeeData) ? employeeData : [];
     packages = Array.isArray(latestPackages) ? latestPackages : [];
@@ -2544,7 +2570,7 @@ async function loadOwnerDashboardSummary() {
     const latestRooms = await fetchRoomsFromApi();
 
     ownerRoomUsageSummary = roomUsageData.summary || null;
-    inventoryItems = Array.isArray(inventoryData.items) ? inventoryData.items : [];
+    inventoryItems = normalizeInventoryItems(inventoryData.items);
     inventorySummary = inventoryData.summary || null;
     rooms = normalizeRooms(latestRooms);
     syncSelectedFbRoomWithRooms();
@@ -12549,12 +12575,13 @@ function createInventoryErpTableElement() {
     minTd.textContent = `${Number(item.min_stock) || 0} ${item.unit || ""}`.trim();
 
     const statusTd = document.createElement("td");
+    const stockStatus = resolveInventoryItemStockStatus(item);
     const statusSpan = document.createElement("span");
     statusSpan.className = withStatusBadge(
-      `inventory-status ${getInventoryStockStatusClass(item.stock_status)}`,
-      getInventoryStockStatusTone(item.stock_status)
+      `inventory-status ${getInventoryStockStatusClass(stockStatus)}`,
+      getInventoryStockStatusTone(stockStatus)
     );
-    statusSpan.textContent = getInventoryStockStatusLabel(item.stock_status);
+    statusSpan.textContent = getInventoryStockStatusLabel(stockStatus);
     statusTd.appendChild(statusSpan);
 
     const actionTd = document.createElement("td");
