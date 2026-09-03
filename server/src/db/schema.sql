@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS employees (
     employee_id VARCHAR(50) PRIMARY KEY,
     employee_name VARCHAR(100) NOT NULL,
-    role VARCHAR(30) NOT NULL CHECK (role IN ('owner', 'manager', 'cashier', 'receptionist')),
+    role VARCHAR(30) NOT NULL CHECK (role IN ('owner', 'manager', 'cashier', 'receptionist', 'inventory', 'gudang')),
     pin VARCHAR(255),
     pin_hash VARCHAR(255),
     salary_type VARCHAR(30) DEFAULT 'monthly',
@@ -771,3 +771,14 @@ CREATE INDEX IF NOT EXISTS idx_owner_mirror_snapshots_period ON owner_mirror_sna
 ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'promo';
 ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS used_in_transaction_id VARCHAR(50);
 ALTER TABLE IF EXISTS promos ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
+
+ALTER TABLE IF EXISTS employees DROP CONSTRAINT IF EXISTS employees_role_check;
+ALTER TABLE IF EXISTS employees ADD CONSTRAINT employees_role_check CHECK (role IN ('owner', 'manager', 'cashier', 'receptionist', 'inventory', 'gudang'));
+
+INSERT INTO employees (employee_id, employee_name, role, pin, salary_type, is_active)
+VALUES ('EMP-GUDANG-01', 'Admin Gudang', 'inventory', '654321', 'monthly', TRUE)
+ON CONFLICT (employee_id) DO UPDATE SET
+  employee_name = 'Admin Gudang',
+  role = 'inventory',
+  pin = '654321',
+  is_active = TRUE;

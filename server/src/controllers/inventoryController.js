@@ -324,6 +324,95 @@ async function approveInventoryAudit(req, res, payload) {
   }
 }
 
+async function receiveGoodsBatch(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const {
+      reference_id = '',
+      supplier_name = '',
+      notes = '',
+      cashier_name = 'Admin Gudang',
+      items = []
+    } = payload;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('Daftar barang masuk tidak boleh kosong.');
+    }
+
+    const docNumber = reference_id.trim() || `SJ-${Date.now()}`;
+    const supplierText = supplier_name.trim() || 'Supplier Umum';
+    const combinedNote = `Penerimaan Supplier: ${supplierText} (No: ${docNumber})${notes ? ' - ' + notes.trim() : ''}`;
+
+    const processedItems = [];
+
+    for (const entry of items) {
+      const stockItemId = String(entry.stock_item_id || '').trim();
+      const qtyIn = Math.abs(Number(entry.quantity || 0));
+
+      if (!stockItemId || qtyIn <= 0) continue;
+
+      const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+      if (invRes.rowCount === 0) continue;
+
+      const inv = invRes.rows[0];
+      const stockBefore = Number(inv.stock_qty || 0);
+      const stockAfter = stockBefore + qtyIn;
+
+      await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+      const movementId = `MOV-IN-${Date.now()}-${stockItemId}`;
+      await client.query(`
+        INSERT INTO stock_movements (
+          movement_id, stock_item_id, stock_item_name, movement_type,
+          reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+        ) VALUES ($1, $2, $3, 'in', 'goods_receipt', $4, $5, $6, $7, $8, $9, $1)
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [
+        movementId,
+        stockItemId,
+        inv.stock_item_name,
+        docNumber,
+        qtyIn,
+        stockBefore,
+        stockAfter,
+        combinedNote,
+        cashier_name
+      ]);
+
+      processedItems.push({
+        stock_item_id: stockItemId,
+        stock_item_name: inv.stock_item_name,
+        qty_in: qtyIn,
+        unit: inv.unit,
+        stock_before: stockBefore,
+        stock_after: stockAfter
+      });
+    }
+
+    if (processedItems.length === 0) {
+      throw new Error('Tidak ada barang valid yang dapat diproses.');
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Berhasil mencatat penerimaan ${processedItems.length} barang masuk (No. Dokumen: ${docNumber}).`,
+      document_number: docNumber,
+      supplier_name: supplierText,
+      total_items: processedItems.length,
+      items: processedItems
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getInventoryItems,
   getInventoryStatus,
@@ -336,4 +425,5 @@ module.exports = {
   submitInventoryAudit,
   approveInventoryAudit,
   adjustInventoryStock,
+  receiveGoodsBatch,
 };

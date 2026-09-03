@@ -188,6 +188,8 @@ async function handlePostAction(action, req, res, payload) {
       return fnbController.settleGeneralFnbBill(req, res, payload);
     case 'adjustInventoryStock':
       return inventoryController.adjustInventoryStock(req, res, payload);
+    case 'receiveGoodsBatch':
+      return inventoryController.receiveGoodsBatch(req, res, payload);
     case 'createInventoryAudit':
       return inventoryController.createInventoryAudit(req, res, payload);
     case 'saveInventoryAuditCounts':
