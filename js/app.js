@@ -12483,11 +12483,15 @@ function createInventoryPanelElement() {
   title.id = "inventory-title";
   title.textContent = "Material Management & Stok";
 
-  const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
-
+  const subtitle = document.createElement("p");
+  subtitle.className = "inventory-subtitle";
   if (getCurrentOperatorRole() === "inventory") {
     subtitle.textContent = "Posisi fisik barang di rak & kulkas. Untuk input barang masuk harian dari supplier, silakan gunakan menu Catat Barang Masuk.";
+  } else {
+    subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
   }
+
+  const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
 
   titleGroup.append(title, subtitle);
 
