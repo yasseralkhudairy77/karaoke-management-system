@@ -868,6 +868,7 @@ let menuErrorMessage = "";
 let inventoryItems = [];
 let inventorySummary = null;
 let isLoadingInventory = false;
+let inventorySearchQuery = "";
 let isLoadingSettingsData = false;
 let hasLoadedSettingsData = false;
 let isSavingMasterData = false;
@@ -12465,8 +12466,35 @@ function createInventoryPanelElement() {
   actions.append(refreshButton, addButton);
   header.append(titleGroup, actions);
 
+  const searchToolbar = document.createElement("div");
+  searchToolbar.className = "inventory-toolbar erp-toolbar";
+  searchToolbar.style.cssText = "display: flex; gap: 10px; align-items: center; margin: 16px 0 12px 0;";
+
+  const searchInput = document.createElement("input");
+  searchInput.className = "inventory-search-input erp-search-input";
+  searchInput.type = "search";
+  searchInput.placeholder = "🔍 Cari barang: nama material, SKU/kode, kategori, status (misal: Jack Daniels, Anggur, Rendah)...";
+  searchInput.value = inventorySearchQuery;
+  searchInput.dataset.action = "search-inventory";
+  searchInput.setAttribute("aria-label", "Cari stok barang");
+  searchInput.style.cssText = "flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border-color, #444); background: var(--bg-card, #1e1e24); color: #fff; font-size: 14px;";
+
+  searchToolbar.appendChild(searchInput);
+
+  if (inventorySearchQuery.trim()) {
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "inventory-button erp-btn-secondary";
+    clearBtn.type = "button";
+    clearBtn.textContent = "✕ Reset";
+    clearBtn.style.cssText = "padding: 8px 14px; border-radius: 8px;";
+    clearBtn.onclick = () => setInventorySearchQuery("");
+    searchToolbar.appendChild(clearBtn);
+  }
+
   const tableContainer = document.createElement("div");
   tableContainer.className = "inventory-table-container erp-table-wrap";
+
+  const filteredInventory = getFilteredInventoryItems();
 
   if (!API_BASE_URL.trim()) {
     tableContainer.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
@@ -12477,14 +12505,21 @@ function createInventoryPanelElement() {
     empty.className = "inventory-empty";
     empty.textContent = "Belum ada data materi stok.";
     tableContainer.appendChild(empty);
+  } else if (filteredInventory.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "inventory-empty";
+    empty.style.cssText = "padding: 24px; text-align: center; color: #aaa;";
+    empty.textContent = `Barang dengan kata kunci "${inventorySearchQuery}" tidak ditemukan.`;
+    tableContainer.appendChild(empty);
   } else {
-    tableContainer.appendChild(createInventoryErpTableElement());
-    tableContainer.appendChild(createPaginationControlsElement("inventoryItems", inventoryItems.length));
+    tableContainer.appendChild(createInventoryErpTableElement(filteredInventory));
+    tableContainer.appendChild(createPaginationControlsElement("inventoryItems", filteredInventory.length));
   }
 
   panel.append(
     header,
     createInventorySummaryElement(),
+    searchToolbar,
     tableContainer,
     createStockAdjustmentPanelElement(),
     lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment(),
@@ -12493,6 +12528,35 @@ function createInventoryPanelElement() {
   );
 
   return panel;
+}
+
+function getFilteredInventoryItems() {
+  const query = inventorySearchQuery.trim().toLowerCase();
+  if (!query) {
+    return inventoryItems;
+  }
+  return inventoryItems.filter((item) => {
+    const id = String(item.stock_item_id || "").toLowerCase();
+    const name = String(item.stock_item_name || "").toLowerCase();
+    const category = String(item.category || "").toLowerCase();
+    const unit = String(item.unit || "").toLowerCase();
+    const statusLabel = getInventoryStockStatusLabel(resolveInventoryItemStockStatus(item)).toLowerCase();
+    return id.includes(query) || name.includes(query) || category.includes(query) || unit.includes(query) || statusLabel.includes(query);
+  });
+}
+
+function setInventorySearchQuery(value) {
+  inventorySearchQuery = value;
+  resetPaginationPage("inventoryItems");
+  renderRooms();
+
+  const searchInput = queryDashboard(".inventory-search-input");
+  if (searchInput) {
+    searchInput.focus();
+    try {
+      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    } catch (error) {}
+  }
 }
 
 function createInventorySummaryElement() {
@@ -12529,7 +12593,7 @@ function createInventorySummaryElement() {
   return grid;
 }
 
-function createInventoryErpTableElement() {
+function createInventoryErpTableElement(sourceItems = null) {
   const table = document.createElement("table");
   table.className = "erp-inventory-table";
 
@@ -12547,7 +12611,8 @@ function createInventoryErpTableElement() {
   `;
 
   const tbody = document.createElement("tbody");
-  const paginatedInventory = getPaginatedSlice("inventoryItems", inventoryItems);
+  const itemsToPaginate = Array.isArray(sourceItems) ? sourceItems : getFilteredInventoryItems();
+  const paginatedInventory = getPaginatedSlice("inventoryItems", itemsToPaginate);
 
   paginatedInventory.items.forEach((item) => {
     const tr = document.createElement("tr");
@@ -28777,6 +28842,11 @@ function handleDashboardInput(event) {
 
   if (action === "search-menu") {
     setMenuSearchQuery(field.value);
+    return;
+  }
+
+  if (action === "search-inventory") {
+    setInventorySearchQuery(field.value);
     return;
   }
 
