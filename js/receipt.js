@@ -105,13 +105,20 @@ export function formatReceipt58mm(receiptData, options = {}) {
     }
   } else {
     lines.push(centerReceiptText("BIAYA ROOM", width));
+    const billableDuration = room.freeRoomMinutes > 0
+      ? (room.billableRoomMinutes > 0 ? room.billableRoomMinutes : Math.max(0, room.durationMinutes - room.freeRoomMinutes))
+      : room.durationMinutes;
+
     lines.push(formatReceiptLine(
       room.ratePerHour > 0
-        ? `${formatReceiptDuration(room.durationMinutes)} x ${formatReceiptCurrency(room.ratePerHour)}`
+        ? `${formatReceiptDuration(billableDuration)} x ${formatReceiptCurrency(room.ratePerHour)}`
         : "Biaya Room",
       formatReceiptCurrency(totals.roomTotal),
       width
     ));
+    if (room.freeRoomMinutes > 0) {
+      pushReceiptField(lines, "  Free Promo", `${formatReceiptDuration(room.freeRoomMinutes)} (Rp0)`, width);
+    }
   }
 
   if (totals.promoDiscount > 0) {
