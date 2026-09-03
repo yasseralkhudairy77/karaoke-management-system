@@ -12478,9 +12478,11 @@ function createInventoryPanelElement() {
   title.id = "inventory-title";
   title.textContent = "Material Management & Stok";
 
-  const subtitle = document.createElement("p");
-  subtitle.className = "inventory-subtitle";
-  subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
+  const canManageMaster = ["owner", "manager"].includes(getCurrentOperatorRole());
+
+  if (getCurrentOperatorRole() === "inventory") {
+    subtitle.textContent = "Posisi fisik barang di rak & kulkas (Hanya Baca / Monitoring). Untuk input barang masuk dari supplier, silakan gunakan menu Catat Barang Masuk.";
+  }
 
   titleGroup.append(title, subtitle);
 
@@ -12494,15 +12496,18 @@ function createInventoryPanelElement() {
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
   refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
 
-  const addButton = document.createElement("button");
-  addButton.className = "inventory-button erp-btn-primary";
-  addButton.type = "button";
-  addButton.dataset.action = "open-add-inventory-item-modal";
-  addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-  addButton.textContent = "+ Tambah Item F&B Baru";
-  addButton.style.marginLeft = "8px";
+  actions.append(refreshButton);
 
-  actions.append(refreshButton, addButton);
+  if (canManageMaster) {
+    const addButton = document.createElement("button");
+    addButton.className = "inventory-button erp-btn-primary";
+    addButton.type = "button";
+    addButton.dataset.action = "open-add-inventory-item-modal";
+    addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
+    addButton.textContent = "+ Tambah Item F&B Baru";
+    addButton.style.marginLeft = "8px";
+    actions.append(addButton);
+  }
   header.append(titleGroup, actions);
 
   const searchToolbar = document.createElement("div");
@@ -12555,13 +12560,15 @@ function createInventoryPanelElement() {
     tableContainer.appendChild(createPaginationControlsElement("inventoryItems", filteredInventory.length));
   }
 
+  const canAdjustStock = ["owner", "manager"].includes(getCurrentOperatorRole());
+
   panel.append(
     header,
     createInventorySummaryElement(),
     searchToolbar,
     tableContainer,
-    createStockAdjustmentPanelElement(),
-    lastStockAdjustment ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment(),
+    canAdjustStock ? createStockAdjustmentPanelElement() : document.createDocumentFragment(),
+    lastStockAdjustment && canAdjustStock ? createLastStockAdjustmentElement(lastStockAdjustment) : document.createDocumentFragment(),
     createAdminPinModalElement(),
     addInventoryItemForm ? createAddInventoryItemModalElement() : document.createDocumentFragment()
   );
@@ -12636,6 +12643,8 @@ function createInventoryErpTableElement(sourceItems = null) {
   const table = document.createElement("table");
   table.className = "erp-inventory-table";
 
+  const canAdjustStock = ["owner", "manager"].includes(getCurrentOperatorRole());
+
   const thead = document.createElement("thead");
   thead.innerHTML = `
     <tr>
@@ -12645,7 +12654,7 @@ function createInventoryErpTableElement(sourceItems = null) {
       <th>Stok Aktual</th>
       <th>Min. Stok</th>
       <th>Status</th>
-      <th style="text-align: right;">Aksi</th>
+      ${canAdjustStock ? '<th style="text-align: right;">Aksi</th>' : ''}
     </tr>
   `;
 
@@ -12688,19 +12697,24 @@ function createInventoryErpTableElement(sourceItems = null) {
     statusSpan.textContent = getInventoryStockStatusLabel(stockStatus);
     statusTd.appendChild(statusSpan);
 
-    const actionTd = document.createElement("td");
-    actionTd.style.textAlign = "right";
-    const adjustBtn = document.createElement("button");
-    adjustBtn.className = "erp-quick-adjust-btn";
-    adjustBtn.type = "button";
-    adjustBtn.textContent = "Adjust / Restock";
-    adjustBtn.onclick = () => {
-      updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
-      focusStockAdjustmentField(".stock-adjustment-quantity");
-    };
-    actionTd.appendChild(adjustBtn);
+    const rowCells = [skuTd, nameTd, catTd, qtyTd, minTd, statusTd];
 
-    tr.append(skuTd, nameTd, catTd, qtyTd, minTd, statusTd, actionTd);
+    if (canAdjustStock) {
+      const actionTd = document.createElement("td");
+      actionTd.style.textAlign = "right";
+      const adjustBtn = document.createElement("button");
+      adjustBtn.className = "erp-quick-adjust-btn";
+      adjustBtn.type = "button";
+      adjustBtn.textContent = "Adjust / Restock";
+      adjustBtn.onclick = () => {
+        updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
+        focusStockAdjustmentField(".stock-adjustment-quantity");
+      };
+      actionTd.appendChild(adjustBtn);
+      rowCells.push(actionTd);
+    }
+
+    tr.append(...rowCells);
     tbody.appendChild(tr);
   });
 
