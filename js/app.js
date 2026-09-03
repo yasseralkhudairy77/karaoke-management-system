@@ -12773,8 +12773,9 @@ function createStockAdjustmentPanelElement() {
   typeSelect.disabled = !API_BASE_URL.trim() || isSavingStockAdjustment;
 
   [
-    ["restock", "Tambah Stok"],
-    ["set_stock", "Koreksi Stok"],
+    ["restock", "Tambah Stok (Restock)"],
+    ["set_stock", "Koreksi Stok Aktual"],
+    ["initial_stock", "👑 Revisi Stok Awal (Otorisasi Owner)"],
   ].forEach(([value, labelText]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -12786,7 +12787,11 @@ function createStockAdjustmentPanelElement() {
   typeField.appendChild(typeSelect);
 
   const quantityField = createStockAdjustmentFieldElement(
-    stockAdjustmentForm.adjustment_type === "restock" ? "Jumlah Ditambahkan" : "Stok Aktual"
+    stockAdjustmentForm.adjustment_type === "restock"
+      ? "Jumlah Ditambahkan"
+      : stockAdjustmentForm.adjustment_type === "initial_stock"
+        ? "Stok Awal yang Benar"
+        : "Stok Aktual"
   );
   const quantityInput = document.createElement("input");
   quantityInput.className = "stock-adjustment-input stock-adjustment-quantity";
@@ -12802,7 +12807,9 @@ function createStockAdjustmentPanelElement() {
   const noteInput = document.createElement("input");
   noteInput.className = "stock-adjustment-input stock-adjustment-note";
   noteInput.type = "text";
-  noteInput.placeholder = "Contoh: Pembelian stok hari ini / Koreksi hasil cek fisik";
+  noteInput.placeholder = stockAdjustmentForm.adjustment_type === "initial_stock"
+    ? "Contoh: Revisi stok awal oleh Owner karena salah hitung fisik"
+    : "Contoh: Pembelian stok hari ini / Koreksi hasil cek fisik";
   noteInput.dataset.action = "update-stock-adjustment-note";
   noteInput.value = stockAdjustmentForm.note;
   noteInput.disabled = !API_BASE_URL.trim() || isSavingStockAdjustment;
@@ -12814,7 +12821,9 @@ function createStockAdjustmentPanelElement() {
   help.className = "stock-adjustment-help";
   help.textContent = stockAdjustmentForm.adjustment_type === "restock"
     ? "Jumlah akan ditambahkan ke stok saat ini."
-    : "Stok akan disetel menjadi jumlah aktual yang diisi.";
+    : stockAdjustmentForm.adjustment_type === "initial_stock"
+      ? "Stok awal barang ini akan direvisi dan langsung tersinkronisasi ke HP orang gudang secara real-time."
+      : "Stok akan disetel menjadi jumlah aktual yang diisi.";
 
   const actions = document.createElement("div");
   actions.className = "stock-adjustment-actions";

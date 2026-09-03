@@ -150,7 +150,73 @@ async function testReceiveGoodsBatch() {
   }
 }
 
-runTests().catch(err => {
+async function testOwnerInitialStockRevision() {
+  const { adjustInventoryStock } = require('../src/controllers/inventoryController');
+  const originalConnect = db.pool.connect;
+  const queries = [];
+
+  const mockItem = {
+    stock_item_id: 'INV-BEER-01',
+    stock_item_name: 'Draft Beer Bintang',
+    stock_qty: '10',
+    min_stock: '5'
+  };
+
+  const mockClient = {
+    query: async (sql, params = []) => {
+      const text = String(sql);
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE')) {
+        return { rows: [mockItem], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release: () => {}
+  };
+
+  db.pool.connect = async () => mockClient;
+
+  try {
+    let responseData = null;
+    const req = {};
+    const res = {
+      json: (data) => { responseData = data; return data; },
+      status: () => res
+    };
+
+    await adjustInventoryStock(req, res, {
+      stock_item_id: 'INV-BEER-01',
+      adjustment_type: 'initial_stock',
+      quantity: 366,
+      note: 'Revisi stok awal oleh Owner sesuai fisik aktual',
+      cashier_name: 'Owner'
+    });
+
+    assert.ok(responseData, 'Response must exist');
+    assert.strictEqual(responseData.stock_before, 10);
+    assert.strictEqual(responseData.stock_after, 366);
+
+    const movQuery = queries.find(q => q.text.includes('INSERT INTO stock_movements'));
+    assert.ok(movQuery, 'Must insert stock movement audit record');
+    assert.strictEqual(movQuery.params[4], 'initial_stock_revision', 'Reference type must be initial_stock_revision');
+    assert.strictEqual(movQuery.params[5], 356, 'Qty change must be +356');
+    assert.strictEqual(movQuery.params[9], 'Owner', 'Recorded by Owner');
+
+    console.log('  ✓ Owner successfully revised initial stock from 10 to 366 with initial_stock_revision audit record');
+  } finally {
+    db.pool.connect = originalConnect;
+  }
+}
+
+async function main() {
+  console.log('🧪 Running Admin Gudang Portal & Goods Receipt Tests...');
+  await testAdminGudangPinLogin();
+  await testReceiveGoodsBatch();
+  await testOwnerInitialStockRevision();
+  console.log('✅ ALL Admin Gudang Portal Tests PASSED SUCCESSFULLY!');
+}
+
+main().catch(err => {
   console.error('Test failed:', err);
   process.exit(1);
 });

@@ -88,6 +88,7 @@ async function adjustInventoryStock(req, res, payload) {
     const stockBefore = Number(item.stock_qty || 0);
     let stockAfter = stockBefore;
     let movementType = 'adjustment';
+    let refType = 'manual_adjustment';
 
     if (adjustment_type === 'restock' || adjustment_type === 'in') {
       stockAfter = stockBefore + Math.abs(qtyChange);
@@ -95,6 +96,10 @@ async function adjustInventoryStock(req, res, payload) {
     } else if (adjustment_type === 'out') {
       stockAfter = stockBefore - Math.abs(qtyChange);
       movementType = 'out';
+    } else if (adjustment_type === 'initial_stock') {
+      stockAfter = Math.max(0, qtyChange);
+      movementType = 'adjustment';
+      refType = 'initial_stock_revision';
     } else {
       // Set stock directly
       stockAfter = qtyChange;
@@ -108,12 +113,13 @@ async function adjustInventoryStock(req, res, payload) {
 
     // Record stock movement
     const movementId = `MOV-${Date.now()}`;
+    const auditNote = note || (adjustment_type === 'initial_stock' ? 'Revisi Saldo Stok Awal oleh Owner' : 'Penyesuaian stok manual');
     await client.query(`
       INSERT INTO stock_movements (
         movement_id, stock_item_id, stock_item_name, movement_type,
         reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name
-      ) VALUES ($1, $2, $3, $4, 'manual_adjustment', $1, $5, $6, $7, $8, $9)
-    `, [movementId, stock_item_id, item.stock_item_name, movementType, (stockAfter - stockBefore), stockBefore, stockAfter, note, cashier_name]);
+      ) VALUES ($1, $2, $3, $4, $5, $1, $6, $7, $8, $9, $10)
+    `, [movementId, stock_item_id, item.stock_item_name, movementType, refType, (stockAfter - stockBefore), stockBefore, stockAfter, auditNote, cashier_name]);
 
     await client.query('COMMIT');
     const finalStockStatus = getInventoryStatus(stockAfter, Number(item.min_stock || 0));
