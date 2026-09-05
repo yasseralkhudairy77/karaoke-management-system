@@ -8766,32 +8766,10 @@ function getOpenFnbOrdersForRoom(room) {
 function createRoomOpenFnbBreakdownElement(openOrders) {
   const container = document.createElement("div");
   container.className = "room-card-fnb-breakdown";
-  container.style.marginTop = "8px";
-  container.style.padding = "6px 8px";
-  container.style.backgroundColor = "rgba(0, 0, 0, 0.25)";
-  container.style.borderRadius = "6px";
-  container.style.border = "1px solid rgba(255, 255, 255, 0.08)";
-  container.style.fontSize = "0.78rem";
-
-  const title = document.createElement("div");
-  title.style.fontWeight = "bold";
-  title.style.color = "rgba(255, 255, 255, 0.85)";
-  title.style.marginBottom = "4px";
-  title.style.display = "flex";
-  title.style.justifyContent = "space-between";
-  title.style.alignItems = "center";
-  title.innerHTML = `<span>🍽️ Rincian F&B:</span>`;
-
-  container.appendChild(title);
-
-  const itemsList = document.createElement("div");
-  itemsList.style.display = "flex";
-  itemsList.style.flexDirection = "column";
-  itemsList.style.gap = "2px";
-  itemsList.style.color = "rgba(255, 255, 255, 0.7)";
 
   const aggregatedItems = {};
   let totalFbAmount = 0;
+  let totalFbQuantity = 0;
 
   openOrders.forEach((order) => {
     (order.items || []).forEach((item) => {
@@ -8803,24 +8781,30 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
       }
       aggregatedItems[name].quantity += qty;
       totalFbAmount += qty * price;
+      totalFbQuantity += qty;
     });
   });
 
+  const title = document.createElement("div");
+  title.className = "fnb-breakdown-title";
+  title.innerHTML = `<span>🍽️ Rincian Pesanan F&B</span> <span class="fnb-count-pill">${totalFbQuantity} item</span>`;
+  container.appendChild(title);
+
+  const itemsList = document.createElement("div");
+  itemsList.className = "fnb-breakdown-list";
+
   Object.entries(aggregatedItems).forEach(([name, data]) => {
     const itemRow = document.createElement("div");
-    itemRow.style.display = "flex";
-    itemRow.style.justifyContent = "space-between";
+    itemRow.className = "fnb-breakdown-item";
 
     const nameSpan = document.createElement("span");
+    nameSpan.className = "fnb-breakdown-item-name";
     nameSpan.textContent = name;
-    nameSpan.style.whiteSpace = "nowrap";
-    nameSpan.style.overflow = "hidden";
-    nameSpan.style.textOverflow = "ellipsis";
-    nameSpan.style.maxWidth = "130px";
+    nameSpan.title = name;
 
     const detailsSpan = document.createElement("span");
+    detailsSpan.className = "fnb-breakdown-item-qty";
     detailsSpan.textContent = `${data.quantity}x ${formatCurrency(data.price)}`;
-    detailsSpan.style.color = "rgba(255, 255, 255, 0.5)";
 
     itemRow.append(nameSpan, detailsSpan);
     itemsList.appendChild(itemRow);
@@ -8828,21 +8812,13 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
 
   container.appendChild(itemsList);
 
-  const divider = document.createElement("div");
-  divider.style.height = "1px";
-  divider.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
-  divider.style.margin = "4px 0";
-  container.appendChild(divider);
-
   const footer = document.createElement("div");
-  footer.style.display = "flex";
-  footer.style.justifyContent = "space-between";
-  footer.style.fontWeight = "bold";
-  footer.style.color = "#10b981";
+  footer.className = "fnb-breakdown-footer";
 
   const footerLabel = document.createElement("span");
   footerLabel.textContent = "Total F&B:";
   const footerVal = document.createElement("span");
+  footerVal.className = "fnb-breakdown-total";
   footerVal.textContent = formatCurrency(totalFbAmount);
 
   footer.append(footerLabel, footerVal);
@@ -8850,6 +8826,7 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
 
   return container;
 }
+
 
 function createRoomCard(room) {
   const card = document.createElement("article");
@@ -8930,10 +8907,10 @@ function createRoomCard(room) {
   actions.className = "room-actions";
 
   const sessionButton = document.createElement("button");
-  sessionButton.className = "room-button";
+  sessionButton.className = "room-button room-button-checkout";
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
-  sessionButton.textContent = sessionButtonLabel;
+  sessionButton.innerHTML = `<span class="room-btn-icon">🏁</span> <span>${sessionButtonLabel}</span>`;
   sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession;
 
   if (room.status === "occupied") {
@@ -8943,29 +8920,27 @@ function createRoomCard(room) {
     extendButton.className = "room-button room-button-extend";
     extendButton.type = "button";
     extendButton.dataset.action = "show-extend-selection";
-    extendButton.textContent = isExtendingSession ? "Menambah..." : "Tambah Waktu";
+    extendButton.innerHTML = `<span class="room-btn-icon">⏱️</span> <span>${isExtendingSession ? "Menambah..." : "Tambah Waktu"}</span>`;
 
     const selectLcButton = document.createElement("button");
     selectLcButton.className = "room-button room-button-lc";
     selectLcButton.type = "button";
     selectLcButton.dataset.action = "show-lc-selection";
-    selectLcButton.textContent = "Pilih LC";
+    selectLcButton.innerHTML = `<span class="room-btn-icon">🎙️</span> <span>Pilih LC</span>`;
 
     const changePackageButton = document.createElement("button");
-    changePackageButton.className = "room-button room-button-secondary";
+    changePackageButton.className = "room-button room-button-package";
     changePackageButton.type = "button";
     changePackageButton.dataset.action = "show-active-session-package";
-    changePackageButton.textContent = "Ubah Paket";
+    changePackageButton.innerHTML = `<span class="room-btn-icon">📦</span> <span>Ubah Paket</span>`;
     changePackageButton.disabled = isUpdatingActiveSessionPackage;
 
     const moveRoomButton = document.createElement("button");
-    moveRoomButton.className = "room-button room-button-secondary";
+    moveRoomButton.className = "room-button room-button-move";
     moveRoomButton.type = "button";
     moveRoomButton.dataset.action = "show-move-room";
     moveRoomButton.dataset.roomId = room.room_id;
-    moveRoomButton.textContent = isMovingRoomSession && moveRoomSourceId === room.room_id
-      ? "Memindahkan..."
-      : "Pindah Room";
+    moveRoomButton.innerHTML = `<span class="room-btn-icon">🔁</span> <span>${isMovingRoomSession && moveRoomSourceId === room.room_id ? "Memindahkan..." : "Pindah Room"}</span>`;
     moveRoomButton.disabled = isMovingRoomSession || getCurrentOperatorRole() === "receptionist";
 
     actions.append(sessionButton, extendButton, selectLcButton, changePackageButton, moveRoomButton);
@@ -9138,12 +9113,12 @@ function createRoomBookingInfoElement(room) {
   updateRoomTimeBadge(badge, timeState.status);
   info.appendChild(badge);
 
-  const countdown = document.createElement("p");
+  const countdown = document.createElement("div");
   countdown.className = "room-booking-row room-countdown";
 
   const countdownLabel = document.createElement("span");
   countdownLabel.className = "room-booking-label";
-  countdownLabel.textContent = getRoomCountdownLabel(room);
+  countdownLabel.textContent = "Sisa Waktu Sesi";
 
   const countdownValue = document.createElement("span");
   countdownValue.className = "timer room-countdown-value";

@@ -7914,21 +7914,111 @@ textarea.action-confirmation-input {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  width: 100%;
 }
 
 .room-actions-occupied {
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+  width: 100% !important;
+  margin-top: 6px !important;
 }
 
-.room-button-extend {
-  background: rgba(255, 255, 255, 0.92);
-  color: #4a2a00;
+/* Selesaikan Sesi (Primary Checkout Action) - FULL WIDTH */
+.room-actions-occupied > [data-action="toggle-session"],
+.room-actions-occupied > .room-button-checkout {
+  grid-column: 1 / -1 !important;
+  min-height: 44px !important;
+  font-size: 0.96rem !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.02em !important;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+  color: #1a1003 !important;
+  border: 1px solid rgba(255, 230, 160, 0.5) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
-.room-button-extend:hover,
-.room-button-extend:focus-visible {
-  background: #ffe8bf;
-  outline: 3px solid rgba(255, 193, 102, 0.55);
+.room-actions-occupied > [data-action="toggle-session"]:hover:not(:disabled),
+.room-actions-occupied > .room-button-checkout:hover:not(:disabled) {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+  box-shadow: 0 6px 18px rgba(245, 158, 11, 0.5) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Sub-action buttons in occupied card (Grid 2x2) */
+.room-actions-occupied .room-button {
+  min-height: 38px !important;
+  padding: 6px 10px !important;
+  font-size: 0.84rem !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* Tambah Waktu */
+.room-actions-occupied .room-button-extend {
+  background: rgba(255, 255, 255, 0.16) !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  color: #ffffff !important;
+}
+.room-actions-occupied .room-button-extend:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.28) !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Pilih LC */
+.room-actions-occupied .room-button-lc {
+  background: rgba(139, 92, 246, 0.24) !important;
+  border: 1px solid rgba(167, 139, 250, 0.45) !important;
+  color: #f3e8ff !important;
+}
+.room-actions-occupied .room-button-lc:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.4) !important;
+  border-color: rgba(196, 181, 253, 0.65) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Ubah Paket */
+.room-actions-occupied .room-button-package,
+.room-actions-occupied > [data-action="show-active-session-package"] {
+  background: rgba(14, 165, 233, 0.18) !important;
+  border: 1px solid rgba(56, 189, 248, 0.38) !important;
+  color: #e0f2fe !important;
+}
+.room-actions-occupied .room-button-package:hover:not(:disabled),
+.room-actions-occupied > [data-action="show-active-session-package"]:hover:not(:disabled) {
+  background: rgba(14, 165, 233, 0.32) !important;
+  border-color: rgba(125, 211, 252, 0.55) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Pindah Room */
+.room-actions-occupied .room-button-move,
+.room-actions-occupied > [data-action="show-move-room"] {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+.room-actions-occupied .room-button-move:hover:not(:disabled),
+.room-actions-occupied > [data-action="show-move-room"]:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  transform: translateY(-1px) !important;
 }
 
 .room-button-full {
@@ -7946,6 +8036,10 @@ textarea.action-confirmation-input {
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .room-button:hover,
@@ -7963,6 +8057,7 @@ textarea.action-confirmation-input {
   cursor: wait;
   opacity: 0.72;
 }
+
 
 .duration-selection {
   display: grid;
@@ -10185,4 +10280,204 @@ textarea.action-confirmation-input {
     flex-direction: column;
   }
 }
+
+/* =========================================================
+   MODERN ROOM CARD & OCCUPIED RED CARD REDESIGN
+   ========================================================= */
+
+/* Deep Velvet Crimson Gradient for Occupied Room */
+.room-card.occupied {
+  background: linear-gradient(165deg, rgba(168, 28, 45, 0.96) 0%, rgba(105, 12, 24, 0.98) 60%, rgba(64, 6, 15, 1) 100%) !important;
+  border: 1px solid rgba(255, 130, 150, 0.3) !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 0 24px rgba(225, 29, 72, 0.22) !important;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.room-card.occupied:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.55), 0 0 32px rgba(225, 29, 72, 0.35) !important;
+}
+
+/* Glassmorphic inner booking card */
+.room-card.occupied .room-booking-info {
+  background: rgba(0, 0, 0, 0.28) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  gap: 6px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.room-card.occupied .room-booking-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 2px 0 !important;
+}
+
+.room-card.occupied .room-booking-label {
+  color: rgba(255, 255, 255, 0.65) !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+}
+
+.room-card.occupied .room-booking-value {
+  color: #ffffff !important;
+  font-size: 0.88rem !important;
+  font-weight: 800 !important;
+}
+
+/* Digital LED Countdown Display inside Occupied Card */
+.room-card.occupied .room-booking-row.room-countdown {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(0, 0, 0, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  margin-top: 6px !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35) !important;
+}
+
+.room-card.occupied .room-countdown .room-booking-label {
+  font-size: 0.72rem !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-weight: 800 !important;
+  margin-bottom: 2px !important;
+}
+
+.room-card.occupied .room-countdown-value {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace !important;
+  font-size: 1.85rem !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.06em !important;
+  color: #ffffff !important;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.35) !important;
+  line-height: 1 !important;
+}
+
+.room-card.occupied .room-countdown-value.warning {
+  color: #fbbf24 !important;
+  text-shadow: 0 0 16px rgba(251, 191, 36, 0.5) !important;
+}
+
+.room-card.occupied .room-countdown-value.expired {
+  color: #f87171 !important;
+  text-shadow: 0 0 16px rgba(248, 113, 113, 0.6) !important;
+}
+
+/* Redesigned F&B Breakdown Panel */
+.room-card-fnb-breakdown {
+  margin-top: 8px !important;
+  padding: 8px 12px !important;
+  background: rgba(0, 0, 0, 0.32) !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  font-size: 0.8rem !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+.fnb-breakdown-title {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  font-weight: 800 !important;
+  color: #fef08a !important;
+  font-size: 0.82rem !important;
+  margin-bottom: 6px !important;
+  padding-bottom: 4px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.fnb-count-pill {
+  font-size: 0.72rem !important;
+  padding: 1px 6px !important;
+  border-radius: 10px !important;
+  background: rgba(254, 240, 138, 0.2) !important;
+  color: #fef08a !important;
+  border: 1px solid rgba(254, 240, 138, 0.35) !important;
+}
+
+.fnb-breakdown-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  max-height: 84px !important;
+  overflow-y: auto !important;
+  padding-right: 4px !important;
+}
+
+.fnb-breakdown-list::-webkit-scrollbar {
+  width: 4px;
+}
+.fnb-breakdown-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+}
+
+.fnb-breakdown-item {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-size: 0.78rem !important;
+}
+
+.fnb-breakdown-item-name {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 150px !important;
+}
+
+.fnb-breakdown-item-qty {
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-size: 0.76rem !important;
+  white-space: nowrap !important;
+}
+
+.fnb-breakdown-footer {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  font-weight: 800 !important;
+  color: #34d399 !important;
+  margin-top: 6px !important;
+  padding-top: 6px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+  font-size: 0.84rem !important;
+}
+
+.fnb-breakdown-total {
+  color: #34d399 !important;
+  font-weight: 900 !important;
+}
+
+/* Rate badge in card */
+.room-card .rate {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  margin: 6px 0 2px 0 !important;
+  padding: 4px 10px !important;
+  background: rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 6px !important;
+  font-size: 0.86rem !important;
+  font-weight: 700 !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  width: fit-content !important;
+}
+
+.room-btn-icon {
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
 
