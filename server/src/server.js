@@ -69,7 +69,25 @@ app.get('/sync/status', async (req, res) => {
   }
 });
 
+async function ensureDatabasePatches() {
+  try {
+    const db = require('./db');
+    await db.query(`
+      ALTER TABLE stock_movements ALTER COLUMN reference_type TYPE VARCHAR(50);
+      ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_reference_type_check;
+      ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_reference_type_check
+      CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'inventory_audit', 'fnb_order', 'goods_receipt', 'initial_stock_revision'));
+    `);
+    console.log('[DB] Schema constraint stock_movements_reference_type_check verified.');
+  } catch (err) {
+    if (err.code !== 'ECONNREFUSED' && !err.message.includes('ECONNREFUSED') && !err.message.includes('DATABASE_OFFLINE')) {
+      console.warn('[DB] Notice verifying database constraints:', err.message);
+    }
+  }
+}
+
 function startServer(port = PORT, bindHost = BIND_HOST) {
+  ensureDatabasePatches();
   if (process.env.DISABLE_SYNC_WORKER !== '1') {
     startSyncWorker(parseInt(process.env.SYNC_INTERVAL_MS || '30000', 10));
   }

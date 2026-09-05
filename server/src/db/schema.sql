@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     stock_item_id VARCHAR(50) REFERENCES inventory(stock_item_id),
     stock_item_name VARCHAR(100) NOT NULL,
     movement_type VARCHAR(20) CHECK (movement_type IN ('in', 'out', 'adjustment')),
-    reference_type VARCHAR(30) CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'fnb_order')),
+    reference_type VARCHAR(50) CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'inventory_audit', 'fnb_order', 'goods_receipt', 'initial_stock_revision')),
     reference_id VARCHAR(100),
     qty_change NUMERIC(12,2) NOT NULL,
     stock_before NUMERIC(12,2) NOT NULL,
@@ -385,6 +385,10 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 ALTER TABLE stock_movements ALTER COLUMN movement_id TYPE VARCHAR(120);
 ALTER TABLE stock_movements ALTER COLUMN reference_id TYPE VARCHAR(100);
 ALTER TABLE stock_movements ALTER COLUMN idempotency_key TYPE VARCHAR(150);
+ALTER TABLE stock_movements ALTER COLUMN reference_type TYPE VARCHAR(50);
+ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_reference_type_check;
+ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_reference_type_check
+CHECK (reference_type IN ('transaction', 'manual_adjustment', 'stock_audit', 'inventory_audit', 'fnb_order', 'goods_receipt', 'initial_stock_revision'));
 
 CREATE TABLE IF NOT EXISTS inventory_audits (
     audit_id VARCHAR(50) PRIMARY KEY,

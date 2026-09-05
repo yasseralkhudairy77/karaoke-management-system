@@ -99,7 +99,7 @@ async function getOperationalAuditReport(req, res) {
       db.query(`SELECT * FROM room_time_logs WHERE ${dateWhere('created_at')} ORDER BY created_at DESC LIMIT 500`, dateParams),
       db.query(`
         SELECT * FROM stock_movements
-        WHERE ${dateWhere('created_at')} AND reference_type IN ('manual_adjustment', 'stock_audit')
+        WHERE ${dateWhere('created_at')} AND reference_type IN ('manual_adjustment', 'stock_audit', 'inventory_audit', 'initial_stock_revision', 'goods_receipt')
         ORDER BY created_at DESC LIMIT 500
       `, dateParams),
       db.query(`SELECT * FROM receipt_print_logs WHERE ${dateWhere('printed_at')} AND is_reprint = TRUE ORDER BY printed_at DESC LIMIT 300`, dateParams),
@@ -191,12 +191,20 @@ async function getOperationalAuditReport(req, res) {
 
     stockRes.rows.forEach(row => {
       if (centralSourceKeys.has(`stock_movements:${row.movement_id}`)) return;
+      const isHighRisk = row.reference_type === 'manual_adjustment' || row.reference_type === 'initial_stock_revision';
+      const isReceipt = row.reference_type === 'goods_receipt';
       events.push(serializeEvent({
         event_id: `legacy-stock-${row.movement_id}`,
         occurred_at: row.created_at,
-        risk_level: row.reference_type === 'manual_adjustment' ? 'high' : 'medium',
+        risk_level: isHighRisk ? 'high' : (isReceipt ? 'low' : 'medium'),
         domain: 'stock',
-        event_type: row.reference_type === 'manual_adjustment' ? 'manual_stock_adjustment' : 'stock_audit_adjustment',
+        event_type: row.reference_type === 'manual_adjustment'
+          ? 'manual_stock_adjustment'
+          : (row.reference_type === 'goods_receipt'
+            ? 'goods_receipt'
+            : (row.reference_type === 'initial_stock_revision'
+              ? 'initial_stock_revision'
+              : 'stock_audit_adjustment')),
         result: 'success',
         initiated_by_name: row.cashier_name,
         target_type: 'inventory',
