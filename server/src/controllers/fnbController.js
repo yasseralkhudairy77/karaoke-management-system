@@ -58,6 +58,24 @@ async function ensureGeneralFnbRoom(client) {
   `, [FNB_GENERAL_ROOM_ID, FNB_GENERAL_ROOM_NAME]);
 }
 
+function normalizeCategoryName(rawCategory) {
+  if (!rawCategory || typeof rawCategory !== 'string') return 'Lainnya';
+  const clean = rawCategory.trim();
+  const upper = clean.toUpperCase();
+
+  if (upper === 'BEER') return 'Beer';
+  if (upper === 'CIGARETTE' || upper === 'ROKOK') return 'Cigarette';
+  if (upper === 'FOOD' || upper === 'MAKANAN') return 'Food';
+  if (upper === 'SNACK' || upper === 'CEMILAN') return 'Snack';
+  if (upper === 'BEVERAGE' || upper === 'MINUMAN') return 'Beverage';
+  if (upper === 'SPIRIT' || upper === 'LIQUOR') return 'Spirit';
+  if (upper === 'ANGGUR' || upper === 'WINE') return 'Anggur';
+  if (upper === 'LOKAL') return 'Lokal';
+  if (upper === 'PAKET ROOM' || upper === 'PAKET' || upper === 'PACKAGE') return 'Paket Room';
+
+  return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+}
+
 async function getMenuItems(req, res) {
   try {
     await ensureFnbBundleSchema();
@@ -646,7 +664,7 @@ async function getTodayFnbSalesReport(req, res) {
       const qty = Number(row.quantity || 0);
       const subtotal = Number(row.subtotal || 0);
       const price = Number(row.price || 0);
-      const cat = row.category || 'Lainnya';
+      const cat = normalizeCategoryName(row.category);
 
       totalFnbSales += subtotal;
       totalItemsSold += qty;
@@ -778,7 +796,7 @@ async function getTodayFnbSalesReport(req, res) {
       consumptionMap.set(inv.stock_item_id, {
         stock_item_id: inv.stock_item_id,
         stock_item_name: inv.stock_item_name,
-        category: inv.category || 'General',
+        category: normalizeCategoryName(inv.category || 'General'),
         unit: inv.unit || 'unit',
         current_stock: Number(inv.stock_qty || 0),
         ala_carte_qty: 0,

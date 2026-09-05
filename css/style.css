@@ -9691,6 +9691,26 @@ textarea.action-confirmation-input {
     font-size: 11px;
   }
 
+  .fnb-report-print {
+    box-sizing: border-box !important;
+    page: fnb-report-page !important;
+    width: 100% !important;
+    min-height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 10px !important;
+  }
+
+  .fnb-report-print-header {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    margin-bottom: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
   .receipt-print {
     box-sizing: border-box;
     width: 58mm;
@@ -9825,7 +9845,7 @@ textarea.action-confirmation-input {
   .lc-report-print-actions,
   .fnb-report-print-actions,
   .receipt-print-actions {
-    background: #ffffff;
+    display: none !important;
   }
 
   .closing-print-signature-line {

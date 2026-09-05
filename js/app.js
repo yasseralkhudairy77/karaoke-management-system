@@ -15574,27 +15574,73 @@ function createFnbReportPrintPreviewElement() {
     </table>
   `;
 
-  const itemSection = document.createElement("section");
-  itemSection.className = "fnb-report-print-section";
-  itemSection.innerHTML = `
-    <h3>Rekapitulasi Penjualan Barang</h3>
+  const physicalSection = document.createElement("section");
+  physicalSection.className = "fnb-report-print-section";
+  physicalSection.innerHTML = `
+    <h3>Rekapitulasi Pengeluaran Barang Fisik (Gudang & Bar)</h3>
     <table>
       <thead>
         <tr>
-          <th style="width: 40px; text-align: center;">No</th>
-          <th>Kode Menu</th>
-          <th>Nama Barang</th>
+          <th style="width: 30px; text-align: center;">No</th>
+          <th style="width: 110px;">Kode SKU</th>
+          <th>Nama Barang Fisik</th>
           <th>Kategori</th>
-          <th style="text-align: right;">Harga Satuan</th>
-          <th style="text-align: center;">Qty Terjual</th>
-          <th style="text-align: right;">Total Omzet</th>
+          <th style="text-align: center; width: 55px;">Satuan</th>
+          <th style="text-align: center; width: 75px;">Terjual Satuan</th>
+          <th style="text-align: center; width: 80px;">Keluar via Paket</th>
+          <th style="text-align: center; width: 85px;">Total Fisik Keluar</th>
+          <th style="text-align: center; width: 95px;">Sisa Stok Fisik</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${fnbPhysicalConsumption.length > 0 ? fnbPhysicalConsumption.map((item, idx) => {
+          const alaCarte = Number(item.ala_carte_qty || 0);
+          const pkgQty = Number(item.package_qty || 0);
+          const totalOut = Number(item.total_consumed || 0);
+          const stock = Number(item.current_stock || 0);
+          const isNegative = stock < 0;
+          const isLow = stock >= 0 && stock <= 5;
+          const stockColor = isNegative ? '#b91c1c' : (isLow ? '#b45309' : '#15803d');
+          const stockWeight = isNegative ? 'bold' : '600';
+          return `
+            <tr>
+              <td style="text-align: center;">${idx + 1}</td>
+              <td><span style="font-family: monospace; font-weight: bold;">${escapeHtml(item.stock_item_id || "-")}</span></td>
+              <td><strong>${escapeHtml(item.stock_item_name || "-")}</strong></td>
+              <td>${escapeHtml(item.category || "-")}</td>
+              <td style="text-align: center;">${escapeHtml(item.unit || "pcs")}</td>
+              <td style="text-align: center;">${alaCarte.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; font-weight: bold;">${pkgQty.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; font-weight: bold; background: #f8fafc;">${totalOut.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; color: ${stockColor}; font-weight: ${stockWeight};">${stock.toLocaleString("id-ID")} ${escapeHtml(item.unit || "")}</td>
+            </tr>
+          `;
+        }).join("") : `<tr><td colspan="9" class="fnb-report-print-empty">Tidak ada data pergerakan barang fisik pada periode ini.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+
+  const itemSection = document.createElement("section");
+  itemSection.className = "fnb-report-print-section";
+  itemSection.innerHTML = `
+    <h3>Rincian Penjualan Menu & Transaksi Kasir</h3>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 30px; text-align: center;">No</th>
+          <th style="width: 110px;">Kode Menu</th>
+          <th>Nama Menu Kasir</th>
+          <th>Kategori</th>
+          <th style="text-align: right; width: 85px;">Harga Satuan</th>
+          <th style="text-align: center; width: 65px;">Qty Terjual</th>
+          <th style="text-align: right; width: 95px;">Total Omzet</th>
         </tr>
       </thead>
       <tbody>
         ${todayFnbMenuSales.length > 0 ? todayFnbMenuSales.map((sale, idx) => `
           <tr>
             <td style="text-align: center;">${idx + 1}</td>
-            <td>${escapeHtml(sale.menu_id || "-")}</td>
+            <td><span style="font-family: monospace;">${escapeHtml(sale.menu_id || "-")}</span></td>
             <td><strong>${escapeHtml(sale.menu_name || "-")}</strong></td>
             <td>${escapeHtml(sale.category || "-")}</td>
             <td style="text-align: right;">${formatCurrency(sale.price)}</td>
@@ -15650,7 +15696,7 @@ function createFnbReportPrintPreviewElement() {
 
   actions.append(closeBtn, printBtn);
 
-  print.append(header, summaryGrid, catSection, itemSection, signatureSection, footer, actions);
+  print.append(header, summaryGrid, catSection, physicalSection, itemSection, signatureSection, footer, actions);
 
   return print;
 }
