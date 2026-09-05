@@ -184,6 +184,8 @@ async function handlePostAction(action, req, res, payload) {
       return fnbController.saveFnbOrder(req, res, payload);
     case 'cancelFnbOrder':
       return fnbController.cancelFnbOrder(req, res, payload);
+    case 'cancelGeneralFnbBill':
+      return fnbController.cancelGeneralFnbBill(req, res, payload);
     case 'settleGeneralFnbBill':
       return fnbController.settleGeneralFnbBill(req, res, payload);
     case 'adjustInventoryStock':

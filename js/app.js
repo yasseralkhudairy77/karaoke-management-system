@@ -11817,9 +11817,22 @@ function createOpenGeneralFnbBillsElement() {
       row.className = "open-fnb-item";
       const label = document.createElement("span");
       label.textContent = `${order.order_id} - ${formatDateTimeLabel(order.created_at)}`;
+      const amountWrap = document.createElement("div");
+      amountWrap.className = "open-fnb-item-amount-wrap";
       const amount = document.createElement("strong");
       amount.textContent = formatCurrency(order.order_total);
-      row.append(label, amount);
+
+      const cancelItemBtn = document.createElement("button");
+      cancelItemBtn.className = "fnb-cancel-button-small";
+      cancelItemBtn.type = "button";
+      cancelItemBtn.dataset.action = "cancel-fnb-order";
+      cancelItemBtn.dataset.orderId = order.order_id;
+      cancelItemBtn.title = "Batalkan pesanan ini";
+      cancelItemBtn.disabled = isCancellingFnbOrder || isSettlingGeneralFnbBill;
+      cancelItemBtn.textContent = "Batal";
+
+      amountWrap.append(amount, cancelItemBtn);
+      row.append(label, amountWrap);
       orderList.appendChild(row);
     });
 
@@ -11837,20 +11850,95 @@ function createOpenGeneralFnbBillsElement() {
     });
     method.value = generalFnbBillPaymentMethods[bill.general_bill_id] || "cash";
 
+    const cancelBillBtn = document.createElement("button");
+    cancelBillBtn.className = "fnb-cancel-button general-fnb-cancel-button";
+    cancelBillBtn.type = "button";
+    cancelBillBtn.dataset.action = "cancel-general-fnb-bill";
+    cancelBillBtn.dataset.generalBillId = bill.general_bill_id;
+    cancelBillBtn.disabled = isCancellingFnbOrder || isSettlingGeneralFnbBill;
+    cancelBillBtn.textContent = isCancellingFnbOrder ? "Membatalkan..." : "Batalkan Tagihan";
+
     const payButton = document.createElement("button");
     payButton.className = "transaction-pay-button";
     payButton.type = "button";
     payButton.dataset.action = "settle-general-fnb-bill";
     payButton.dataset.generalBillId = bill.general_bill_id;
-    payButton.disabled = isSettlingGeneralFnbBill;
+    payButton.disabled = isSettlingGeneralFnbBill || isCancellingFnbOrder;
     payButton.textContent = isSettlingGeneralFnbBill ? "Memproses..." : "Bayar & Cetak Nota";
-    payment.append(method, payButton);
+    payment.append(method, cancelBillBtn, payButton);
 
     card.append(header, orderList, payment);
     section.appendChild(card);
   });
 
   return section;
+}
+
+function requestCancelGeneralFnbBill(generalBillId) {
+  if (!generalBillId || isCancellingFnbOrder || isSettlingGeneralFnbBill) return;
+  const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
+  if (!bill) {
+    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "danger",
+    title: "Batalkan Tagihan F&B Umum",
+    message: "Seluruh pesanan dalam tagihan F&B umum ini akan dibatalkan. Tindakan ini tercatat dalam audit operasional.",
+    details: [
+      ["ID Tagihan", bill.general_bill_id],
+      ["Pelanggan", bill.customer_name || "-"],
+      ["Jumlah Order", `${bill.orders.length} order`],
+      ["Jumlah Item", `${bill.total_items} item`],
+      ["Total Tagihan", formatCurrency(bill.total_amount)],
+    ],
+    field: {
+      label: "Alasan pembatalan tagihan",
+      placeholder: "Contoh: tamu batal pesan / salah input pesanan",
+      multiline: true,
+      required: true,
+      minLength: 5,
+      errorMessage: "Alasan pembatalan minimal 5 karakter.",
+    },
+    confirmLabel: "Ya, Batalkan Seluruh Tagihan",
+    cancelLabel: "Kembali",
+    onConfirm: (reason) => executeCancelGeneralFnbBill(generalBillId, reason),
+  });
+}
+
+async function executeCancelGeneralFnbBill(generalBillId, reason) {
+  if (!generalBillId || isCancellingFnbOrder) return;
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  isCancellingFnbOrder = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "cancelGeneralFnbBill",
+      general_bill_id: generalBillId,
+      cancel_reason: reason,
+      cancelled_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Gagal membatalkan tagihan F&B umum.");
+    }
+
+    showInlineNotice("Tagihan F&B umum berhasil dibatalkan.", "success");
+    await loadOpenFnbOrders();
+    await loadTodayFnbOrders();
+    await loadInventoryItems();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membatalkan tagihan F&B umum.", "error");
+  } finally {
+    isCancellingFnbOrder = false;
+    renderRooms();
+  }
 }
 
 async function settleGeneralFnbBill(generalBillId) {
@@ -28985,6 +29073,11 @@ async function handleRoomAction(event) {
 
   if (action === "settle-general-fnb-bill") {
     await settleGeneralFnbBill(button.dataset.generalBillId || "");
+    return;
+  }
+
+  if (action === "cancel-general-fnb-bill") {
+    requestCancelGeneralFnbBill(button.dataset.generalBillId || "");
     return;
   }
 

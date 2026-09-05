@@ -249,7 +249,7 @@ async function createInventoryAudit(req, res, payload) {
     await client.query('COMMIT');
     return successResponse(res, { message: 'Audit stok berhasil dibuat.', audit_id: auditId });
   } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch(() => { });
     return errorResponse(res, err.message);
   } finally {
     if (client) client.release();
@@ -278,7 +278,7 @@ async function saveInventoryAuditCounts(req, res, payload) {
     await client.query('COMMIT');
     return successResponse(res, { message: 'Hitungan audit stok berhasil disimpan.', audit_id: auditId });
   } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch(() => { });
     return errorResponse(res, err.message);
   } finally {
     if (client) client.release();
@@ -323,7 +323,7 @@ async function approveInventoryAudit(req, res, payload) {
     await client.query('COMMIT');
     return successResponse(res, { message: 'Audit stok berhasil diposting.', audit_id: auditId });
   } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch(() => { });
     return errorResponse(res, err.message);
   } finally {
     if (client) client.release();
@@ -412,7 +412,7 @@ async function receiveGoodsBatch(req, res, payload) {
       items: processedItems
     });
   } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch(() => { });
     return errorResponse(res, err.message);
   } finally {
     if (client) client.release();

@@ -1138,6 +1138,10 @@ function doPost(e) {
       return jsonResponse(cancelFnbOrder_(payload.order_id, payload.cancel_reason, payload.cancelled_by));
     }
 
+    if (action === "cancelGeneralFnbBill") {
+      return jsonResponse(cancelGeneralFnbBill_(payload.general_bill_id, payload.cancel_reason, payload.cancelled_by));
+    }
+
     if (action === "sendTvCommand") {
       return jsonResponse(sendTvCommand_(payload));
     }
@@ -14584,6 +14588,58 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
       ok: true,
       message: "Order F&B berhasil dibatalkan.",
       order: getFnbOrderObjectFromRow_(sheet, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cancelGeneralFnbBill_(generalBillId, cancelReason, cancelledBy) {
+  var normalizedBillId = String(generalBillId || "").trim();
+  if (!normalizedBillId) {
+    return { ok: false, error: "general_bill_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, error: "Sistem sedang memproses pembatalan order lain. Coba lagi sebentar." };
+  }
+
+  try {
+    if (!sheetExists_("FnbOrders")) {
+      return { ok: false, error: "Data FnbOrders tidak ditemukan." };
+    }
+
+    var sheet = ensureFnbOrdersSheetColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var data = sheet.getDataRange().getValues();
+    var now = getCurrentTimestamp_();
+    var reason = String(cancelReason || "").trim() || "Dibatalkan kasir";
+    var user = String(cancelledBy || "").trim() || "Kasir";
+    var cancelledCount = 0;
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var rowBillId = String(row[headerMap.general_bill_id - 1] || "").trim();
+      var rowStatus = String(row[headerMap.order_status - 1] || "").trim().toLowerCase();
+      if (rowBillId === normalizedBillId && rowStatus === "open") {
+        var rowNum = i + 1;
+        sheet.getRange(rowNum, headerMap.order_status).setValue("cancelled");
+        if (headerMap.cancel_reason) sheet.getRange(rowNum, headerMap.cancel_reason).setValue(reason);
+        if (headerMap.cancelled_by) sheet.getRange(rowNum, headerMap.cancelled_by).setValue(user);
+        if (headerMap.cancelled_at) sheet.getRange(rowNum, headerMap.cancelled_at).setValue(now);
+        if (headerMap.updated_at) sheet.getRange(rowNum, headerMap.updated_at).setValue(now);
+        cancelledCount++;
+      }
+    }
+
+    if (cancelledCount === 0) {
+      return { ok: false, error: "Tagihan F&B umum tidak ditemukan atau sudah dibatalkan/dibayar." };
+    }
+
+    return {
+      ok: true,
+      message: "Tagihan " + normalizedBillId + " (" + cancelledCount + " order) berhasil dibatalkan."
     };
   } finally {
     lock.releaseLock();

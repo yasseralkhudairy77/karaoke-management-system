@@ -448,6 +448,65 @@ async function cancelFnbOrder(req, res, payload) {
   }
 }
 
+async function cancelGeneralFnbBill(req, res, payload) {
+  let client;
+  try {
+    const { general_bill_id, cancel_reason, cancelled_by = 'Kasir' } = payload;
+    if (!general_bill_id) throw new Error('general_bill_id wajib diisi.');
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const ordersRes = await client.query(`
+      SELECT * FROM fnb_orders
+      WHERE general_bill_id = $1 AND order_status = 'open'
+      FOR UPDATE
+    `, [general_bill_id]);
+
+    if (ordersRes.rowCount === 0) throw new Error('Tagihan F&B umum tidak ditemukan atau sudah dibatalkan/dibayar.');
+
+    const orderIds = ordersRes.rows.map(o => o.order_id);
+    const totalAmount = ordersRes.rows.reduce((sum, o) => sum + Number(o.order_total || 0), 0);
+
+    const updatedRes = await client.query(`
+      UPDATE fnb_orders
+      SET order_status = 'cancelled',
+          cancel_reason = $1,
+          cancelled_by = $2,
+          cancelled_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE order_id = ANY($3)
+      RETURNING *
+    `, [cancel_reason || 'Dibatalkan kasir', cancelled_by, orderIds]);
+
+    for (const oldOrder of ordersRes.rows) {
+      const updatedOrder = updatedRes.rows.find(r => r.order_id === oldOrder.order_id) || oldOrder;
+      await writeOperationalAudit(client, {
+        risk_level: 'medium', domain: 'fnb', event_type: 'fnb_order_cancelled',
+        source_action: 'cancelGeneralFnbBill', source_table: 'fnb_orders', source_record_id: oldOrder.order_id,
+        initiated_by: cancelled_by,
+        target_type: 'fnb_order', target_id: oldOrder.order_id, order_id: oldOrder.order_id,
+        room_id: oldOrder.room_id, room_name: oldOrder.room_name,
+        reason: cancel_reason || 'Dibatalkan kasir',
+        amount_before: Number(oldOrder.order_total || 0), amount_after: 0,
+        old_value: oldOrder, new_value: updatedOrder
+      });
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Tagihan ${general_bill_id} (${orderIds.length} order) berhasil dibatalkan.`,
+      cancelled_orders: orderIds,
+      cancelled_amount: totalAmount
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function getFnbOrdersByIds(req, res) {
   try {
     const rawIds = req.query.order_ids || req.query.ids || '';
@@ -908,6 +967,7 @@ module.exports = {
   getFnbOrdersByIds,
   saveFnbOrder,
   cancelFnbOrder,
+  cancelGeneralFnbBill,
   settleGeneralFnbBill,
   getTodayFnbSalesReport,
   getFnbSalesReport: getTodayFnbSalesReport

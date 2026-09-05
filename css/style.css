@@ -8942,15 +8942,63 @@ textarea.action-confirmation-input {
 }
 
 .general-fnb-payment {
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(170px, auto);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
+}
+
+.general-fnb-payment .transaction-pay-select {
+  flex: 1 1 140px;
+  min-width: 130px;
+}
+
+.general-fnb-cancel-button {
+  flex: 0 0 auto;
+}
+
+.general-fnb-payment .transaction-pay-button {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 640px) {
   .general-fnb-payment {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
+}
+
+.open-fnb-item-amount-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fnb-cancel-button-small {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.22);
+  color: #fca5a5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+.fnb-cancel-button-small:hover {
+  background: rgba(153, 27, 27, 0.42);
+  border-color: rgba(248, 113, 113, 0.75);
+  color: #fff;
+}
+
+.fnb-cancel-button-small:disabled {
+  border-color: rgba(139, 150, 168, 0.25);
+  background: rgba(139, 150, 168, 0.08);
+  color: var(--muted);
+  cursor: not-allowed;
 }
 
 .fb-cart-total {
