@@ -15490,6 +15490,7 @@ function createFnbDetailLogsOverlay() {
 
 function showFnbReportPrintPreview() {
   fnbReportPrintPreviewVisible = true;
+  document.body.classList.add("fnb-print-preview-active");
   renderRooms();
 }
 
@@ -15682,6 +15683,7 @@ function createFnbReportPrintPreviewElement() {
   closeBtn.textContent = "Tutup Preview";
   closeBtn.onclick = () => {
     fnbReportPrintPreviewVisible = false;
+    document.body.classList.remove("fnb-print-preview-active");
     renderRooms();
   };
 
