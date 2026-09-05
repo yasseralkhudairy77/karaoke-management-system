@@ -9705,33 +9705,62 @@ textarea.action-confirmation-input {
     background: #ffffff !important;
     color: #000000 !important;
     font-family: Arial, sans-serif !important;
-    font-size: 10px !important;
+    font-size: 9.5px !important;
   }
 
   .fnb-report-print-header {
     margin-top: 0 !important;
     padding-top: 0 !important;
-    margin-bottom: 8px !important;
-    padding-bottom: 8px !important;
+    margin-bottom: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .fnb-report-print-summary {
+    gap: 6px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .fnb-report-print-metric {
+    padding: 5px 8px !important;
+  }
+
+  .fnb-report-print-metric span {
+    font-size: 9.5px !important;
+  }
+
+  .fnb-report-print-metric strong {
+    font-size: 13px !important;
+    margin-top: 2px !important;
+  }
+
+  .fnb-report-print-subgrid table {
+    margin-bottom: 0 !important;
+    font-size: 9px !important;
+  }
+
+  .fnb-report-print-table-physical th,
+  .fnb-report-print-table-physical td {
+    padding: 2.5px 4px !important;
+    font-size: 9px !important;
   }
 
   .fnb-report-signature-grid {
-    margin-top: 24px !important;
-    margin-bottom: 16px !important;
+    margin-top: 14px !important;
+    margin-bottom: 8px !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
 
   .fnb-report-signature-box {
-    gap: 45px !important;
+    gap: 34px !important;
   }
 
   .fnb-report-print-footer {
-    margin-top: 14px !important;
-    padding-top: 8px !important;
-    border-top: 1px dashed #bbbbbb !important;
-    font-size: 9.5px !important;
-    color: #555555 !important;
+    margin-top: 8px !important;
+    padding-top: 4px !important;
+    border-top: 1px dashed #cbd5e1 !important;
+    font-size: 8.5px !important;
+    color: #64748b !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }

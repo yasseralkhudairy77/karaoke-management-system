@@ -15548,48 +15548,82 @@ function createFnbReportPrintPreviewElement() {
     createFnbReportPrintMetric("Menu Terlaris", topMenuLabel)
   );
 
-  const catSection = document.createElement("section");
-  catSection.className = "fnb-report-print-section";
-  catSection.innerHTML = `
-    <h3>Rekap Penjualan per Kategori</h3>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 40px; text-align: center;">No</th>
-          <th>Kategori</th>
-          <th style="text-align: center;">Total Item Terjual</th>
-          <th style="text-align: right;">Total Omzet</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${fnbCategorySummary.length > 0 ? fnbCategorySummary.map((cat, idx) => `
-          <tr>
-            <td style="text-align: center;">${idx + 1}</td>
-            <td><strong>${escapeHtml(cat.category || "-")}</strong></td>
-            <td style="text-align: center;">${Number(cat.total_quantity || 0).toLocaleString("id-ID")}</td>
-            <td style="text-align: right;"><strong>${formatCurrency(cat.total_sales)}</strong></td>
+  // 1. Seksi Ringkas Berdampingan: Rekap Kategori (Kiri) & Rincian Paket (Kanan)
+  const subGridSection = document.createElement("section");
+  subGridSection.className = "fnb-report-print-subgrid";
+  subGridSection.style.display = "grid";
+  subGridSection.style.gridTemplateColumns = "1.15fr 0.85fr";
+  subGridSection.style.gap = "10px";
+  subGridSection.style.margin = "8px 0 10px 0";
+
+  // Filter paket yang terjual pada periode ini
+  const packageSales = todayFnbMenuSales.filter((s) =>
+    (s.category || "").toLowerCase().includes("paket") ||
+    (s.menu_name || "").toLowerCase().includes("package") ||
+    String(s.menu_id || "").startsWith("PKG-")
+  );
+
+  subGridSection.innerHTML = `
+    <div style="border: 1px solid #d8dee8; border-radius: 4px; padding: 6px 8px; background: #fafbfc;">
+      <h4 style="margin: 0 0 4px 0; font-size: 10.5px; font-weight: bold; color: #111;">Rekap Penjualan per Kategori</h4>
+      <table style="width: 100%; border-collapse: collapse; font-size: 9.5px; margin: 0;">
+        <thead>
+          <tr style="background: #eef2f6;">
+            <th style="padding: 2px 4px; text-align: left;">Kategori</th>
+            <th style="padding: 2px 4px; text-align: center; width: 60px;">Qty Terjual</th>
+            <th style="padding: 2px 4px; text-align: right; width: 90px;">Total Omzet</th>
           </tr>
-        `).join("") : `<tr><td colspan="4" class="fnb-report-print-empty">Tidak ada rekap kategori.</td></tr>`}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          ${fnbCategorySummary.length > 0 ? fnbCategorySummary.map((cat) => `
+            <tr>
+              <td style="padding: 2px 4px;"><strong>${escapeHtml(cat.category || "-")}</strong></td>
+              <td style="padding: 2px 4px; text-align: center;">${Number(cat.total_quantity || 0).toLocaleString("id-ID")}</td>
+              <td style="padding: 2px 4px; text-align: right;"><strong>${formatCurrency(cat.total_sales)}</strong></td>
+            </tr>
+          `).join("") : `<tr><td colspan="3" style="text-align: center; color: #666;">Tidak ada rekap kategori.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="border: 1px solid #d8dee8; border-radius: 4px; padding: 6px 8px; background: #fafbfc; display: flex; flex-direction: column; justify-content: space-between;">
+      <div>
+        <h4 style="margin: 0 0 4px 0; font-size: 10.5px; font-weight: bold; color: #111;">Rincian Paket Terjual (Bundel Room & F&B)</h4>
+        <div style="font-size: 9.5px; color: #333; display: flex; flex-direction: column; gap: 4px;">
+          ${packageSales.length > 0 ? packageSales.map((pkg) => `
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 2px;">
+              <span>📦 <strong>${Number(pkg.quantity_sold ?? pkg.quantity ?? 1)}x</strong> ${escapeHtml(pkg.menu_name || "-")}</span>
+              <strong style="color: #047857;">${formatCurrency(pkg.gross_sales ?? pkg.subtotal ?? 0)}</strong>
+            </div>
+          `).join("") : `<p style="margin: 0; color: #64748b; font-style: italic;">Tidak ada paket room/F&B terjual (semua pesanan satuan).</p>`}
+        </div>
+      </div>
+      <p style="margin: 4px 0 0 0; font-size: 8.5px; color: #64748b; line-height: 1.2;">
+        ℹ️ <em>Barang fisik di dalam paket otomatis terurai pada tabel konsumsi fisik gudang di bawah.</em>
+      </p>
+    </div>
   `;
 
+  // 2. Tabel Utama Tunggal: 9 Kolom Pengeluaran Fisik Barang & Sisa Stok
   const physicalSection = document.createElement("section");
   physicalSection.className = "fnb-report-print-section";
+  physicalSection.style.marginTop = "4px";
   physicalSection.innerHTML = `
-    <h3>Rekapitulasi Pengeluaran Barang Fisik (Gudang & Bar)</h3>
-    <table>
+    <h3 style="margin: 0 0 6px 0; font-size: 11px; font-weight: bold; color: #111;">
+      Rekapitulasi Pengeluaran Barang Fisik (Gudang & Bar)
+    </h3>
+    <table class="fnb-report-print-table-physical" style="width: 100%; border-collapse: collapse; font-size: 9.5px; margin-bottom: 6px;">
       <thead>
-        <tr>
-          <th style="width: 30px; text-align: center;">No</th>
-          <th style="width: 110px;">Kode SKU</th>
-          <th>Nama Barang Fisik</th>
-          <th>Kategori</th>
-          <th style="text-align: center; width: 55px;">Satuan</th>
-          <th style="text-align: center; width: 75px;">Terjual Satuan</th>
-          <th style="text-align: center; width: 80px;">Keluar via Paket</th>
-          <th style="text-align: center; width: 85px;">Total Fisik Keluar</th>
-          <th style="text-align: center; width: 95px;">Sisa Stok Fisik</th>
+        <tr style="background: #f1f5f9;">
+          <th style="width: 28px; text-align: center; padding: 3px 4px;">No</th>
+          <th style="width: 100px; padding: 3px 4px;">Kode SKU</th>
+          <th style="padding: 3px 4px;">Nama Barang Fisik</th>
+          <th style="width: 75px; padding: 3px 4px;">Kategori</th>
+          <th style="text-align: center; width: 50px; padding: 3px 4px;">Satuan</th>
+          <th style="text-align: center; width: 70px; padding: 3px 4px;">Terjual Satuan</th>
+          <th style="text-align: center; width: 75px; padding: 3px 4px;">Keluar via Paket</th>
+          <th style="text-align: center; width: 80px; padding: 3px 4px;">Total Fisik Keluar</th>
+          <th style="text-align: center; width: 90px; padding: 3px 4px;">Sisa Stok Fisik</th>
         </tr>
       </thead>
       <tbody>
@@ -15604,56 +15638,27 @@ function createFnbReportPrintPreviewElement() {
           const stockWeight = isNegative ? 'bold' : '600';
           return `
             <tr>
-              <td style="text-align: center;">${idx + 1}</td>
-              <td><span style="font-family: monospace; font-weight: bold;">${escapeHtml(item.stock_item_id || "-")}</span></td>
-              <td><strong>${escapeHtml(item.stock_item_name || "-")}</strong></td>
-              <td>${escapeHtml(item.category || "-")}</td>
-              <td style="text-align: center;">${escapeHtml(item.unit || "pcs")}</td>
-              <td style="text-align: center;">${alaCarte.toLocaleString("id-ID")}</td>
-              <td style="text-align: center; font-weight: bold;">${pkgQty.toLocaleString("id-ID")}</td>
-              <td style="text-align: center; font-weight: bold; background: #f8fafc;">${totalOut.toLocaleString("id-ID")}</td>
-              <td style="text-align: center; color: ${stockColor}; font-weight: ${stockWeight};">${stock.toLocaleString("id-ID")} ${escapeHtml(item.unit || "")}</td>
+              <td style="text-align: center; padding: 2.5px 4px;">${idx + 1}</td>
+              <td style="padding: 2.5px 4px;"><span style="font-family: monospace; font-weight: bold;">${escapeHtml(item.stock_item_id || "-")}</span></td>
+              <td style="padding: 2.5px 4px;"><strong>${escapeHtml(item.stock_item_name || "-")}</strong></td>
+              <td style="padding: 2.5px 4px;">${escapeHtml(item.category || "-")}</td>
+              <td style="text-align: center; padding: 2.5px 4px;">${escapeHtml(item.unit || "pcs")}</td>
+              <td style="text-align: center; padding: 2.5px 4px;">${alaCarte.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; font-weight: bold; padding: 2.5px 4px;">${pkgQty.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; font-weight: bold; background: #f8fafc; padding: 2.5px 4px;">${totalOut.toLocaleString("id-ID")}</td>
+              <td style="text-align: center; color: ${stockColor}; font-weight: ${stockWeight}; padding: 2.5px 4px;">${stock.toLocaleString("id-ID")} ${escapeHtml(item.unit || "")}</td>
             </tr>
           `;
-        }).join("") : `<tr><td colspan="9" class="fnb-report-print-empty">Tidak ada data pergerakan barang fisik pada periode ini.</td></tr>`}
+        }).join("") : `<tr><td colspan="9" class="fnb-report-print-empty" style="padding: 8px; text-align: center;">Tidak ada data pergerakan barang fisik pada periode ini.</td></tr>`}
       </tbody>
     </table>
   `;
 
-  const itemSection = document.createElement("section");
-  itemSection.className = "fnb-report-print-section";
-  itemSection.innerHTML = `
-    <h3>Rincian Penjualan Menu & Transaksi Kasir</h3>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 30px; text-align: center;">No</th>
-          <th style="width: 110px;">Kode Menu</th>
-          <th>Nama Menu Kasir</th>
-          <th>Kategori</th>
-          <th style="text-align: right; width: 85px;">Harga Satuan</th>
-          <th style="text-align: center; width: 65px;">Qty Terjual</th>
-          <th style="text-align: right; width: 95px;">Total Omzet</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${todayFnbMenuSales.length > 0 ? todayFnbMenuSales.map((sale, idx) => `
-          <tr>
-            <td style="text-align: center;">${idx + 1}</td>
-            <td><span style="font-family: monospace;">${escapeHtml(sale.menu_id || "-")}</span></td>
-            <td><strong>${escapeHtml(sale.menu_name || "-")}</strong></td>
-            <td>${escapeHtml(sale.category || "-")}</td>
-            <td style="text-align: right;">${formatCurrency(sale.price)}</td>
-            <td style="text-align: center;"><strong>${Number(sale.quantity_sold ?? sale.quantity ?? 0).toLocaleString("id-ID")}</strong></td>
-            <td style="text-align: right;"><strong>${formatCurrency(sale.gross_sales ?? sale.subtotal ?? 0)}</strong></td>
-          </tr>
-        `).join("") : `<tr><td colspan="7" class="fnb-report-print-empty">Tidak ada data penjualan barang.</td></tr>`}
-      </tbody>
-    </table>
-  `;
-
+  // 3. Kolom Tanda Tangan 3 Pihak (Compact)
   const signatureSection = document.createElement("section");
   signatureSection.className = "fnb-report-signature-grid";
+  signatureSection.style.marginTop = "16px";
+  signatureSection.style.marginBottom = "10px";
   signatureSection.innerHTML = `
     <div class="fnb-report-signature-box">
       <span>Dibuat Oleh,</span>
@@ -15669,9 +15674,14 @@ function createFnbReportPrintPreviewElement() {
     </div>
   `;
 
+  // 4. Footer Resmi Sistem
   const footer = document.createElement("p");
   footer.className = "fnb-report-print-footer";
-  footer.textContent = "Dokumen resmi Happy Song Karaoke Management System. Dicetak otomatis dari database PostgreSQL lokal.";
+  footer.style.marginTop = "8px";
+  footer.style.paddingTop = "6px";
+  footer.style.borderTop = "1px dashed #cbd5e1";
+  footer.style.fontSize = "9px";
+  footer.textContent = "Dokumen resmi Happy Song Karaoke Management System. Dicetak otomatis dari database PostgreSQL lokal. Sah untuk audit fisik & stok.";
 
   const actions = document.createElement("div");
   actions.className = "fnb-report-print-actions";
@@ -15696,7 +15706,7 @@ function createFnbReportPrintPreviewElement() {
 
   actions.append(closeBtn, printBtn);
 
-  print.append(header, summaryGrid, catSection, physicalSection, itemSection, signatureSection, footer, actions);
+  print.append(header, summaryGrid, subGridSection, physicalSection, signatureSection, footer, actions);
 
   return print;
 }
