@@ -9666,6 +9666,7 @@ textarea.action-confirmation-input {
   .closing-print,
   .owner-report-print,
   .lc-report-print,
+  .fnb-report-print,
   .receipt-print {
     position: absolute;
     left: 0;
@@ -9690,19 +9691,6 @@ textarea.action-confirmation-input {
     font-size: 11px;
   }
 
-  /* Saat print preview F&B aktif, sembunyikan semua elemen dashboard agar tidak memakan ruang cetak */
-  body.fnb-print-preview-active .dashboard-shell > *:not(#dashboardPanels),
-  body.fnb-print-preview-active #dashboardPanels > *:not(.fnb-sales-report-panel),
-  body.fnb-print-preview-active .fnb-sales-report-panel > *:not(.fnb-report-print) {
-    display: none !important;
-  }
-
-  body.fnb-print-preview-active {
-    background: #ffffff !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
   .fnb-report-print {
     box-sizing: border-box !important;
     page: fnb-report-page !important;
@@ -9710,9 +9698,6 @@ textarea.action-confirmation-input {
     min-height: auto !important;
     margin: 0 !important;
     padding: 0 !important;
-    position: static !important;
-    display: block !important;
-    visibility: visible !important;
     overflow: visible !important;
     border-radius: 0 !important;
     border: none !important;
