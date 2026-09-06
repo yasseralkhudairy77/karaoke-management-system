@@ -159,6 +159,17 @@ CREATE TABLE IF NOT EXISTS promos (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+VALUES 
+    ('FREEROOM100', 'Free Room 100% (Gratis Sewa Room)', 'promo', 'percentage', 100, TRUE),
+    ('FREEROOM50', 'Diskon Sewa Room 50%', 'promo', 'percentage', 50, TRUE),
+    ('FREEROOM25', 'Diskon Sewa Room 25%', 'promo', 'percentage', 25, TRUE),
+    ('KAPTEN1', 'Potongan Kapten Rp 250.000', 'promo', 'fixed', 250000, TRUE),
+    ('GOHS', 'Grand Opening HS 100%', 'promo', 'percentage', 100, TRUE),
+    ('MERDEKA50', 'Promo Merdeka Diskon 50%', 'promo', 'percentage', 50, TRUE),
+    ('VCH100K', 'Voucher Potongan Rp 100.000', 'voucher', 'fixed', 100000, TRUE)
+ON CONFLICT (promo_code) DO NOTHING;
+
 -- 7. Master LC (Lady Companion / PR)
 CREATE TABLE IF NOT EXISTS lc_master (
     lc_id VARCHAR(50) PRIMARY KEY,

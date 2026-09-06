@@ -637,9 +637,41 @@ async function markTransactionPaid(req, res, payload) {
     if (prCode) {
       const grossRoomTotal = Math.max(0, roomTotal + existingDiscount);
       const promoRes = await client.query('SELECT * FROM promos WHERE UPPER(promo_code) = $1 LIMIT 1', [prCode]);
+      let promo = promoRes.rowCount > 0 ? promoRes.rows[0] : null;
 
-      if (promoRes.rowCount > 0) {
-        const promo = promoRes.rows[0];
+      if (!promo) {
+        if (prCode === 'FREEROOM100' || prCode === 'GOHS') {
+          promo = { promo_code: prCode, promo_name: 'Free Room 100%', type: 'promo', discount_type: 'percentage', discount_value: 100, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Free Room 100% (Gratis Sewa Room)', 'promo', 'percentage', 100, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'FREEROOM50' || prCode === 'MERDEKA50') {
+          promo = { promo_code: prCode, promo_name: 'Diskon Room 50%', type: 'promo', discount_type: 'percentage', discount_value: 50, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Diskon Sewa Room 50%', 'promo', 'percentage', 50, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'FREEROOM25') {
+          promo = { promo_code: prCode, promo_name: 'Diskon Room 25%', type: 'promo', discount_type: 'percentage', discount_value: 25, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Diskon Sewa Room 25%', 'promo', 'percentage', 25, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'KAPTEN1') {
+          promo = { promo_code: prCode, promo_name: 'Potongan Kapten Rp 250.000', type: 'promo', discount_type: 'fixed', discount_value: 250000, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Potongan Kapten Rp 250.000', 'promo', 'fixed', 250000, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        }
+      }
+
+      if (promo) {
         const promoType = String(promo.type || 'promo').trim().toLowerCase();
 
         if (promoType === 'voucher' && promo.used_in_transaction_id && promo.used_in_transaction_id !== transaction_id) {

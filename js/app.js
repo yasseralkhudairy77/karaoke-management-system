@@ -4249,7 +4249,27 @@ async function findTransactionForAction(button) {
         || (selectedReceiptTransaction?.transaction_id === transactionId ? selectedReceiptTransaction : null);
     }
 
-    return transaction;
+    if (transaction) {
+      const summary = button?.closest?.(".billing-summary");
+      if (summary) {
+        const promoInput = summary.querySelector(".billing-payment-promo-input");
+        const appliedCode = promoInput ? promoInput.getAttribute("data-applied-promo-code") || "" : "";
+        if (appliedCode) {
+          transaction.promo_code = appliedCode;
+          if (!transaction.promo_discount || Number(transaction.promo_discount) <= 0) {
+            if (appliedCode === "FREEROOM100" || appliedCode === "GOHS") {
+              const gross = Math.max(0, Number(transaction.room_total || 0) + Number(transaction.promo_discount || 0));
+              transaction.promo_discount = gross;
+              transaction.room_total = 0;
+              transaction.grand_total = Math.max(0, (Number(transaction.fnb_total) || 0) + (Number(transaction.lc_total) || 0));
+            }
+          }
+        }
+      }
+      return transaction;
+    }
+
+    return null;
   }
 
   return lastTransaction || selectedReceiptTransaction || getLatestTodayTransaction();
@@ -7281,7 +7301,7 @@ function createPaymentControlElement(transaction) {
 
   // Dynamic Banknote Shortcuts generator
   function getShortcutValues(total) {
-    if (total <= 0) return [];
+    if (total <= 0) return [0];
     const shortcuts = new Set();
     shortcuts.add(total); // Uang Pas
 
@@ -7317,7 +7337,7 @@ function createPaymentControlElement(transaction) {
       btn.style.fontWeight = "700";
       
       if (val === total) {
-        btn.textContent = "Uang Pas";
+        btn.textContent = total <= 0 ? "Lunas Promo (Rp 0)" : "Uang Pas";
         btn.style.borderColor = "var(--success)";
         btn.style.color = "var(--success)";
       } else {
@@ -7334,6 +7354,13 @@ function createPaymentControlElement(transaction) {
 
   function recalculateChange(total) {
     const cashText = cashInput.value;
+    if (total <= 0) {
+      changeDisplay.textContent = "Rp 0 (Lunas Promo)";
+      changeDisplay.style.color = "var(--success)";
+      button.disabled = false;
+      return;
+    }
+
     if (!cashText) {
       changeDisplay.textContent = "-";
       changeDisplay.style.color = "var(--muted)";
@@ -7450,11 +7477,26 @@ function createPaymentControlElement(transaction) {
 
     try {
       if (!API_BASE_URL.trim()) {
-        if (code === "MERDEKA50") {
+        if (code === "FREEROOM100" || code === "GOHS") {
+          appliedPromoCode = code;
+          appliedDiscountVal = roomTotal;
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Free Room 100% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+        } else if (code === "MERDEKA50" || code === "FREEROOM50") {
           appliedPromoCode = code;
           appliedDiscountVal = Math.ceil(0.5 * roomTotal);
           promoNotice.style.color = "var(--success)";
           promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+        } else if (code === "FREEROOM25") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.ceil(0.25 * roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 25% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+        } else if (code === "KAPTEN1") {
+          appliedPromoCode = code;
+          appliedDiscountVal = Math.min(250000, roomTotal);
+          promoNotice.style.color = "var(--success)";
+          promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
         } else if (code === "VCH100K") {
           appliedPromoCode = code;
           appliedDiscountVal = Math.min(100000, roomTotal);
@@ -7518,6 +7560,29 @@ function createPaymentControlElement(transaction) {
       transaction.promo_discount = appliedDiscountVal;
       transaction.room_total = discountedRoomTotal;
       transaction.grand_total = newGrandTotal;
+
+      const trxId = transaction.transaction_id;
+      if (trxId) {
+        const foundIdx = todayTransactions.findIndex(t => t.transaction_id === trxId);
+        if (foundIdx >= 0) {
+          todayTransactions[foundIdx] = {
+            ...todayTransactions[foundIdx],
+            promo_code: appliedPromoCode,
+            promo_discount: appliedDiscountVal,
+            room_total: discountedRoomTotal,
+            grand_total: newGrandTotal,
+          };
+        }
+        if (lastTransaction?.transaction_id === trxId) {
+          lastTransaction = {
+            ...lastTransaction,
+            promo_code: appliedPromoCode,
+            promo_discount: appliedDiscountVal,
+            room_total: discountedRoomTotal,
+            grand_total: newGrandTotal,
+          };
+        }
+      }
     }
 
     const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
@@ -8465,6 +8530,12 @@ function createReceiptPrintElement(transaction) {
   }
 
   const lcTotal = Number(transaction?.lc_total || 0);
+  if (Number(receiptData.totals.promoDiscount || 0) > 0) {
+    const promoLabel = receiptData.totals.promoCode
+      ? `Diskon Promo (${receiptData.totals.promoCode})`
+      : "Diskon Promo";
+    billingRows.push([promoLabel, `-${formatCurrency(receiptData.totals.promoDiscount)}`]);
+  }
   if (Number(receiptData.totals.roomDiscountAmount || 0) > 0) {
     billingRows.push(["Free Room Owner", `-${formatCurrency(receiptData.totals.roomDiscountAmount)}`]);
   }
@@ -10626,11 +10697,26 @@ function createPaymentSelectionElement(room) {
 
       try {
         if (!API_BASE_URL.trim()) {
-          if (code === "MERDEKA50") {
+          if (code === "FREEROOM100" || code === "GOHS") {
+            appliedPromoCode = code;
+            appliedDiscountVal = roomPrepayCharge;
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Free Room 100% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+          } else if (code === "MERDEKA50" || code === "FREEROOM50") {
             appliedPromoCode = code;
             appliedDiscountVal = Math.ceil(0.5 * roomPrepayCharge);
             promoNotice.style.color = "var(--success)";
             promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 50% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+          } else if (code === "FREEROOM25") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.ceil(0.25 * roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Diskon Room 25% (<strong>${formatCurrency(appliedDiscountVal)}</strong>)`;
+          } else if (code === "KAPTEN1") {
+            appliedPromoCode = code;
+            appliedDiscountVal = Math.min(250000, roomPrepayCharge);
+            promoNotice.style.color = "var(--success)";
+            promoNotice.innerHTML = `✅ Terpasang (Mock): Potongan sewa room <strong>${formatCurrency(appliedDiscountVal)}</strong>`;
           } else if (code === "VCH100K") {
             appliedPromoCode = code;
             appliedDiscountVal = Math.min(100000, roomPrepayCharge);

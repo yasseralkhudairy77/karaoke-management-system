@@ -471,6 +471,19 @@ async function ensurePromosSchema() {
       );
       ALTER TABLE promos DROP CONSTRAINT IF EXISTS promos_discount_type_check;
       ALTER TABLE promos ADD CONSTRAINT promos_discount_type_check CHECK (discount_type IN ('percentage', 'fixed', 'nominal'));
+
+      INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+      VALUES 
+        ('FREEROOM100', 'Free Room 100% (Gratis Sewa Room)', 'promo', 'percentage', 100, TRUE),
+        ('FREEROOM50', 'Diskon Sewa Room 50%', 'promo', 'percentage', 50, TRUE),
+        ('FREEROOM25', 'Diskon Sewa Room 25%', 'promo', 'percentage', 25, TRUE),
+        ('KAPTEN1', 'Potongan Kapten Rp 250.000', 'promo', 'fixed', 250000, TRUE),
+        ('GOHS', 'Grand Opening HS 100%', 'promo', 'percentage', 100, TRUE),
+        ('MERDEKA50', 'Promo Merdeka Diskon 50%', 'promo', 'percentage', 50, TRUE),
+        ('VCH100K', 'Voucher Potongan Rp 100.000', 'voucher', 'fixed', 100000, TRUE)
+      ON CONFLICT (promo_code) DO UPDATE SET
+        is_active = TRUE
+      WHERE promos.is_active IS NULL OR (promos.is_active = FALSE AND promos.used_in_transaction_id IS NULL);
     `);
     promoSchemaChecked = true;
   } catch (e) {
@@ -930,6 +943,7 @@ async function deletePackageMaster(req, res, payload) {
 
 async function validatePromoCode(req, res) {
   try {
+    await ensurePromosSchema();
     const code = String(req.query.code || req.query.promo_code || '').trim().toUpperCase();
     const roomTotal = Number(req.query.room_total || req.query.roomTotal || 0);
     if (!code) throw new Error('Kode promo wajib diisi.');
