@@ -10571,8 +10571,8 @@ textarea.action-confirmation-input {
 .fnb-breakdown-list {
   display: flex !important;
   flex-direction: column !important;
-  gap: 4px !important;
-  max-height: 84px !important;
+  gap: 6px !important;
+  max-height: 118px !important;
   overflow-y: auto !important;
   padding-right: 4px !important;
 }
@@ -10586,41 +10586,43 @@ textarea.action-confirmation-input {
 }
 
 .fnb-breakdown-item {
-  display: flex !important;
-  justify-content: space-between !important;
-  align-items: center !important;
+  display: grid !important;
+  gap: 2px !important;
   color: rgba(255, 255, 255, 0.85) !important;
   font-size: 0.78rem !important;
+  line-height: 1.25 !important;
 }
 
 .fnb-breakdown-item-name {
-  white-space: nowrap !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  max-width: 150px !important;
+  color: rgba(255, 255, 255, 0.94) !important;
+  font-weight: 900 !important;
+  overflow-wrap: anywhere !important;
 }
 
 .fnb-breakdown-item-qty {
-  color: rgba(255, 255, 255, 0.6) !important;
+  color: rgba(255, 255, 255, 0.72) !important;
   font-size: 0.76rem !important;
-  white-space: nowrap !important;
+  font-weight: 800 !important;
+  overflow-wrap: anywhere !important;
 }
 
 .fnb-breakdown-footer {
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
-  font-weight: 800 !important;
+  font-weight: 950 !important;
   color: #34d399 !important;
-  margin-top: 6px !important;
-  padding-top: 6px !important;
-  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
-  font-size: 0.84rem !important;
+  margin-top: 8px !important;
+  padding-top: 7px !important;
+  border-top: 2px solid rgba(52, 211, 153, 0.32) !important;
+  font-size: 0.88rem !important;
+  line-height: 1.2 !important;
 }
 
 .fnb-breakdown-total {
   color: #34d399 !important;
-  font-weight: 900 !important;
+  font-weight: 950 !important;
+  text-align: right !important;
 }
 
 /* Rate badge in card */

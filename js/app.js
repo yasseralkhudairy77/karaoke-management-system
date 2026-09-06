@@ -8890,20 +8890,20 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
   const itemsList = document.createElement("div");
   itemsList.className = "fnb-breakdown-list";
 
-  Object.entries(aggregatedItems).forEach(([name, data]) => {
+  Object.entries(aggregatedItems).forEach(([name, data], index) => {
     const itemRow = document.createElement("div");
     itemRow.className = "fnb-breakdown-item";
 
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "fnb-breakdown-item-name";
-    nameSpan.textContent = name;
-    nameSpan.title = name;
+    const nameLine = document.createElement("div");
+    nameLine.className = "fnb-breakdown-item-name";
+    nameLine.textContent = `${index + 1}. ${name}`;
+    nameLine.title = name;
 
-    const detailsSpan = document.createElement("span");
-    detailsSpan.className = "fnb-breakdown-item-qty";
-    detailsSpan.textContent = `${data.quantity}x ${formatCurrency(data.price)}`;
+    const detailLine = document.createElement("div");
+    detailLine.className = "fnb-breakdown-item-qty";
+    detailLine.textContent = `${data.quantity} x ${formatCurrency(data.price)} = ${formatCurrency(data.quantity * data.price)}`;
 
-    itemRow.append(nameSpan, detailsSpan);
+    itemRow.append(nameLine, detailLine);
     itemsList.appendChild(itemRow);
   });
 
