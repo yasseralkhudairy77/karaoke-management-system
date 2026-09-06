@@ -17406,12 +17406,21 @@ function createTransactionActionsElement(transaction) {
     if (String(transaction?.payment_status || "").toLowerCase() === "paid") {
       const commissionButton = document.createElement("button");
       const hasCommission = getTransactionSalesCommissionAmount(transaction) > 0;
-      commissionButton.className = "transaction-action-button";
+      commissionButton.className = hasCommission
+        ? "transaction-action-button commission-recorded"
+        : "transaction-action-button";
       commissionButton.type = "button";
-      commissionButton.dataset.action = "open-sales-commission";
-      commissionButton.dataset.transactionId = transaction?.transaction_id || "";
-      commissionButton.disabled = hasCommission;
-      commissionButton.textContent = hasCommission ? "Komisi Tercatat" : "Komisi Sales";
+      if (hasCommission) {
+        commissionButton.dataset.action = "reprint-sales-commission";
+        commissionButton.dataset.transactionId = transaction?.transaction_id || "";
+        commissionButton.textContent = "Cetak Slip Komisi";
+        commissionButton.title = "Cetak ulang bukti serah terima komisi marketing";
+      } else {
+        commissionButton.dataset.action = "open-sales-commission";
+        commissionButton.dataset.transactionId = transaction?.transaction_id || "";
+        commissionButton.textContent = "Komisi Sales";
+        commissionButton.title = "Catat komisi marketing untuk transaksi ini";
+      }
       actions.appendChild(commissionButton);
     }
 
@@ -19003,6 +19012,75 @@ function openTransactionSalesCommission(transactionId) {
     note: "",
   };
   renderRooms();
+}
+
+async function reprintTransactionSalesCommission(transactionId) {
+  const operatorRole = getCurrentOperatorRole();
+  if (operatorRole !== "owner" && operatorRole !== "manager") {
+    showInlineNotice("Hanya akun Owner atau Manager yang dapat mencetak ulang slip komisi sales/marketing.", "error");
+    return;
+  }
+
+  const normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId) {
+    showInlineNotice("ID Transaksi tidak valid.", "error");
+    return;
+  }
+
+  let transaction = getTransactionById(normalizedTransactionId);
+  if (!transaction) {
+    await loadTodayTransactions();
+    transaction = getTransactionById(normalizedTransactionId);
+  }
+
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+
+  let commission = transaction.sales_commission;
+  if (!commission && getTransactionSalesCommissionAmount(transaction) > 0) {
+    showInlineNotice("Memuat data komisi...");
+    await loadTodayTransactions();
+    transaction = getTransactionById(normalizedTransactionId);
+    commission = transaction?.sales_commission;
+  }
+
+  if (!commission) {
+    showInlineNotice("Data rincian komisi tidak ditemukan untuk transaksi ini.", "error");
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "info",
+    title: "Cetak Ulang Slip Komisi",
+    message: "Cetak ulang bukti serah terima komisi sales/marketing ke printer thermal?",
+    details: [
+      ["ID Transaksi", transaction.transaction_id || "-"],
+      ["Ruangan", transaction.room_name || transaction.room_id || "-"],
+      ["Penerima", commission.recipient_name || commission.recipientName || "-"],
+      ["Dasar Komisi", getSalesCommissionBasisLabel(commission.basis_type || commission.basisType)],
+      ["Persentase", `${commission.commission_percent || commission.percent || 0}%`],
+      ["Nominal Komisi", formatCurrency(commission.commission_amount || commission.amount || 0)],
+    ],
+    confirmLabel: "Cetak Ulang Slip",
+    cancelLabel: "Batal",
+    onConfirm: async () => {
+      const slipText = formatSalesCommissionSlip58mm(commission, {
+        transaction,
+        isReprint: true,
+        printedBy: getLoggedInOperatorName() || "Kasir",
+        printedAt: new Date().toISOString(),
+      });
+
+      try {
+        await printThermalText(slipText);
+        showInlineNotice("Slip komisi sales berhasil dikirim ke printer (Cetak Ulang).", "success");
+      } catch (error) {
+        showInlineNotice(`Gagal mencetak ulang slip komisi: ${error.message || "printer tidak merespons"}.`, "error");
+      }
+    },
+  });
 }
 
 function closeTransactionSalesCommission() {
@@ -29275,6 +29353,11 @@ async function handleRoomAction(event) {
 
   if (action === "open-sales-commission") {
     openTransactionSalesCommission(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "reprint-sales-commission") {
+    reprintTransactionSalesCommission(button.dataset.transactionId || "");
     return;
   }
 

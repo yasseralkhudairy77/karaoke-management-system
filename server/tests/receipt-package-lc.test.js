@@ -278,6 +278,34 @@ async function run() {
     console.log('  PASS: Sales commission thermal handover slip renders calculation and signatures');
   }
 
+  // Test 7: Sales commission thermal handover slip reprint
+  {
+    const formatted = formatSalesCommissionSlip58mm({
+      commission_id: 'COMM-1',
+      transaction_id: 'TRX-1788710023635',
+      basis_type: 'grand_total',
+      basis_amount: 1260000,
+      commission_percent: 5,
+      commission_amount: 63000,
+      recipient_name: 'Riko Marketing',
+      cashier_name: 'Manager 1',
+      created_at: '2026-09-07T00:24:24.000Z',
+      note: 'Komisi booking customer VIP'
+    }, {
+      transaction: {
+        transaction_id: 'TRX-1788710023635',
+        room_name: 'Ruangan 3 - VIP 3',
+        grand_total: 1260000,
+      },
+      isReprint: true,
+      printedBy: 'Manager 1',
+      printedAt: '2026-09-07T00:25:00.000Z'
+    });
+
+    assert(formatted.includes('*** CETAK ULANG ***'));
+    console.log('  PASS: Sales commission thermal reprint slip renders *** CETAK ULANG ***');
+  }
+
   console.log('All Receipt Package LC Tests Passed Successfully!');
 }
 

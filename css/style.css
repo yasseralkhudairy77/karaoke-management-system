@@ -7801,6 +7801,19 @@ textarea.action-confirmation-input {
   outline-offset: 2px;
 }
 
+.transaction-action-button.commission-recorded {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #a7f3d0;
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.transaction-action-button.commission-recorded:hover,
+.transaction-action-button.commission-recorded:focus-visible {
+  border-color: rgba(52, 211, 153, 0.7);
+  background: rgba(16, 185, 129, 0.24);
+  outline: 3px solid rgba(52, 211, 153, 0.25);
+}
+
 .transaction-pay-control {
   display: flex;
   flex: 1 1 100%;
@@ -7848,7 +7861,7 @@ textarea.action-confirmation-input {
 .transaction-filter-button:disabled,
 .transaction-action-button:disabled,
 .transaction-pay-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.72;
 }
 

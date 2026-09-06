@@ -329,6 +329,9 @@ export function formatSalesCommissionSlip58mm(commission, options = {}) {
 
   lines.push(centerReceiptText("BUKTI SERAH TERIMA", width));
   lines.push(centerReceiptText("KOMISI SALES/MARKETING", width));
+  if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
   lines.push(strongSeparator);
   pushReceiptField(lines, "No", normalizedCommission.id || "-", width);
   pushReceiptField(lines, "Tanggal", formatReceiptDateTime(normalizedCommission.createdAt || options.printedAt), width);
