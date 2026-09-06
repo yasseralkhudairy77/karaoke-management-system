@@ -14,8 +14,8 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm } from "./receipt.js?v=fnb-bundle-v1";
-import { printThermalReceipt } from "./printer-adapter.js?v=lc-receipt-breakdown-v1";
+import { buildReceiptData, formatReceipt58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=stock-handover-slip-v1";
+import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=stock-handover-slip-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -2797,6 +2797,41 @@ function setStockMovementReferenceFilter(referenceType) {
   stockMovementReferenceFilter = referenceType;
   resetPaginationPage("stockMovements");
   loadTodayStockMovements();
+}
+
+function findTodayStockMovementById(movementId) {
+  const safeMovementId = String(movementId || "").trim();
+
+  if (!safeMovementId) {
+    return null;
+  }
+
+  return todayStockMovements.find((movement) => String(movement?.movement_id || "").trim() === safeMovementId) || null;
+}
+
+function printStockMovementHandoverSlip(movementId) {
+  const movement = findTodayStockMovementById(movementId);
+
+  if (!movement) {
+    showInlineNotice("Data mutasi stok tidak ditemukan untuk dicetak.", "error");
+    renderRooms();
+    return;
+  }
+
+  const slipText = formatStockHandoverSlip58mm(movement, {
+    printedBy: getLoggedInOperatorName(),
+    printedAt: new Date().toISOString(),
+    shiftLabel: "Aktif",
+  });
+  const printed = printThermalText(slipText);
+
+  if (!printed) {
+    showInlineNotice("Browser belum siap untuk mencetak bukti serah terima.", "error");
+  } else {
+    showInlineNotice("Bukti serah terima barang siap dicetak.");
+  }
+
+  renderRooms();
 }
 
 async function loadInventoryAudits({ selectLatest = false } = {}) {
@@ -13580,7 +13615,19 @@ function createTodayStockMovementRowElement(movement) {
   );
   badge.textContent = getTodayStockMovementTypeLabel(movement.movement_type);
 
-  header.append(titleGroup, badge);
+  const actionGroup = document.createElement("div");
+  actionGroup.className = "stock-movements-row-actions";
+
+  const printButton = document.createElement("button");
+  printButton.className = "stock-movements-print-button";
+  printButton.type = "button";
+  printButton.dataset.action = "print-stock-movement-handover";
+  printButton.dataset.movementId = movement.movement_id || "";
+  printButton.disabled = !movement.movement_id;
+  printButton.textContent = "Print Serah Terima";
+
+  actionGroup.append(badge, printButton);
+  header.append(titleGroup, actionGroup);
 
   const details = document.createElement("div");
   details.className = "stock-movements-details";
@@ -29099,6 +29146,11 @@ async function handleRoomAction(event) {
 
   if (action === "refresh-stock-movements") {
     await loadTodayStockMovements();
+    return;
+  }
+
+  if (action === "print-stock-movement-handover") {
+    printStockMovementHandoverSlip(button.dataset.movementId || "");
     return;
   }
 

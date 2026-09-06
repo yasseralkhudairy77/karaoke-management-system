@@ -3,7 +3,11 @@ const path = require('path');
 
 async function run() {
   const receiptModulePath = path.resolve(__dirname, '../../js/receipt.js');
-  const { buildReceiptData, formatReceipt58mm } = await import('file://' + receiptModulePath.replace(/\\/g, '/'));
+  const {
+    buildReceiptData,
+    formatReceipt58mm,
+    formatStockHandoverSlip58mm
+  } = await import('file://' + receiptModulePath.replace(/\\/g, '/'));
 
   console.log('Running Receipt Package LC Tests...');
 
@@ -191,6 +195,38 @@ async function run() {
     const formatted = formatReceipt58mm(receiptData);
     assert(!formatted.includes('DETAIL LC'), 'Receipt without LC must not render DETAIL LC');
     console.log('  PASS: Transaction without LC cleanly omits DETAIL LC');
+  }
+
+  // Test 5: Stock handover thermal slip
+  {
+    const movement = {
+      movement_id: 'MOV-IN-1788701660810-MENU-044',
+      created_at: '2026-09-06T13:34:20.000Z',
+      stock_item_id: 'MENU-044',
+      stock_item_name: 'Esse Juice',
+      movement_type: 'in',
+      reference_type: 'manual_adjustment',
+      reference_id: '002-06-09-2026',
+      qty_change: 5,
+      stock_before: 0,
+      stock_after: 5,
+      cashier_name: 'Manager 1',
+      note: 'Penerimaan barang supplier'
+    };
+
+    const formatted = formatStockHandoverSlip58mm(movement, {
+      printedBy: 'Manager 1',
+      printedAt: '2026-09-06T13:40:00.000Z'
+    });
+
+    assert(formatted.includes('BUKTI SERAH TERIMA BARANG'));
+    assert(formatted.includes('BARANG MASUK'));
+    assert(formatted.includes('Esse Juice'));
+    assert(formatted.includes('Jumlah Masuk'));
+    assert(formatted.includes('PENERIMA'));
+    assert(formatted.includes('Manager 1'));
+    assert(formatted.includes('002-06-09-2026'));
+    console.log('  PASS: Stock handover thermal slip renders movement identity and signature fields');
   }
 
   console.log('All Receipt Package LC Tests Passed Successfully!');

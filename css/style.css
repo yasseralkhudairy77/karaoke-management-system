@@ -5872,6 +5872,41 @@ textarea.action-confirmation-input {
   gap: 12px;
 }
 
+.stock-movements-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.stock-movements-print-button {
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 193, 102, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 193, 102, 0.13);
+  color: var(--billing-amber);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.stock-movements-print-button:hover,
+.stock-movements-print-button:focus-visible {
+  border-color: rgba(255, 193, 102, 0.8);
+  background: rgba(255, 193, 102, 0.22);
+  outline: none;
+}
+
+.stock-movements-print-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .stock-movements-item-name {
   margin: 0;
   color: var(--text);
@@ -8646,6 +8681,12 @@ textarea.action-confirmation-input {
     flex-direction: column;
   }
 
+  .stock-movements-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
   .menu-toolbar {
     grid-template-columns: 1fr;
   }
@@ -8683,6 +8724,7 @@ textarea.action-confirmation-input {
 
   .today-fnb-filter-button,
   .stock-movements-filter-button,
+  .stock-movements-print-button,
   .fnb-cancel-button,
   .inventory-button,
   .today-fnb-button,

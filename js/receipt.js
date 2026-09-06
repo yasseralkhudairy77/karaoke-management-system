@@ -259,6 +259,57 @@ export function formatReceipt58mm(receiptData, options = {}) {
   return lines.join("\n");
 }
 
+export function formatStockHandoverSlip58mm(movement, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+  const normalizedMovement = normalizeStockMovement(movement);
+  const handover = getStockMovementHandoverLabels(normalizedMovement.type);
+  const printedBy = getText(options.printedBy) || normalizedMovement.cashierName || "-";
+
+  lines.push(centerReceiptText("BUKTI SERAH TERIMA BARANG", width));
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "No", normalizedMovement.id || "-", width);
+  pushReceiptField(lines, "Tanggal", formatReceiptDateTime(normalizedMovement.createdAt), width);
+  pushReceiptField(lines, "Shift", getText(options.shiftLabel) || "Aktif", width);
+  pushReceiptField(lines, "Jenis", handover.typeLabel, width);
+  lines.push(separator);
+  lines.push(centerReceiptText("BARANG", width));
+  wrapReceiptText(normalizedMovement.itemName || normalizedMovement.itemId || "-", width).forEach((line) => {
+    lines.push(line);
+  });
+  pushReceiptField(lines, handover.quantityLabel, formatReceiptQuantity(normalizedMovement.quantity), width);
+  pushReceiptField(lines, "Stok Sebelum", formatReceiptQuantity(normalizedMovement.stockBefore), width);
+  pushReceiptField(lines, "Stok Sesudah", formatReceiptQuantity(normalizedMovement.stockAfter), width);
+  lines.push(separator);
+  pushReceiptField(lines, "Referensi", getStockMovementReferenceReceiptLabel(normalizedMovement.referenceType), width);
+  pushReceiptField(lines, "ID Ref", normalizedMovement.referenceId || "-", width);
+  pushReceiptField(lines, "Operator", normalizedMovement.cashierName || "-", width);
+
+  if (normalizedMovement.note) {
+    lines.push(separator);
+    lines.push(centerReceiptText("CATATAN", width));
+    wrapReceiptText(normalizedMovement.note, width).forEach((line) => {
+      lines.push(line);
+    });
+  }
+
+  lines.push(separator);
+  pushReceiptSignature(lines, handover.firstPartyLabel, handover.firstPartyName, width);
+  lines.push("");
+  pushReceiptSignature(lines, handover.secondPartyLabel, handover.secondPartyName || normalizedMovement.cashierName, width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(options.printedAt || new Date().toISOString()), width);
+  pushReceiptField(lines, "Oleh", printedBy, width);
+  lines.push(separator);
+  wrapReceiptText("Simpan struk ini sebagai bukti verifikasi mutasi stok.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
@@ -272,6 +323,12 @@ function pushReceiptHeader(lines, business, width) {
   }
 
   lines.push(border);
+}
+
+function pushReceiptSignature(lines, label, partyName, width = DEFAULT_PAPER.width) {
+  lines.push(centerReceiptText(label, width));
+  pushReceiptField(lines, "Nama", partyName || "________________", width);
+  pushReceiptField(lines, "Ttd", "________________", width);
 }
 
 function pushReceiptField(lines, label, value, width = DEFAULT_PAPER.width) {
@@ -417,6 +474,87 @@ function formatReceiptDateTime(value) {
   const minute = String(parsedDate.getMinutes()).padStart(2, "0");
 
   return `${day} ${month} ${year} ${hour}:${minute}`;
+}
+
+function formatReceiptQuantity(value) {
+  const numberValue = getNumber(value);
+
+  if (Number.isInteger(numberValue)) {
+    return String(numberValue);
+  }
+
+  return String(numberValue).replace(/\.?0+$/, "");
+}
+
+function normalizeStockMovement(movement) {
+  const safeMovement = movement || {};
+  const type = getText(safeMovement.movement_type || safeMovement.movementType).toLowerCase();
+
+  return {
+    id: getText(safeMovement.movement_id || safeMovement.movementId),
+    createdAt: getText(safeMovement.created_at || safeMovement.createdAt),
+    itemId: getText(safeMovement.stock_item_id || safeMovement.stockItemId),
+    itemName: getText(safeMovement.stock_item_name || safeMovement.stockItemName),
+    type,
+    referenceType: getText(safeMovement.reference_type || safeMovement.referenceType),
+    referenceId: getText(safeMovement.reference_id || safeMovement.referenceId),
+    quantity: Math.abs(getNumber(safeMovement.qty_change ?? safeMovement.qtyChange)),
+    stockBefore: getNumber(safeMovement.stock_before ?? safeMovement.stockBefore),
+    stockAfter: getNumber(safeMovement.stock_after ?? safeMovement.stockAfter),
+    note: getText(safeMovement.note),
+    cashierName: getText(safeMovement.cashier_name || safeMovement.cashierName),
+  };
+}
+
+function getStockMovementHandoverLabels(type) {
+  if (type === "out") {
+    return {
+      typeLabel: "BARANG KELUAR",
+      quantityLabel: "Jumlah Keluar",
+      firstPartyLabel: "DISERAHKAN OLEH",
+      firstPartyName: "",
+      secondPartyLabel: "DITERIMA OLEH",
+      secondPartyName: "",
+    };
+  }
+
+  if (type === "adjustment") {
+    return {
+      typeLabel: "KOREKSI STOK",
+      quantityLabel: "Selisih",
+      firstPartyLabel: "DIPERIKSA OLEH",
+      firstPartyName: "",
+      secondPartyLabel: "DISETUJUI OLEH",
+      secondPartyName: "",
+    };
+  }
+
+  return {
+    typeLabel: "BARANG MASUK",
+    quantityLabel: "Jumlah Masuk",
+    firstPartyLabel: "PEMBERI",
+    firstPartyName: "",
+    secondPartyLabel: "PENERIMA",
+    secondPartyName: "",
+  };
+}
+
+function getStockMovementReferenceReceiptLabel(referenceType) {
+  const normalizedReference = getText(referenceType).toLowerCase();
+
+  if (normalizedReference === "transaction") {
+    return "Transaksi";
+  }
+
+  if (normalizedReference === "manual_adjustment") {
+    return "Manual";
+  }
+
+  if (normalizedReference === "stock_audit") {
+    return "Stock Opname";
+  }
+
+  return referenceType || "-";
 }
 
 function getReceiptMonthName(monthIndex) {
