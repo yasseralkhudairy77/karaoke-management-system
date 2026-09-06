@@ -2790,7 +2790,7 @@ function setStockMovementTypeFilter(movementType) {
 }
 
 function setStockMovementReferenceFilter(referenceType) {
-  if (!["all", "transaction", "manual_adjustment", "stock_audit"].includes(referenceType)) {
+  if (!["all", "transaction", "manual_adjustment", "goods_receipt", "stock_audit"].includes(referenceType)) {
     return;
   }
 
@@ -2809,7 +2809,67 @@ function findTodayStockMovementById(movementId) {
   return todayStockMovements.find((movement) => String(movement?.movement_id || "").trim() === safeMovementId) || null;
 }
 
-function printStockMovementHandoverSlip(movementId) {
+function getRelatedStockMovementsForHandover(sourceMovement, movements = todayStockMovements) {
+  const referenceId = String(sourceMovement?.reference_id || "").trim();
+  const referenceType = String(sourceMovement?.reference_type || "").trim();
+
+  if (!referenceId) {
+    return [sourceMovement].filter(Boolean);
+  }
+
+  const relatedMovements = (Array.isArray(movements) ? movements : []).filter((movement) => (
+    String(movement?.reference_id || "").trim() === referenceId
+    && String(movement?.reference_type || "").trim() === referenceType
+  ));
+
+  if (!relatedMovements.some((movement) => String(movement?.movement_id || "") === String(sourceMovement?.movement_id || ""))) {
+    relatedMovements.unshift(sourceMovement);
+  }
+
+  return relatedMovements.sort((first, second) => {
+    const firstTime = new Date(first?.created_at || "").getTime();
+    const secondTime = new Date(second?.created_at || "").getTime();
+    if (Number.isFinite(firstTime) && Number.isFinite(secondTime) && firstTime !== secondTime) {
+      return firstTime - secondTime;
+    }
+    return String(first?.stock_item_name || "").localeCompare(String(second?.stock_item_name || ""), "id");
+  });
+}
+
+async function fetchRelatedStockMovementsForHandover(sourceMovement) {
+  if (!API_BASE_URL.trim() || !sourceMovement?.reference_id) {
+    return getRelatedStockMovementsForHandover(sourceMovement);
+  }
+
+  try {
+    const params = new URLSearchParams({ action: "getTodayStockMovements" });
+    buildActiveShiftQueryParams().forEach((value, key) => {
+      params.set(key, value);
+    });
+    if (sourceMovement.reference_type) {
+      params.set("reference_type", sourceMovement.reference_type);
+    }
+
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || data.ok !== true || !Array.isArray(data.stock_movements)) {
+      throw new Error(data?.error || "API response is invalid.");
+    }
+
+    return getRelatedStockMovementsForHandover(sourceMovement, data.stock_movements);
+  } catch (error) {
+    console.warn("Gagal memuat rincian lengkap mutasi untuk cetak serah terima.", error);
+    return getRelatedStockMovementsForHandover(sourceMovement);
+  }
+}
+
+async function printStockMovementHandoverSlip(movementId) {
   const movement = findTodayStockMovementById(movementId);
 
   if (!movement) {
@@ -2818,7 +2878,9 @@ function printStockMovementHandoverSlip(movementId) {
     return;
   }
 
+  const relatedMovements = await fetchRelatedStockMovementsForHandover(movement);
   const slipText = formatStockHandoverSlip58mm(movement, {
+    movements: relatedMovements,
     printedBy: getLoggedInOperatorName(),
     printedAt: new Date().toISOString(),
     shiftLabel: "Aktif",
@@ -2828,7 +2890,7 @@ function printStockMovementHandoverSlip(movementId) {
   if (!printed) {
     showInlineNotice("Browser belum siap untuk mencetak bukti serah terima.", "error");
   } else {
-    showInlineNotice("Bukti serah terima barang siap dicetak.");
+    showInlineNotice(`Bukti serah terima barang siap dicetak (${relatedMovements.length} item).`);
   }
 
   renderRooms();
@@ -13058,6 +13120,10 @@ function getTodayStockMovementReferenceLabel(referenceType) {
     return "Transaksi";
   }
 
+  if (referenceType === "goods_receipt") {
+    return "Barang Masuk";
+  }
+
   if (referenceType === "manual_adjustment") {
     return "Manual";
   }
@@ -13559,6 +13625,7 @@ function createTodayStockMovementToolbarElement() {
   [
     ["all", "Semua Referensi"],
     ["transaction", "Transaksi"],
+    ["goods_receipt", "Barang Masuk"],
     ["manual_adjustment", "Manual Adjustment"],
     ["stock_audit", "Stock Opname"],
   ].forEach(([referenceType, labelText]) => {
@@ -29150,7 +29217,7 @@ async function handleRoomAction(event) {
   }
 
   if (action === "print-stock-movement-handover") {
-    printStockMovementHandoverSlip(button.dataset.movementId || "");
+    await printStockMovementHandoverSlip(button.dataset.movementId || "");
     return;
   }
 

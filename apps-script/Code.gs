@@ -14778,7 +14778,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
     };
   }
 
-  if (normalizedReferenceType && ["transaction", "manual_adjustment", "stock_audit"].indexOf(normalizedReferenceType) === -1) {
+  if (normalizedReferenceType && ["transaction", "manual_adjustment", "goods_receipt", "stock_audit"].indexOf(normalizedReferenceType) === -1) {
     return {
       ok: false,
       error: "Jenis referensi mutasi stok tidak dikenal.",

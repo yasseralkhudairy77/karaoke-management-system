@@ -265,23 +265,29 @@ export function formatStockHandoverSlip58mm(movement, options = {}) {
   const strongSeparator = repeatReceiptChar("=", width);
   const lines = [];
   const normalizedMovement = normalizeStockMovement(movement);
+  const relatedMovements = normalizeStockMovementItems(options.movements || [movement], normalizedMovement);
   const handover = getStockMovementHandoverLabels(normalizedMovement.type);
   const printedBy = getText(options.printedBy) || normalizedMovement.cashierName || "-";
 
   lines.push(centerReceiptText("BUKTI SERAH TERIMA BARANG", width));
   lines.push(strongSeparator);
-  pushReceiptField(lines, "No", normalizedMovement.id || "-", width);
+  pushReceiptField(lines, "No", normalizedMovement.referenceId || normalizedMovement.id || "-", width);
   pushReceiptField(lines, "Tanggal", formatReceiptDateTime(normalizedMovement.createdAt), width);
   pushReceiptField(lines, "Shift", getText(options.shiftLabel) || "Aktif", width);
   pushReceiptField(lines, "Jenis", handover.typeLabel, width);
+  pushReceiptField(lines, "Total Item", String(relatedMovements.length), width);
   lines.push(separator);
-  lines.push(centerReceiptText("BARANG", width));
-  wrapReceiptText(normalizedMovement.itemName || normalizedMovement.itemId || "-", width).forEach((line) => {
-    lines.push(line);
+  lines.push(centerReceiptText("RINCIAN BARANG", width));
+  relatedMovements.forEach((item, index) => {
+    if (index > 0) {
+      lines.push("");
+    }
+    wrapReceiptText(`${index + 1}. ${item.itemName || item.itemId || "-"}`, width).forEach((line) => {
+      lines.push(line);
+    });
+    pushReceiptField(lines, `  ${handover.quantityLabel}`, formatReceiptQuantity(item.quantity), width);
+    pushReceiptField(lines, "  Stok", `${formatReceiptQuantity(item.stockBefore)} -> ${formatReceiptQuantity(item.stockAfter)}`, width);
   });
-  pushReceiptField(lines, handover.quantityLabel, formatReceiptQuantity(normalizedMovement.quantity), width);
-  pushReceiptField(lines, "Stok Sebelum", formatReceiptQuantity(normalizedMovement.stockBefore), width);
-  pushReceiptField(lines, "Stok Sesudah", formatReceiptQuantity(normalizedMovement.stockAfter), width);
   lines.push(separator);
   pushReceiptField(lines, "Referensi", getStockMovementReferenceReceiptLabel(normalizedMovement.referenceType), width);
   pushReceiptField(lines, "ID Ref", normalizedMovement.referenceId || "-", width);
@@ -506,6 +512,18 @@ function normalizeStockMovement(movement) {
   };
 }
 
+function normalizeStockMovementItems(movements, fallbackMovement) {
+  const normalizedItems = (Array.isArray(movements) ? movements : [])
+    .map((movement) => normalizeStockMovement(movement))
+    .filter((movement) => movement.id || movement.itemId || movement.itemName);
+
+  if (normalizedItems.length > 0) {
+    return normalizedItems;
+  }
+
+  return fallbackMovement ? [fallbackMovement] : [];
+}
+
 function getStockMovementHandoverLabels(type) {
   if (type === "out") {
     return {
@@ -548,6 +566,10 @@ function getStockMovementReferenceReceiptLabel(referenceType) {
 
   if (normalizedReference === "manual_adjustment") {
     return "Manual";
+  }
+
+  if (normalizedReference === "goods_receipt") {
+    return "Barang Masuk";
   }
 
   if (normalizedReference === "stock_audit") {

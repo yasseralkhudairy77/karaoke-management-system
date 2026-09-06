@@ -215,6 +215,18 @@ async function run() {
     };
 
     const formatted = formatStockHandoverSlip58mm(movement, {
+      movements: [
+        movement,
+        {
+          ...movement,
+          movement_id: 'MOV-IN-1788701660811-MENU-045',
+          stock_item_id: 'MENU-045',
+          stock_item_name: 'Aqua Botol',
+          qty_change: 12,
+          stock_before: 3,
+          stock_after: 15
+        }
+      ],
       printedBy: 'Manager 1',
       printedAt: '2026-09-06T13:40:00.000Z'
     });
@@ -222,6 +234,8 @@ async function run() {
     assert(formatted.includes('BUKTI SERAH TERIMA BARANG'));
     assert(formatted.includes('BARANG MASUK'));
     assert(formatted.includes('Esse Juice'));
+    assert(formatted.includes('Aqua Botol'));
+    assert(formatted.includes('Total Item'));
     assert(formatted.includes('Jumlah Masuk'));
     assert(formatted.includes('PENERIMA'));
     assert(formatted.includes('Manager 1'));
