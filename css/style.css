@@ -4568,6 +4568,40 @@ textarea.action-confirmation-input {
   line-height: 1.25;
 }
 
+.fb-order-saved-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.fb-order-saved-print-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(5, 150, 105, 0.35));
+  color: #a7f3d0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 900;
+  transition: all 0.18s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.fb-order-saved-print-button:hover,
+.fb-order-saved-print-button:focus-visible {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.38), rgba(5, 150, 105, 0.48));
+  border-color: rgba(52, 211, 153, 0.7);
+  outline: 3px solid rgba(52, 211, 153, 0.25);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+}
+
 .open-fnb-panel {
   grid-column: 1 / -1;
   display: grid;
@@ -5082,7 +5116,30 @@ textarea.action-confirmation-input {
 
 .fnb-cancel-actions {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
+}
+
+.fnb-print-receipt-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.18);
+  color: #a7f3d0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+  transition: all 0.18s ease;
+}
+
+.fnb-print-receipt-button:hover,
+.fnb-print-receipt-button:focus-visible {
+  background: rgba(16, 185, 129, 0.32);
+  border-color: rgba(52, 211, 153, 0.7);
+  outline: 3px solid rgba(52, 211, 153, 0.2);
+  outline-offset: 2px;
 }
 
 .fnb-cancel-button {

@@ -32,7 +32,8 @@
     "test:universal-package-linking": "node tests/universal-package-linking.test.js",
     "test:promo-room": "node tests/promo-room-2plus1.test.js",
     "test:admin-gudang": "node tests/admin-gudang-portal.test.js",
-    "test:cancel-general-fnb-bill": "node tests/cancel-general-fnb-bill.test.js"
+    "test:cancel-general-fnb-bill": "node tests/cancel-general-fnb-bill.test.js",
+    "test:direct-paid-fnb": "node tests/direct-paid-general-fnb.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

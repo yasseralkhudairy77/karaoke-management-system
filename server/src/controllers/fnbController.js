@@ -357,15 +357,29 @@ async function saveFnbOrder(req, res, payload) {
       const now = new Date();
       const transactionId = `TRX-${Date.now()}`;
       const opDate = getOperationalDate(now);
+      const effectiveTxRoomName = isGeneralOrder && customer_name ? `${FNB_GENERAL_ROOM_NAME} - ${customer_name}` : roomName;
       await client.query(`
         INSERT INTO transactions (
           transaction_id, room_id, room_name, start_time, end_time,
           duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
           grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key
         ) VALUES ($1, $2, $3, $4, $4, 0, 0, 0, $5, 0, $5, $6, $7, 'paid', $8, $9, $10)
-      `, [transactionId, room_id, isGeneralOrder && customer_name ? `${FNB_GENERAL_ROOM_NAME} - ${customer_name}` : roomName, now, orderTotal, orderId, payment_method || 'cash', cashier_name, opDate, idempotency_key ? `${idempotency_key}:trx` : null]);
+      `, [transactionId, room_id, effectiveTxRoomName, now, orderTotal, orderId, payment_method || 'cash', cashier_name, opDate, idempotency_key ? `${idempotency_key}:trx` : null]);
       await deductStockForFnbOrders(client, [orderId], transactionId, cashier_name);
-      transaction = { transaction_id: transactionId, room_id, room_name: roomName, fnb_total: orderTotal, grand_total: orderTotal, payment_status: 'paid', payment_method: payment_method || 'cash' };
+      transaction = {
+        transaction_id: transactionId,
+        room_id,
+        room_name: effectiveTxRoomName,
+        fnb_total: orderTotal,
+        grand_total: orderTotal,
+        payment_status: 'paid',
+        payment_method: payment_method || 'cash',
+        fnb_order_ids: orderId,
+        cashier_name,
+        operational_date: opDate,
+        created_at: now.toISOString(),
+        end_time: now.toISOString(),
+      };
     }
 
     await client.query(`

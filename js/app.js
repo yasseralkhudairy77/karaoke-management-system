@@ -4213,7 +4213,28 @@ function getLatestTodayTransaction() {
 }
 
 async function findTransactionForAction(button) {
-  const transactionId = button?.dataset?.transactionId || "";
+  let transactionId = button?.dataset?.transactionId || "";
+  const fnbOrderId = button?.dataset?.fnbOrderId || "";
+
+  if (!transactionId && fnbOrderId) {
+    if (lastFnbOrder?.order?.order_id === fnbOrderId && lastFnbOrder?.transaction?.transaction_id) {
+      transactionId = lastFnbOrder.transaction.transaction_id;
+    } else {
+      let matched = todayTransactions.find((t) =>
+        String(t.fnb_order_ids || "").split(",").map((id) => id.trim()).includes(fnbOrderId)
+      );
+      if (!matched) {
+        showInlineNotice("Mencari data transaksi struk...");
+        await loadTodayTransactions();
+        matched = todayTransactions.find((t) =>
+          String(t.fnb_order_ids || "").split(",").map((id) => id.trim()).includes(fnbOrderId)
+        );
+      }
+      if (matched) {
+        transactionId = matched.transaction_id;
+      }
+    }
+  }
 
   if (transactionId) {
     let transaction = findTodayTransactionById(transactionId)
@@ -5364,6 +5385,8 @@ async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
     lastFnbOrder = {
       order: data.order || null,
       items: Array.isArray(data.items) ? data.items : [],
+      transaction: data.transaction || null,
+      transaction_id: data.transaction?.transaction_id || "",
     };
     if (!isGeneralOrder && data.order?.order_status === "open") {
       const savedOpenOrder = Object.assign({}, data.order, {
@@ -5398,24 +5421,38 @@ async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
         : "Order F&B berhasil disimpan.",
       isDuplicateReplay ? "warning" : "success"
     );
-    await loadOpenFnbOrders();
-    await loadTodayFnbOrders();
-    await loadInventoryItems();
 
-    if (data.order && data.order.order_status === "paid") {
+    const isDirectPaid = Boolean(data.transaction)
+      || data.order?.order_status === "paid"
+      || (data.order?.order_status === "billed" && (originalPaymentMethod === "cash" || originalPaymentMethod === "transfer"));
+
+    await Promise.all([
+      loadOpenFnbOrders(),
+      loadTodayFnbOrders(),
+      loadTodayTransactions(),
+      loadInventoryItems(),
+    ]);
+
+    if (isDirectPaid) {
       const detailedOrder = Object.assign({}, data.order, {
         items: lastFnbOrder.items
       });
-      transactionFnbDetails[data.order.order_id] = [detailedOrder];
+      const effectiveTxId = data.transaction?.transaction_id || data.order?.order_id;
+      if (effectiveTxId) {
+        transactionFnbDetails[effectiveTxId] = [detailedOrder];
+      }
+      if (data.order?.order_id) {
+        transactionFnbDetails[data.order.order_id] = [detailedOrder];
+      }
 
-      const tempTransaction = {
+      const receiptTransaction = data.transaction || {
         transaction_id: data.order.order_id,
         room_id: data.order.room_id,
         room_name: data.order.customer_name
           ? `${data.order.room_name} - ${data.order.customer_name}`
           : data.order.room_name,
         start_time: "",
-        end_time: data.order.created_at,
+        end_time: data.order.created_at || new Date().toISOString(),
         duration_minutes: 0,
         rate_per_hour: 0,
         room_total: 0,
@@ -5425,13 +5462,13 @@ async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
         payment_method: originalPaymentMethod || "cash",
         payment_status: "paid",
         cashier_name: data.order.cashier_name,
-        created_at: data.order.created_at,
+        created_at: data.order.created_at || new Date().toISOString(),
         transaction_type: "fnb_addon",
         customer_name: data.order.customer_name || "",
         general_bill_id: data.order.general_bill_id || "",
       };
       
-      showReceiptPrint(tempTransaction);
+      showReceiptPrint(receiptTransaction);
     }
 
     if (isDuplicateReplay) {
@@ -5450,16 +5487,16 @@ async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
       openActionResult({
         tone: "success",
         title: "Order F&B Tersimpan",
-        message: data.order?.order_status === "paid"
+        message: isDirectPaid
           ? "Pembayaran tercatat lunas. Nota sudah disiapkan untuk dicetak."
           : "Order sudah masuk ke tagihan yang dipilih dan tidak perlu disimpan ulang.",
         details: [
           ["ID Order", data.order?.order_id || "-"],
           ["Room / Pelanggan", data.order?.room_name || data.order?.customer_name || "-"],
-          ["Status", data.order?.order_status === "paid" ? "Lunas" : "Open / Belum ditagihkan"],
+          ["Status", isDirectPaid ? "Lunas" : "Open / Belum ditagihkan"],
           ["Total", formatCurrency(data.order?.order_total || 0)],
         ],
-        confirmLabel: data.order?.order_status === "paid" ? "Lanjut ke Nota" : "Selesai",
+        confirmLabel: isDirectPaid ? "Lanjut ke Nota" : "Selesai",
       });
     }
   } catch (error) {
@@ -11895,6 +11932,27 @@ function createLastFnbOrderElement(order, items) {
 
   saved.append(title, grid);
 
+  const isBilledOrPaid = order?.order_status === "billed" || order?.order_status === "paid" || Boolean(lastFnbOrder?.transaction_id);
+  if (isBilledOrPaid) {
+    const actions = document.createElement("div");
+    actions.className = "fb-order-saved-actions";
+
+    const printButton = document.createElement("button");
+    printButton.className = "fb-order-saved-print-button";
+    printButton.type = "button";
+    printButton.dataset.action = "show-receipt-print";
+    if (lastFnbOrder?.transaction_id) {
+      printButton.dataset.transactionId = lastFnbOrder.transaction_id;
+    }
+    if (order?.order_id) {
+      printButton.dataset.fnbOrderId = order.order_id;
+    }
+    printButton.textContent = "🖨️ Cetak Struk Transaksi Ini";
+
+    actions.appendChild(printButton);
+    saved.appendChild(actions);
+  }
+
   return saved;
 }
 
@@ -12370,6 +12428,17 @@ function createOpenFnbOrderCardElement(order) {
 function createFnbOrderCancelActionsElement(order) {
   const actions = document.createElement("div");
   actions.className = "fnb-cancel-actions";
+
+  const isBilledOrPaid = order?.order_status === "billed" || order?.order_status === "paid";
+  if (isBilledOrPaid) {
+    const printButton = document.createElement("button");
+    printButton.className = "fnb-print-receipt-button";
+    printButton.type = "button";
+    printButton.dataset.action = "show-receipt-print";
+    printButton.dataset.fnbOrderId = order.order_id || "";
+    printButton.textContent = "Cetak Struk";
+    actions.appendChild(printButton);
+  }
 
   const button = document.createElement("button");
   const canCancel = getFnbOrderCanCancel(order) && !isCancellingFnbOrder;
