@@ -316,6 +316,57 @@ export function formatStockHandoverSlip58mm(movement, options = {}) {
   return lines.join("\n");
 }
 
+export function formatSalesCommissionSlip58mm(commission, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+  const normalizedCommission = normalizeSalesCommission(commission);
+  const transaction = options.transaction || {};
+  const total = getNumber(transaction.grand_total ?? transaction.total ?? 0);
+  const netRevenue = Math.max(0, total - normalizedCommission.amount);
+  const cashierName = normalizedCommission.cashierName || getText(options.printedBy) || "Kasir";
+
+  lines.push(centerReceiptText("BUKTI SERAH TERIMA", width));
+  lines.push(centerReceiptText("KOMISI SALES/MARKETING", width));
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "No", normalizedCommission.id || "-", width);
+  pushReceiptField(lines, "Tanggal", formatReceiptDateTime(normalizedCommission.createdAt || options.printedAt), width);
+  pushReceiptField(lines, "TRX", normalizedCommission.transactionId || transaction.transaction_id || "-", width);
+  pushReceiptField(lines, "Room", transaction.room_name || transaction.room_id || "-", width);
+  lines.push(separator);
+  lines.push(centerReceiptText("PERHITUNGAN", width));
+  pushReceiptField(lines, "Dasar", getSalesCommissionBasisReceiptLabel(normalizedCommission.basisType), width);
+  pushReceiptField(lines, "Nominal", formatReceiptCurrency(normalizedCommission.basisAmount), width);
+  pushReceiptField(lines, "Persen", `${formatReceiptPercent(normalizedCommission.percent)}%`, width);
+  lines.push(formatReceiptLine("KOMISI", formatReceiptCurrency(normalizedCommission.amount), width));
+  lines.push(separator);
+  pushReceiptField(lines, "Total TRX", formatReceiptCurrency(total), width);
+  pushReceiptField(lines, "Net Omzet", formatReceiptCurrency(netRevenue), width);
+  lines.push(separator);
+  pushReceiptField(lines, "Penerima", normalizedCommission.recipientName || "-", width);
+  pushReceiptField(lines, "Kasir", cashierName, width);
+
+  if (normalizedCommission.note) {
+    lines.push(separator);
+    lines.push(centerReceiptText("CATATAN", width));
+    wrapReceiptText(normalizedCommission.note, width).forEach((line) => lines.push(line));
+  }
+
+  lines.push(separator);
+  pushReceiptSignature(lines, "Diserahkan Oleh", cashierName, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Diterima Oleh", normalizedCommission.recipientName, width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(options.printedAt || new Date().toISOString()), width);
+  lines.push(separator);
+  wrapReceiptText("Simpan struk ini sebagai bukti komisi yang mengurangi omzet bersih shift.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
@@ -329,6 +380,34 @@ function pushReceiptHeader(lines, business, width) {
   }
 
   lines.push(border);
+}
+
+function normalizeSalesCommission(commission = {}) {
+  return {
+    id: getText(commission.commission_id || commission.id),
+    transactionId: getText(commission.transaction_id || commission.transactionId),
+    basisType: getText(commission.basis_type || commission.basisType || "grand_total"),
+    basisAmount: getNumber(commission.basis_amount ?? commission.basisAmount),
+    percent: getNumber(commission.commission_percent ?? commission.percent),
+    amount: getNumber(commission.commission_amount ?? commission.amount),
+    recipientName: getText(commission.recipient_name || commission.recipientName),
+    cashierName: getText(commission.cashier_name || commission.cashierName),
+    note: getText(commission.note),
+    createdAt: getText(commission.created_at || commission.createdAt),
+  };
+}
+
+function getSalesCommissionBasisReceiptLabel(basisType) {
+  if (basisType === "room_total") return "Room/Paket";
+  if (basisType === "fnb_total") return "F&B";
+  return "Total Akhir";
+}
+
+function formatReceiptPercent(value) {
+  const numberValue = getNumber(value);
+  return Number.isInteger(numberValue)
+    ? String(numberValue)
+    : numberValue.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function pushReceiptSignature(lines, label, partyName, width = DEFAULT_PAPER.width) {

@@ -14,8 +14,8 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=stock-handover-slip-v1";
-import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=stock-handover-slip-v1";
+import { buildReceiptData, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=sales-commission-v1";
+import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
 const dashboardGlobal = document.querySelector("#dashboardGlobal");
@@ -902,6 +902,8 @@ let transactionFreeRoomCorrection = null;
 let isSavingTransactionFreeRoomCorrection = false;
 let transactionManualDiscount = null;
 let isSavingTransactionManualDiscount = false;
+let transactionSalesCommission = null;
+let isSavingTransactionSalesCommission = false;
 let transactionFnbVoidModal = null;
 let isVoidingTransactionFnb = false;
 let employees = [];
@@ -1134,6 +1136,7 @@ function isUserBusy() {
     adminPinModal ||
     deleteMasterConfirmation ||
     transactionDeleteConfirmation ||
+    transactionSalesCommission ||
     deleteLcConfirmation ||
     roomRecoveryConfirmation ||
     lcDurationEditor ||
@@ -1157,7 +1160,8 @@ function isUserBusy() {
     isDeletingMasterData ||
     isDeletingTransaction ||
     isLoadingLcDurationEditor ||
-    isSavingLcDurationEditor
+    isSavingLcDurationEditor ||
+    isSavingTransactionSalesCommission
   ) {
     return true;
   }
@@ -6091,6 +6095,13 @@ function getTransactionFinalTotal(transaction) {
     + (Number(transaction?.lc_total) || 0);
 }
 
+function getTransactionSalesCommissionAmount(transaction) {
+  const fromFlat = Number(transaction?.sales_commission_amount || 0);
+  if (Number.isFinite(fromFlat) && fromFlat > 0) return fromFlat;
+  const fromObject = Number(transaction?.sales_commission?.commission_amount || 0);
+  return Number.isFinite(fromObject) && fromObject > 0 ? fromObject : 0;
+}
+
 function parseRupiahInput(value) {
   return Number(String(value || "").replace(/[^\d]/g, "")) || 0;
 }
@@ -6328,7 +6339,10 @@ function calculateCashierRevenueSummary(transactions) {
     summary.totalRevenue += transactionTotal;
 
     if (paymentStatus === "paid") {
+      const commissionAmount = getTransactionSalesCommissionAmount(transaction);
       summary.paidRevenue += transactionTotal;
+      summary.salesCommissionTotal += commissionAmount;
+      summary.netPaidRevenue += Math.max(0, transactionTotal - commissionAmount);
       summary.paidCount += 1;
 
       const breakdown = getTransactionPaymentBreakdownForSummary(transaction);
@@ -6355,6 +6369,8 @@ function calculateCashierRevenueSummary(transactions) {
     transferRevenue: 0,
     unpaidRevenue: 0,
     totalRevenue: 0,
+    salesCommissionTotal: 0,
+    netPaidRevenue: 0,
     paidCount: 0,
     unpaidCount: 0,
     cashCount: 0,
@@ -6385,6 +6401,18 @@ function createCashierRevenueSummaryElement(summary) {
       "Omzet Lunas",
       formatCurrency(summary.paidRevenue),
       `${summary.paidCount} transaksi lunas`,
+      "highlight",
+    ],
+    [
+      "Komisi Marketing",
+      `-${formatCurrency(summary.salesCommissionTotal)}`,
+      "Pengurang omzet bersih",
+      "warning",
+    ],
+    [
+      "Omzet Bersih",
+      formatCurrency(summary.netPaidRevenue),
+      "Omzet lunas setelah komisi",
       "highlight",
     ],
     ["Cash", formatCurrency(summary.cashRevenue), `${summary.cashCount} transaksi`],
@@ -6432,8 +6460,11 @@ function calculateCashierClosingPreview(transactions) {
     result.totalRevenue += transactionTotal;
 
     if (paymentStatus === "paid") {
+      const commissionAmount = getTransactionSalesCommissionAmount(transaction);
       result.paidTransactions += 1;
       result.paidRevenue += transactionTotal;
+      result.salesCommissionTotal += commissionAmount;
+      result.netRevenueAfterCommission += Math.max(0, transactionTotal - commissionAmount);
 
       const breakdown = getTransactionPaymentBreakdownForSummary(transaction);
       if (breakdown.cashAmount > 0) {
@@ -6464,13 +6495,17 @@ function calculateCashierClosingPreview(transactions) {
     transferRevenue: 0,
     unpaidRevenue: 0,
     totalRevenue: 0,
+    salesCommissionTotal: 0,
+    netRevenueAfterCommission: 0,
+    cashExpectedAfterCommission: 0,
     cashActual: 0,
     cashDifference: 0,
     note: "",
   });
 
   preview.cashActual = Number(cashierClosingCashActual) || 0;
-  preview.cashDifference = preview.cashActual - preview.cashExpected;
+  preview.cashExpectedAfterCommission = Math.max(0, preview.cashExpected - preview.salesCommissionTotal);
+  preview.cashDifference = preview.cashActual - preview.cashExpectedAfterCommission;
   preview.note = cashierClosingNote;
 
   return preview;
@@ -6558,7 +6593,9 @@ function createCashierClosingConfirmationElement() {
   details.className = "master-delete-details cashier-closing-confirm-details";
 
   [
-    ["Cash Sistem", formatCurrency(preview.cashExpected)],
+    ["Cash Sistem Awal", formatCurrency(preview.cashExpected)],
+    ["Komisi Marketing", `-${formatCurrency(preview.salesCommissionTotal)}`],
+    ["Cash Sistem Akhir", formatCurrency(preview.cashExpectedAfterCommission)],
     ["Cash Aktual", formatCurrency(preview.cashActual)],
     ["Selisih Cash", `${formatCurrency(preview.cashDifference)} - ${getCashDifferenceLabel(preview.cashDifference)}`],
     ["Transfer Sistem", formatCurrency(preview.transferRevenue)],
@@ -6686,6 +6723,8 @@ function createCashierClosingPreviewElement(preview) {
     ["Omzet Lunas (Sudah Dibayar)", "Total penerimaan kasir", formatCurrency(preview.paidRevenue), "highlight-row text-success"],
     ["• Cash Sistem", `${preview.cashTransactions} transaksi cash`, formatCurrency(preview.cashExpected), "sub-row"],
     ["• Transfer Sistem", `${preview.transferTransactions} transaksi transfer`, formatCurrency(preview.transferRevenue), "sub-row"],
+    ["Komisi Marketing", "Sudah diserahkan dari uang kasir", `-${formatCurrency(preview.salesCommissionTotal)}`, preview.salesCommissionTotal > 0 ? "text-warning font-bold" : ""],
+    ["Omzet Bersih", "Omzet lunas setelah komisi", formatCurrency(preview.netRevenueAfterCommission), "highlight-row text-success"],
     ["Sisa Belum Dibayar", "Tagihan room/F&B yang masih open", formatCurrency(preview.unpaidRevenue), preview.unpaidRevenue > 0 ? "text-warning font-bold" : ""],
     ["Total Semua Tagihan", "Akumulasi lunas + belum lunas", formatCurrency(preview.totalRevenue), "grand-total-row"],
   ];
@@ -6826,7 +6865,9 @@ function createCashierClosingPreviewElement(preview) {
   const cashCompBody = document.createElement("tbody");
 
   const compRows = [
-    ["Cash Sistem (Seharusnya Ada)", formatCurrency(preview.cashExpected), ""],
+    ["Cash Sistem Sebelum Komisi", formatCurrency(preview.cashExpected), ""],
+    ["Komisi Marketing Dibayar", `-${formatCurrency(preview.salesCommissionTotal)}`, "text-warning"],
+    ["Cash Sistem Setelah Komisi", formatCurrency(preview.cashExpectedAfterCommission), "font-bold"],
     ["Cash Aktual Fisik (Dihitung)", formatCurrency(preview.cashActual), "text-gold"],
     ["Selisih Cash", formatCurrency(preview.cashDifference), `highlight-row text-gold ${getCashDifferenceClass(preview.cashDifference)}`],
   ];
@@ -7018,6 +7059,8 @@ function createLastClosingSavedElement(closing) {
     ["Waktu", formatDateTimeLabel(closing?.created_at)],
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
+    ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
+    ["Omzet Bersih", formatCurrency(closing?.net_revenue_after_commission)],
     ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
     ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
     [
@@ -16185,6 +16228,8 @@ function createTransactionHistoryElement() {
     ["Sudah Lunas", Number(summary.paid_transactions) || 0],
     ["Belum Dibayar", Number(summary.unpaid_transactions) || 0],
     ["Omzet Lunas", formatCurrency(summary.total_revenue_paid)],
+    ["Komisi Marketing", `-${formatCurrency(summary.sales_commission_total)}`],
+    ["Omzet Bersih", formatCurrency(summary.net_revenue_after_commission)],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "transaction-summary-card";
@@ -16244,6 +16289,9 @@ function createTransactionHistoryElement() {
       : document.createDocumentFragment(),
     transactionManualDiscount
       ? createTransactionManualDiscountElement()
+      : document.createDocumentFragment(),
+    transactionSalesCommission
+      ? createTransactionSalesCommissionElement()
       : document.createDocumentFragment(),
     transactionFnbVoidModal
       ? createTransactionFnbVoidModalElement()
@@ -16353,12 +16401,15 @@ function createClosingPrintPreviewElement(closing) {
       ]
     : [
         ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
+        ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
+        ["Omzet Bersih", formatCurrency(closing?.net_revenue_after_commission), "total"],
         ["Total Tagihan", formatCurrency(closing?.total_revenue), "total"],
       ];
   const salesSection = createClosingReceiptSection("Ringkasan Omzet", salesRows);
 
   const paymentSection = createClosingReceiptSection("Pembayaran", [
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
+    ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
     ["Selisih", formatClosingSignedCurrency(closing?.cash_difference), "total"],
     ["Transfer", formatCurrency(closing?.transfer_revenue)],
@@ -17232,6 +17283,13 @@ function createTransactionRowElement(transaction) {
         item.appendChild(badge);
       }
 
+      if (labelText === "Total Akhir" && getTransactionSalesCommissionAmount(transaction) > 0) {
+        const commissionBadge = document.createElement("span");
+        commissionBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
+        commissionBadge.textContent = `Komisi -${formatCurrency(getTransactionSalesCommissionAmount(transaction))}`;
+        item.appendChild(commissionBadge);
+      }
+
       if (labelText === "Ruangan" && transactionHasPackage(transaction)) {
         const badge = document.createElement("span");
         badge.className = withStatusBadge("transaction-fnb-badge", "success");
@@ -17276,6 +17334,18 @@ function createTransactionActionsElement(transaction) {
 
   const operatorRole = getCurrentOperatorRole();
   if (operatorRole === "owner" || operatorRole === "manager") {
+    if (String(transaction?.payment_status || "").toLowerCase() === "paid") {
+      const commissionButton = document.createElement("button");
+      const hasCommission = getTransactionSalesCommissionAmount(transaction) > 0;
+      commissionButton.className = "transaction-action-button";
+      commissionButton.type = "button";
+      commissionButton.dataset.action = "open-sales-commission";
+      commissionButton.dataset.transactionId = transaction?.transaction_id || "";
+      commissionButton.disabled = hasCommission;
+      commissionButton.textContent = hasCommission ? "Komisi Tercatat" : "Komisi Sales";
+      actions.appendChild(commissionButton);
+    }
+
     const manualDiscountButton = document.createElement("button");
     manualDiscountButton.className = "transaction-action-button";
     manualDiscountButton.type = "button";
@@ -18831,6 +18901,352 @@ async function executeTransactionManualDiscount(adminPin) {
     return { success: false, message };
   } finally {
     isSavingTransactionManualDiscount = false;
+    renderRooms();
+  }
+}
+
+function openTransactionSalesCommission(transactionId) {
+  const operatorRole = getCurrentOperatorRole();
+  if (operatorRole !== "owner" && operatorRole !== "manager") {
+    showInlineNotice("Hanya akun Owner atau Manager yang dapat mencatat komisi sales/marketing.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+  if (String(transaction.payment_status || "").toLowerCase() !== "paid") {
+    showInlineNotice("Komisi sales/marketing hanya bisa dicatat untuk transaksi lunas.", "error");
+    return;
+  }
+  if (getTransactionSalesCommissionAmount(transaction) > 0) {
+    showInlineNotice("Komisi untuk transaksi ini sudah tercatat.", "error");
+    return;
+  }
+
+  transactionSalesCommission = {
+    transactionId,
+    basisType: "grand_total",
+    commissionPercent: "5",
+    recipientName: "",
+    note: "",
+  };
+  renderRooms();
+}
+
+function closeTransactionSalesCommission() {
+  if (isSavingTransactionSalesCommission) {
+    return;
+  }
+
+  transactionSalesCommission = null;
+  renderRooms();
+}
+
+function updateTransactionSalesCommission(field, value) {
+  if (!transactionSalesCommission || !["basisType", "commissionPercent", "recipientName", "note"].includes(field)) {
+    return;
+  }
+
+  transactionSalesCommission = {
+    ...transactionSalesCommission,
+    [field]: field === "commissionPercent"
+      ? String(value || "").replace(/[^\d.]/g, "")
+      : value,
+  };
+}
+
+function getTransactionSalesCommissionPreview() {
+  const transaction = getTransactionById(transactionSalesCommission?.transactionId) || {};
+  const basisType = transactionSalesCommission?.basisType || "grand_total";
+  const basisAmount = basisType === "room_total"
+    ? getTransactionRoomTotal(transaction)
+    : basisType === "fnb_total"
+      ? getTransactionFnbTotal(transaction)
+      : getTransactionFinalTotal(transaction);
+  const commissionPercent = Math.max(0, Number(transactionSalesCommission?.commissionPercent) || 0);
+  const commissionAmount = Math.round(basisAmount * commissionPercent / 100);
+  const netRevenue = Math.max(0, getTransactionFinalTotal(transaction) - commissionAmount);
+
+  return {
+    transaction,
+    basisType,
+    basisAmount,
+    commissionPercent,
+    commissionAmount,
+    netRevenue,
+  };
+}
+
+function getSalesCommissionBasisLabel(basisType) {
+  if (basisType === "room_total") return "Biaya Room/Paket";
+  if (basisType === "fnb_total") return "F&B";
+  return "Total Akhir";
+}
+
+function syncTransactionSalesCommissionControls() {
+  const modal = queryDashboard(".transaction-sales-commission-modal");
+  if (!modal || !transactionSalesCommission) {
+    return;
+  }
+
+  const preview = getTransactionSalesCommissionPreview();
+  const submitButton = modal.querySelector("[data-role='transaction-sales-commission-submit']");
+  if (submitButton) {
+    submitButton.disabled = isSavingTransactionSalesCommission
+      || preview.basisAmount <= 0
+      || preview.commissionPercent <= 0
+      || preview.commissionPercent > 100
+      || !String(transactionSalesCommission.recipientName || "").trim();
+  }
+}
+
+function createTransactionSalesCommissionElement() {
+  if (!transactionSalesCommission) {
+    return document.createDocumentFragment();
+  }
+
+  const preview = getTransactionSalesCommissionPreview();
+  const transaction = preview.transaction || {};
+
+  const overlay = document.createElement("section");
+  overlay.className = "master-delete-modal transaction-sales-commission-modal";
+  overlay.setAttribute("aria-labelledby", "transaction-sales-commission-title");
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-delete-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "master-delete-title";
+  title.id = "transaction-sales-commission-title";
+  title.textContent = "Komisi Sales / Marketing";
+
+  const warning = document.createElement("p");
+  warning.className = "master-delete-warning";
+  warning.textContent = "Komisi dicatat sebagai pengurang omzet bersih dan tidak mengubah total transaksi pelanggan. Setelah tersimpan, slip thermal serah-terima dapat dicetak.";
+
+  const details = document.createElement("div");
+  details.className = "master-delete-details";
+  [
+    ["ID", transaction.transaction_id],
+    ["Ruangan", transaction.room_name || transaction.room_id || "-"],
+    ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction))],
+    ["Dasar Komisi", getSalesCommissionBasisLabel(preview.basisType)],
+    ["Nominal Dasar", formatCurrency(preview.basisAmount)],
+    ["Persentase", `${preview.commissionPercent || 0}%`],
+    ["Komisi", formatCurrency(preview.commissionAmount)],
+    ["Omzet Bersih", formatCurrency(preview.netRevenue)],
+  ].forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "transaction-label";
+    label.textContent = labelText;
+    const value = document.createElement("p");
+    value.className = "transaction-value";
+    value.textContent = valueText || "-";
+    item.append(label, value);
+    details.appendChild(item);
+  });
+
+  const basisField = document.createElement("label");
+  basisField.className = "master-form-field";
+  const basisLabel = document.createElement("span");
+  basisLabel.className = "master-form-label";
+  basisLabel.textContent = "Dasar Perhitungan";
+  const basisSelect = document.createElement("select");
+  basisSelect.className = "master-form-input";
+  basisSelect.dataset.action = "update-sales-commission";
+  basisSelect.dataset.field = "basisType";
+  [
+    ["grand_total", "Total Akhir / Omzet"],
+    ["room_total", "Room / Paket"],
+    ["fnb_total", "F&B"],
+  ].forEach(([value, text]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    option.selected = value === preview.basisType;
+    basisSelect.appendChild(option);
+  });
+  basisSelect.onchange = () => renderRooms();
+  basisField.append(basisLabel, basisSelect);
+
+  const percentField = document.createElement("label");
+  percentField.className = "master-form-field";
+  const percentLabel = document.createElement("span");
+  percentLabel.className = "master-form-label";
+  percentLabel.textContent = "Persentase Komisi";
+  const percentInput = document.createElement("input");
+  percentInput.className = "master-form-input";
+  percentInput.type = "number";
+  percentInput.min = "0.01";
+  percentInput.max = "100";
+  percentInput.step = "0.01";
+  percentInput.placeholder = "Contoh: 5";
+  percentInput.dataset.action = "update-sales-commission";
+  percentInput.dataset.field = "commissionPercent";
+  percentInput.value = transactionSalesCommission.commissionPercent || "";
+  percentInput.onchange = () => renderRooms();
+  percentField.append(percentLabel, percentInput);
+
+  const recipientField = document.createElement("label");
+  recipientField.className = "master-form-field";
+  const recipientLabel = document.createElement("span");
+  recipientLabel.className = "master-form-label";
+  recipientLabel.textContent = "Nama Marketing / Penerima";
+  const recipientInput = document.createElement("input");
+  recipientInput.className = "master-form-input";
+  recipientInput.type = "text";
+  recipientInput.placeholder = "Contoh: Riko Marketing";
+  recipientInput.dataset.action = "update-sales-commission";
+  recipientInput.dataset.field = "recipientName";
+  recipientInput.value = transactionSalesCommission.recipientName || "";
+  recipientField.append(recipientLabel, recipientInput);
+
+  const noteField = document.createElement("label");
+  noteField.className = "master-form-field";
+  const noteLabel = document.createElement("span");
+  noteLabel.className = "master-form-label";
+  noteLabel.textContent = "Catatan";
+  const noteInput = document.createElement("input");
+  noteInput.className = "master-form-input";
+  noteInput.type = "text";
+  noteInput.placeholder = "Opsional, contoh: Komisi booking customer VIP";
+  noteInput.dataset.action = "update-sales-commission";
+  noteInput.dataset.field = "note";
+  noteInput.value = transactionSalesCommission.note || "";
+  noteField.append(noteLabel, noteInput);
+
+  const actions = document.createElement("div");
+  actions.className = "master-delete-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "master-button secondary";
+  cancelButton.type = "button";
+  cancelButton.dataset.action = "close-sales-commission";
+  cancelButton.disabled = isSavingTransactionSalesCommission;
+  cancelButton.textContent = "Batal";
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "master-button primary";
+  submitButton.type = "button";
+  submitButton.dataset.action = "submit-sales-commission";
+  submitButton.dataset.role = "transaction-sales-commission-submit";
+  submitButton.disabled = isSavingTransactionSalesCommission
+    || preview.basisAmount <= 0
+    || preview.commissionPercent <= 0
+    || preview.commissionPercent > 100
+    || !String(transactionSalesCommission.recipientName || "").trim();
+  submitButton.textContent = isSavingTransactionSalesCommission ? "Menyimpan..." : "Simpan & Cetak Slip";
+
+  actions.append(cancelButton, submitButton);
+  dialog.append(title, warning, details, basisField, percentField, recipientField, noteField, actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function submitTransactionSalesCommission() {
+  if (!transactionSalesCommission || isSavingTransactionSalesCommission) {
+    return;
+  }
+
+  const preview = getTransactionSalesCommissionPreview();
+  if (preview.basisAmount <= 0 || preview.commissionPercent <= 0 || preview.commissionPercent > 100) {
+    showInlineNotice("Isi dasar dan persentase komisi yang valid.", "error");
+    return;
+  }
+  if (!String(transactionSalesCommission.recipientName || "").trim()) {
+    showInlineNotice("Nama marketing/penerima komisi wajib diisi.", "error");
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "warning",
+    title: "Konfirmasi Komisi Sales",
+    message: "Pastikan uang komisi benar-benar diserahkan kepada penerima sebelum dicatat.",
+    details: [
+      ["Transaksi", transactionSalesCommission.transactionId],
+      ["Dasar", `${getSalesCommissionBasisLabel(preview.basisType)} - ${formatCurrency(preview.basisAmount)}`],
+      ["Persentase", `${preview.commissionPercent}%`],
+      ["Nominal Komisi", formatCurrency(preview.commissionAmount)],
+      ["Penerima", transactionSalesCommission.recipientName],
+    ],
+    confirmLabel: "Catat & Cetak",
+    cancelLabel: "Periksa Lagi",
+    onConfirm: () => executeTransactionSalesCommission(),
+  });
+}
+
+async function executeTransactionSalesCommission() {
+  if (!transactionSalesCommission || isSavingTransactionSalesCommission) {
+    return { success: false };
+  }
+
+  isSavingTransactionSalesCommission = true;
+  renderRooms();
+
+  try {
+    const payload = {
+      action: "createSalesCommission",
+      transaction_id: transactionSalesCommission.transactionId,
+      basis_type: transactionSalesCommission.basisType || "grand_total",
+      commission_percent: Number(transactionSalesCommission.commissionPercent) || 0,
+      recipient_name: String(transactionSalesCommission.recipientName || "").trim(),
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+      note: String(transactionSalesCommission.note || "").trim(),
+    };
+    const data = await postApiAction(payload);
+
+    if (!data || (data.ok !== true && data.success !== true)) {
+      const message = data?.message || data?.error || "Komisi sales/marketing gagal dicatat.";
+      showInlineNotice(message, "error");
+      return { success: false, message };
+    }
+
+    const sourceTransaction = getTransactionById(transactionSalesCommission.transactionId) || data.transaction || {};
+    const commission = data.commission || {};
+    const updatedTransaction = {
+      ...sourceTransaction,
+      ...data.transaction,
+      sales_commission: commission,
+      sales_commission_amount: Number(commission.commission_amount || 0),
+    };
+    mergeUpdatedTransactionIntoState(updatedTransaction);
+
+    const slipText = formatSalesCommissionSlip58mm(commission, {
+      transaction: updatedTransaction,
+      printedBy: getLoggedInOperatorName() || "Kasir",
+      printedAt: new Date().toISOString(),
+    });
+    let printError = null;
+    try {
+      await printThermalText(slipText);
+    } catch (error) {
+      printError = error;
+    }
+
+    transactionSalesCommission = null;
+    showInlineNotice(
+      printError
+        ? `Komisi sales/marketing berhasil dicatat, tetapi slip thermal gagal dicetak: ${printError.message || "printer tidak merespons"}.`
+        : (data.message || "Komisi sales/marketing berhasil dicatat dan slip dikirim ke printer."),
+      printError ? "warning" : "success"
+    );
+    await Promise.allSettled([
+      loadTodayTransactions(),
+      loadTodayCashierClosings(),
+      loadOwnerDashboardSummary(),
+      loadOwnerPeriodReport(),
+    ]);
+    return { success: true };
+  } catch (error) {
+    const message = error.message || "Terjadi kendala saat mencatat komisi sales/marketing.";
+    showInlineNotice(message, "error");
+    return { success: false, message };
+  } finally {
+    isSavingTransactionSalesCommission = false;
     renderRooms();
   }
 }
@@ -28788,6 +29204,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "open-sales-commission") {
+    openTransactionSalesCommission(button.dataset.transactionId || "");
+    return;
+  }
+
   if (action === "close-transaction-package-correction") {
     closeTransactionPackageCorrection();
     return;
@@ -28803,6 +29224,11 @@ async function handleRoomAction(event) {
     return;
   }
 
+  if (action === "close-sales-commission") {
+    closeTransactionSalesCommission();
+    return;
+  }
+
   if (action === "submit-transaction-package-correction") {
     submitTransactionPackageCorrection();
     return;
@@ -28815,6 +29241,11 @@ async function handleRoomAction(event) {
 
   if (action === "submit-transaction-manual-discount") {
     submitTransactionManualDiscount();
+    return;
+  }
+
+  if (action === "submit-sales-commission") {
+    submitTransactionSalesCommission();
     return;
   }
 
@@ -29701,6 +30132,12 @@ function handleDashboardInput(event) {
   if (action === "update-transaction-manual-discount") {
     updateTransactionManualDiscount(field.dataset.field || "", field.value);
     syncTransactionManualDiscountControls();
+    return;
+  }
+
+  if (action === "update-sales-commission") {
+    updateTransactionSalesCommission(field.dataset.field || "", field.value);
+    syncTransactionSalesCommissionControls();
     return;
   }
 

@@ -241,6 +241,23 @@ function serializeTransaction(row) {
   };
 }
 
+function serializeSalesCommission(row) {
+  if (!row) return null;
+  return {
+    commission_id: row.commission_id,
+    transaction_id: row.transaction_id,
+    operational_date: row.operational_date ? new Date(row.operational_date).toISOString().split('T')[0] : '',
+    basis_type: row.basis_type || 'grand_total',
+    basis_amount: Number(row.basis_amount || 0),
+    commission_percent: Number(row.commission_percent || 0),
+    commission_amount: Number(row.commission_amount || 0),
+    recipient_name: row.recipient_name || '',
+    cashier_name: row.cashier_name || '',
+    note: row.note || '',
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+  };
+}
+
 async function validateOwnerPin(pin) {
   if (!pin) throw new Error('PIN owner wajib diisi.');
 
@@ -352,12 +369,38 @@ async function ensureTransactionCorrectionSchema(client) {
       corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS sales_commission_logs (
+      commission_id VARCHAR(80) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL UNIQUE REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+      operational_date DATE NOT NULL,
+      basis_type VARCHAR(30) NOT NULL DEFAULT 'grand_total',
+      basis_amount NUMERIC(12,2) NOT NULL,
+      commission_percent NUMERIC(7,4) NOT NULL,
+      commission_amount NUMERIC(12,2) NOT NULL,
+      recipient_name VARCHAR(100) NOT NULL,
+      cashier_name VARCHAR(100) NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'sales_commission_logs_basis_type_check'
+      ) THEN
+        ALTER TABLE sales_commission_logs ADD CONSTRAINT sales_commission_logs_basis_type_check
+        CHECK (basis_type IN ('grand_total', 'room_total', 'fnb_total'));
+      END IF;
+    END $$;
+
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
     ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS sales_commission_total NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS net_revenue_after_commission NUMERIC(12,2) DEFAULT 0;
   `);
 }
 
@@ -473,6 +516,7 @@ async function getTodayTransactions(req, res) {
   try {
     const { period, start_date, end_date } = req.query;
     const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
+    await ensureTransactionCorrectionSchema(db);
 
     const result = await db.query(`
       SELECT * FROM transactions
@@ -481,7 +525,27 @@ async function getTodayTransactions(req, res) {
       ORDER BY created_at DESC
     `, [startDate, endDate]);
 
-    const transactions = result.rows.map(serializeTransaction);
+    const commissionRes = await db.query(`
+      SELECT *
+      FROM sales_commission_logs
+      WHERE operational_date >= $1 AND operational_date <= $2
+      ORDER BY created_at DESC
+    `, [startDate, endDate]);
+    const commissionsByTransactionId = new Map(
+      commissionRes.rows.map((row) => [row.transaction_id, row])
+    );
+    const transactions = result.rows.map((row) => {
+      const serialized = serializeTransaction(row);
+      const commission = commissionsByTransactionId.get(row.transaction_id);
+      if (commission) {
+        serialized.sales_commission = serializeSalesCommission(commission);
+        serialized.sales_commission_amount = Number(commission.commission_amount || 0);
+      } else {
+        serialized.sales_commission = null;
+        serialized.sales_commission_amount = 0;
+      }
+      return serialized;
+    });
 
     let cashRevenue = 0;
     let transferRevenue = 0;
@@ -492,6 +556,7 @@ async function getTodayTransactions(req, res) {
     let unpaidTransactions = 0;
     let cashTransactions = 0;
     let transferTransactions = 0;
+    let salesCommissionTotal = 0;
 
     transactions.forEach(t => {
       const transactionTotal = Number(t.grand_total) || 0;
@@ -500,6 +565,7 @@ async function getTodayTransactions(req, res) {
         paidTransactions += 1;
         totalRevenuePaid += transactionTotal;
         totalRevenueAll += transactionTotal;
+        salesCommissionTotal += Number(t.sales_commission_amount || 0);
 
         const breakdown = getPaymentBreakdown(t);
         if (breakdown.cash_amount > 0) {
@@ -534,7 +600,9 @@ async function getTodayTransactions(req, res) {
         total_revenue_paid: totalRevenuePaid,
         total_revenue_unpaid: unpaidRevenue,
         total_revenue_all: totalRevenueAll,
-        total_revenue: totalRevenuePaid
+        total_revenue: totalRevenuePaid,
+        sales_commission_total: salesCommissionTotal,
+        net_revenue_after_commission: totalRevenuePaid - salesCommissionTotal
       },
       operational_date_start: startDate,
       operational_date_end: endDate
@@ -1950,6 +2018,117 @@ async function updateTransactionLcDurations(req, res, payload) {
   }
 }
 
+async function createSalesCommission(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const recipientName = String(payload.recipient_name || payload.marketing_name || '').trim();
+    const cashierName = String(payload.cashier_name || payload.created_by || 'Kasir').trim();
+    const basisType = String(payload.basis_type || 'grand_total').trim();
+    const note = String(payload.note || '').trim();
+    const commissionPercent = money(payload.commission_percent ?? payload.percent ?? 0);
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (!recipientName) throw new Error('Nama sales/marketing penerima komisi wajib diisi.');
+    if (!['grand_total', 'room_total', 'fnb_total'].includes(basisType)) {
+      throw new Error('Dasar komisi wajib total akhir, room, atau F&B.');
+    }
+    if (commissionPercent <= 0 || commissionPercent > 100) {
+      throw new Error('Persentase komisi wajib lebih dari 0 dan maksimal 100.');
+    }
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const trx = trxRes.rows[0];
+
+    if (String(trx.payment_status || '').toLowerCase() !== 'paid') {
+      throw new Error('Komisi sales/marketing hanya bisa dibuat untuk transaksi lunas.');
+    }
+
+    const existingRes = await client.query(
+      'SELECT * FROM sales_commission_logs WHERE transaction_id = $1',
+      [transactionId]
+    );
+    if (existingRes.rowCount > 0) {
+      throw new Error('Komisi untuk transaksi ini sudah pernah dicatat.');
+    }
+
+    const basisAmount = basisType === 'room_total'
+      ? money(trx.room_total)
+      : basisType === 'fnb_total'
+        ? money(trx.fnb_total)
+        : money(trx.grand_total);
+    if (basisAmount <= 0) {
+      throw new Error('Dasar nominal komisi harus lebih dari 0.');
+    }
+
+    const commissionAmount = money(basisAmount * commissionPercent / 100);
+    const commissionId = `COMM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const insertRes = await client.query(`
+      INSERT INTO sales_commission_logs (
+        commission_id, transaction_id, operational_date, basis_type, basis_amount,
+        commission_percent, commission_amount, recipient_name, cashier_name, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+    `, [
+      commissionId,
+      transactionId,
+      trx.operational_date || getOperationalDate(),
+      basisType,
+      basisAmount,
+      commissionPercent,
+      commissionAmount,
+      recipientName,
+      cashierName,
+      note,
+    ]);
+    const commission = insertRes.rows[0];
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high',
+      domain: 'finance',
+      event_type: 'sales_commission_paid',
+      source_action: 'createSalesCommission',
+      source_table: 'sales_commission_logs',
+      source_record_id: commissionId,
+      initiated_by: cashierName,
+      target_type: 'transaction',
+      target_id: transactionId,
+      transaction_id: transactionId,
+      room_id: trx.room_id,
+      room_name: trx.room_name,
+      reason: note || `Komisi sales/marketing ${commissionPercent}% untuk ${recipientName}`,
+      amount_before: money(trx.grand_total),
+      amount_after: money(trx.grand_total - commissionAmount),
+      old_value: { transaction_total: money(trx.grand_total) },
+      new_value: serializeSalesCommission(commission),
+      metadata: { basis_type: basisType, commission_percent: commissionPercent }
+    });
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('sales_commission_logs', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [commissionId, JSON.stringify(serializeSalesCommission(commission))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Komisi sales/marketing berhasil dicatat.',
+      commission: serializeSalesCommission(commission),
+      transaction: serializeTransaction(trx),
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function createManualOutageTransaction(req, res, payload) {
   let client;
   try {
@@ -2106,6 +2285,7 @@ module.exports = {
   correctTransactionPackage,
   correctTransactionFreeRoom,
   applyTransactionManualDiscount,
+  createSalesCommission,
   deleteTransaction,
   getTransactionLcEditDetails: getTransactionLcDetails,
   getTransactionLcReceiptDetails: getTransactionLcDetails,

@@ -21,8 +21,29 @@ function getPaymentBreakdown(row) {
   return { cash_amount: 0, transfer_amount: 0 };
 }
 
+async function ensureClosingCommissionSchema(client = db) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS sales_commission_logs (
+      commission_id VARCHAR(80) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL UNIQUE REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+      operational_date DATE NOT NULL,
+      basis_type VARCHAR(30) NOT NULL DEFAULT 'grand_total',
+      basis_amount NUMERIC(12,2) NOT NULL,
+      commission_percent NUMERIC(7,4) NOT NULL,
+      commission_amount NUMERIC(12,2) NOT NULL,
+      recipient_name VARCHAR(100) NOT NULL,
+      cashier_name VARCHAR(100) NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS sales_commission_total NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS net_revenue_after_commission NUMERIC(12,2) DEFAULT 0;
+  `);
+}
+
 async function getTodayCashierClosings(req, res) {
   try {
+    await ensureClosingCommissionSchema();
     const { period, start_date, end_date } = req.query;
     const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
 
@@ -46,6 +67,8 @@ async function getTodayCashierClosings(req, res) {
       cash_actual: Number(c.cash_actual),
       cash_difference: Number(c.cash_difference),
       transfer_revenue: Number(c.transfer_revenue),
+      sales_commission_total: Number(c.sales_commission_total || 0),
+      net_revenue_after_commission: Number(c.net_revenue_after_commission || 0),
       unpaid_revenue: Number(c.unpaid_revenue),
       total_revenue: Number(c.total_revenue),
       note: c.note || '',
@@ -71,6 +94,7 @@ async function saveCashierClosing(req, res, payload) {
       ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
       ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
     `);
+    await ensureClosingCommissionSchema(client);
     const { cash_actual = 0, note = '', cashier_name = 'Kasir' } = payload;
     const todayOpDate = getOperationalDate();
 
@@ -90,6 +114,17 @@ async function saveCashierClosing(req, res, payload) {
     let transferRevenue = 0;
     let unpaidRevenue = 0;
     let totalRevenue = 0;
+    let salesCommissionTotal = 0;
+
+    const commissionRes = await client.query(`
+      SELECT COALESCE(SUM(scl.commission_amount), 0) AS total
+      FROM sales_commission_logs scl
+      JOIN transactions t ON t.transaction_id = scl.transaction_id
+      WHERE scl.operational_date = $1
+        AND t.payment_status = 'paid'
+        AND t.payment_status <> 'cancelled'
+    `, [todayOpDate]);
+    salesCommissionTotal = Number(commissionRes.rows[0]?.total || 0);
 
     trxs.forEach(t => {
       const gTotal = Number(t.grand_total || 0);
@@ -114,7 +149,9 @@ async function saveCashierClosing(req, res, payload) {
     });
 
     const cashActualNum = Number(cash_actual || 0);
-    const cashDiff = cashActualNum - cashExpected;
+    const cashExpectedAfterCommission = Math.max(0, cashExpected - salesCommissionTotal);
+    const cashDiff = cashActualNum - cashExpectedAfterCommission;
+    const netRevenueAfterCommission = Math.max(0, paidRevenue - salesCommissionTotal);
     const closingId = `CLS-${Date.now()}`;
 
     await client.query(`
@@ -122,9 +159,9 @@ async function saveCashierClosing(req, res, payload) {
         closing_id, closing_date, cashier_name, total_transactions, paid_transactions,
         unpaid_transactions, cash_transactions, transfer_transactions, paid_revenue,
         cash_expected, cash_actual, cash_difference, transfer_revenue, unpaid_revenue,
-        total_revenue, note
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-    `, [closingId, todayOpDate, cashier_name, totalTrx, paidTrx, unpaidTrx, cashTrx, transferTrx, paidRevenue, cashExpected, cashActualNum, cashDiff, transferRevenue, unpaidRevenue, totalRevenue, note]);
+        total_revenue, note, sales_commission_total, net_revenue_after_commission
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    `, [closingId, todayOpDate, cashier_name, totalTrx, paidTrx, unpaidTrx, cashTrx, transferTrx, paidRevenue, cashExpectedAfterCommission, cashActualNum, cashDiff, transferRevenue, unpaidRevenue, totalRevenue, note, salesCommissionTotal, netRevenueAfterCommission]);
 
     for (const t of trxs) {
       await client.query(`
@@ -167,9 +204,13 @@ async function saveCashierClosing(req, res, payload) {
       message: `Tutup kasir tanggal ${todayOpDate} berhasil disimpan.`,
       closing_id: closingId,
       closing_date: todayOpDate,
-      cash_expected: cashExpected,
+      cash_expected: cashExpectedAfterCommission,
+      cash_expected_before_commission: cashExpected,
+      cash_expected_after_commission: cashExpectedAfterCommission,
       cash_actual: cashActualNum,
       cash_difference: cashDiff,
+      sales_commission_total: salesCommissionTotal,
+      net_revenue_after_commission: netRevenueAfterCommission,
       total_revenue: totalRevenue
     });
   } catch (err) {
@@ -207,15 +248,22 @@ async function getCashierClosingDetails(req, res) {
 
 async function validateCashierClosingSnapshot(req, res, payload) {
   try {
+    await ensureClosingCommissionSchema();
     const closingDate = payload.closing_date || getOperationalDate();
     const trxRes = await db.query("SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total FROM transactions WHERE operational_date = $1 AND payment_status <> 'cancelled'", [closingDate]);
+    const commissionRes = await db.query('SELECT COALESCE(SUM(commission_amount), 0) AS total FROM sales_commission_logs WHERE operational_date = $1', [closingDate]);
     const existingRes = await db.query('SELECT closing_id FROM cashier_closings WHERE closing_date = $1', [closingDate]);
     return successResponse(res, {
       valid: existingRes.rowCount === 0,
       closing_date: closingDate,
       already_closed: existingRes.rowCount > 0,
       transaction_count: Number(trxRes.rows[0].count || 0),
-      total_revenue: Number(trxRes.rows[0].total || 0)
+      total_revenue: Number(trxRes.rows[0].total || 0),
+      sales_commission_total: Number(commissionRes.rows[0].total || 0),
+      net_revenue_after_commission: Math.max(
+        0,
+        Number(trxRes.rows[0].total || 0) - Number(commissionRes.rows[0].total || 0)
+      )
     });
   } catch (err) {
     return errorResponse(res, err.message);

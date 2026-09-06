@@ -28,6 +28,12 @@ function loadAppFunctions() {
     function getTransactionTransferAmount(t) {
       return Number(t?.transfer_amount || 0);
     }
+    function getTransactionSalesCommissionAmount(t) {
+      const fromFlat = Number(t?.sales_commission_amount || 0);
+      if (Number.isFinite(fromFlat) && fromFlat > 0) return fromFlat;
+      const fromObject = Number(t?.sales_commission?.commission_amount || 0);
+      return Number.isFinite(fromObject) && fromObject > 0 ? fromObject : 0;
+    }
   ` + appSource.slice(
     appSource.indexOf('function getTransactionPaymentBreakdownForSummary'),
     appSource.indexOf('function createCashierClosingCard')
@@ -66,6 +72,8 @@ async function run() {
     assert.strictEqual(summary.transferRevenue, 465000, 'Transfer revenue must be 465.000');
     assert.strictEqual(summary.transferCount, 1, 'Transfer count must be 1');
     assert.strictEqual(summary.unpaidRevenue, 0, 'Unpaid revenue must be 0');
+    assert.strictEqual(summary.salesCommissionTotal, 0, 'Commission must default to 0');
+    assert.strictEqual(summary.netPaidRevenue, 1465000, 'Net paid revenue should equal paid revenue without commission');
 
     const preview = calculateCashierClosingPreview(transactions);
     assert.strictEqual(preview.paidRevenue, 1465000, 'Closing paid revenue must be 1.465.000');
@@ -75,6 +83,8 @@ async function run() {
     assert.strictEqual(preview.transferTransactions, 1, 'Closing transfer transactions must be 1');
     assert.strictEqual(preview.cashActual, 1000000);
     assert.strictEqual(preview.cashDifference, 0, 'Cash difference should be 0 when actual matches expected');
+    assert.strictEqual(preview.salesCommissionTotal, 0, 'Closing commission must default to 0');
+    assert.strictEqual(preview.netRevenueAfterCommission, 1465000, 'Closing net revenue should equal paid revenue without commission');
 
     console.log('  PASS: TRX-1788281277792 split bill allocates 1M cash and 465k transfer correctly');
   }
@@ -104,6 +114,31 @@ async function run() {
     assert.strictEqual(preview.unpaidRevenue, 150000);
 
     console.log('  PASS: Mixed transactions aggregate cash, transfer, split, and unpaid perfectly');
+  }
+
+  // Test 3: Sales commission reduces net revenue and cash expectation
+  {
+    const transactions = [
+      {
+        transaction_id: 'TRX-COMM-1',
+        grand_total: 1260000,
+        payment_method: 'cash',
+        payment_status: 'paid',
+        sales_commission_amount: 63000
+      }
+    ];
+
+    const summary = calculateCashierRevenueSummary(transactions);
+    assert.strictEqual(summary.paidRevenue, 1260000);
+    assert.strictEqual(summary.salesCommissionTotal, 63000);
+    assert.strictEqual(summary.netPaidRevenue, 1197000);
+
+    const preview = calculateCashierClosingPreview(transactions);
+    assert.strictEqual(preview.cashExpected, 1260000);
+    assert.strictEqual(preview.cashExpectedAfterCommission, 1197000);
+    assert.strictEqual(preview.netRevenueAfterCommission, 1197000);
+
+    console.log('  PASS: Sales commission reduces net revenue and cashier cash expectation');
   }
 
   console.log('All Split Bill Summary UI Tests Passed Successfully!');

@@ -281,6 +281,20 @@ CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS sales_commission_logs (
+    commission_id VARCHAR(80) PRIMARY KEY,
+    transaction_id VARCHAR(50) NOT NULL UNIQUE REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+    operational_date DATE NOT NULL,
+    basis_type VARCHAR(30) NOT NULL DEFAULT 'grand_total' CHECK (basis_type IN ('grand_total', 'room_total', 'fnb_total')),
+    basis_amount NUMERIC(12,2) NOT NULL,
+    commission_percent NUMERIC(7,4) NOT NULL,
+    commission_amount NUMERIC(12,2) NOT NULL,
+    recipient_name VARCHAR(100) NOT NULL,
+    cashier_name VARCHAR(100) NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS transaction_lines (
     transaction_line_id VARCHAR(100) PRIMARY KEY,
     transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
@@ -568,6 +582,8 @@ ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discoun
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS sales_commission_total NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS net_revenue_after_commission NUMERIC(12,2) DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS cashier_closing_fnb_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

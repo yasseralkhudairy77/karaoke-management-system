@@ -210,6 +210,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.correctTransactionFreeRoom(req, res, payload);
     case 'applyTransactionManualDiscount':
       return transactionsController.applyTransactionManualDiscount(req, res, payload);
+    case 'createSalesCommission':
+      return transactionsController.createSalesCommission(req, res, payload);
     case 'updateTransactionLcDurations':
       return transactionsController.updateTransactionLcDurations(req, res, payload);
     case 'deleteTransaction':

@@ -6,6 +6,7 @@ async function run() {
   const {
     buildReceiptData,
     formatReceipt58mm,
+    formatSalesCommissionSlip58mm,
     formatStockHandoverSlip58mm
   } = await import('file://' + receiptModulePath.replace(/\\/g, '/'));
 
@@ -241,6 +242,40 @@ async function run() {
     assert(formatted.includes('Manager 1'));
     assert(formatted.includes('002-06-09-2026'));
     console.log('  PASS: Stock handover thermal slip renders movement identity and signature fields');
+  }
+
+  // Test 6: Sales commission thermal handover slip
+  {
+    const formatted = formatSalesCommissionSlip58mm({
+      commission_id: 'COMM-1',
+      transaction_id: 'TRX-1788710023635',
+      basis_type: 'grand_total',
+      basis_amount: 1260000,
+      commission_percent: 5,
+      commission_amount: 63000,
+      recipient_name: 'Riko Marketing',
+      cashier_name: 'Manager 1',
+      created_at: '2026-09-07T00:24:24.000Z',
+      note: 'Komisi booking customer VIP'
+    }, {
+      transaction: {
+        transaction_id: 'TRX-1788710023635',
+        room_name: 'Ruangan 3 - VIP 3',
+        grand_total: 1260000,
+      },
+      printedBy: 'Manager 1',
+      printedAt: '2026-09-07T00:25:00.000Z'
+    });
+
+    assert(formatted.includes('KOMISI SALES/MARKETING'));
+    assert(formatted.includes('TRX-1788710023635'));
+    assert(formatted.includes('Rp1.260.000'));
+    assert(formatted.includes('5%'));
+    assert(formatted.includes('Rp63.000'));
+    assert(formatted.includes('Riko Marketing'));
+    assert(formatted.includes('Diserahkan Oleh'));
+    assert(formatted.includes('Diterima Oleh'));
+    console.log('  PASS: Sales commission thermal handover slip renders calculation and signatures');
   }
 
   console.log('All Receipt Package LC Tests Passed Successfully!');
