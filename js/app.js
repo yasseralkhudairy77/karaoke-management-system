@@ -9153,34 +9153,6 @@ function createRoomBookingInfoElement(room) {
     rows.unshift(["Paket", roomPackage ? roomPackage.package_name : room.package_id]);
   }
 
-  const lcIds = String(room.lc_ids || "").trim();
-  if (lcIds) {
-    const ids = lcIds.split(",").map(id => id.trim()).filter(Boolean);
-    const pendingCount = ids.filter(id => id === "PENDING").length;
-    const resolvedIds = ids.filter(id => id !== "PENDING");
-    
-    let displayStr = "";
-    if (pendingCount > 0) {
-      const resolvedNames = resolvedIds.map(id => {
-        const found = lcs.find(l => l.lc_id === id);
-        return found ? found.lc_name : id.replace("LC-", "");
-      });
-      const parts = [];
-      if (resolvedNames.length > 0) {
-        parts.push(resolvedNames.join(", "));
-      }
-      parts.push(`${pendingCount} Orang (Belum Dipilih)`);
-      displayStr = parts.join(" + ");
-    } else {
-      displayStr = resolvedIds.map(id => {
-        const found = lcs.find(l => l.lc_id === id);
-        return found ? found.lc_name : id.replace("LC-", "");
-      }).join(", ");
-    }
-    
-    rows.push(["LC Sesi", displayStr]);
-  }
-
   rows.forEach(([labelText, valueText]) => {
     const row = document.createElement("p");
     row.className = "room-booking-row";
@@ -9196,6 +9168,11 @@ function createRoomBookingInfoElement(room) {
     row.append(label, value);
     info.appendChild(row);
   });
+
+  const lcSessionItems = getRoomLcSessionDisplayItems(room);
+  if (lcSessionItems.length > 0) {
+    info.appendChild(createRoomLcSessionRowElement(lcSessionItems));
+  }
 
   const lcReminder = document.createElement("p");
   lcReminder.className = "room-lc-reminder";
@@ -9233,6 +9210,72 @@ function createRoomBookingInfoElement(room) {
   info.appendChild(countdown);
 
   return info;
+}
+
+function getRoomLcSessionDisplayItems(room) {
+  const lcIds = String(room.lc_ids || "").trim();
+
+  if (!lcIds) {
+    return [];
+  }
+
+  return lcIds
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => {
+      if (id === "PENDING") {
+        return {
+          label: "Belum Dipilih",
+          title: "LC belum dipilih",
+          isPending: true,
+        };
+      }
+
+      const found = lcs.find((lc) => lc.lc_id === id);
+      const label = found ? found.lc_name : id.replace("LC-", "");
+
+      return {
+        label,
+        title: label,
+        isPending: false,
+      };
+    });
+}
+
+function createRoomLcSessionRowElement(lcItems) {
+  const row = document.createElement("div");
+  row.className = "room-booking-row room-lc-session-row";
+
+  const label = document.createElement("span");
+  label.className = "room-booking-label";
+  label.textContent = "LC Sesi:";
+
+  const chips = document.createElement("div");
+  chips.className = "room-lc-session-chips";
+  chips.title = lcItems.map((item, index) => `${index + 1}. ${item.label}`).join("\n");
+
+  const visibleItems = lcItems.slice(0, 4);
+  const hiddenItems = lcItems.slice(4);
+
+  visibleItems.forEach((item) => {
+    const chip = document.createElement("span");
+    chip.className = item.isPending ? "room-lc-session-chip pending" : "room-lc-session-chip";
+    chip.textContent = item.label;
+    chip.title = item.title;
+    chips.appendChild(chip);
+  });
+
+  if (hiddenItems.length > 0) {
+    const moreChip = document.createElement("span");
+    moreChip.className = "room-lc-session-chip more";
+    moreChip.textContent = `+${hiddenItems.length} LC`;
+    moreChip.title = hiddenItems.map((item, index) => `${index + 1}. ${item.label}`).join("\n");
+    chips.appendChild(moreChip);
+  }
+
+  row.append(label, chips);
+  return row;
 }
 
 function createDurationSelectionElement(room) {

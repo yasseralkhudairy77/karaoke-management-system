@@ -7877,6 +7877,55 @@ textarea.action-confirmation-input {
   text-align: right;
 }
 
+.room-lc-session-row {
+  align-items: flex-start;
+}
+
+.room-lc-session-row .room-booking-label {
+  padding-top: 3px;
+}
+
+.room-lc-session-chips {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+  max-width: 170px;
+}
+
+.room-lc-session-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 78px;
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid rgba(254, 240, 138, 0.34);
+  border-radius: 8px;
+  background: rgba(254, 240, 138, 0.13);
+  color: #fff7ad;
+  overflow: hidden;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-lc-session-chip.more {
+  border-color: rgba(167, 139, 250, 0.42);
+  background: rgba(124, 58, 237, 0.2);
+  color: #ddd6fe;
+}
+
+.room-lc-session-chip.pending {
+  max-width: 104px;
+  border-color: rgba(253, 186, 116, 0.5);
+  background: rgba(154, 52, 18, 0.28);
+  color: #fed7aa;
+}
+
 .room-booking-row.room-countdown {
   align-items: center;
   padding-top: 5px;
