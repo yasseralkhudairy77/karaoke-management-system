@@ -123,15 +123,23 @@ function getPaymentBreakdown(row) {
   }
 
   if (paymentMethod === 'split') {
+    if (storedCash + storedTransfer === grandTotal) {
+      return {
+        cash_amount: storedCash,
+        transfer_amount: storedTransfer
+      };
+    }
+    const safeCash = Math.min(grandTotal, Math.max(0, storedCash));
+    const safeTransfer = Math.max(0, money(grandTotal - safeCash));
     return {
-      cash_amount: storedCash,
-      transfer_amount: storedTransfer
+      cash_amount: safeCash,
+      transfer_amount: safeTransfer
     };
   }
 
   if (paymentMethod === 'cash') {
     return {
-      cash_amount: storedCash > 0 ? storedCash : grandTotal,
+      cash_amount: grandTotal,
       transfer_amount: 0
     };
   }
@@ -139,7 +147,7 @@ function getPaymentBreakdown(row) {
   if (paymentMethod === 'transfer' || paymentMethod === 'qris') {
     return {
       cash_amount: 0,
-      transfer_amount: storedTransfer > 0 ? storedTransfer : grandTotal
+      transfer_amount: grandTotal
     };
   }
 
@@ -189,6 +197,25 @@ function normalizePaymentBreakdown(paymentMethod, grandTotal, payload = {}) {
     cash_amount: cashAmount,
     transfer_amount: transferAmount
   };
+}
+
+function adjustPaymentBreakdownForCorrection(paymentMethod, newGrandTotal, currentCash = 0, currentTransfer = 0) {
+  const total = money(newGrandTotal);
+  const method = String(paymentMethod || 'cash').toLowerCase().trim();
+
+  if (method === 'cash') {
+    return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
+  }
+  if (method === 'transfer' || method === 'qris') {
+    return { payment_method: 'transfer', cash_amount: 0, transfer_amount: total };
+  }
+  if (method === 'split') {
+    const cash = money(currentCash);
+    const safeCash = Math.min(total, Math.max(0, cash));
+    const safeTransfer = Math.max(0, money(total - safeCash));
+    return { payment_method: 'split', cash_amount: safeCash, transfer_amount: safeTransfer };
+  }
+  return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
 }
 
 function serializeTransaction(row) {
@@ -942,6 +969,12 @@ async function correctTransactionPackage(req, res, payload) {
     const grandTotal = packageTotal + fnbTotal + lcTotal;
     const durationMinutes = toNumber(pkg.duration_minutes, oldTransaction.duration_minutes);
     const ratePerHour = durationMinutes > 0 ? Math.ceil(packageTotal / Math.ceil(durationMinutes / 60 || 1)) : 0;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
 
     const updatedRes = await client.query(`
       UPDATE transactions
@@ -953,10 +986,12 @@ async function correctTransactionPackage(req, res, payload) {
           rate_per_hour = $5,
           room_total = $3,
           grand_total = $6,
+          cash_amount = $7,
+          transfer_amount = $8,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $7,
-          correction_note = $8
-      WHERE transaction_id = $9
+          corrected_by = $9,
+          correction_note = $10
+      WHERE transaction_id = $11
       RETURNING *
     `, [
       packageId,
@@ -965,6 +1000,8 @@ async function correctTransactionPackage(req, res, payload) {
       Math.floor(durationMinutes || oldTransaction.duration_minutes || 0),
       ratePerHour,
       grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
       correctedBy,
       reason,
       transactionId
@@ -990,7 +1027,9 @@ async function correctTransactionPackage(req, res, payload) {
         room_total: toNumber(oldTransaction.room_total),
         fnb_total: fnbTotal,
         lc_total: lcTotal,
-        grand_total: toNumber(oldTransaction.grand_total)
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount)
       }),
       JSON.stringify({
         booking_mode: 'package_correction',
@@ -1002,7 +1041,9 @@ async function correctTransactionPackage(req, res, payload) {
         room_total: packageTotal,
         fnb_total: fnbTotal,
         lc_total: lcTotal,
-        grand_total: grandTotal
+        grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount
       }),
       reason,
       correctedBy
@@ -1090,6 +1131,12 @@ async function correctTransactionFreeRoom(req, res, payload) {
     const fnbTotal = toNumber(oldTransaction.fnb_total);
     const lcTotal = toNumber(oldTransaction.lc_total);
     const grandTotal = nextRoomTotal + fnbTotal + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
 
     const updatedRes = await client.query(`
       UPDATE transactions
@@ -1099,10 +1146,12 @@ async function correctTransactionFreeRoom(req, res, payload) {
           room_discount_amount = $3,
           room_total = $4,
           grand_total = $5,
+          cash_amount = $6,
+          transfer_amount = $7,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $6,
-          correction_note = $7
-      WHERE transaction_id = $8
+          corrected_by = $8,
+          correction_note = $9
+      WHERE transaction_id = $10
       RETURNING *
     `, [
       billableRoomMinutes,
@@ -1110,6 +1159,8 @@ async function correctTransactionFreeRoom(req, res, payload) {
       discountAmount,
       nextRoomTotal,
       grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
       correctedBy,
       reason,
       transactionId
@@ -1135,7 +1186,9 @@ async function correctTransactionFreeRoom(req, res, payload) {
         room_total: toNumber(oldTransaction.room_total),
         fnb_total: fnbTotal,
         lc_total: lcTotal,
-        grand_total: toNumber(oldTransaction.grand_total)
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount)
       }),
       JSON.stringify({
         booking_mode: 'free_room_correction',
@@ -1147,7 +1200,9 @@ async function correctTransactionFreeRoom(req, res, payload) {
         room_total: nextRoomTotal,
         fnb_total: fnbTotal,
         lc_total: lcTotal,
-        grand_total: grandTotal
+        grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount
       }),
       reason,
       correctedBy
@@ -1238,27 +1293,37 @@ async function applyTransactionManualDiscount(req, res, payload) {
     const nextManualDiscountRoom = oldManualDiscountRoom + roomDiscountApplied;
     const nextManualDiscountFnb = oldManualDiscountFnb + fnbDiscountApplied;
     const grandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
 
     const updatedRes = await client.query(`
       UPDATE transactions
       SET room_total = $1,
           fnb_total = $2,
           grand_total = $3,
-          manual_discount = $4,
-          manual_discount_room = $5,
-          manual_discount_fnb = $6,
-          manual_discount_reason = $7,
-          manual_discount_by = $8,
+          cash_amount = $4,
+          transfer_amount = $5,
+          manual_discount = $6,
+          manual_discount_room = $7,
+          manual_discount_fnb = $8,
+          manual_discount_reason = $9,
+          manual_discount_by = $10,
           manual_discount_at = CURRENT_TIMESTAMP,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $8,
-          correction_note = $7
-      WHERE transaction_id = $9
+          corrected_by = $10,
+          correction_note = $9
+      WHERE transaction_id = $11
       RETURNING *
     `, [
       nextRoomTotal,
       nextFnbTotal,
       grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
       nextManualDiscount,
       nextManualDiscountRoom,
       nextManualDiscountFnb,
@@ -1282,6 +1347,8 @@ async function applyTransactionManualDiscount(req, res, payload) {
         fnb_total: oldFnbTotal,
         lc_total: lcTotal,
         grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount),
         manual_discount: oldManualDiscount,
         manual_discount_room: oldManualDiscountRoom,
         manual_discount_fnb: oldManualDiscountFnb,
@@ -1292,6 +1359,8 @@ async function applyTransactionManualDiscount(req, res, payload) {
         fnb_total: nextFnbTotal,
         lc_total: lcTotal,
         grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount,
         manual_discount: nextManualDiscount,
         manual_discount_room: nextManualDiscountRoom,
         manual_discount_fnb: nextManualDiscountFnb,
@@ -1580,21 +1649,31 @@ async function voidTransactionFnbOrder(req, res, payload) {
     const nextPaymentStatus = (isGeneralFnbOnly && newGrandTotal === 0) ? 'cancelled' : oldTransaction.payment_status;
 
     const voidedNames = itemsToVoid.map(it => `${it.menu_name} (${it.quantity}x)`).join(', ');
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      newGrandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
 
     const updatedRes = await client.query(`
       UPDATE transactions
       SET fnb_total = $1,
           grand_total = $2,
-          fnb_order_ids = $3,
-          payment_status = $4,
+          cash_amount = $3,
+          transfer_amount = $4,
+          fnb_order_ids = $5,
+          payment_status = $6,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $5,
-          correction_note = $6
-      WHERE transaction_id = $7
+          corrected_by = $7,
+          correction_note = $8
+      WHERE transaction_id = $9
       RETURNING *
     `, [
       newFnbTotal,
       newGrandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
       remainingActiveOrderIds.join(','),
       nextPaymentStatus,
       voidedBy,
@@ -1616,12 +1695,16 @@ async function voidTransactionFnbOrder(req, res, payload) {
       JSON.stringify({
         fnb_total: toNumber(oldTransaction.fnb_total),
         grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount),
         fnb_order_ids: oldTransaction.fnb_order_ids || '',
         voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal }))
       }),
       JSON.stringify({
         fnb_total: newFnbTotal,
         grand_total: newGrandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount,
         fnb_order_ids: remainingActiveOrderIds.join(','),
         voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal })),
         restored_stock: restoredMovements
@@ -1982,16 +2065,25 @@ async function updateTransactionLcDurations(req, res, payload) {
     }
 
     const grandTotal = Number(trx.room_total || 0) + Number(trx.fnb_total || 0) + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      trx.payment_method,
+      grandTotal,
+      trx.cash_amount,
+      trx.transfer_amount
+    );
+
     const updatedRes = await client.query(`
       UPDATE transactions
       SET lc_total = $1,
           grand_total = $2,
+          cash_amount = $3,
+          transfer_amount = $4,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $3,
-          correction_note = $4
-      WHERE transaction_id = $5
+          corrected_by = $5,
+          correction_note = $6
+      WHERE transaction_id = $7
       RETURNING *
-    `, [lcTotal, grandTotal, changedBy, reason, transactionId]);
+    `, [lcTotal, grandTotal, paymentBreakdown.cash_amount, paymentBreakdown.transfer_amount, changedBy, reason, transactionId]);
     const updatedTransaction = updatedRes.rows[0];
 
     const correctionId = `TCOR-LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -2003,8 +2095,8 @@ async function updateTransactionLcDurations(req, res, payload) {
     `, [
       correctionId,
       transactionId,
-      JSON.stringify({ lc_total: oldLcTotal, grand_total: oldGrandTotal, items: oldItems }),
-      JSON.stringify({ lc_total: lcTotal, grand_total: grandTotal, items: newItems }),
+      JSON.stringify({ lc_total: oldLcTotal, grand_total: oldGrandTotal, cash_amount: Number(trx.cash_amount || 0), transfer_amount: Number(trx.transfer_amount || 0), items: oldItems }),
+      JSON.stringify({ lc_total: lcTotal, grand_total: grandTotal, cash_amount: paymentBreakdown.cash_amount, transfer_amount: paymentBreakdown.transfer_amount, items: newItems }),
       reason,
       changedBy
     ]);

@@ -15,9 +15,16 @@ function getPaymentBreakdown(row) {
   const transferAmount = toNumber(row?.transfer_amount || 0);
 
   if (paymentStatus !== 'paid') return { cash_amount: 0, transfer_amount: 0 };
-  if (paymentMethod === 'split') return { cash_amount: cashAmount, transfer_amount: transferAmount };
-  if (paymentMethod === 'cash') return { cash_amount: cashAmount > 0 ? cashAmount : grandTotal, transfer_amount: 0 };
-  if (paymentMethod === 'transfer' || paymentMethod === 'qris') return { cash_amount: 0, transfer_amount: transferAmount > 0 ? transferAmount : grandTotal };
+  if (paymentMethod === 'split') {
+    if (cashAmount + transferAmount === grandTotal) {
+      return { cash_amount: cashAmount, transfer_amount: transferAmount };
+    }
+    const safeCash = Math.min(grandTotal, Math.max(0, cashAmount));
+    const safeTransfer = Math.max(0, toNumber(grandTotal - safeCash));
+    return { cash_amount: safeCash, transfer_amount: safeTransfer };
+  }
+  if (paymentMethod === 'cash') return { cash_amount: grandTotal, transfer_amount: 0 };
+  if (paymentMethod === 'transfer' || paymentMethod === 'qris') return { cash_amount: 0, transfer_amount: grandTotal };
   return { cash_amount: 0, transfer_amount: 0 };
 }
 
