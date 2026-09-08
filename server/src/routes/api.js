@@ -187,6 +187,8 @@ async function handlePostAction(action, req, res, payload) {
       return roomsController.completeCleaning(req, res, payload);
     case 'saveFnbOrder':
       return fnbController.saveFnbOrder(req, res, payload);
+    case 'sendComplimentaryGift':
+      return fnbController.sendComplimentaryGift(req, res, payload);
     case 'cancelFnbOrder':
       return fnbController.cancelFnbOrder(req, res, payload);
     case 'cancelGeneralFnbBill':

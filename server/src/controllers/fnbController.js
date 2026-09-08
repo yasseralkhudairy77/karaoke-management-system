@@ -30,6 +30,11 @@ async function ensureFnbBundleSchema(executor = db) {
     );
     CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order_item ON fnb_order_item_components(order_item_id);
     CREATE INDEX IF NOT EXISTS idx_fnb_order_item_components_order ON fnb_order_item_components(order_id);
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_complimentary BOOLEAN DEFAULT FALSE;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS complimentary_reason TEXT;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS complimentary_by VARCHAR(100);
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS original_price NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS stock_deducted BOOLEAN DEFAULT FALSE;
   `);
   fnbBundleSchemaChecked = true;
 }
@@ -446,6 +451,36 @@ async function cancelFnbOrder(req, res, payload) {
     `, [cancel_reason || 'Dibatalkan kasir', cancelled_by, order_id]);
 
     const updatedOrder = updatedRes.rows[0];
+
+    // Restore stock if any items were already deducted (e.g. Free Gift or settled items)
+    const deductedItems = await client.query(`
+      SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit
+      FROM fnb_order_items foi
+      JOIN menu m ON foi.menu_id = m.menu_id
+      WHERE foi.order_id = $1 AND foi.stock_deducted IS TRUE AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+    `, [order_id]);
+
+    for (const item of deductedItems.rows) {
+      if (item.stock_tracking === 'yes' && item.stock_item_id) {
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [item.stock_item_id]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const returnQty = Number(item.quantity || 1) * Number(item.stock_qty_per_unit || 1);
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore + returnQty;
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
+
+          const movId = `MOV-RESTORE-${order_id}-${item.stock_item_id}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'in', 'manual_adjustment', $4, $5, $6, $7, $8, $9, $1)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [movId, item.stock_item_id, inv.stock_item_name, order_id, returnQty, stockBefore, stockAfter, `Pengembalian Stok Batal Hadiah/Order: ${item.menu_name}`, cancelled_by]);
+        }
+      }
+    }
     await writeOperationalAudit(client, {
       risk_level: 'medium', domain: 'fnb', event_type: 'fnb_order_cancelled',
       source_action: 'cancelFnbOrder', source_table: 'fnb_orders', source_record_id: order_id,
@@ -980,12 +1015,272 @@ async function getTodayFnbSalesReport(req, res) {
   }
 }
 
+async function sendComplimentaryGift(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await ensureFnbBundleSchema(client);
+    await client.query('BEGIN');
+
+    const {
+      room_id,
+      menu_id,
+      quantity = 1,
+      pin = '',
+      reason = 'Hadiah Owner untuk Tamu VIP',
+      cashier_name = 'Kasir',
+      idempotency_key = null
+    } = payload;
+
+    if (!room_id) throw new Error('room_id wajib diisi.');
+    if (!menu_id) throw new Error('menu_id wajib diisi.');
+    const giftQty = Math.max(1, parseInt(quantity, 10) || 1);
+    const cleanReason = String(reason || '').trim();
+    if (!cleanReason) throw new Error('Alasan / keterangan hadiah wajib diisi.');
+
+    // 1. Otorisasi PIN Owner / Manager
+    const { validateOwnerOrManagerPin } = require('./expensesController');
+    const authorizer = await validateOwnerOrManagerPin(pin);
+    const authorizerName = `${authorizer.employee_name} (${authorizer.role.toUpperCase()})`;
+
+    // 2. Cek Idempotency
+    if (idempotency_key) {
+      const existing = await client.query('SELECT * FROM fnb_orders WHERE idempotency_key = $1', [idempotency_key]);
+      if (existing.rowCount > 0) {
+        const itemsRes = await client.query(
+          'SELECT * FROM fnb_order_items WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL) ORDER BY created_at ASC',
+          [existing.rows[0].order_id]
+        );
+        await client.query('COMMIT');
+        return successResponse(res, {
+          message: 'Hadiah F&B sudah diproses (idempotent).',
+          order: existing.rows[0],
+          items: itemsRes.rows,
+          authorizer: authorizerName,
+          idempotent_replay: true
+        });
+      }
+    }
+
+    // 3. Validasi Ruangan
+    const roomRes = await client.query('SELECT room_id, room_name, start_time, status FROM rooms WHERE room_id = $1', [room_id]);
+    if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+    const room = roomRes.rows[0];
+    const roomStatus = String(room.status || '').toLowerCase();
+    if (!['occupied', 'paid_waiting_start', 'waiting_payment', 'booked'].includes(roomStatus)) {
+      throw new Error(`Ruangan ${room.room_name} sedang tidak aktif (${roomStatus}). Hadiah hanya bisa dikirim ke ruangan aktif.`);
+    }
+
+    const sessionRes = await client.query(`
+      SELECT session_id
+      FROM room_sessions
+      WHERE room_id = $1 AND status IN ('starting', 'active')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [room_id]);
+    const sessionId = sessionRes.rows[0]?.session_id || null;
+    const roomStartTime = room.start_time || null;
+
+    // 4. Validasi Menu & Stok
+    const menuRes = await client.query('SELECT * FROM menu WHERE menu_id = $1', [menu_id]);
+    if (menuRes.rowCount === 0) throw new Error('Menu tidak ditemukan.');
+    const menu = menuRes.rows[0];
+    if (menu.status !== 'active') throw new Error(`Menu ${menu.menu_name} sedang tidak aktif.`);
+
+    const originalPrice = Number(menu.price || 0);
+
+    // 5. Buat fnb_orders
+    const orderId = `FNB-GIFT-${Date.now()}`;
+    const orderNote = `[FREE GIFT] ${cleanReason} (Otorisasi: ${authorizerName})`;
+
+    await client.query(`
+      INSERT INTO fnb_orders (
+        order_id, room_id, room_name, session_id, room_start_time, order_status,
+        order_total, cashier_name, note, idempotency_key
+      ) VALUES ($1, $2, $3, $4, $5, 'open', 0, $6, $7, $8)
+    `, [orderId, room.room_id, room.room_name, sessionId, roomStartTime, cashier_name, orderNote, idempotency_key || null]);
+
+    // 6. Buat fnb_order_items (price = 0, is_complimentary = true, stock_deducted = true)
+    const itemInsertRes = await client.query(`
+      INSERT INTO fnb_order_items (
+        order_id, menu_id, menu_name, category, price, quantity, subtotal,
+        menu_type_snapshot, is_complimentary, complimentary_reason, complimentary_by,
+        original_price, stock_deducted
+      ) VALUES ($1, $2, $3, $4, 0, $5, 0, $6, TRUE, $7, $8, $9, TRUE)
+      RETURNING *
+    `, [
+      orderId,
+      menu.menu_id,
+      menu.menu_name,
+      menu.category || 'F&B',
+      giftQty,
+      menu.menu_type || 'regular',
+      cleanReason,
+      authorizerName,
+      originalPrice
+    ]);
+    const createdItem = itemInsertRes.rows[0];
+
+    // 7. Potong Stok Fisik Bar / Inventory Langsung (Real-Time)
+    const movements = [];
+    if (menu.stock_tracking === 'yes' && menu.stock_item_id) {
+      const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [menu.stock_item_id]);
+      if (invRes.rowCount > 0) {
+        const inv = invRes.rows[0];
+        const qtyDeduct = giftQty * Number(menu.stock_qty_per_unit || 1);
+        const stockBefore = Number(inv.stock_qty || 0);
+        const stockAfter = stockBefore - qtyDeduct;
+
+        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, menu.stock_item_id]);
+
+        const movementId = `MOV-GIFT-${orderId}-${menu.stock_item_id}`;
+        await client.query(`
+          INSERT INTO stock_movements (
+            movement_id, stock_item_id, stock_item_name, movement_type,
+            reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+          ) VALUES ($1, $2, $3, 'out', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+          ON CONFLICT (idempotency_key) DO NOTHING
+        `, [
+          movementId,
+          menu.stock_item_id,
+          inv.stock_item_name,
+          orderId,
+          -qtyDeduct,
+          stockBefore,
+          stockAfter,
+          `Free Gift ${room.room_name}: ${giftQty}x ${menu.menu_name} (Izin: ${authorizerName} - ${cleanReason})`,
+          cashier_name
+        ]);
+
+        movements.push({ stock_item_id: menu.stock_item_id, stock_item_name: inv.stock_item_name, stock_before: stockBefore, stock_after: stockAfter, qty_change: -qtyDeduct });
+      }
+    }
+
+    // Jika menu bertipe bundle / recipe
+    const recipeRes = await client.query('SELECT r.*, i.stock_item_name FROM recipe r JOIN inventory i ON r.item_id = i.stock_item_id WHERE r.menu_id = $1', [menu.menu_id]);
+    for (const r of recipeRes.rows) {
+      const rInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+      if (rInvRes.rowCount > 0) {
+        const rInv = rInvRes.rows[0];
+        const rDeduct = giftQty * Number(r.qty_used || 1);
+        const rStockBefore = Number(rInv.stock_qty || 0);
+        const rStockAfter = rStockBefore - rDeduct;
+
+        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+
+        const rMovementId = `MOV-GIFT-${orderId}-RECIPE-${r.item_id}`;
+        await client.query(`
+          INSERT INTO stock_movements (
+            movement_id, stock_item_id, stock_item_name, movement_type,
+            reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+          ) VALUES ($1, $2, $3, 'out', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+          ON CONFLICT (idempotency_key) DO NOTHING
+        `, [
+          rMovementId,
+          r.item_id,
+          rInv.stock_item_name,
+          orderId,
+          -rDeduct,
+          rStockBefore,
+          rStockAfter,
+          `Komponen Free Gift ${room.room_name}: ${giftQty}x ${menu.menu_name}`,
+          cashier_name
+        ]);
+
+        movements.push({ stock_item_id: r.item_id, stock_item_name: rInv.stock_item_name, stock_before: rStockBefore, stock_after: rStockAfter, qty_change: -rDeduct });
+      }
+    }
+
+    // 8. Audit Log
+    await writeOperationalAudit(client, {
+      risk_level: 'medium',
+      domain: 'fnb',
+      event_type: 'fnb_complimentary_gift_sent',
+      source_action: 'sendComplimentaryGift',
+      source_table: 'fnb_orders',
+      source_record_id: orderId,
+      initiated_by: cashier_name,
+      target_type: 'fnb_order',
+      target_id: orderId,
+      order_id: orderId,
+      room_id: room.room_id,
+      room_name: room.room_name,
+      reason: cleanReason,
+      amount_before: originalPrice * giftQty,
+      amount_after: 0,
+      old_value: { menu_id, menu_name: menu.menu_name, original_price: originalPrice, quantity: giftQty },
+      new_value: { order_id: orderId, complimentary: true, authorizer: authorizerName }
+    });
+
+    // 9. Sync Outbox
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('fnb_orders', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [orderId, JSON.stringify({
+      order_id: orderId,
+      room_id: room.room_id,
+      room_name: room.room_name,
+      is_complimentary: true,
+      menu_name: menu.menu_name,
+      quantity: giftQty,
+      authorizer: authorizerName
+    })]);
+
+    await client.query('COMMIT');
+
+    const createdOrder = {
+      order_id: orderId,
+      room_id: room.room_id,
+      room_name: room.room_name,
+      session_id: sessionId,
+      room_start_time: roomStartTime,
+      order_status: 'open',
+      order_total: 0,
+      cashier_name,
+      note: orderNote,
+      created_at: new Date().toISOString()
+    };
+
+    return successResponse(res, {
+      message: `Hadiah ${giftQty}x ${menu.menu_name} berhasil dikirim ke ${room.room_name}. Stok otomatis dipotong.`,
+      order: createdOrder,
+      item: {
+        ...createdItem,
+        price: 0,
+        subtotal: 0,
+        original_price: originalPrice,
+        is_complimentary: true,
+        complimentary_reason: cleanReason,
+        complimentary_by: authorizerName
+      },
+      items: [{
+        ...createdItem,
+        price: 0,
+        subtotal: 0,
+        original_price: originalPrice,
+        is_complimentary: true,
+        complimentary_reason: cleanReason,
+        complimentary_by: authorizerName
+      }],
+      authorizer: authorizerName,
+      stock_movements: movements
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getMenuItems,
   getOpenFnbOrders,
   getTodayFnbOrders,
   getFnbOrdersByIds,
   saveFnbOrder,
+  sendComplimentaryGift,
   cancelFnbOrder,
   cancelGeneralFnbBill,
   settleGeneralFnbBill,

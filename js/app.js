@@ -461,6 +461,7 @@ let errorMessage = "";
 let noticeMessage = "";
 let noticeType = "info";
 let actionConfirmationModal = null;
+let freeGiftModalState = null;
 let actionModalSequence = 0;
 let floatingToastSequence = 0;
 const floatingToastTimers = new Map();
@@ -6932,7 +6933,10 @@ function calculateCashierClosingPreview(transactions) {
     note: "",
   });
 
-  const operationalExpenseTotal = (todayExpenses || [])
+  const currentExpenses = typeof todayExpenses !== "undefined" && Array.isArray(todayExpenses)
+    ? todayExpenses
+    : [];
+  const operationalExpenseTotal = currentExpenses
     .filter(e => !e.is_voided)
     .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
@@ -9418,10 +9422,12 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
       const name = item.menu_name || "-";
       const qty = Number(item.quantity) || 0;
       const price = Number(item.price) || 0;
-      if (!aggregatedItems[name]) {
-        aggregatedItems[name] = { quantity: 0, price: price };
+      const isComplimentary = Boolean(item.is_complimentary || item.isComplimentary);
+      const key = isComplimentary ? `${name} [Gift]` : name;
+      if (!aggregatedItems[key]) {
+        aggregatedItems[key] = { name, quantity: 0, price: price, isComplimentary };
       }
-      aggregatedItems[name].quantity += qty;
+      aggregatedItems[key].quantity += qty;
       totalFbAmount += qty * price;
       totalFbQuantity += qty;
     });
@@ -9435,14 +9441,14 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
   const itemsList = document.createElement("div");
   itemsList.className = "fnb-breakdown-list";
 
-  Object.entries(aggregatedItems).forEach(([name, data], index) => {
+  Object.entries(aggregatedItems).forEach(([key, data], index) => {
     const itemRow = document.createElement("div");
     itemRow.className = "fnb-breakdown-item";
 
     const nameLine = document.createElement("span");
     nameLine.className = "fnb-breakdown-item-name";
-    nameLine.textContent = `${index + 1}. ${name}`;
-    nameLine.title = name;
+    nameLine.textContent = data.isComplimentary ? `${index + 1}. 🎁 ${data.name}` : `${index + 1}. ${data.name}`;
+    nameLine.title = data.name;
 
     const qtySpan = document.createElement("span");
     qtySpan.className = "fnb-breakdown-item-qty";
@@ -9453,7 +9459,13 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
 
     const priceSpan = document.createElement("span");
     priceSpan.className = "fnb-breakdown-item-price";
-    priceSpan.textContent = formatCurrency(data.quantity * data.price);
+    if (data.isComplimentary) {
+      priceSpan.textContent = "GRATIS (Gift)";
+      priceSpan.style.color = "#10b981";
+      priceSpan.style.fontWeight = "700";
+    } else {
+      priceSpan.textContent = formatCurrency(data.quantity * data.price);
+    }
 
     itemRow.append(nameLine, qtySpan, dotsSpan, priceSpan);
     itemsList.appendChild(itemRow);
@@ -9592,7 +9604,15 @@ function createRoomCard(room) {
     moveRoomButton.innerHTML = `<span class="room-btn-icon">🔁</span> <span>${isMovingRoomSession && moveRoomSourceId === room.room_id ? "Memindahkan..." : "Pindah Room"}</span>`;
     moveRoomButton.disabled = isMovingRoomSession || getCurrentOperatorRole() === "receptionist";
 
-    actions.append(sessionButton, extendButton, selectLcButton, changePackageButton, moveRoomButton);
+    const freeGiftButton = document.createElement("button");
+    freeGiftButton.className = "room-button room-button-gift";
+    freeGiftButton.type = "button";
+    freeGiftButton.dataset.action = "show-free-gift";
+    freeGiftButton.dataset.roomId = room.room_id;
+    freeGiftButton.innerHTML = `<span class="room-btn-icon">🎁</span> <span>Free Gift</span>`;
+    freeGiftButton.disabled = getCurrentOperatorRole() === "receptionist";
+
+    actions.append(sessionButton, extendButton, selectLcButton, changePackageButton, moveRoomButton, freeGiftButton);
   } else if (["booked", "waiting_payment"].includes(room.status)) {
     const cancelBookingButton = document.createElement("button");
     cancelBookingButton.className = "room-button room-button-secondary";
@@ -11754,6 +11774,376 @@ function createMoveRoomElement(room) {
 
   panel.append(title, currentInfo, targetField, pricingInfo, reasonField, saveButton, cancelButton);
   return panel;
+}
+
+function openFreeGiftModal(roomId) {
+  const room = rooms.find(r => r.room_id === roomId);
+  if (!room) return;
+
+  const activeMenus = (menuItems || []).filter(m => m.status === "active");
+  const defaultMenuId = activeMenus.length > 0 ? activeMenus[0].menu_id : "";
+
+  freeGiftModalState = {
+    room_id: room.room_id,
+    room_name: room.room_name,
+    menu_id: defaultMenuId,
+    search_query: "",
+    quantity: 1,
+    reason: "Hadiah Owner untuk Tamu VIP",
+    custom_reason: "",
+    pin: "",
+    is_submitting: false,
+    error: ""
+  };
+  renderRooms();
+}
+
+function closeFreeGiftModal() {
+  if (freeGiftModalState?.is_submitting) return;
+  freeGiftModalState = null;
+  renderRooms();
+}
+
+function createFreeGiftModalElement() {
+  if (!freeGiftModalState) return document.createDocumentFragment();
+
+  const overlay = document.createElement("div");
+  overlay.className = "free-gift-overlay";
+  overlay.onclick = (e) => {
+    if (e.target === overlay) closeFreeGiftModal();
+  };
+
+  const modal = document.createElement("div");
+  modal.className = "free-gift-modal";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "free-gift-modal-header";
+  header.innerHTML = `
+    <div class="free-gift-header-badge-row">
+      <span class="free-gift-badge">🎁 FREE GIFT / KOMPLIMEN</span>
+      <button type="button" class="free-gift-close-btn" aria-label="Tutup">&times;</button>
+    </div>
+    <h2 class="free-gift-modal-title">Kirim Hadiah ke ${freeGiftModalState.room_name}</h2>
+    <p class="free-gift-modal-desc">Minuman atau makanan diberikan cuma-cuma ke tamu (Rp 0). Stok fisik bar otomatis terpotong saat itu juga.</p>
+  `;
+  const closeBtn = header.querySelector(".free-gift-close-btn");
+  if (closeBtn) closeBtn.onclick = () => closeFreeGiftModal();
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "free-gift-modal-body";
+
+  // Menu Search & Select
+  const searchGroup = document.createElement("div");
+  searchGroup.className = "free-gift-form-group";
+  const searchLabel = document.createElement("label");
+  searchLabel.className = "free-gift-label";
+  searchLabel.textContent = "Pilih Minuman / Makanan Hadiah:";
+
+  const searchInput = document.createElement("input");
+  searchInput.className = "free-gift-input";
+  searchInput.type = "text";
+  searchInput.placeholder = "Ketik untuk mencari menu (misal: kapten, bir, snack)...";
+  searchInput.value = freeGiftModalState.search_query || "";
+
+  const menuSelect = document.createElement("select");
+  menuSelect.className = "free-gift-select";
+
+  function populateMenuList() {
+    menuSelect.innerHTML = "";
+    const q = (freeGiftModalState.search_query || "").toLowerCase().trim();
+    const filteredMenus = (menuItems || []).filter(m => m.status === "active" && (!q || (m.menu_name || "").toLowerCase().includes(q) || (m.category || "").toLowerCase().includes(q)));
+
+    if (filteredMenus.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "-- Tidak ada menu yang cocok --";
+      menuSelect.appendChild(opt);
+      return;
+    }
+
+    if (!filteredMenus.some(m => m.menu_id === freeGiftModalState.menu_id)) {
+      freeGiftModalState.menu_id = filteredMenus[0].menu_id;
+    }
+
+    filteredMenus.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.menu_id;
+      const cat = m.category ? `[${m.category}] ` : "";
+      opt.textContent = `${cat}${m.menu_name} (Normal: ${formatCurrency(m.price)})`;
+      if (m.menu_id === freeGiftModalState.menu_id) opt.selected = true;
+      menuSelect.appendChild(opt);
+    });
+  }
+
+  searchInput.oninput = (e) => {
+    freeGiftModalState.search_query = e.target.value;
+    populateMenuList();
+    updatePreview();
+  };
+
+  menuSelect.onchange = (e) => {
+    freeGiftModalState.menu_id = e.target.value;
+    updatePreview();
+  };
+
+  populateMenuList();
+  searchGroup.append(searchLabel, searchInput, menuSelect);
+
+  // Qty Group
+  const qtyGroup = document.createElement("div");
+  qtyGroup.className = "free-gift-form-group";
+  const qtyLabel = document.createElement("label");
+  qtyLabel.className = "free-gift-label";
+  qtyLabel.textContent = "Jumlah (Qty):";
+
+  const qtyInput = document.createElement("input");
+  qtyInput.className = "free-gift-input";
+  qtyInput.type = "number";
+  qtyInput.min = "1";
+  qtyInput.max = "100";
+  qtyInput.value = freeGiftModalState.quantity || 1;
+  qtyInput.oninput = (e) => {
+    freeGiftModalState.quantity = Math.max(1, parseInt(e.target.value, 10) || 1);
+    updatePreview();
+  };
+  qtyGroup.append(qtyLabel, qtyInput);
+
+  // Reason Group
+  const reasonGroup = document.createElement("div");
+  reasonGroup.className = "free-gift-form-group";
+  const reasonLabel = document.createElement("label");
+  reasonLabel.className = "free-gift-label";
+  reasonLabel.textContent = "Keperluan / Alasan Hadiah:";
+
+  const reasonSelect = document.createElement("select");
+  reasonSelect.className = "free-gift-select";
+  const presetReasons = [
+    "Hadiah Owner untuk Tamu VIP",
+    "Komplimen Apresiasi Konsumen",
+    "Perayaan Ulang Tahun / Event Tamu",
+    "Kompensasi Kendala Layanan",
+    "Lainnya (Ketik sendiri)"
+  ];
+  presetReasons.forEach(r => {
+    const opt = document.createElement("option");
+    opt.value = r;
+    opt.textContent = r;
+    if (r === freeGiftModalState.reason) opt.selected = true;
+    reasonSelect.appendChild(opt);
+  });
+
+  const customReasonInput = document.createElement("input");
+  customReasonInput.className = "free-gift-input";
+  customReasonInput.type = "text";
+  customReasonInput.placeholder = "Ketik alasan khusus pemberian hadiah...";
+  customReasonInput.style.display = freeGiftModalState.reason === "Lainnya (Ketik sendiri)" ? "block" : "none";
+  customReasonInput.style.marginTop = "6px";
+  customReasonInput.value = freeGiftModalState.custom_reason || "";
+  customReasonInput.oninput = (e) => {
+    freeGiftModalState.custom_reason = e.target.value;
+  };
+
+  reasonSelect.onchange = (e) => {
+    freeGiftModalState.reason = e.target.value;
+    customReasonInput.style.display = e.target.value === "Lainnya (Ketik sendiri)" ? "block" : "none";
+    if (e.target.value === "Lainnya (Ketik sendiri)") {
+      customReasonInput.focus();
+    }
+  };
+  reasonGroup.append(reasonLabel, reasonSelect, customReasonInput);
+
+  // PIN Group
+  const pinGroup = document.createElement("div");
+  pinGroup.className = "free-gift-form-group";
+  const pinLabel = document.createElement("label");
+  pinLabel.className = "free-gift-label";
+  pinLabel.innerHTML = `<span>PIN Otorisasi Owner / Manager:</span> <span style="color:#ef4444;">*</span>`;
+
+  const pinInput = document.createElement("input");
+  pinInput.className = "free-gift-input free-gift-pin-input";
+  pinInput.type = "password";
+  pinInput.placeholder = "Masukkan PIN Owner atau Manager...";
+  pinInput.value = freeGiftModalState.pin || "";
+  pinInput.oninput = (e) => {
+    freeGiftModalState.pin = e.target.value;
+  };
+  pinInput.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      executeSendComplimentaryGift();
+    }
+  };
+  pinGroup.append(pinLabel, pinInput);
+
+  // Preview Box
+  const previewCard = document.createElement("div");
+  previewCard.className = "free-gift-preview-card";
+
+  function updatePreview() {
+    const selectedMenu = (menuItems || []).find(m => m.menu_id === freeGiftModalState.menu_id);
+    const qty = freeGiftModalState.quantity || 1;
+    const normalPrice = selectedMenu ? Number(selectedMenu.price || 0) * qty : 0;
+    const menuName = selectedMenu ? selectedMenu.menu_name : "-";
+
+    previewCard.innerHTML = `
+      <div class="free-gift-preview-row">
+        <span class="preview-label">Item Hadiah:</span>
+        <span class="preview-value font-bold">${qty}x ${menuName}</span>
+      </div>
+      <div class="free-gift-preview-row">
+        <span class="preview-label">Harga Normal:</span>
+        <span class="preview-value line-through text-muted">${formatCurrency(normalPrice)}</span>
+      </div>
+      <div class="free-gift-preview-row highlight-green">
+        <span class="preview-label">Tagihan ke Tamu:</span>
+        <span class="preview-value text-success font-bold">Rp 0 (GRATIS)</span>
+      </div>
+      <div class="free-gift-preview-row highlight-warning">
+        <span class="preview-label">Dampak Stok Bar:</span>
+        <span class="preview-value text-warning font-bold">Berkurang -${qty} saat disimpan</span>
+      </div>
+    `;
+  }
+  updatePreview();
+
+  // Error container
+  const errorBox = document.createElement("div");
+  errorBox.className = "free-gift-error-notice";
+  errorBox.style.display = freeGiftModalState.error ? "block" : "none";
+  errorBox.textContent = freeGiftModalState.error || "";
+
+  // Footer Actions
+  const footer = document.createElement("div");
+  footer.className = "free-gift-modal-footer";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "room-button room-button-secondary";
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.disabled = freeGiftModalState.is_submitting;
+  cancelBtn.onclick = () => closeFreeGiftModal();
+
+  const submitBtn = document.createElement("button");
+  submitBtn.className = "room-button room-button-gift-submit";
+  submitBtn.type = "button";
+  submitBtn.innerHTML = freeGiftModalState.is_submitting
+    ? `<span>Memproses Hadiah...</span>`
+    : `<span class="room-btn-icon">🎁</span> <span>Kirim Hadiah & Potong Stok</span>`;
+  submitBtn.disabled = freeGiftModalState.is_submitting;
+  submitBtn.onclick = () => executeSendComplimentaryGift();
+
+  footer.append(cancelBtn, submitBtn);
+
+  body.append(searchGroup, qtyGroup, reasonGroup, pinGroup, previewCard, errorBox);
+  modal.append(header, body, footer);
+  overlay.appendChild(modal);
+
+  return overlay;
+}
+
+async function executeSendComplimentaryGift() {
+  if (!freeGiftModalState || freeGiftModalState.is_submitting) return;
+
+  const { room_id, menu_id, quantity, reason, custom_reason, pin } = freeGiftModalState;
+  const effectiveReason = reason === "Lainnya (Ketik sendiri)" ? (custom_reason.trim() || "Hadiah Tamu VIP") : reason;
+
+  if (!menu_id) {
+    freeGiftModalState.error = "Pilih minuman/makanan yang akan dihadiahkan.";
+    renderRooms();
+    return;
+  }
+  if (!pin.trim()) {
+    freeGiftModalState.error = "PIN Owner/Manager wajib diisi untuk otorisasi.";
+    renderRooms();
+    return;
+  }
+
+  freeGiftModalState.is_submitting = true;
+  freeGiftModalState.error = "";
+  renderRooms();
+
+  try {
+    const payload = {
+      action: "sendComplimentaryGift",
+      room_id,
+      menu_id,
+      quantity,
+      reason: effectiveReason,
+      pin: pin.trim(),
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+      idempotency_key: `gift-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    };
+
+    const response = await postApiAction(payload);
+    if (!response || response.ok !== true) {
+      throw new Error(response?.error || response?.message || "Gagal mengirim hadiah.");
+    }
+
+    const savedOrder = response.order;
+    const savedItems = response.items || (response.item ? [response.item] : []);
+
+    if (savedOrder) {
+      const fullOrder = {
+        ...savedOrder,
+        items: savedItems
+      };
+      openFnbOrders = [
+        ...openFnbOrders.filter(o => o.order_id !== savedOrder.order_id),
+        fullOrder
+      ];
+    }
+
+    await loadOccupiedRooms(true);
+    await loadOpenFnbOrders(true);
+
+    const selectedMenu = (menuItems || []).find(m => m.menu_id === menu_id);
+    const slipData = {
+      order_id: savedOrder?.order_id || `FNB-GIFT-${Date.now()}`,
+      created_at: new Date().toISOString(),
+      room_name: freeGiftModalState.room_name,
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+      authorizer: response.authorizer || "Owner",
+      reason: effectiveReason,
+      menu_name: selectedMenu ? selectedMenu.menu_name : "Free Gift",
+      quantity: quantity,
+      original_price: selectedMenu ? Number(selectedMenu.price || 0) : 0
+    };
+
+    closeFreeGiftModal();
+    showFloatingToast(`Hadiah ${quantity}x ${slipData.menu_name} berhasil dikirim ke ${slipData.room_name}! Stok bar otomatis berkurang.`, "success");
+
+    openActionConfirmation({
+      tone: "success",
+      title: "Hadiah Berhasil Dikirim!",
+      message: `Minuman hadiah sudah tercatat ke ${slipData.room_name} (Rp 0). Cetak slip bukti serah-terima untuk bar?`,
+      details: [
+        ["Room", slipData.room_name],
+        ["Item", `${quantity}x ${slipData.menu_name}`],
+        ["Tagihan Tamu", "Rp 0 (GRATIS)"],
+        ["Otorisasi", slipData.authorizer],
+        ["Stok Bar", `Berkurang -${quantity} botol`]
+      ],
+      confirmLabel: "🖨️ Cetak Slip Bar (58mm)",
+      cancelLabel: "Tutup",
+      onConfirm: async () => {
+        try {
+          const { formatFreeGiftSlip58mm } = await import("./receipt.js");
+          const slipText = formatFreeGiftSlip58mm(slipData);
+          await printDirectRawReceipt(slipText);
+        } catch (printErr) {
+          console.error("Gagal mencetak slip bar:", printErr);
+          showFloatingToast("Gagal mencetak slip bar: " + printErr.message, "warning");
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error("Error sending complimentary gift:", err);
+    freeGiftModalState.is_submitting = false;
+    freeGiftModalState.error = err.message || "Gagal memproses hadiah.";
+    renderRooms();
+  }
 }
 
 function createMenuPanelElement() {
@@ -26538,6 +26928,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createActionConfirmationElement());
   }
 
+  if (freeGiftModalState) {
+    fragment.appendChild(createFreeGiftModalElement());
+  }
+
   dashboardGlobal.replaceChildren(fragment);
 }
 
@@ -30546,6 +30940,15 @@ async function handleRoomAction(event) {
       return;
     }
     showMoveRoomSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "show-free-gift") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan mengirim Free Gift.", "error");
+      return;
+    }
+    openFreeGiftModal(button.dataset.roomId || roomId || "");
     return;
   }
 

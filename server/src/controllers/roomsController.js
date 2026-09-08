@@ -1273,7 +1273,10 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
            m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
     FROM fnb_order_items foi
     JOIN menu m ON foi.menu_id = m.menu_id
-    WHERE foi.order_id = ANY($1) AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+    WHERE foi.order_id = ANY($1)
+      AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+      AND (foi.is_complimentary IS NOT TRUE)
+      AND (foi.stock_deducted IS NOT TRUE)
   `, [fnbOrderIds]);
 
   const movements = [];
@@ -1347,6 +1350,11 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
       }
     }
   }
+
+  await client.query(`
+    UPDATE fnb_order_items SET stock_deducted = TRUE
+    WHERE order_id = ANY($1)
+  `, [fnbOrderIds]);
 
   return { movements };
 }

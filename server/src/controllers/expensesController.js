@@ -31,7 +31,7 @@ async function ensureExpensesSchema(clientOrDb = db) {
 
 async function validateOwnerOrManagerPin(pin) {
   const cleanPin = String(pin || '').trim();
-  if (!cleanPin) throw new Error('PIN Owner/Manager wajib diisi untuk otorisasi pembatalan.');
+  if (!cleanPin) throw new Error('PIN Owner/Manager wajib diisi untuk otorisasi.');
 
   const result = await db.query(`
     SELECT employee_id, employee_name, role, pin, pin_hash
@@ -298,6 +298,7 @@ async function voidExpense(req, res, payload) {
 
 module.exports = {
   ensureExpensesSchema,
+  validateOwnerOrManagerPin,
   getTodayExpenses,
   getExpensesByDateRange,
   saveExpense,

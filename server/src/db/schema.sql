@@ -389,6 +389,11 @@ ON fnb_order_item_components(order_id);
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
 ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_complimentary BOOLEAN DEFAULT FALSE;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS complimentary_reason TEXT;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS complimentary_by VARCHAR(100);
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS original_price NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS stock_deducted BOOLEAN DEFAULT FALSE;
 
 -- 11. Stock Movements & Audits (Stock Opname)
 CREATE TABLE IF NOT EXISTS stock_movements (

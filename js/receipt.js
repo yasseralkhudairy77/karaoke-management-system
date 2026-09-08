@@ -203,11 +203,21 @@ export function formatReceipt58mm(receiptData, options = {}) {
           wrapReceiptText(item.name || "-", width).forEach((line) => {
             lines.push(line);
           });
-          lines.push(formatReceiptLine(
-            `  ${getNumber(item.quantity)} x ${formatReceiptCurrency(item.price)}`,
-            formatReceiptCurrency(item.subtotal),
-            width
-          ));
+          if (item.isComplimentary || item.is_complimentary) {
+            lines.push(formatReceiptLine(
+              `  ${getNumber(item.quantity)} x Rp0 (FREE GIFT)`,
+              "Rp0",
+              width
+            ));
+            const giftNote = item.complimentaryReason || item.complimentary_reason || "Hadiah Owner";
+            wrapReceiptText(`  [${giftNote}]`, width).forEach((line) => lines.push(line));
+          } else {
+            lines.push(formatReceiptLine(
+              `  ${getNumber(item.quantity)} x ${formatReceiptCurrency(item.price)}`,
+              formatReceiptCurrency(item.subtotal),
+              width
+            ));
+          }
           (item.bundleComponents || []).forEach((component) => {
             const modeLabel = component.mode === "bonus" ? "Bonus" : "Termasuk";
             const componentText = `  ${modeLabel}: ${getNumber(component.totalQty)}x ${component.name}`;
@@ -437,6 +447,69 @@ export function formatOperationalExpenseSlip58mm(expense, options = {}) {
   pushReceiptField(lines, "Dicetak", formatReceiptDateTime(options.printedAt || new Date().toISOString()), width);
   lines.push(separator);
   wrapReceiptText("Harap staples nota/bon belanja asli pada slip ini untuk rekonsiliasi closing.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
+export function formatFreeGiftSlip58mm(giftData, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+
+  const business = options.business || DEFAULT_BUSINESS;
+  const orderId = getText(giftData?.order_id || giftData?.id || "-");
+  const createdAt = giftData?.created_at || options.printedAt || new Date().toISOString();
+  const roomName = getText(giftData?.room_name || giftData?.room || "-");
+  const cashierName = getText(giftData?.cashier_name || options.printedBy || "Kasir");
+  const authorizer = getText(giftData?.authorizer || giftData?.complimentary_by || "Owner / Manager");
+  const reason = getText(giftData?.reason || giftData?.complimentary_reason || giftData?.note || "Hadiah Tamu VIP");
+  const itemName = getText(giftData?.menu_name || giftData?.item_name || giftData?.item?.menu_name || "-");
+  const quantity = getNumber(giftData?.quantity || giftData?.item?.quantity || 1);
+  const originalPrice = getNumber(giftData?.original_price || giftData?.item?.original_price || 0);
+
+  lines.push(centerReceiptText(business.name || DEFAULT_BUSINESS.name, width));
+  lines.push(centerReceiptText("SLIP FREE GIFT / KOMPLIMEN BAR", width));
+  lines.push(centerReceiptText("*** KHUSUS TAMU ROOM ***", width));
+
+  if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
+
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "No. Order", orderId, width);
+  pushReceiptField(lines, "Waktu", formatReceiptDateTime(createdAt), width);
+  pushReceiptField(lines, "Tujuan Room", roomName, width);
+  pushReceiptField(lines, "Kasir", cashierName, width);
+  pushReceiptField(lines, "Otorisasi", authorizer, width);
+  lines.push(separator);
+
+  lines.push(centerReceiptText("ITEM FREE GIFT", width));
+  wrapReceiptText(`${quantity}x ${itemName}`, width).forEach((line) => lines.push(line));
+  if (originalPrice > 0) {
+    pushReceiptField(lines, "Harga Normal", formatReceiptCurrency(originalPrice * quantity), width);
+  }
+  lines.push(formatReceiptLine("TAGIHAN TAMU", "Rp0 (GRATIS)", width));
+  lines.push(separator);
+
+  lines.push(centerReceiptText("KETERANGAN / ALASAN", width));
+  wrapReceiptText(reason, width).forEach((line) => lines.push(line));
+  lines.push(separator);
+
+  wrapReceiptText("* Stok fisik bar berkurang otomatis di sistem *", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+  lines.push(separator);
+
+  pushReceiptSignature(lines, "Pemberi Hadiah", authorizer, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Petugas Bar", "Bartender / Kru", width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(options.printedAt || new Date().toISOString()), width);
+  lines.push(separator);
+  wrapReceiptText("Serahkan slip ini ke Bar/Gudang sebagai bukti sah pengeluaran minuman/makanan hadiah.", width).forEach((line) => {
     lines.push(centerReceiptText(line, width));
   });
 
@@ -879,6 +952,10 @@ function normalizeFnbItems(items) {
       price: getNumber(item?.price),
       quantity: getNumber(item?.quantity),
       subtotal: getNumber(item?.subtotal),
+      isComplimentary: Boolean(item?.is_complimentary || item?.isComplimentary),
+      complimentaryReason: getText(item?.complimentary_reason || item?.complimentaryReason),
+      complimentaryBy: getText(item?.complimentary_by || item?.complimentaryBy),
+      originalPrice: getNumber(item?.original_price || item?.originalPrice),
       createdAt: getText(item?.created_at),
     bundleComponents: Array.isArray(item?.bundle_components)
       ? item.bundle_components.map((component) => ({
