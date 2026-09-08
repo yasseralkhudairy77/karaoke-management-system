@@ -1265,11 +1265,14 @@ async function updateActiveSessionPackage(req, res, payload) {
   }
 }
 
-async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashierName) {
+async function deductStockForFnbOrders(client, fnbOrderIds, referenceId, cashierName) {
   if (!fnbOrderIds || fnbOrderIds.length === 0) return { movements: [] };
 
+  const isTrx = String(referenceId || '').startsWith('TRX-');
+  const refType = isTrx ? 'transaction' : 'fnb_order';
+
   const itemsRes = await client.query(`
-    SELECT foi.order_item_id, foi.menu_id, foi.quantity, foi.menu_type_snapshot,
+    SELECT foi.order_item_id, foi.order_id, foi.menu_id, foi.quantity, foi.menu_type_snapshot,
            m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
     FROM fnb_order_items foi
     JOIN menu m ON foi.menu_id = m.menu_id
@@ -1294,14 +1297,15 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
 
         await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
 
-        const movementId = `MOV-${transactionId}-${item.order_item_id}-${item.stock_item_id}`;
+        const movementId = `MOV-${referenceId}-${item.order_item_id}-${item.stock_item_id}`;
+        const noteText = isTrx ? `F&B Checkout Menu: ${item.menu_name}` : `F&B Order Menu: ${item.menu_name}`;
         await client.query(`
           INSERT INTO stock_movements (
             movement_id, stock_item_id, stock_item_name, movement_type,
             reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
-          ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+          ) VALUES ($1, $2, $3, 'out', $4, $5, $6, $7, $8, $9, $10, $1)
           ON CONFLICT (idempotency_key) DO NOTHING
-        `, [movementId, item.stock_item_id, inv.stock_item_name, transactionId, -qtyDeduct, stockBefore, stockAfter, `F&B Checkout Menu: ${item.menu_name}`, cashierName]);
+        `, [movementId, item.stock_item_id, inv.stock_item_name, refType, referenceId, -qtyDeduct, stockBefore, stockAfter, noteText, cashierName]);
 
         movements.push({ stock_item_id: item.stock_item_id, stock_before: stockBefore, stock_after: stockAfter });
       }
@@ -1337,14 +1341,17 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
 
         await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
 
-        const rMovementId = `MOV-${transactionId}-${item.order_item_id}-RECIPE-${component.item_id}`;
+        const rMovementId = `MOV-${referenceId}-${item.order_item_id}-RECIPE-${component.item_id}`;
+        const rNoteText = isTrx
+          ? `Komponen ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name}`
+          : `Komponen order ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name}`;
         await client.query(`
           INSERT INTO stock_movements (
             movement_id, stock_item_id, stock_item_name, movement_type,
             reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
-          ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+          ) VALUES ($1, $2, $3, 'out', $4, $5, $6, $7, $8, $9, $10, $1)
           ON CONFLICT (idempotency_key) DO NOTHING
-        `, [rMovementId, component.item_id, rInv.stock_item_name, transactionId, -recipeDeduct, rStockBefore, rStockAfter, `Komponen ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name}`, cashierName]);
+        `, [rMovementId, component.item_id, rInv.stock_item_name, refType, referenceId, -recipeDeduct, rStockBefore, rStockAfter, rNoteText, cashierName]);
 
         movements.push({ stock_item_id: component.item_id, stock_before: rStockBefore, stock_after: rStockAfter });
       }

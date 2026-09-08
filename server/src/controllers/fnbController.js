@@ -363,8 +363,8 @@ async function saveFnbOrder(req, res, payload) {
     }
 
     let transaction = null;
+    const { deductStockForFnbOrders } = require('./roomsController');
     if (isPaid) {
-      const { deductStockForFnbOrders } = require('./roomsController');
       const now = new Date();
       const transactionId = `TRX-${Date.now()}`;
       const opDate = getOperationalDate(now);
@@ -391,6 +391,9 @@ async function saveFnbOrder(req, res, payload) {
         created_at: now.toISOString(),
         end_time: now.toISOString(),
       };
+    } else {
+      // Potong stok langsung saat order dibuat / open bill (Anti Ghost Selling & Overselling)
+      await deductStockForFnbOrders(client, [orderId], orderId, cashier_name);
     }
 
     await client.query(`
@@ -426,6 +429,99 @@ async function saveFnbOrder(req, res, payload) {
   }
 }
 
+async function restoreStockForFnbOrders(client, orderIds, cancelledBy = 'Kasir', cancelReason = 'Order dibatalkan') {
+  if (!orderIds || orderIds.length === 0) return { movements: [] };
+
+  const deductedItems = await client.query(`
+    SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
+    FROM fnb_order_items foi
+    JOIN menu m ON foi.menu_id = m.menu_id
+    WHERE foi.order_id = ANY($1)
+      AND foi.stock_deducted IS TRUE
+      AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+  `, [orderIds]);
+
+  const movements = [];
+
+  for (const item of deductedItems.rows) {
+    const orderQty = Number(item.quantity || 1);
+
+    if (item.stock_tracking === 'yes' && item.stock_item_id) {
+      const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [item.stock_item_id]);
+      if (invRes.rowCount > 0) {
+        const inv = invRes.rows[0];
+        const returnQty = orderQty * Number(item.stock_qty_per_unit || 1);
+        const stockBefore = Number(inv.stock_qty || 0);
+        const stockAfter = stockBefore + returnQty;
+
+        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
+
+        const movId = `MOV-RESTORE-${item.order_id}-${item.order_item_id}-${item.stock_item_id}`;
+        await client.query(`
+          INSERT INTO stock_movements (
+            movement_id, stock_item_id, stock_item_name, movement_type,
+            reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+          ) VALUES ($1, $2, $3, 'in', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+          ON CONFLICT (idempotency_key) DO NOTHING
+        `, [movId, item.stock_item_id, inv.stock_item_name, item.order_id, returnQty, stockBefore, stockAfter, `Pengembalian Stok Batal Order: ${item.menu_name}`, cancelledBy]);
+
+        movements.push({ stock_item_id: item.stock_item_id, stock_before: stockBefore, stock_after: stockAfter, returnQty });
+      }
+    }
+
+    const snapshotRes = await client.query(`
+      SELECT item_id, component_name, total_qty, component_mode
+      FROM fnb_order_item_components
+      WHERE order_item_id = $1
+      ORDER BY created_at ASC, component_snapshot_id ASC
+    `, [item.order_item_id]);
+
+    const componentRows = snapshotRes.rowCount > 0
+      ? snapshotRes.rows.map(component => ({
+          item_id: component.item_id,
+          component_name: component.component_name,
+          component_mode: component.component_mode,
+          qty_to_restore: Number(component.total_qty || 0)
+        }))
+      : (await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id])).rows.map(recipe => ({
+          item_id: recipe.item_id,
+          component_name: recipe.item_id,
+          component_mode: recipe.component_mode || 'included',
+          qty_to_restore: orderQty * Number(recipe.qty_used || 1)
+        }));
+
+    for (const component of componentRows) {
+      const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [component.item_id]);
+      if (recipeInvRes.rowCount > 0) {
+        const rInv = recipeInvRes.rows[0];
+        const recipeReturn = Number(component.qty_to_restore || 0);
+        const rStockBefore = Number(rInv.stock_qty || 0);
+        const rStockAfter = rStockBefore + recipeReturn;
+
+        await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
+
+        const rMovId = `MOV-RESTORE-${item.order_id}-${item.order_item_id}-RECIPE-${component.item_id}`;
+        await client.query(`
+          INSERT INTO stock_movements (
+            movement_id, stock_item_id, stock_item_name, movement_type,
+            reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+          ) VALUES ($1, $2, $3, 'in', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+          ON CONFLICT (idempotency_key) DO NOTHING
+        `, [rMovId, component.item_id, rInv.stock_item_name, item.order_id, recipeReturn, rStockBefore, rStockAfter, `Pengembalian Stok Batal Komponen: ${item.menu_name} (${component.component_name})`, cancelledBy]);
+
+        movements.push({ stock_item_id: component.item_id, stock_before: rStockBefore, stock_after: rStockAfter, returnQty: recipeReturn });
+      }
+    }
+  }
+
+  await client.query(`
+    UPDATE fnb_order_items SET stock_deducted = FALSE
+    WHERE order_id = ANY($1)
+  `, [orderIds]);
+
+  return { movements };
+}
+
 async function cancelFnbOrder(req, res, payload) {
   let client;
   try {
@@ -452,35 +548,9 @@ async function cancelFnbOrder(req, res, payload) {
 
     const updatedOrder = updatedRes.rows[0];
 
-    // Restore stock if any items were already deducted (e.g. Free Gift or settled items)
-    const deductedItems = await client.query(`
-      SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit
-      FROM fnb_order_items foi
-      JOIN menu m ON foi.menu_id = m.menu_id
-      WHERE foi.order_id = $1 AND foi.stock_deducted IS TRUE AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
-    `, [order_id]);
+    // Restore stock for regular and recipe components if already deducted
+    await restoreStockForFnbOrders(client, [order_id], cancelled_by, cancel_reason);
 
-    for (const item of deductedItems.rows) {
-      if (item.stock_tracking === 'yes' && item.stock_item_id) {
-        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [item.stock_item_id]);
-        if (invRes.rowCount > 0) {
-          const inv = invRes.rows[0];
-          const returnQty = Number(item.quantity || 1) * Number(item.stock_qty_per_unit || 1);
-          const stockBefore = Number(inv.stock_qty || 0);
-          const stockAfter = stockBefore + returnQty;
-          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
-
-          const movId = `MOV-RESTORE-${order_id}-${item.stock_item_id}`;
-          await client.query(`
-            INSERT INTO stock_movements (
-              movement_id, stock_item_id, stock_item_name, movement_type,
-              reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
-            ) VALUES ($1, $2, $3, 'in', 'manual_adjustment', $4, $5, $6, $7, $8, $9, $1)
-            ON CONFLICT (idempotency_key) DO NOTHING
-          `, [movId, item.stock_item_id, inv.stock_item_name, order_id, returnQty, stockBefore, stockAfter, `Pengembalian Stok Batal Hadiah/Order: ${item.menu_name}`, cancelled_by]);
-        }
-      }
-    }
     await writeOperationalAudit(client, {
       risk_level: 'medium', domain: 'fnb', event_type: 'fnb_order_cancelled',
       source_action: 'cancelFnbOrder', source_table: 'fnb_orders', source_record_id: order_id,
@@ -532,6 +602,9 @@ async function cancelGeneralFnbBill(req, res, payload) {
       WHERE order_id = ANY($3)
       RETURNING *
     `, [cancel_reason || 'Dibatalkan kasir', cancelled_by, orderIds]);
+
+    // Restore stock for all orders in this general bill
+    await restoreStockForFnbOrders(client, orderIds, cancelled_by, cancel_reason);
 
     for (const oldOrder of ordersRes.rows) {
       const updatedOrder = updatedRes.rows.find(r => r.order_id === oldOrder.order_id) || oldOrder;
@@ -1284,6 +1357,7 @@ module.exports = {
   cancelFnbOrder,
   cancelGeneralFnbBill,
   settleGeneralFnbBill,
+  restoreStockForFnbOrders,
   getTodayFnbSalesReport,
   getFnbSalesReport: getTodayFnbSalesReport
 };

@@ -5458,6 +5458,7 @@ async function performFnbOrderSave(isGeneralOrder, selectedRoom) {
       loadTodayFnbOrders(),
       loadTodayTransactions(),
       loadInventoryItems(),
+      loadMenuItems(),
     ]);
 
     if (isDirectPaid) {
@@ -5631,6 +5632,7 @@ async function cancelFnbOrder(orderId, reason) {
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
+    await loadMenuItems();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan order F&B.", "error");
   } finally {
@@ -13052,6 +13054,7 @@ async function executeCancelGeneralFnbBill(generalBillId, reason) {
     await loadOpenFnbOrders();
     await loadTodayFnbOrders();
     await loadInventoryItems();
+    await loadMenuItems();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan tagihan F&B umum.", "error");
   } finally {
