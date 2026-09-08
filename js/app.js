@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=expenses-tab-v1";
+import { buildReceiptData, formatFreeGiftSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=free-gift-v1";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -12094,8 +12094,9 @@ async function executeSendComplimentaryGift() {
       ];
     }
 
-    await loadOccupiedRooms(true);
-    await loadOpenFnbOrders(true);
+    await loadRooms();
+    await loadOpenFnbOrders();
+    loadInventoryItems().catch(() => {});
 
     const selectedMenu = (menuItems || []).find(m => m.menu_id === menu_id);
     const slipData = {
@@ -12128,9 +12129,9 @@ async function executeSendComplimentaryGift() {
       cancelLabel: "Tutup",
       onConfirm: async () => {
         try {
-          const { formatFreeGiftSlip58mm } = await import("./receipt.js");
           const slipText = formatFreeGiftSlip58mm(slipData);
-          await printDirectRawReceipt(slipText);
+          await printThermalText(slipText);
+          showFloatingToast("Slip bar berhasil dikirim ke printer.", "success");
         } catch (printErr) {
           console.error("Gagal mencetak slip bar:", printErr);
           showFloatingToast("Gagal mencetak slip bar: " + printErr.message, "warning");
