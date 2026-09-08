@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatFreeGiftSlip58mm, formatLcShiftReport58mm, formatLcSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=lc-thermal-v1";
+import { buildReceiptData, formatFreeGiftSlip58mm, formatLcShiftReport58mm, formatLcSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=lc-thermal-v2";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");

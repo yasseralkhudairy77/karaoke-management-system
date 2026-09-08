@@ -163,10 +163,12 @@ async function runTests() {
     assert(shiftSlip.includes('Bella (LC-001)'), 'Struk harus mencantumkan Bella');
     assert(shiftSlip.includes('Rere (LC-002)'), 'Struk harus mencantumkan Rere');
     assert(shiftSlip.includes('Sari (LC-003)'), 'Struk harus mencantumkan Sari');
-    assert(shiftSlip.includes('TOTAL FEE LC'), 'Struk harus mencantumkan total fee LC');
+    assert(shiftSlip.includes('- - - - - - - - - - - - - - - -'), 'Struk harus memiliki pemisah putus-putus antar nama');
+    assert(shiftSlip.includes('TOTAL KESELURUHAN SHIFT'), 'Struk harus memiliki rekap total keseluruhan di bagian bawah');
+    assert(shiftSlip.includes('TOTAL BIAYA LC'), 'Struk harus mencantumkan total biaya LC di bagian bawah');
     assert(shiftSlip.includes('Supervisor / Owner'), 'Struk harus memiliki tanda tangan supervisor');
 
-    console.log('  PASS: LC shift recap report 58mm renders accurately.');
+    console.log('  PASS: LC shift recap report 58mm renders accurately with clean separators and bottom totals.');
   }
 
   // Test 4: Frontend Contract & Integrity in js/app.js
