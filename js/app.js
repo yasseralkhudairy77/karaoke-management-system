@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=fnb-void-filter-v4";
+import { buildReceiptData, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=expenses-tab-v1";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -27,6 +27,7 @@ const OPERATOR_SESSION_STORAGE_KEY = "karaoke_operator_session";
 const DASHBOARD_TABS = [
   { key: "rooms", label: "Ruangan" },
   { key: "fnb", label: "F&B" },
+  { key: "expenses", label: "Pengeluaran" },
   { key: "stock", label: "Stok" },
   { key: "lc", label: "LC" },
   { key: "reports", label: "Laporan" },
@@ -48,9 +49,9 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
-  manager: ["rooms", "fnb", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
-  cashier: ["rooms", "fnb", "lc", "reports", "transactions"],
+  owner: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  manager: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  cashier: ["rooms", "fnb", "expenses", "lc", "reports", "transactions"],
   receptionist: ["rooms"],
   inventory: ["stock"],
 };
@@ -862,6 +863,11 @@ let isSavingCashierClosing = false;
 const markingTransactionPaidIds = new Set(); // track per-transactionId mark-paid in progress
 let todayCashierClosings = [];
 let todayCashierClosingSummary = null;
+let todayExpenses = [];
+let todayExpensesSummary = { total_active_amount: 0, total_count: 0, active_count: 0, voided_count: 0 };
+let isLoadingTodayExpenses = false;
+let isSavingExpense = false;
+let isVoidingExpense = false;
 let selectedClosingForPrint = null;
 let closingPrintPreviewVisible = false;
 let menuItems = [];
@@ -6508,6 +6514,371 @@ function createCashierRevenueSummaryElement(summary) {
   return revenue;
 }
 
+async function loadTodayExpenses() {
+  if (!API_BASE_URL.trim()) return;
+  isLoadingTodayExpenses = true;
+  try {
+    const params = new URLSearchParams({ action: "getTodayExpenses" });
+    const response = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data && data.ok) {
+      todayExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+      todayExpensesSummary = data.summary || {
+        total_active_amount: todayExpenses.filter(e => !e.is_voided).reduce((s, e) => s + (Number(e.amount) || 0), 0),
+        total_count: todayExpenses.length,
+        active_count: todayExpenses.filter(e => !e.is_voided).length,
+        voided_count: todayExpenses.filter(e => e.is_voided).length
+      };
+    }
+  } catch (err) {
+    console.error("Gagal memuat pengeluaran operasional:", err);
+  } finally {
+    isLoadingTodayExpenses = false;
+  }
+}
+
+function createExpenseMetricCard(title, value, type, icon) {
+  const card = document.createElement("div");
+  card.className = `expense-metric-card expense-metric-card--${type}`;
+  card.innerHTML = `
+    <div class="expense-metric-icon">${icon}</div>
+    <div class="expense-metric-content">
+      <span class="expense-metric-title">${title}</span>
+      <strong class="expense-metric-value">${value}</strong>
+    </div>
+  `;
+  return card;
+}
+
+function createExpensesPanelElement() {
+  const container = document.createElement("section");
+  container.className = "expenses-page-container";
+
+  // 1. Metric Cards on Top
+  const metricsRow = document.createElement("div");
+  metricsRow.className = "expenses-metrics-row";
+
+  const totalAmount = todayExpenses.filter(e => !e.is_voided).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const activeCount = todayExpenses.filter(e => !e.is_voided).length;
+  const voidedCount = todayExpenses.filter(e => e.is_voided).length;
+
+  metricsRow.append(
+    createExpenseMetricCard("Total Kas Keluar", formatCurrency(totalAmount), "total-spent", "💸"),
+    createExpenseMetricCard("Transaksi Pengeluaran", `${activeCount} item aktif`, "active-count", "🧾"),
+    createExpenseMetricCard("Dibatalkan (Void)", `${voidedCount} item`, "voided-count", "🚫")
+  );
+
+  container.appendChild(metricsRow);
+
+  // 2. Two-Column Layout
+  const layout = document.createElement("div");
+  layout.className = "expenses-layout";
+
+  // Left Column: Form Card
+  const formCard = document.createElement("div");
+  formCard.className = "expenses-card expenses-form-card";
+
+  const formHeader = document.createElement("div");
+  formHeader.className = "expenses-card-header";
+  formHeader.innerHTML = `
+    <h3 class="expenses-card-title">📝 Catat Pengeluaran Kas Baru</h3>
+    <p class="expenses-card-subtitle">Pengeluaran tunai otomatis memotong target uang fisik kas laci saat closing.</p>
+  `;
+  formCard.appendChild(formHeader);
+
+  const form = document.createElement("form");
+  form.className = "expenses-form";
+  form.id = "expensesForm";
+
+  form.innerHTML = `
+    <div class="expenses-form-group">
+      <label class="expenses-form-label" for="expenseTitle">Keperluan / Nama Belanja <span class="required">*</span></label>
+      <input type="text" id="expenseTitle" class="expenses-form-input" placeholder="Contoh: Beli kertas thermal 58mm (3 roll)" required autocomplete="off" />
+    </div>
+
+    <div class="expenses-form-group">
+      <label class="expenses-form-label" for="expenseCategory">Kategori Pengeluaran <span class="required">*</span></label>
+      <select id="expenseCategory" class="expenses-form-select">
+        <option value="Perlengkapan Kasir & Tamu">Perlengkapan Kasir & Tamu (Kertas nota, tusuk gigi, plastik, dll)</option>
+        <option value="Operasional Kamar & Audio">Operasional Kamar & Audio (Baterai mic, cover mic, kabel)</option>
+        <option value="Kebersihan & Fasilitas">Kebersihan & Fasilitas (Tisu, sabun, pewangi, obat pel)</option>
+        <option value="Dapur & Bar">Dapur & Bar (Air galon, es batu darurat, gas)</option>
+        <option value="Lain-lain">Lain-lain (Bensin kurir, tips, perbaikan darurat)</option>
+      </select>
+    </div>
+
+    <div class="expenses-form-group">
+      <label class="expenses-form-label" for="expenseAmount">Nominal Pengeluaran (Rp) <span class="required">*</span></label>
+      <div class="expenses-input-currency-wrapper">
+        <span class="expenses-currency-prefix">Rp</span>
+        <input type="number" id="expenseAmount" class="expenses-form-input expenses-input-amount" placeholder="0" min="500" step="500" required />
+      </div>
+    </div>
+
+    <div class="expenses-form-group">
+      <label class="expenses-form-label">Sumber Dana</label>
+      <div class="expenses-source-badge">
+        <span class="expenses-source-dot"></span>
+        <span>Kas Laci Kasir (Cash Drawer) - Tunai</span>
+      </div>
+    </div>
+
+    <div class="expenses-form-group">
+      <label class="expenses-form-label" for="expenseNote">Catatan Tambahan (Opsional)</label>
+      <textarea id="expenseNote" class="expenses-form-textarea" placeholder="Contoh: Beli di warung sebelah, bon pembelian ada" rows="2"></textarea>
+    </div>
+
+    <div class="expenses-form-actions">
+      <button type="submit" class="expenses-submit-button" id="btnSaveExpense" ${isSavingExpense ? "disabled" : ""}>
+        ${isSavingExpense ? "Menyimpan..." : "💾 Simpan & Cetak Slip"}
+      </button>
+    </div>
+  `;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (isSavingExpense) return;
+    const titleInput = form.querySelector("#expenseTitle");
+    const categorySelect = form.querySelector("#expenseCategory");
+    const amountInput = form.querySelector("#expenseAmount");
+    const noteTextarea = form.querySelector("#expenseNote");
+
+    const title = titleInput?.value.trim() || "";
+    const category = categorySelect?.value || "Perlengkapan Kasir & Tamu";
+    const amount = Number(amountInput?.value || 0);
+    const note = noteTextarea?.value.trim() || "";
+
+    if (!title) {
+      showInlineNotice("Keperluan pengeluaran wajib diisi.", "warning");
+      titleInput?.focus();
+      return;
+    }
+    if (amount <= 0) {
+      showInlineNotice("Nominal pengeluaran harus lebih dari Rp 0.", "warning");
+      amountInput?.focus();
+      return;
+    }
+
+    await handleSaveExpense({ title, category, amount, note });
+  });
+
+  formCard.appendChild(form);
+  layout.appendChild(formCard);
+
+  // Right Column: Table History Card
+  const tableCard = document.createElement("div");
+  tableCard.className = "expenses-card expenses-table-card";
+
+  const tableHeader = document.createElement("div");
+  tableHeader.className = "expenses-card-header expenses-table-header";
+  tableHeader.innerHTML = `
+    <div class="expenses-table-header-info">
+      <h3 class="expenses-card-title">📜 Riwayat Pengeluaran Kas Hari Ini</h3>
+      <p class="expenses-card-subtitle">Daftar pengeluaran pada tanggal operasional aktif.</p>
+    </div>
+    <button type="button" class="expenses-refresh-button" id="btnRefreshExpenses" title="Muat ulang data pengeluaran">
+      🔄 Segarkan
+    </button>
+  `;
+  tableHeader.querySelector("#btnRefreshExpenses")?.addEventListener("click", async () => {
+    await loadTodayExpenses();
+    renderRooms();
+  });
+  tableCard.appendChild(tableHeader);
+
+  if (isLoadingTodayExpenses && !todayExpenses.length) {
+    tableCard.appendChild(createStateMessage("Memuat riwayat pengeluaran kas..."));
+  } else if (!todayExpenses.length) {
+    const emptyMsg = document.createElement("div");
+    emptyMsg.className = "expenses-empty-state";
+    emptyMsg.innerHTML = `
+      <div class="expenses-empty-icon">💸</div>
+      <p class="expenses-empty-title">Belum ada pengeluaran kas hari ini.</p>
+      <p class="expenses-empty-desc">Gunakan form di samping untuk mencatat pengeluaran operasional kasir.</p>
+    `;
+    tableCard.appendChild(emptyMsg);
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "expenses-table-wrapper";
+
+    const table = document.createElement("table");
+    table.className = "expenses-table";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Waktu</th>
+          <th>No. Bukti</th>
+          <th>Keperluan</th>
+          <th>Kategori</th>
+          <th class="text-right">Nominal</th>
+          <th>Kasir</th>
+          <th>Status</th>
+          <th class="text-center">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+      </tbody>
+    `;
+
+    const tbody = table.querySelector("tbody");
+    todayExpenses.forEach((item) => {
+      const tr = document.createElement("tr");
+      if (item.is_voided) tr.className = "expense-row-voided";
+
+      const timeStr = item.created_at ? formatDateTimeLabel(item.created_at) : "-";
+      const amountStr = formatCurrency(item.amount);
+
+      tr.innerHTML = `
+        <td class="expense-cell-time">${timeStr}</td>
+        <td class="expense-cell-id"><code>${item.expense_id || "-"}</code></td>
+        <td class="expense-cell-title">
+          <strong>${item.expense_title || "-"}</strong>
+          ${item.note ? `<div class="expense-cell-note">${item.note}</div>` : ""}
+          ${item.is_voided && item.void_reason ? `<div class="expense-cell-void-reason">Batal: ${item.void_reason} (oleh ${item.voided_by || "Admin"})</div>` : ""}
+        </td>
+        <td><span class="expense-category-pill">${item.category || "-"}</span></td>
+        <td class="text-right expense-cell-amount ${item.is_voided ? "voided" : ""}">
+          -${amountStr}
+        </td>
+        <td>${item.cashier_name || "-"}</td>
+        <td>
+          ${item.is_voided
+            ? '<span class="expense-status-badge void">Dibatalkan</span>'
+            : '<span class="expense-status-badge active">Aktif</span>'}
+        </td>
+        <td class="text-center expense-actions-cell">
+          <button type="button" class="expense-btn-action expense-btn-print" title="Cetak Slip Bukti Pengeluaran" data-expense-id="${item.expense_id}">
+            🖨️
+          </button>
+          ${!item.is_voided
+            ? `<button type="button" class="expense-btn-action expense-btn-void" title="Batalkan Pengeluaran Ini" data-expense-id="${item.expense_id}">
+                ❌
+              </button>`
+            : ""}
+        </td>
+      `;
+
+      tr.querySelector(".expense-btn-print")?.addEventListener("click", () => {
+        handlePrintExpenseSlip(item, { isReprint: true });
+      });
+
+      tr.querySelector(".expense-btn-void")?.addEventListener("click", () => {
+        promptVoidExpense(item);
+      });
+
+      tbody.appendChild(tr);
+    });
+
+    tableWrapper.appendChild(table);
+    tableCard.appendChild(tableWrapper);
+  }
+
+  layout.appendChild(tableCard);
+  container.appendChild(layout);
+
+  return container;
+}
+
+async function handleSaveExpense({ title, category, amount, note }) {
+  isSavingExpense = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "saveExpense",
+      expense_title: title,
+      category,
+      amount,
+      note,
+      cashier_name: getLoggedInOperatorName() || "Kasir",
+      idempotency_key: `EXP-IDEM-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+    });
+
+    if (!data || !data.ok) {
+      throw new Error(data?.message || data?.error || "Gagal mencatat pengeluaran.");
+    }
+
+    showInlineNotice(`Pengeluaran Rp ${amount.toLocaleString("id-ID")} berhasil disimpan.`, "success");
+
+    if (data.expense) {
+      try {
+        await handlePrintExpenseSlip(data.expense, { isReprint: false, silentFail: true });
+      } catch (printErr) {
+        console.warn("Gagal auto-print slip pengeluaran:", printErr);
+      }
+    }
+
+    await loadTodayExpenses();
+    renderRooms();
+  } catch (err) {
+    showInlineNotice(err.message || "Terjadi kesalahan saat menyimpan pengeluaran.", "error");
+  } finally {
+    isSavingExpense = false;
+    renderRooms();
+  }
+}
+
+async function handlePrintExpenseSlip(expense, options = {}) {
+  const slipText = formatOperationalExpenseSlip58mm(expense, {
+    isReprint: options.isReprint || false,
+    printedBy: getLoggedInOperatorName() || "Kasir",
+    printedAt: new Date().toISOString()
+  });
+
+  try {
+    await printThermalText(slipText);
+    showInlineNotice("Slip bukti pengeluaran berhasil dikirim ke printer.", "success");
+  } catch (err) {
+    if (!options.silentFail) {
+      showInlineNotice(`Printer thermal tidak merespons: ${err.message}.`, "warning");
+    }
+  }
+}
+
+function promptVoidExpense(expense) {
+  openAdminPinModal({
+    title: "Otorisasi Pembatalan Pengeluaran",
+    message: `Masukkan PIN Manager/Owner untuk membatalkan pengeluaran: "${expense.expense_title}" (${formatCurrency(expense.amount)})`,
+    requiredRole: "manager",
+    onSuccess: async (authResult, pin) => {
+      const reason = prompt(`Masukkan alasan pembatalan untuk "${expense.expense_title}":`);
+      if (reason === null) return;
+      const cleanReason = String(reason || "").trim();
+      if (cleanReason.length < 3) {
+        showInlineNotice("Alasan pembatalan minimal 3 karakter.", "error");
+        return;
+      }
+
+      isVoidingExpense = true;
+      renderRooms();
+
+      try {
+        const data = await postApiAction({
+          action: "voidExpense",
+          expense_id: expense.expense_id,
+          reason: cleanReason,
+          admin_pin: pin,
+          voided_by: authResult?.employee?.employee_name || getLoggedInOperatorName() || "Manager"
+        });
+
+        if (!data || !data.ok) {
+          throw new Error(data?.message || data?.error || "Gagal membatalkan pengeluaran.");
+        }
+
+        showInlineNotice(`Pengeluaran "${expense.expense_title}" berhasil dibatalkan.`, "success");
+        await loadTodayExpenses();
+        renderRooms();
+      } catch (err) {
+        showInlineNotice(err.message || "Gagal membatalkan pengeluaran.", "error");
+      } finally {
+        isVoidingExpense = false;
+        renderRooms();
+      }
+    }
+  });
+}
+
 function calculateCashierClosingPreview(transactions) {
   const preview = transactions.reduce((result, transaction) => {
     const transactionTotal = getTransactionFinalTotal(transaction);
@@ -6553,6 +6924,7 @@ function calculateCashierClosingPreview(transactions) {
     unpaidRevenue: 0,
     totalRevenue: 0,
     salesCommissionTotal: 0,
+    operationalExpenseTotal: 0,
     netRevenueAfterCommission: 0,
     cashExpectedAfterCommission: 0,
     cashActual: 0,
@@ -6560,8 +6932,14 @@ function calculateCashierClosingPreview(transactions) {
     note: "",
   });
 
+  const operationalExpenseTotal = (todayExpenses || [])
+    .filter(e => !e.is_voided)
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  preview.operationalExpenseTotal = operationalExpenseTotal;
   preview.cashActual = Number(cashierClosingCashActual) || 0;
-  preview.cashExpectedAfterCommission = Math.max(0, preview.cashExpected - preview.salesCommissionTotal);
+  preview.cashExpectedAfterCommission = Math.max(0, preview.cashExpected - preview.salesCommissionTotal - operationalExpenseTotal);
+  preview.netRevenueAfterCommission = Math.max(0, preview.paidRevenue - preview.salesCommissionTotal - operationalExpenseTotal);
   preview.cashDifference = preview.cashActual - preview.cashExpectedAfterCommission;
   preview.note = cashierClosingNote;
 
@@ -6652,6 +7030,7 @@ function createCashierClosingConfirmationElement() {
   [
     ["Cash Sistem Awal", formatCurrency(preview.cashExpected)],
     ["Komisi Marketing", `-${formatCurrency(preview.salesCommissionTotal)}`],
+    ["Pengeluaran Kas", `-${formatCurrency(preview.operationalExpenseTotal)}`],
     ["Cash Sistem Akhir", formatCurrency(preview.cashExpectedAfterCommission)],
     ["Cash Aktual", formatCurrency(preview.cashActual)],
     ["Selisih Cash", `${formatCurrency(preview.cashDifference)} - ${getCashDifferenceLabel(preview.cashDifference)}`],
@@ -6781,7 +7160,8 @@ function createCashierClosingPreviewElement(preview) {
     ["• Cash Sistem", `${preview.cashTransactions} transaksi cash`, formatCurrency(preview.cashExpected), "sub-row"],
     ["• Transfer Sistem", `${preview.transferTransactions} transaksi transfer`, formatCurrency(preview.transferRevenue), "sub-row"],
     ["Komisi Marketing", "Sudah diserahkan dari uang kasir", `-${formatCurrency(preview.salesCommissionTotal)}`, preview.salesCommissionTotal > 0 ? "text-warning font-bold" : ""],
-    ["Omzet Bersih", "Omzet lunas setelah komisi", formatCurrency(preview.netRevenueAfterCommission), "highlight-row text-success"],
+    ["Pengeluaran Kas Kecil", "Belanja operasional kas laci", `-${formatCurrency(preview.operationalExpenseTotal)}`, preview.operationalExpenseTotal > 0 ? "text-danger font-bold" : ""],
+    ["Omzet Bersih", "Omzet lunas setelah komisi & pengeluaran", formatCurrency(preview.netRevenueAfterCommission), "highlight-row text-success"],
     ["Sisa Belum Dibayar", "Tagihan room/F&B yang masih open", formatCurrency(preview.unpaidRevenue), preview.unpaidRevenue > 0 ? "text-warning font-bold" : ""],
     ["Total Semua Tagihan", "Akumulasi lunas + belum lunas", formatCurrency(preview.totalRevenue), "grand-total-row"],
   ];
@@ -6922,9 +7302,10 @@ function createCashierClosingPreviewElement(preview) {
   const cashCompBody = document.createElement("tbody");
 
   const compRows = [
-    ["Cash Sistem Sebelum Komisi", formatCurrency(preview.cashExpected), ""],
+    ["Cash Sistem Sebelum Potongan", formatCurrency(preview.cashExpected), ""],
     ["Komisi Marketing Dibayar", `-${formatCurrency(preview.salesCommissionTotal)}`, "text-warning"],
-    ["Cash Sistem Setelah Komisi", formatCurrency(preview.cashExpectedAfterCommission), "font-bold"],
+    ["Pengeluaran Kas Kecil", `-${formatCurrency(preview.operationalExpenseTotal)}`, preview.operationalExpenseTotal > 0 ? "text-danger" : ""],
+    ["Target Cash Fisik di Laci", formatCurrency(preview.cashExpectedAfterCommission), "font-bold text-success"],
     ["Cash Aktual Fisik (Dihitung)", formatCurrency(preview.cashActual), "text-gold"],
     ["Selisih Cash", formatCurrency(preview.cashDifference), `highlight-row text-gold ${getCashDifferenceClass(preview.cashDifference)}`],
   ];
@@ -7117,6 +7498,7 @@ function createLastClosingSavedElement(closing) {
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
     ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
+    ["Pengeluaran Kas", `-${formatCurrency(closing?.operational_expense_total)}`],
     ["Omzet Bersih", formatCurrency(closing?.net_revenue_after_commission)],
     ["Transfer Sistem", formatCurrency(closing?.transfer_revenue)],
     ["Transaksi Transfer", `${Number(closing?.transfer_transactions) || 0} transaksi`],
@@ -16576,6 +16958,7 @@ function createClosingPrintPreviewElement(closing) {
     : [
         ["Omzet Lunas", formatCurrency(closing?.paid_revenue)],
         ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
+        ["Pengeluaran Kas", `-${formatCurrency(closing?.operational_expense_total)}`],
         ["Omzet Bersih", formatCurrency(closing?.net_revenue_after_commission), "total"],
         ["Total Tagihan", formatCurrency(closing?.total_revenue), "total"],
       ];
@@ -16584,6 +16967,7 @@ function createClosingPrintPreviewElement(closing) {
   const paymentSection = createClosingReceiptSection("Pembayaran", [
     ["Cash Sistem", formatCurrency(closing?.cash_expected)],
     ["Komisi Marketing", `-${formatCurrency(closing?.sales_commission_total)}`],
+    ["Pengeluaran Kas", `-${formatCurrency(closing?.operational_expense_total)}`],
     ["Cash Aktual", formatCurrency(closing?.cash_actual)],
     ["Selisih", formatClosingSignedCurrency(closing?.cash_difference), "total"],
     ["Transfer", formatCurrency(closing?.transfer_revenue)],
@@ -22831,6 +23215,11 @@ function refreshActiveTabData() {
         loadInventoryItems();
       }
       break;
+    case "expenses":
+      loadTodayExpenses().then(() => {
+        if (activeDashboardTab === "expenses") renderRooms();
+      });
+      break;
     case "stock":
       if (activeStockSubTab === "opname") {
         loadInventoryAudits();
@@ -26650,6 +27039,10 @@ function appendDashboardTabContent(panel, tabKey) {
         } else if (activeFnbSubTab === "report") {
           panel.appendChild(createTodayFnbSalesReportPanelElement());
         }
+        break;
+      }
+      case "expenses": {
+        panel.appendChild(createExpensesPanelElement());
         break;
       }
       case "transactions": {
@@ -30925,6 +31318,10 @@ async function initializeDashboard() {
     } else if (activeReportSubTab === "cashier" && isValidReportSubTab("cashier")) {
       initialLoads.push(loadTodayCashierClosings());
     }
+  }
+
+  if (activeDashboardTab === "expenses" && canAccessDashboardTab("expenses")) {
+    initialLoads.push(loadTodayExpenses());
   }
 
   if (activeDashboardTab === "audit" && canAccessDashboardTab("audit")) {

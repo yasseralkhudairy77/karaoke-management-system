@@ -11,6 +11,7 @@ const tvController = require('../controllers/tvController');
 const masterDataController = require('../controllers/masterDataController');
 const mirrorController = require('../controllers/mirrorController');
 const auditController = require('../controllers/auditController');
+const expensesController = require('../controllers/expensesController');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // Helper to handle Apps Script GET actions
@@ -57,6 +58,10 @@ async function handleGetAction(action, req, res) {
       return closingsController.getTodayCashierClosings(req, res);
     case 'getCashierClosingDetails':
       return closingsController.getCashierClosingDetails(req, res);
+    case 'getTodayExpenses':
+      return expensesController.getTodayExpenses(req, res);
+    case 'getExpensesByDateRange':
+      return expensesController.getExpensesByDateRange(req, res);
     case 'getLcMasterList':
       return lcController.getLcMasterList(req, res);
     case 'getLcWorkReports':
@@ -224,6 +229,10 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.logReceiptPrint(req, res, payload);
     case 'saveCashierClosing':
       return closingsController.saveCashierClosing(req, res, payload);
+    case 'saveExpense':
+      return expensesController.saveExpense(req, res, payload);
+    case 'voidExpense':
+      return expensesController.voidExpense(req, res, payload);
     case 'pushOwnerMirrorSnapshot':
       return mirrorController.pushOwnerMirrorSnapshot(req, res, payload);
     case 'validateCashierClosingSnapshot':

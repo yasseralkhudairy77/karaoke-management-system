@@ -376,6 +376,73 @@ export function formatSalesCommissionSlip58mm(commission, options = {}) {
   return lines.join("\n");
 }
 
+export function formatOperationalExpenseSlip58mm(expense, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+
+  const business = options.business || DEFAULT_BUSINESS;
+  const expenseId = getText(expense?.expense_id || expense?.id || "-");
+  const createdAt = expense?.created_at || options.printedAt || new Date().toISOString();
+  const cashierName = getText(expense?.cashier_name || options.printedBy || "Kasir");
+  const category = getText(expense?.category || "Perlengkapan");
+  const title = getText(expense?.expense_title || expense?.title || "-");
+  const amount = getNumber(expense?.amount);
+  const note = getText(expense?.note);
+  const isVoided = Boolean(expense?.is_voided);
+
+  lines.push(centerReceiptText(business.name || DEFAULT_BUSINESS.name, width));
+  lines.push(centerReceiptText("BUKTI PENGELUARAN KAS KECIL", width));
+  lines.push(centerReceiptText("(PETTY CASH VOUCHER)", width));
+
+  if (isVoided) {
+    lines.push(centerReceiptText("*** DIBATALKAN / VOID ***", width));
+  } else if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
+
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "No. Bukti", expenseId, width);
+  pushReceiptField(lines, "Waktu", formatReceiptDateTime(createdAt), width);
+  pushReceiptField(lines, "Kasir (PIC)", cashierName, width);
+  pushReceiptField(lines, "Sumber Dana", "Kas Laci (Tunai)", width);
+  pushReceiptField(lines, "Kategori", category, width);
+  lines.push(separator);
+
+  lines.push(centerReceiptText("KEPERLUAN", width));
+  wrapReceiptText(title, width).forEach((line) => lines.push(line));
+
+  lines.push(separator);
+  lines.push(formatReceiptLine("TOTAL KELUAR", formatReceiptCurrency(amount), width));
+  lines.push(strongSeparator);
+
+  if (note) {
+    lines.push(centerReceiptText("CATATAN", width));
+    wrapReceiptText(note, width).forEach((line) => lines.push(line));
+    lines.push(separator);
+  }
+
+  if (isVoided && expense?.void_reason) {
+    lines.push(centerReceiptText("ALASAN BATAL", width));
+    wrapReceiptText(expense.void_reason, width).forEach((line) => lines.push(line));
+    pushReceiptField(lines, "Dibatalkan Oleh", getText(expense.voided_by || "Admin"), width);
+    lines.push(separator);
+  }
+
+  pushReceiptSignature(lines, "Kasir / PIC", cashierName, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Supervisor / Owner", "Pemeriksa", width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(options.printedAt || new Date().toISOString()), width);
+  lines.push(separator);
+  wrapReceiptText("Harap staples nota/bon belanja asli pada slip ini untuk rekonsiliasi closing.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
