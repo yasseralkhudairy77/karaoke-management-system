@@ -23,10 +23,10 @@ export function buildReceiptData(transaction, options = {}) {
     room: normalizeRoom(safeTransaction),
     lc: normalizeLcDetails(options.lcDetails ?? safeTransaction.lc_details, totals.lcTotal),
     fnb: {
-      hasFnb: getNumber(safeTransaction.fnb_total) > 0 || normalizedFnbOrders.length > 0 || orderIds.length > 0,
+      hasFnb: getNumber(safeTransaction.fnb_total) > 0 || normalizedFnbOrders.length > 0,
       orderIds,
       orders: normalizedFnbOrders,
-      detailLoaded: normalizedFnbOrders.length > 0 || orderIds.length === 0,
+      detailLoaded: normalizedFnbOrders.length > 0 || orderIds.length === 0 || getNumber(safeTransaction.fnb_total) === 0,
     },
     payment: normalizePayment(safeTransaction),
     totals,
@@ -184,18 +184,22 @@ export function formatReceipt58mm(receiptData, options = {}) {
   }
 
   if (fnb.hasFnb) {
-    lines.push(separator);
-    lines.push(centerReceiptText("DETAIL F&B", width));
+    const activeOrders = (fnb.orders || []).filter(
+      (order) => order?.status !== "cancelled" && (order?.items || []).some((item) => !item?.isVoided && !item?.is_voided)
+    );
 
-    if (Array.isArray(fnb.orders) && fnb.orders.length > 0) {
-      fnb.orders.forEach((order) => {
+    if (activeOrders.length > 0) {
+      lines.push(separator);
+      lines.push(centerReceiptText("DETAIL F&B", width));
+
+      activeOrders.forEach((order) => {
         if (order.note) {
           wrapReceiptText(`Note: ${order.note}`, width).forEach((line) => {
             lines.push(line);
           });
         }
 
-        (order.items || []).forEach((item) => {
+        (order.items || []).filter((item) => !item?.isVoided && !item?.is_voided).forEach((item) => {
           wrapReceiptText(item.name || "-", width).forEach((line) => {
             lines.push(line);
           });
@@ -211,7 +215,9 @@ export function formatReceipt58mm(receiptData, options = {}) {
           });
         });
       });
-    } else {
+    } else if (totals.fnbTotal > 0) {
+      lines.push(separator);
+      lines.push(centerReceiptText("DETAIL F&B", width));
       lines.push(centerReceiptText("Detail F&B belum tersedia", width));
     }
   }
@@ -775,18 +781,20 @@ function normalizeFnbOrders(fnbOrders) {
     return [];
   }
 
-  return fnbOrders.map((order) => ({
-    id: getText(order?.order_id),
-    roomId: getText(order?.room_id),
-    roomName: getText(order?.room_name),
-    status: getText(order?.order_status),
-    total: getNumber(order?.order_total),
-    cashierName: getText(order?.cashier_name),
-    note: getText(order?.note),
-    createdAt: getText(order?.created_at),
-    updatedAt: getText(order?.updated_at),
-    items: normalizeFnbItems(order?.items),
-  }));
+  return fnbOrders
+    .map((order) => ({
+      id: getText(order?.order_id),
+      roomId: getText(order?.room_id),
+      roomName: getText(order?.room_name),
+      status: getText(order?.order_status),
+      total: getNumber(order?.order_total),
+      cashierName: getText(order?.cashier_name),
+      note: getText(order?.note),
+      createdAt: getText(order?.created_at),
+      updatedAt: getText(order?.updated_at),
+      items: normalizeFnbItems(order?.items),
+    }))
+    .filter((order) => order.status !== "cancelled" && Array.isArray(order.items) && order.items.length > 0);
 }
 
 function normalizeFnbItems(items) {
@@ -794,14 +802,17 @@ function normalizeFnbItems(items) {
     return [];
   }
 
-  return items.map((item) => ({
-    menuId: getText(item?.menu_id),
-    name: getText(item?.menu_name),
-    category: getText(item?.category),
-    price: getNumber(item?.price),
-    quantity: getNumber(item?.quantity),
-    subtotal: getNumber(item?.subtotal),
-    createdAt: getText(item?.created_at),
+  return items
+    .filter((item) => !item?.is_voided && !item?.isVoided)
+    .map((item) => ({
+      menuId: getText(item?.menu_id),
+      name: getText(item?.menu_name),
+      isVoided: Boolean(item?.is_voided || item?.isVoided),
+      category: getText(item?.category),
+      price: getNumber(item?.price),
+      quantity: getNumber(item?.quantity),
+      subtotal: getNumber(item?.subtotal),
+      createdAt: getText(item?.created_at),
     bundleComponents: Array.isArray(item?.bundle_components)
       ? item.bundle_components.map((component) => ({
           itemId: getText(component?.item_id || component?.stock_item_id),

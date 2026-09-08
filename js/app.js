@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=sales-commission-v1";
+import { buildReceiptData, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=fnb-void-filter-v4";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -5110,7 +5110,7 @@ function calculateOpenFnbOrdersSummary(orders) {
   return orders.reduce((summary, order) => {
     summary.total_orders += 1;
     summary.total_amount += Number(order.order_total) || 0;
-    summary.total_items += (order.items || []).reduce((total, item) => {
+    summary.total_items += (order.items || []).filter(item => !item.is_voided).reduce((total, item) => {
       return total + (Number(item.quantity) || 0);
     }, 0);
 
@@ -5154,7 +5154,7 @@ function calculateTodayFnbOrderSummary(orders) {
     const orderTotal = Number(order.order_total) || 0;
 
     summary.total_orders += 1;
-    summary.total_items += (order.items || []).reduce((total, item) => {
+    summary.total_items += (order.items || []).filter(item => !item.is_voided).reduce((total, item) => {
       return total + (Number(item.quantity) || 0);
     }, 0);
     summary.total_amount += orderTotal;
@@ -5222,7 +5222,7 @@ function getOpenGeneralFnbBills() {
       const bill = bills.get(billId);
       bill.orders.push(order);
       bill.total_amount += Number(order.order_total) || 0;
-      bill.total_items += (order.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      bill.total_items += (order.items || []).filter(item => !item.is_voided).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
     });
   return [...bills.values()].sort((first, second) => new Date(first.created_at) - new Date(second.created_at));
 }
@@ -7876,6 +7876,7 @@ function mergeUpdatedTransactionIntoState(updatedTransaction) {
 
   const transactionId = updatedTransaction.transaction_id;
   delete transactionLcReceiptDetails[transactionId];
+  delete transactionFnbDetails[transactionId];
   const mergeTransaction = (existing) => existing?.transaction_id === transactionId
     ? { ...existing, ...updatedTransaction }
     : existing;
@@ -8382,7 +8383,10 @@ function createBillingFnbDetailsElement(transaction) {
   title.textContent = "Detail F&B";
 
   const transactionId = transaction?.transaction_id || "";
-  const orders = transactionFnbDetails[transactionId] || transaction?.fnb_orders || [];
+  const rawOrders = transactionFnbDetails[transactionId] || transaction?.fnb_orders || [];
+  const orders = (rawOrders || []).filter(
+    (order) => order?.order_status !== "cancelled" && (order?.items || []).some((item) => !item.is_voided)
+  );
 
   detail.appendChild(title);
 
@@ -8392,7 +8396,10 @@ function createBillingFnbDetailsElement(transaction) {
   }
 
   if (!orders.length) {
-    detail.appendChild(createStateMessage("Detail F&B belum tersedia."));
+    const fnbTotal = Number(transaction?.fnb_total) || 0;
+    detail.appendChild(createStateMessage(
+      fnbTotal > 0 ? "Detail F&B belum tersedia." : "Tidak ada pesanan F&B aktif."
+    ));
     return detail;
   }
 
@@ -8423,7 +8430,7 @@ function createBillingFnbOrderElement(order) {
   const items = document.createElement("div");
   items.className = "billing-fnb-items";
 
-  (order?.items || []).forEach((item) => {
+  (order?.items || []).filter(item => !item.is_voided).forEach((item) => {
     const itemElement = document.createElement("div");
     itemElement.className = "billing-fnb-item";
 
@@ -8797,12 +8804,17 @@ function createReceiptFnbDetailElement(receiptData) {
     return section;
   }
 
-  const orders = receiptData.fnb.orders;
+  const rawOrders = receiptData.fnb.orders || [];
+  const orders = rawOrders.filter(
+    (order) => order?.status !== "cancelled" && (order?.items || []).some((item) => !item.is_voided && !item.isVoided)
+  );
 
   if (!orders.length) {
     const unavailable = document.createElement("p");
     unavailable.className = "receipt-print-note";
-    unavailable.textContent = "Detail F&B belum tersedia. Buka ringkasan transaksi terlebih dahulu.";
+    unavailable.textContent = (receiptData.totals?.fnbTotal > 0)
+      ? "Detail F&B belum tersedia. Buka ringkasan transaksi terlebih dahulu."
+      : "Tidak ada pesanan F&B aktif.";
     section.appendChild(unavailable);
     return section;
   }
@@ -8824,7 +8836,7 @@ function createReceiptFnbDetailElement(receiptData) {
       orderElement.appendChild(note);
     }
 
-    (order?.items || []).forEach((item) => {
+    (order?.items || []).filter(item => !item.is_voided).forEach((item) => {
       const row = document.createElement("div");
       row.className = "receipt-print-fnb-item";
 
@@ -9020,7 +9032,7 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
   let totalFbQuantity = 0;
 
   openOrders.forEach((order) => {
-    (order.items || []).forEach((item) => {
+    (order.items || []).filter(item => !item.is_voided).forEach((item) => {
       const name = item.menu_name || "-";
       const qty = Number(item.quantity) || 0;
       const price = Number(item.price) || 0;
@@ -12500,7 +12512,7 @@ function createOpenFnbOrderCardElement(order) {
   const items = document.createElement("div");
   items.className = "open-fnb-items";
 
-  (order.items || []).forEach((item) => {
+  (order.items || []).filter(item => !item.is_voided).forEach((item) => {
     items.appendChild(createOpenFnbOrderItemElement(item));
   });
 
@@ -12786,7 +12798,7 @@ function createTodayFnbOrderCardElement(order) {
   const items = document.createElement("div");
   items.className = "today-fnb-items";
 
-  (order.items || []).forEach((item) => {
+  (order.items || []).filter(item => !item.is_voided).forEach((item) => {
     items.appendChild(createTodayFnbOrderItemElement(item));
   });
 
@@ -28281,7 +28293,7 @@ async function showPaymentSelection(roomId) {
       const itemsList = [];
       detailedOrders.forEach(order => {
         if (Array.isArray(order.items)) {
-          order.items.forEach(item => {
+          order.items.filter(item => !item.is_voided).forEach(item => {
             const existing = itemsList.find(x => x.menu_id === item.menu_id);
             if (existing) {
               existing.quantity += item.quantity;

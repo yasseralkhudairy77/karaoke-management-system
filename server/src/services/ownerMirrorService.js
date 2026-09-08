@@ -44,7 +44,7 @@ async function getOpenFnbOrders() {
     const itemsRes = await db.query(`
       SELECT *
       FROM fnb_order_items
-      WHERE order_id = $1
+      WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL)
       ORDER BY created_at ASC
     `, [order.order_id]);
 
@@ -110,7 +110,7 @@ async function buildFnbSoldSummary(transactions) {
       SUM(subtotal) AS revenue,
       COUNT(*) AS line_count
     FROM fnb_order_items
-    WHERE order_id = ANY($1::text[])
+    WHERE order_id = ANY($1::text[]) AND (is_voided IS FALSE OR is_voided IS NULL)
     GROUP BY order_id, menu_id, menu_name, category
     ORDER BY revenue DESC, quantity DESC, menu_name ASC
   `, [orderIds]);

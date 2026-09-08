@@ -267,7 +267,7 @@ async function getRooms(req, res) {
       const itemsRes = await db.query(`
         SELECT *
         FROM fnb_order_items
-        WHERE order_id = $1
+        WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL)
         ORDER BY created_at ASC
       `, [order.order_id]);
 
@@ -1273,7 +1273,7 @@ async function deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashi
            m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name
     FROM fnb_order_items foi
     JOIN menu m ON foi.menu_id = m.menu_id
-    WHERE foi.order_id = ANY($1)
+    WHERE foi.order_id = ANY($1) AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
   `, [fnbOrderIds]);
 
   const movements = [];

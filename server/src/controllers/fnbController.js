@@ -148,7 +148,10 @@ async function getOpenFnbOrders(req, res, roomId) {
 async function attachOrderItems(orders) {
   await ensureFnbBundleSchema();
   for (const order of orders) {
-    const itemsRes = await db.query('SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [order.order_id]);
+    const itemsRes = await db.query(
+      'SELECT * FROM fnb_order_items WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL) ORDER BY created_at ASC',
+      [order.order_id]
+    );
     const itemIds = itemsRes.rows.map(item => item.order_item_id);
     const componentsResult = itemIds.length > 0
       ? await db.query(`
@@ -234,7 +237,10 @@ async function saveFnbOrder(req, res, payload) {
     if (idempotency_key) {
       const existing = await client.query('SELECT * FROM fnb_orders WHERE idempotency_key = $1', [idempotency_key]);
       if (existing.rowCount > 0) {
-        const itemsRes = await client.query('SELECT * FROM fnb_order_items WHERE order_id = $1 ORDER BY created_at ASC', [existing.rows[0].order_id]);
+        const itemsRes = await client.query(
+          'SELECT * FROM fnb_order_items WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL) ORDER BY created_at ASC',
+          [existing.rows[0].order_id]
+        );
         await client.query('COMMIT');
         return successResponse(res, { message: 'Order F&B sudah diproses (idempotent).', order: existing.rows[0], items: itemsRes.rows, idempotent_replay: true });
       }

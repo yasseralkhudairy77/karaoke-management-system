@@ -306,6 +306,101 @@ async function run() {
     console.log('  PASS: Sales commission thermal reprint slip renders *** CETAK ULANG ***');
   }
 
+  // Test 8: Filter out voided F&B items from receipt printing
+  {
+    const transaction = {
+      transaction_id: 'TRX-FNB-VOID-1',
+      room_id: 'ROOM-1',
+      room_name: 'VIP 1',
+      room_total: 200000,
+      fnb_total: 50000,
+      lc_total: 0,
+      grand_total: 250000,
+      payment_method: 'cash',
+      payment_status: 'paid',
+      cashier_name: 'Kasir',
+      fnb_orders: [
+        {
+          order_id: 'ORD-1',
+          order_status: 'open',
+          order_total: 50000,
+          items: [
+            {
+              menu_id: 'M-1',
+              menu_name: 'French Fries',
+              price: 50000,
+              quantity: 1,
+              subtotal: 50000,
+              is_voided: false
+            },
+            {
+              menu_id: 'M-2',
+              menu_name: 'Baileys Strawberi',
+              price: 1300000,
+              quantity: 1,
+              subtotal: 1300000,
+              is_voided: true,
+              void_reason: 'Salah pesan'
+            }
+          ]
+        }
+      ]
+    };
+
+    const receiptData = buildReceiptData(transaction, { fnbOrders: transaction.fnb_orders });
+    assert.strictEqual(receiptData.fnb.hasFnb, true);
+    assert.strictEqual(receiptData.fnb.orders.length, 1);
+    assert.strictEqual(receiptData.fnb.orders[0].items.length, 1);
+    assert.strictEqual(receiptData.fnb.orders[0].items[0].name, 'French Fries');
+
+    const formatted = formatReceipt58mm(receiptData);
+    assert(formatted.includes('French Fries'), 'French Fries should be printed');
+    assert(!formatted.includes('Baileys Strawberi'), 'Voided Baileys Strawberi must NOT be printed');
+    console.log('  PASS: Partially voided F&B order excludes voided items from receipt');
+  }
+
+  // Test 9: All items voided and order cancelled omits F&B from receipt
+  {
+    const transaction = {
+      transaction_id: 'TRX-FNB-VOID-ALL',
+      room_id: 'ROOM-1',
+      room_name: 'VIP 1',
+      room_total: 200000,
+      fnb_total: 0,
+      lc_total: 0,
+      grand_total: 200000,
+      payment_method: 'cash',
+      payment_status: 'paid',
+      cashier_name: 'Kasir',
+      fnb_orders: [
+        {
+          order_id: 'ORD-CANCELLED',
+          order_status: 'cancelled',
+          order_total: 0,
+          items: [
+            {
+              menu_id: 'M-2',
+              menu_name: 'Baileys Strawberi',
+              price: 1300000,
+              quantity: 1,
+              subtotal: 1300000,
+              is_voided: true
+            }
+          ]
+        }
+      ]
+    };
+
+    const receiptData = buildReceiptData(transaction, { fnbOrders: transaction.fnb_orders });
+    assert.strictEqual(receiptData.fnb.hasFnb, false, 'hasFnb should be false when all orders are voided/cancelled');
+    assert.strictEqual(receiptData.fnb.orders.length, 0, 'orders array should be empty');
+
+    const formatted = formatReceipt58mm(receiptData);
+    assert(!formatted.includes('Baileys Strawberi'), 'Voided item must not be on receipt');
+    assert(!formatted.includes('DETAIL F&B'), 'DETAIL F&B header must not be rendered when hasFnb is false');
+    console.log('  PASS: Fully voided F&B order cleanly omits DETAIL F&B from receipt');
+  }
+
   console.log('All Receipt Package LC Tests Passed Successfully!');
 }
 
