@@ -10044,12 +10044,6 @@ textarea.action-confirmation-input {
   .receipt-print-row,
   .receipt-print-lc-item,
   .receipt-print-fnb-item {
-  .receipt-print-reprint-notice,
-  .receipt-print-section,
-  .receipt-print-footer,
-  .receipt-print-row,
-  .receipt-print-lc-item,
-  .receipt-print-fnb-item {
     border-color: #d0d0d0;
     background: #ffffff;
   }
@@ -10700,26 +10694,28 @@ textarea.action-confirmation-input {
 .fnb-breakdown-item {
   display: flex !important;
   align-items: baseline !important;
-  gap: 5px !important;
+  gap: 4px !important;
   color: rgba(255, 255, 255, 0.9) !important;
-  font-size: 0.8rem !important;
+  font-size: 0.78rem !important;
   line-height: 1.35 !important;
   padding: 1px 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
 }
 
 .fnb-breakdown-item-name {
   color: rgba(255, 255, 255, 0.95) !important;
   font-weight: 700 !important;
-  max-width: 58% !important;
+  max-width: 48% !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
-  flex-shrink: 0 !important;
+  flex-shrink: 1 !important;
 }
 
 .fnb-breakdown-item-qty {
   color: #93c5fd !important;
-  font-size: 0.76rem !important;
+  font-size: 0.74rem !important;
   font-weight: 800 !important;
   flex-shrink: 0 !important;
 }
@@ -10727,16 +10723,16 @@ textarea.action-confirmation-input {
 .fnb-breakdown-item-dots {
   flex: 1 1 auto !important;
   border-bottom: 1px dotted rgba(255, 255, 255, 0.35) !important;
-  min-width: 8px !important;
+  min-width: 6px !important;
   height: 1px !important;
-  margin: 0 2px 3px 2px !important;
+  margin: 0 1px 3px 1px !important;
 }
 
 .fnb-breakdown-item-price {
   flex-shrink: 0 !important;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   color: #fef08a !important;
-  font-size: 0.82rem !important;
+  font-size: 0.8rem !important;
   font-weight: 800 !important;
   text-align: right !important;
 }
