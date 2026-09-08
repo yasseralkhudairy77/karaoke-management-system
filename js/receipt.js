@@ -516,6 +516,197 @@ export function formatFreeGiftSlip58mm(giftData, options = {}) {
   return lines.join("\n");
 }
 
+export function formatLcSlip58mm(lcData, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+
+  const business = options.business || DEFAULT_BUSINESS;
+  const lcId = getText(lcData?.lc_id || "-");
+  const lcName = getText(lcData?.lc_name || "Partner LC");
+  const cashierName = getText(options.cashierName || options.printedBy || "Kasir");
+  const payrollId = getText(lcData?.payroll_id || options.payrollId);
+  const periodLabel = getText(options.periodLabel || options.period || "");
+  const printedAt = options.printedAt || new Date().toISOString();
+
+  lines.push(centerReceiptText(business.name || DEFAULT_BUSINESS.name, width));
+  lines.push(centerReceiptText("SLIP KERJA & FEE PARTNER (LC)", width));
+  lines.push(centerReceiptText("*** TANDA TERIMA PEMBAYARAN ***", width));
+
+  if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
+
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "Nama LC", `${lcName} (${lcId})`, width);
+  if (payrollId) {
+    pushReceiptField(lines, "No. Payroll", payrollId, width);
+  }
+  if (periodLabel) {
+    pushReceiptField(lines, "Periode", periodLabel, width);
+  }
+  pushReceiptField(lines, "Waktu Cetak", formatReceiptDateTime(printedAt), width);
+  pushReceiptField(lines, "Kasir (PIC)", cashierName, width);
+  lines.push(separator);
+
+  // Rincian Sesi Room
+  lines.push(centerReceiptText("RINCIAN SESI ROOM", width));
+  const logs = Array.isArray(lcData?.logs) ? lcData.logs : [];
+  if (logs.length > 0) {
+    logs.forEach((log, idx) => {
+      const room = getText(log.room_name || (log.session_id ? log.session_id.split("-")[0] : `Sesi ${idx + 1}`));
+      let durMin = Math.round(getNumber(log.duration_minutes));
+      if (durMin <= 0 && log.created_at && log.closed_at) {
+        const diffMs = new Date(log.closed_at).getTime() - new Date(log.created_at).getTime();
+        durMin = Math.max(1, Math.ceil(diffMs / 60000));
+      }
+      const durHours = durMin > 0 ? (durMin / 60).toFixed(1) : "0";
+      const ratePerHour = getNumber(log.rate_per_hour || log.rate_per_room || lcData?.rate_per_room);
+      const fee = getNumber(log.rate);
+
+      lines.push(`${idx + 1}. ${room}`);
+      lines.push(formatReceiptLine(`   ${durHours} Jam @ ${formatReceiptCurrency(ratePerHour)}`, formatReceiptCurrency(fee), width));
+    });
+  } else {
+    lines.push(centerReceiptText("(Tidak ada rincian sesi room)", width));
+  }
+  lines.push(separator);
+
+  // Rincian Bonus Penjualan (jika ada)
+  const bonusLogs = Array.isArray(lcData?.sales_bonus_logs) ? lcData.sales_bonus_logs : [];
+  if (bonusLogs.length > 0) {
+    lines.push(centerReceiptText("BONUS PENJUALAN F&B", width));
+    bonusLogs.forEach((bonus, bIdx) => {
+      const menu = getText(bonus.menu_name || bonus.menu_id || "Item F&B");
+      const qty = getNumber(bonus.quantity || 1);
+      const bTotal = getNumber(bonus.bonus_total);
+      lines.push(`${bIdx + 1}. ${qty}x ${menu}`);
+      lines.push(formatReceiptLine("   Bonus", formatReceiptCurrency(bTotal), width));
+    });
+    lines.push(separator);
+  }
+
+  // Ringkasan Finansial
+  const totalSessions = getNumber(lcData?.total_sessions || logs.length);
+  const totalDurationMin = getNumber(lcData?.total_duration_minutes || logs.reduce((sum, l) => sum + getNumber(l.duration_minutes), 0));
+  const totalDurationHours = totalDurationMin > 0 ? (totalDurationMin / 60).toFixed(1) : "0";
+  const roomEarning = getNumber(lcData?.room_earning_total ?? (logs.reduce((sum, l) => sum + getNumber(l.rate), 0)));
+  const salesBonusTotal = getNumber(lcData?.sales_bonus_total ?? (bonusLogs.reduce((sum, b) => sum + getNumber(b.bonus_total), 0)));
+  const grossTotal = getNumber(lcData?.gross_earning_total ?? lcData?.total_earnings ?? (roomEarning + salesBonusTotal));
+  const cashAdvance = getNumber(lcData?.cash_advance_deduction || lcData?.cash_advance_total || 0);
+  const netPayout = getNumber(lcData?.net_payout ?? (grossTotal - cashAdvance));
+
+  pushReceiptField(lines, "Total Sesi", `${totalSessions} Sesi (${totalDurationHours} Jam)`, width);
+  lines.push(formatReceiptLine("Subtotal Fee Room", formatReceiptCurrency(roomEarning), width));
+  if (salesBonusTotal > 0) {
+    lines.push(formatReceiptLine("Bonus Sales F&B", formatReceiptCurrency(salesBonusTotal), width));
+  }
+  if (cashAdvance > 0) {
+    lines.push(formatReceiptLine("Potongan Kasbon", `-${formatReceiptCurrency(cashAdvance)}`, width));
+  }
+  lines.push(strongSeparator);
+  lines.push(formatReceiptLine("TOTAL DITERIMA", formatReceiptCurrency(netPayout), width));
+  lines.push(strongSeparator);
+
+  lines.push("");
+  pushReceiptSignature(lines, "Kasir (PIC)", cashierName, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Partner (LC)", lcName, width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(printedAt), width);
+  lines.push(separator);
+  wrapReceiptText("Simpan slip ini sebagai bukti tanda terima resmi fee partner LC.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
+export function formatLcShiftReport58mm(reportData, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const lines = [];
+
+  const business = options.business || DEFAULT_BUSINESS;
+  const cashierName = getText(options.cashierName || options.printedBy || "Kasir");
+  const periodLabel = getText(options.periodLabel || reportData?.period || "Hari Ini");
+  const printedAt = options.printedAt || new Date().toISOString();
+  const summary = reportData?.summary || {};
+  const lcs = Array.isArray(reportData?.reports) ? reportData.reports : (Array.isArray(reportData) ? reportData : []);
+
+  lines.push(centerReceiptText(business.name || DEFAULT_BUSINESS.name, width));
+  lines.push(centerReceiptText("REKAPITULASI LAPORAN LC", width));
+  lines.push(centerReceiptText("(SHIFT / HARIAN)", width));
+
+  if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
+
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "Periode", periodLabel, width);
+  pushReceiptField(lines, "Waktu Cetak", formatReceiptDateTime(printedAt), width);
+  pushReceiptField(lines, "Kasir (PIC)", cashierName, width);
+  lines.push(separator);
+
+  // Ringkasan Global
+  lines.push(centerReceiptText("RINGKASAN OPERASIONAL", width));
+  const totalLcs = getNumber(summary.total_lcs || lcs.length);
+  const totalSessions = getNumber(summary.total_sessions || lcs.reduce((sum, r) => sum + getNumber(r.total_sessions), 0));
+  const totalDurationMin = getNumber(summary.total_duration_minutes || lcs.reduce((sum, r) => sum + getNumber(r.total_duration_minutes), 0));
+  const totalDurationHours = totalDurationMin > 0 ? (totalDurationMin / 60).toFixed(1) : "0";
+  const totalRoomEarning = getNumber(summary.room_earning_total || lcs.reduce((sum, r) => sum + getNumber(r.room_earning_total ?? r.total_earnings), 0));
+  const totalSalesBonus = getNumber(summary.sales_bonus_total || lcs.reduce((sum, r) => sum + getNumber(r.sales_bonus_total), 0));
+  const totalGross = getNumber(summary.gross_earning_total || (totalRoomEarning + totalSalesBonus));
+
+  pushReceiptField(lines, "Total LC Aktif", `${totalLcs} Orang`, width);
+  pushReceiptField(lines, "Total Sesi Room", `${totalSessions} Sesi`, width);
+  pushReceiptField(lines, "Total Jam Kerja", `${totalDurationHours} Jam`, width);
+  lines.push(formatReceiptLine("Total Fee Room", formatReceiptCurrency(totalRoomEarning), width));
+  if (totalSalesBonus > 0) {
+    lines.push(formatReceiptLine("Total Bonus Sales", formatReceiptCurrency(totalSalesBonus), width));
+  }
+  lines.push(strongSeparator);
+  lines.push(formatReceiptLine("TOTAL FEE LC", formatReceiptCurrency(totalGross), width));
+  lines.push(strongSeparator);
+
+  // Rincian per LC
+  lines.push(centerReceiptText("RINCIAN PER PARTNER LC", width));
+  if (lcs.length > 0) {
+    lcs.forEach((lc, idx) => {
+      const name = getText(lc.lc_name || `LC ${lc.lc_id}`);
+      const id = getText(lc.lc_id || "");
+      const sessions = getNumber(lc.total_sessions || 0);
+      const durMin = getNumber(lc.total_duration_minutes || 0);
+      const durH = durMin > 0 ? (durMin / 60).toFixed(1) : "0";
+      const total = getNumber(lc.gross_earning_total ?? lc.total_earnings ?? (getNumber(lc.room_earning_total) + getNumber(lc.sales_bonus_total)));
+      const bonus = getNumber(lc.sales_bonus_total || 0);
+
+      lines.push(`${idx + 1}. ${name} (${id})`);
+      let subInfo = `   ${sessions} sesi (${durH}j)`;
+      if (bonus > 0) subInfo += ` [B:${formatReceiptCurrency(bonus)}]`;
+      lines.push(formatReceiptLine(subInfo, formatReceiptCurrency(total), width));
+    });
+  } else {
+    lines.push(centerReceiptText("(Tidak ada data LC pada periode ini)", width));
+  }
+  lines.push(separator);
+
+  lines.push("");
+  pushReceiptSignature(lines, "Kasir (PIC)", cashierName, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Supervisor / Owner", "Pemeriksa", width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(printedAt), width);
+  lines.push(separator);
+  wrapReceiptText("Dokumen rekapitulasi sah operasional sistem POS Happy Song Karaoke.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();

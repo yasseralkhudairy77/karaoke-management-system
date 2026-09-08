@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatFreeGiftSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=free-gift-v1";
+import { buildReceiptData, formatFreeGiftSlip58mm, formatLcShiftReport58mm, formatLcSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=lc-thermal-v1";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -25195,6 +25195,29 @@ function createLcReportsSubTabElement() {
     await loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate);
   };
 
+  const printThermalBtn = document.createElement("button");
+  printThermalBtn.type = "button";
+  printThermalBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printThermalBtn.style.padding = "8px 16px";
+  printThermalBtn.style.alignSelf = "flex-end";
+  printThermalBtn.style.fontWeight = "bold";
+  printThermalBtn.textContent = "🖨️ Cetak Rekap (58mm)";
+  printThermalBtn.disabled = isLoadingLcWorkReports || lcWorkReports.length === 0;
+  printThermalBtn.onclick = async () => {
+    const sortedReports = getSortedLcWorkReports();
+    const summary = getLcReportPrintSummary(sortedReports);
+    const periodDisplay = getLcReportPeriodLabel();
+    const slipText = formatLcShiftReport58mm({
+      summary,
+      reports: sortedReports,
+      period: periodDisplay
+    }, {
+      cashierName: getLoggedInOperatorName(),
+      periodLabel: periodDisplay
+    });
+    await printThermalText(slipText);
+  };
+
   const printBtn = document.createElement("button");
   printBtn.type = "button";
   printBtn.className = "erp-btn erp-btn-secondary";
@@ -25207,7 +25230,7 @@ function createLcReportsSubTabElement() {
     showLcReportPrintPreview();
   };
 
-  toolbar.append(applyBtn, printBtn);
+  toolbar.append(applyBtn, printThermalBtn, printBtn);
   container.appendChild(toolbar);
 
   if (isLoadingLcWorkReports) {
@@ -25281,14 +25304,24 @@ function createLcReportsSubTabElement() {
       <td>${formatCurrency(rep.room_earning_total ?? rep.total_earnings)}</td>
       <td>${formatCurrency(rep.sales_bonus_total || 0)}</td>
       <td><strong>${formatCurrency(rep.gross_earning_total ?? rep.total_earnings)}</strong></td>
-      <td style="text-align: center;">
+      <td style="text-align: center; display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
         <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-print-lc-slip" style="padding: 4px 8px; font-size: 12px;">🖨️ Cetak Slip</button>
       </td>
     `;
 
     tr.querySelector(".btn-detail-lc-logs").onclick = () => {
       selectedLcDetailForLogs = rep;
       renderRooms();
+    };
+
+    tr.querySelector(".btn-print-lc-slip").onclick = async () => {
+      const periodDisplay = getLcReportPeriodLabel();
+      const slipText = formatLcSlip58mm(rep, {
+        cashierName: getLoggedInOperatorName(),
+        periodLabel: periodDisplay
+      });
+      await printThermalText(slipText);
     };
 
     tbody.appendChild(tr);
@@ -26197,53 +26230,12 @@ function createLcSlipModalOverlay() {
   const doubleDivider = "================================";
 
   const lc = selectedLcForSlip;
-  const lines = [
-    centerText("HAPPY SONG KARAOKE", 32),
-    centerText("SLIP GAJI PARTNER (LC)", 32),
-    divider,
-    padText("ID Payroll", lc.payroll_id, 32),
-    padText("ID LC", lc.lc_id, 32),
-    padText("Nama", lc.lc_name, 32),
-    divider,
-    "Rincian Sesi Kerja:",
-  ];
-
-  (lc.logs || []).forEach((log, index) => {
-    const dateStr = formatTransactionDateTime(log.created_at).split(" - ")[0];
-    const roomName = log.session_id.split("-")[0];
-    
-    let durationMinutes = Math.round(Number(log.duration_minutes) || 0);
-    if (durationMinutes <= 0 && log.created_at && log.closed_at) {
-      const ms = new Date(log.closed_at).getTime() - new Date(log.created_at).getTime();
-      durationMinutes = Math.max(1, Math.ceil(ms / 60000));
-    }
-    if (durationMinutes <= 0 && Number(log.rate) > 0 && Number(lc.rate_per_room) > 0) {
-      durationMinutes = Math.ceil(Number(log.rate) / Number(lc.rate_per_room)) * 60;
-    }
-    const durationHours = durationMinutes > 0 ? durationMinutes / 60 : 0;
-    
-    lines.push(`${index + 1}. Room: ${roomName} (${dateStr})`);
-    
-    const formattedHours = durationHours > 0 ? `${durationHours.toFixed(1)} Jam` : "N/A";
-    lines.push(padText(`   ${formattedHours} @ ${formatCurrency(lc.rate_per_room)}/Jam`, formatCurrency(log.rate), 32));
+  const formattedSlipText = formatLcSlip58mm(lc, {
+    cashierName: getLoggedInOperatorName(),
+    periodLabel: lc?.period || ""
   });
 
-  lines.push(
-    divider,
-    padText("Total Sesi", `${lc.total_sessions} Sesi`, 32),
-    padText("Tarif per Jam", formatCurrency(lc.rate_per_room), 32),
-    doubleDivider,
-    padText("TOTAL GAJI", formatCurrency(lc.total_earnings), 32),
-    doubleDivider,
-    "",
-    centerText("TANDA TERIMA", 32),
-    "",
-    "",
-    centerText("( ______________________ )", 32),
-    centerText(lc.lc_name, 32),
-  );
-
-  content.textContent = lines.join("\n");
+  content.textContent = formattedSlipText;
   container.appendChild(title);
   container.appendChild(content);
 
@@ -26257,33 +26249,9 @@ function createLcSlipModalOverlay() {
   printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
   printBtn.style.padding = "8px 16px";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "Cetak Slip";
-  printBtn.onclick = () => {
-    const printWindow = window.open("", "_blank");
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Cetak Slip Gaji ${lc.lc_name}</title>
-          <style>
-            body {
-              font-family: monospace;
-              font-size: 14px;
-              white-space: pre-wrap;
-              padding: 20px;
-              width: 300px;
-            }
-            @media print {
-              body { padding: 0; margin: 0; width: 58mm; }
-            }
-          </style>
-        </head>
-        <body>${content.textContent}</body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-    printWindow.close();
+  printBtn.textContent = "🖨️ Cetak Slip (58mm)";
+  printBtn.onclick = async () => {
+    await printThermalText(formattedSlipText);
   };
 
   const closeBtn = document.createElement("button");
@@ -26863,6 +26831,21 @@ function createLcDetailLogsOverlay() {
   const actions = document.createElement("div");
   actions.style.display = "flex";
   actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+
+  const printSlipBtn = document.createElement("button");
+  printSlipBtn.type = "button";
+  printSlipBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printSlipBtn.style.fontWeight = "bold";
+  printSlipBtn.textContent = "🖨️ Cetak Slip (58mm)";
+  printSlipBtn.onclick = async () => {
+    const periodDisplay = getLcReportPeriodLabel();
+    const slipText = formatLcSlip58mm(selectedLcDetailForLogs, {
+      cashierName: getLoggedInOperatorName(),
+      periodLabel: periodDisplay
+    });
+    await printThermalText(slipText);
+  };
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
@@ -26872,7 +26855,7 @@ function createLcDetailLogsOverlay() {
     selectedLcDetailForLogs = null;
     renderRooms();
   };
-  actions.appendChild(closeBtn);
+  actions.append(printSlipBtn, closeBtn);
 
   formEl.append(title, infoText, workTitle, tableWrapper, bonusTitle, bonusTableWrapper, actions);
   overlay.appendChild(formEl);
