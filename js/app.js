@@ -1009,6 +1009,7 @@ let manualTransactionDraft = null;
 let isSavingManualTransaction = false;
 let manualTransactionIdempotencyKey = "";
 let openFnbOrders = [];
+let expandedGeneralFnbOrderIds = new Set();
 let openFnbOrderSummary = null;
 let isLoadingOpenFnbOrders = false;
 let todayFnbOrders = [];
@@ -12932,12 +12933,40 @@ function createOpenGeneralFnbBillsElement() {
     header.append(identity, total);
 
     const orderList = document.createElement("div");
-    orderList.className = "open-fnb-items";
+    orderList.className = "open-fnb-items general-fnb-orders-list";
     bill.orders.forEach((order) => {
-      const row = document.createElement("div");
-      row.className = "open-fnb-item";
+      const orderGroup = document.createElement("div");
+      orderGroup.className = "general-fnb-order-group";
+
+      const orderHeader = document.createElement("div");
+      orderHeader.className = "open-fnb-item general-fnb-order-header";
+
+      const activeItems = (order.items || []).filter((item) => !item.is_voided);
+      const itemCount = activeItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      const isExpanded = expandedGeneralFnbOrderIds.has(order.order_id);
+
+      const infoWrap = document.createElement("div");
+      infoWrap.className = "general-fnb-order-info";
+
       const label = document.createElement("span");
+      label.className = "general-fnb-order-title";
       label.textContent = `${order.order_id} - ${formatDateTimeLabel(order.created_at)}`;
+      infoWrap.appendChild(label);
+
+      if (activeItems.length > 0) {
+        const toggleBtn = document.createElement("button");
+        toggleBtn.className = "general-fnb-toggle-btn";
+        toggleBtn.type = "button";
+        toggleBtn.dataset.action = "toggle-general-fnb-order-details";
+        toggleBtn.dataset.orderId = order.order_id;
+        toggleBtn.dataset.itemCount = String(itemCount);
+        toggleBtn.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+        toggleBtn.innerHTML = isExpanded
+          ? `<span>Tutup Rincian</span> <span class="toggle-icon">▴</span>`
+          : `<span>Lihat ${itemCount} Item</span> <span class="toggle-icon">▾</span>`;
+        infoWrap.appendChild(toggleBtn);
+      }
+
       const amountWrap = document.createElement("div");
       amountWrap.className = "open-fnb-item-amount-wrap";
       const amount = document.createElement("strong");
@@ -12953,8 +12982,55 @@ function createOpenGeneralFnbBillsElement() {
       cancelItemBtn.textContent = "Batal";
 
       amountWrap.append(amount, cancelItemBtn);
-      row.append(label, amountWrap);
-      orderList.appendChild(row);
+      orderHeader.append(infoWrap, amountWrap);
+      orderGroup.appendChild(orderHeader);
+
+      if (activeItems.length > 0) {
+        const detailsContainer = document.createElement("div");
+        detailsContainer.className = isExpanded
+          ? "general-fnb-order-details"
+          : "general-fnb-order-details collapsed";
+
+        activeItems.forEach((item) => {
+          const itemRow = document.createElement("div");
+          itemRow.className = "general-fnb-order-item";
+
+          const itemInfo = document.createElement("div");
+          itemInfo.className = "general-fnb-item-info";
+
+          const itemName = document.createElement("span");
+          itemName.className = "general-fnb-item-name";
+          itemName.textContent = item.menu_name || "-";
+
+          const itemMeta = document.createElement("span");
+          itemMeta.className = "general-fnb-item-meta";
+          itemMeta.textContent = `${Number(item.quantity) || 0}x @ ${formatCurrency(item.price)}`;
+
+          itemInfo.append(itemName, itemMeta);
+
+          if (Array.isArray(item.bundle_components) && item.bundle_components.length > 0) {
+            const bundleMeta = document.createElement("div");
+            bundleMeta.className = "general-fnb-bundle-meta";
+            bundleMeta.textContent = item.bundle_components.map((c) => {
+              const qty = Number(c.total_qty) || (Number(c.qty_per_menu ?? c.qty_used) || 0) * (Number(item.quantity) || 1);
+              const mode = c.component_mode === "bonus" ? "Bonus" : "Termasuk";
+              return `${mode}: ${formatDecimal(qty)}x ${c.component_name || c.stock_item_name || c.item_id}`;
+            }).join(" | ");
+            itemInfo.appendChild(bundleMeta);
+          }
+
+          const itemSubtotal = document.createElement("span");
+          itemSubtotal.className = "general-fnb-item-subtotal";
+          itemSubtotal.textContent = formatCurrency(item.subtotal);
+
+          itemRow.append(itemInfo, itemSubtotal);
+          detailsContainer.appendChild(itemRow);
+        });
+
+        orderGroup.appendChild(detailsContainer);
+      }
+
+      orderList.appendChild(orderGroup);
     });
 
     const payment = document.createElement("div");
@@ -30241,6 +30317,29 @@ async function handleRoomAction(event) {
 
   if (button.closest(".transaction-menu-dropdown")) {
     closeAllTransactionActionMenus();
+  }
+
+  if (action === "toggle-general-fnb-order-details") {
+    const orderId = button.dataset.orderId || "";
+    const itemCount = button.dataset.itemCount || "";
+    const orderGroup = button.closest(".general-fnb-order-group");
+    const details = orderGroup?.querySelector(".general-fnb-order-details");
+
+    if (details) {
+      const isCollapsed = details.classList.contains("collapsed");
+      if (isCollapsed) {
+        details.classList.remove("collapsed");
+        button.setAttribute("aria-expanded", "true");
+        button.innerHTML = `<span>Tutup Rincian</span> <span class="toggle-icon">▴</span>`;
+        if (orderId) expandedGeneralFnbOrderIds.add(orderId);
+      } else {
+        details.classList.add("collapsed");
+        button.setAttribute("aria-expanded", "false");
+        button.innerHTML = `<span>Lihat ${itemCount} Item</span> <span class="toggle-icon">▾</span>`;
+        if (orderId) expandedGeneralFnbOrderIds.delete(orderId);
+      }
+    }
+    return;
   }
 
   if (action === "switch-dashboard-tab") {
