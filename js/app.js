@@ -29979,13 +29979,35 @@ async function showUpfrontPaymentModal(roomId, options = {}) {
 
   // Perhitungan LC untuk durasi booking
   ensureLcSelectionStateForRoom(room);
-  const lcAssignments = buildLcAssignmentsForRoom(room);
-  const calculatedLcs = calculateLcCustomerChargeForRoom(room, lcAssignments.map(a => ({
-    name: a.lc_name || a.lc_id,
-    lc_id: a.lc_id,
-    durationMinutes: a.duration_minutes || durationMinutes,
-    ratePerHour: a.rate_per_hour
-  })));
+  const activeLcList = Array.isArray(lcs) ? lcs.filter(l => l.status === "active") : [];
+  const activeLcRates = activeLcList.map(l => Number(l.rate_per_room || l.rate_per_hour) || 0).filter(r => r > 0);
+  const avgLcRate = activeLcRates.length > 0 ? activeLcRates.reduce((a, b) => a + b, 0) / activeLcRates.length : 175000;
+
+  let parsedRoomAssignments = [];
+  try {
+    if (typeof room.lc_assignments === "string" && room.lc_assignments.trim()) {
+      parsedRoomAssignments = JSON.parse(room.lc_assignments);
+    } else if (Array.isArray(room.lc_assignments)) {
+      parsedRoomAssignments = room.lc_assignments;
+    }
+  } catch (e) {}
+
+  const rawLcDetails = activeLcIds.map(id => {
+    const lcDuration = getLcDurationForRoom(room, id) || durationMinutes;
+    const foundLc = Array.isArray(lcs) ? lcs.find(l => l.lc_id === id) : null;
+    const foundAssignment = parsedRoomAssignments.find(a => a.lc_id === id);
+    const lcName = foundLc?.lc_name || foundAssignment?.lc_name || id;
+    const ratePerHour = Number(foundLc?.rate_per_room || foundAssignment?.rate_per_hour || foundLc?.rate_per_hour || avgLcRate);
+
+    return {
+      id,
+      name: lcName,
+      durationMinutes: lcDuration,
+      ratePerHour: ratePerHour
+    };
+  });
+
+  const calculatedLcs = calculateLcCustomerChargeForRoom(room, rawLcDetails);
   const lcSubtotal = calculatedLcs.reduce((sum, item) => sum + Number(item.customerCharge || 0), 0);
 
   const grandTotal = roomSubtotal + fnbSubtotal + lcSubtotal;
@@ -30018,7 +30040,7 @@ async function showUpfrontPaymentModal(roomId, options = {}) {
       <span>${formatCurrency(fnbSubtotal)}</span>
     </div>
     <div class="upfront-summary-row">
-      <span><strong>Pemandu Lagu (${calculatedLcs.length} LC):</strong> ${calculatedLcs.length > 0 ? escapeHtml(calculatedLcs.map(l => l.name).join(", ")) : "(Tanpa LC)"}</span>
+      <span><strong>Pemandu Lagu (${calculatedLcs.length} LC):</strong> ${calculatedLcs.length > 0 ? escapeHtml(calculatedLcs.map(l => `${l.name} (${formatLcDurationShort(l.durationMinutes)})`).join(", ")) : "(Tanpa LC)"}</span>
       <span>${formatCurrency(lcSubtotal)}</span>
     </div>
     <div class="upfront-summary-row upfront-total-row">
@@ -30113,7 +30135,12 @@ async function showUpfrontPaymentModal(roomId, options = {}) {
         cash_amount: method === "cash" ? grandTotal : 0,
         transfer_amount: method !== "cash" ? grandTotal : 0,
         lc_ids: activeLcIds.join(","),
-        lc_assignments: buildLcAssignmentsPayloadForRoom(room)
+        lc_assignments: JSON.stringify(rawLcDetails.map(item => ({
+          lc_id: item.id,
+          lc_name: item.name,
+          duration_minutes: item.durationMinutes,
+          rate_per_hour: item.ratePerHour
+        })))
       });
 
       if (!res || res.ok !== true) {

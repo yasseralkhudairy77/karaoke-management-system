@@ -865,7 +865,16 @@ async function payUpfrontSession(req, res, payload) {
     }
 
     // LC Calculation: allocate for booked duration
-    const lcRes = await client.query(`
+    let passedAssignments = [];
+    try {
+      if (typeof payload.lc_assignments === 'string' && payload.lc_assignments.trim()) {
+        passedAssignments = JSON.parse(payload.lc_assignments);
+      } else if (Array.isArray(payload.lc_assignments)) {
+        passedAssignments = payload.lc_assignments;
+      }
+    } catch (e) {}
+
+    let lcRes = await client.query(`
       SELECT
         log_id, session_id, room_id, room_name, lc_id, lc_name,
         duration_minutes, rate_per_hour, rate, status, created_at
@@ -875,12 +884,69 @@ async function payUpfrontSession(req, res, payload) {
       ORDER BY created_at ASC
     `, [activeSession.session_id, roomId]);
 
+    // Fallback: If no work logs exist yet but assignments or lc_ids were provided
+    if (lcRes.rowCount === 0 && (passedAssignments.length > 0 || payload.lc_ids || room.lc_ids)) {
+      const ids = passedAssignments.length > 0
+        ? passedAssignments.map(a => a.lc_id).filter(Boolean)
+        : String(payload.lc_ids || room.lc_ids || '').split(',').map(s => s.trim()).filter(Boolean);
+
+      for (const lcId of ids) {
+        if (!lcId || lcId === 'PENDING') continue;
+        const assignMeta = passedAssignments.find(a => a.lc_id === lcId);
+        const lcDur = Number(assignMeta?.duration_minutes || durationMinutes);
+        const masterRes = await client.query('SELECT lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1', [lcId]);
+        const masterRow = masterRes.rows[0] || {};
+        const lcName = assignMeta?.lc_name || masterRow.lc_name || lcId;
+        const ratePerHour = Number(assignMeta?.rate_per_hour || masterRow.rate_per_hour || 0);
+        const rate = Math.ceil(lcDur / 60) * ratePerHour;
+        const logId = `LCW-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+        await client.query(`
+          INSERT INTO lc_work_logs (
+            log_id, session_id, room_id, room_name, lc_id, lc_name,
+            duration_minutes, rate_per_hour, rate, status, cashier_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10)
+        `, [logId, activeSession.session_id, roomId, room.room_name, lcId, lcName, lcDur, ratePerHour, rate, cashierName]);
+      }
+
+      lcRes = await client.query(`
+        SELECT
+          log_id, session_id, room_id, room_name, lc_id, lc_name,
+          duration_minutes, rate_per_hour, rate, status, created_at
+        FROM lc_work_logs
+        WHERE closed_at IS NULL AND status != 'cancelled'
+          AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
+        ORDER BY created_at ASC
+      `, [activeSession.session_id, roomId]);
+    }
+
+    // Pastikan rate_per_hour dan duration_minutes akurat
+    for (const row of lcRes.rows) {
+      const assignMeta = passedAssignments.find(a => a.lc_id === row.lc_id);
+      if (assignMeta && Number(assignMeta.duration_minutes) > 0) {
+        row.duration_minutes = Number(assignMeta.duration_minutes);
+      } else if (!row.duration_minutes || Number(row.duration_minutes) <= 0) {
+        row.duration_minutes = durationMinutes;
+      }
+      if (!row.rate_per_hour || Number(row.rate_per_hour) <= 0) {
+        if (assignMeta && Number(assignMeta.rate_per_hour) > 0) {
+          row.rate_per_hour = Number(assignMeta.rate_per_hour);
+        } else {
+          const masterRes = await client.query('SELECT lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1', [row.lc_id]);
+          if (masterRes.rowCount > 0) {
+            row.rate_per_hour = Number(masterRes.rows[0].rate_per_hour || 0);
+            if (!row.lc_name) row.lc_name = masterRes.rows[0].lc_name;
+          }
+        }
+      }
+      if (!row.lc_name && assignMeta?.lc_name) {
+        row.lc_name = assignMeta.lc_name;
+      }
+    }
+
     const uniqueLcRows = Array.from(lcRes.rows.reduce((map, row) => {
       if (!row.lc_id || map.has(row.lc_id)) return map;
-      map.set(row.lc_id, {
-        ...row,
-        duration_minutes: durationMinutes
-      });
+      map.set(row.lc_id, row);
       return map;
     }, new Map()).values());
 
