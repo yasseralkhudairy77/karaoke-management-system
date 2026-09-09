@@ -43,7 +43,8 @@
     "test:transaction-action-menu-ui": "node tests/transaction-action-menu-ui.test.js",
     "test:general-fnb-items-ui": "node tests/general-fnb-items-ui.test.js",
     "test:backup-restore": "node tests/backup-restore.test.js",
-    "test:backup-restore-ui": "node tests/backup-restore-ui.test.js"
+    "test:backup-restore-ui": "node tests/backup-restore-ui.test.js",
+    "test:room-instant-ui": "node tests/room-countdown-instant-ui.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

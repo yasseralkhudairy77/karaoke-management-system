@@ -411,32 +411,45 @@ async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
     };
   }
 
-  const response = await fetch(LOCAL_TV_BRIDGE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-    body: JSON.stringify({
-      room_id: roomId,
-      tv_action: tvAction,
-      trigger_source: triggerSource,
-      requested_by: getLoggedInOperatorName(),
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-  let data = null;
   try {
-    data = await response.json();
-  } catch (error) {
-    throw new Error("Bridge TV lokal mengembalikan respons tidak valid.");
-  }
+    const response = await fetch(LOCAL_TV_BRIDGE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      signal: controller.signal,
+      body: JSON.stringify({
+        room_id: roomId,
+        tv_action: tvAction,
+        trigger_source: triggerSource,
+        requested_by: getLoggedInOperatorName(),
+      }),
+    });
 
-  if (!response.ok || data?.success !== true) {
-    throw new Error(data?.message || data?.error || `Perintah TV gagal dengan status ${response.status}.`);
-  }
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new Error("Bridge TV lokal mengembalikan respons tidak valid.");
+    }
 
-  return data;
+    if (!response.ok || data?.success !== true) {
+      throw new Error(data?.message || data?.error || `Perintah TV gagal dengan status ${response.status}.`);
+    }
+
+    return data;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Koneksi ke Bridge TV fisik batas waktu habis (timeout 2.5 detik).");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function sendTvOffForExpiredCountdown(roomId, scheduledEndTime) {
@@ -29373,20 +29386,34 @@ async function startSession(roomId, durationMinutes) {
       throw new Error(data?.error || "Gagal memulai sesi.");
     }
 
-    try {
-      await sendLocalTvCommand(roomId, "power_on", "start_session");
-      showInlineNotice("Sesi berhasil dimulai. TV dinyalakan.");
-    } catch (tvError) {
-      showInlineNotice(`Sesi berhasil dimulai. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
-    }
-
     durationSelectionRoomId = "";
     customDurationMinutes = "";
+
+    // 1. Terapkan pembaruan status room seketika di UI (Card langsung MERAH dalam hitungan milidetik)
+    if (data.room) {
+      const idx = rooms.findIndex((r) => r.room_id === roomId);
+      if (idx >= 0) {
+        rooms[idx] = { ...rooms[idx], ...data.room };
+      }
+    }
+    setActionButtonsDisabled(false);
+    renderRooms();
+
+    // 2. Perintah TV fisik dijalankan non-blocking di background
+    sendLocalTvCommand(roomId, "power_on", "start_session")
+      .then(() => {
+        showInlineNotice("Sesi berhasil dimulai. TV dinyalakan.");
+      })
+      .catch((tvError) => {
+        showInlineNotice(`Sesi berhasil dimulai. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+      });
+
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal memulai sesi.", "error");
   } finally {
     setActionButtonsDisabled(false);
+    renderRooms();
   }
 }
 
@@ -29656,12 +29683,25 @@ async function completeCleaning(roomId) {
       throw new Error(data?.error || "Gagal menyelesaikan cleaning.");
     }
 
-    try {
-      await sendLocalTvCommand(roomId, "power_on", "complete_cleaning");
-      showInlineNotice("Room siap digunakan kembali. TV dinyalakan.");
-    } catch (tvError) {
-      showInlineNotice(`Room siap digunakan kembali. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+    // 1. Terapkan pembaruan status room seketika di UI (Card langsung BERSIH/AVAILABLE)
+    if (data.room) {
+      const idx = rooms.findIndex((r) => r.room_id === roomId);
+      if (idx >= 0) {
+        rooms[idx] = { ...rooms[idx], ...data.room };
+      }
     }
+    isCompletingCleaning = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+
+    // 2. Perintah TV fisik dijalankan non-blocking di background
+    sendLocalTvCommand(roomId, "power_on", "complete_cleaning")
+      .then(() => {
+        showInlineNotice("Room siap digunakan kembali. TV dinyalakan.");
+      })
+      .catch((tvError) => {
+        showInlineNotice(`Room siap digunakan kembali. Namun TV gagal dinyalakan: ${tvError.message}`, "warning");
+      });
 
     await loadRooms();
   } catch (error) {
@@ -29760,15 +29800,28 @@ async function activatePreparedSession(roomId) {
       throw new Error(data?.error || "Gagal memulai countdown.");
     }
 
-    try {
-      await sendLocalTvCommand(roomId, "power_on", "activate_prepared_session");
-      showInlineNotice(`${data.message || "Sesi postpaid berhasil dimulai."} TV dinyalakan.`);
-    } catch (tvError) {
-      showInlineNotice(
-        `${data.message || "Sesi postpaid berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
-        "warning"
-      );
+    // 1. Terapkan pembaruan status room seketika di UI (Card langsung MERAH & countdown berdetik seketika)
+    if (data.room) {
+      const idx = rooms.findIndex((r) => r.room_id === roomId);
+      if (idx >= 0) {
+        rooms[idx] = { ...rooms[idx], ...data.room };
+      }
     }
+    isActivatingPreparedSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+
+    // 2. Perintah TV fisik dijalankan non-blocking di background
+    sendLocalTvCommand(roomId, "power_on", "activate_prepared_session")
+      .then(() => {
+        showInlineNotice(`${data.message || "Sesi postpaid berhasil dimulai."} TV dinyalakan.`);
+      })
+      .catch((tvError) => {
+        showInlineNotice(
+          `${data.message || "Sesi postpaid berhasil dimulai."} Namun TV gagal dinyalakan: ${tvError.message}`,
+          "warning"
+        );
+      });
 
     await loadRooms();
   } catch (error) {
@@ -29899,18 +29952,17 @@ async function closeSession(roomId, options = {}) {
       transactionFnbDetails[transaction.transaction_id] = transaction.fnb_orders;
     }
 
-    let closeSessionTvWarning = "";
-    try {
-      await sendLocalTvCommand(roomId, "power_off", "close_session");
-    } catch (tvError) {
-      closeSessionTvWarning = ` TV gagal dimatikan: ${tvError.message}`;
-    }
+    // Perintah TV power off di background tanpa menahan dialog struk/billing
+    sendLocalTvCommand(roomId, "power_off", "close_session")
+      .catch((tvError) => {
+        showInlineNotice(`TV gagal dimatikan: ${tvError.message}`, "warning");
+      });
 
     if (transaction.transaction_id) {
       showBillingSummary(transaction);
       showInlineNotice(
-        `Sesi selesai. Periksa durasi LC dan total tagihan sebelum mencetak struk.${closeSessionTvWarning}`,
-        closeSessionTvWarning ? "warning" : "success"
+        "Sesi selesai. Periksa durasi LC dan total tagihan sebelum mencetak struk.",
+        "success"
       );
       await loadTodayTransactions();
     } else {
