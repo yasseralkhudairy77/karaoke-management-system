@@ -193,8 +193,18 @@ async function recordPettyCashEntry(req, res, payload) {
   }
 }
 
+let upfrontPaymentSchemaChecked = false;
+async function ensureUpfrontPaymentSchema() {
+  if (upfrontPaymentSchemaChecked) return;
+  await db.query(`
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS upfront_transaction_id VARCHAR(50);
+  `).catch(() => {});
+  upfrontPaymentSchemaChecked = true;
+}
+
 async function getLcWorkReports(req, res) {
   try {
+    await ensureUpfrontPaymentSchema();
     const { startDate, endDate } = getLcReportDateRange(req.query);
     const [lcsRes, logsRes, bonusRes] = await Promise.all([
       db.query('SELECT * FROM lc_master ORDER BY lc_name ASC'),
@@ -202,7 +212,7 @@ async function getLcWorkReports(req, res) {
         SELECT
           log_id, session_id, room_id, room_name, lc_id, lc_name,
           duration_minutes, rate_per_hour, rate, status,
-          created_at, closed_at, payroll_id, closed_transaction_id
+          created_at, closed_at, payroll_id, closed_transaction_id, upfront_transaction_id
         FROM lc_work_logs
         WHERE status <> 'cancelled'
           AND (((COALESCE(closed_at, created_at) AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
@@ -263,6 +273,9 @@ async function getLcWorkReports(req, res) {
       }
 
       const report = reportsByLcId.get(lcId);
+      const isUpfrontPaid = Boolean(row.upfront_transaction_id);
+      const isSettledOrUpfront = ['done', 'closed', 'paid'].includes(String(row.status || '').toLowerCase()) || isUpfrontPaid;
+
       const log = {
         log_id: row.log_id || '',
         session_id: row.session_id || '',
@@ -275,13 +288,15 @@ async function getLcWorkReports(req, res) {
         rate_per_room: toNumber(row.rate_per_hour),
         rate: toNumber(row.rate),
         status: row.status || '',
+        is_upfront: isUpfrontPaid,
+        upfront_transaction_id: row.upfront_transaction_id || '',
         created_at: toIsoString(row.created_at),
         closed_at: toIsoString(row.closed_at),
         payroll_id: row.payroll_id || '',
         closed_transaction_id: row.closed_transaction_id || ''
       };
       report.logs.push(log);
-      if (['done', 'closed', 'paid'].includes(String(row.status || '').toLowerCase())) {
+      if (isSettledOrUpfront) {
         report.total_sessions += 1;
         report.total_duration_minutes += log.duration_minutes;
         report.room_earning_total += log.rate;

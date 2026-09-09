@@ -5,6 +5,7 @@ const { createLcSalesBonusLog, getLcWorkReports } = require('../src/controllers/
 async function run() {
   await testReportAggregation();
   await testSalesBonusInsertUsesPostgresSchema();
+  await testUpfrontPaidLcIncludedInReport();
   console.log('LC work reports aggregation test passed.');
 }
 
@@ -103,7 +104,8 @@ async function testReportAggregation() {
 
   assert(queries.some(query => query.text.includes('COALESCE(closed_at, created_at)')));
   assert(queries.every(query => (
-    query.text.includes('FROM lc_master')
+    query.text.includes('ALTER TABLE')
+    || query.text.includes('FROM lc_master')
     || (query.params[0] === '2026-08-17' && query.params[1] === '2026-08-29')
   )));
 }
@@ -145,6 +147,59 @@ async function testSalesBonusInsertUsesPostgresSchema() {
   assert.strictEqual(captured.params[9], 3);
   assert.strictEqual(captured.params[10], 10000);
   assert.strictEqual(captured.params[11], 30000);
+}
+
+async function testUpfrontPaidLcIncludedInReport() {
+  const originalQuery = db.query;
+  db.query = async (sql) => {
+    const text = String(sql);
+    if (text.includes('FROM lc_master')) {
+      return {
+        rows: [
+          { lc_id: 'LC-027', lc_name: 'Bella', rate_per_hour: '175000', status: 'active' }
+        ],
+        rowCount: 1
+      };
+    }
+    if (text.includes('FROM lc_work_logs')) {
+      return {
+        rows: [
+          {
+            log_id: 'LCW-UPF-1', session_id: 'SES-VIP-4', room_id: 'ROOM-4', room_name: 'VIP 4',
+            lc_id: 'LC-027', lc_name: 'Bella', duration_minutes: 120, rate_per_hour: '175000',
+            rate: '350000', status: 'active', upfront_transaction_id: 'TRX-12345',
+            created_at: new Date('2026-09-10T02:00:00+07:00'),
+            closed_at: null, payroll_id: null, closed_transaction_id: null
+          }
+        ],
+        rowCount: 1
+      };
+    }
+    if (text.includes('FROM lc_sales_bonus_logs')) {
+      return { rows: [], rowCount: 0 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
+  let payload;
+  const req = { query: { period: 'today' } };
+  const res = { json(value) { payload = value; return value; } };
+
+  try {
+    await getLcWorkReports(req, res);
+  } finally {
+    db.query = originalQuery;
+  }
+
+  assert.strictEqual(payload.ok, true);
+  assert.strictEqual(payload.reports.length, 1, 'LC with active session but paid upfront MUST be included in report.');
+  const bella = payload.reports[0];
+  assert.strictEqual(bella.lc_id, 'LC-027');
+  assert.strictEqual(bella.total_sessions, 1);
+  assert.strictEqual(bella.total_duration_minutes, 120);
+  assert.strictEqual(bella.room_earning_total, 350000);
+  assert.strictEqual(bella.logs[0].is_upfront, true);
+  assert.strictEqual(bella.logs[0].upfront_transaction_id, 'TRX-12345');
 }
 
 run().catch(error => {

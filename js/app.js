@@ -25381,12 +25381,18 @@ function getSortedLcWorkReports() {
   return reports;
 }
 
-function getLcWorkStatusDisplay(status) {
+function getLcWorkStatusDisplay(status, isUpfront = false) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "active") {
+    if (isUpfront) {
+      return { text: "Aktif (Bayar di Muka)", className: "badge badge-success" };
+    }
     return { text: "Aktif", className: "badge badge-primary" };
   }
   if (normalized === "closed" || normalized === "done") {
+    if (isUpfront) {
+      return { text: "Selesai (Bayar di Muka)", className: "badge badge-success" };
+    }
     return { text: "Selesai", className: "badge badge-success" };
   }
   if (normalized === "paid") {
@@ -26176,7 +26182,7 @@ function createLcReportPrintPreviewElement() {
         </thead>
         <tbody>
           ${logs.length > 0 ? logs.map((log) => {
-            const statusDisplay = getLcWorkStatusDisplay(log.status);
+            const statusDisplay = getLcWorkStatusDisplay(log.status, Boolean(log.is_upfront || log.upfront_transaction_id));
             return `
               <tr>
                 <td>${escapeHtml(log.log_id || "-")}</td>
@@ -27435,11 +27441,11 @@ function createLcDetailLogsOverlay() {
   } else {
     logs.forEach(log => {
       const tr = document.createElement("tr");
-      const statusDisplay = getLcWorkStatusDisplay(log.status);
+      const statusDisplay = getLcWorkStatusDisplay(log.status, Boolean(log.is_upfront || log.upfront_transaction_id));
 
       tr.innerHTML = `
         <td><small>${log.log_id}</small></td>
-        <td><small>${log.session_id}</small></td>
+        <td><small>${log.session_id || log.room_name || "-"}</small></td>
         <td>${formatCurrency(log.rate)}</td>
         <td><span class="${statusDisplay.className}">${statusDisplay.text}</span></td>
         <td><small>${formatDateTimeLabel(log.created_at)}</small></td>
@@ -30160,7 +30166,10 @@ async function showUpfrontPaymentModal(roomId, options = {}) {
         loadRooms(),
         loadOpenFnbOrders(),
         loadTodayFnbOrders(),
-        loadTodayTransactions()
+        loadTodayTransactions(),
+        loadLcWorkReports(lcReportPeriod, lcReportStartDate, lcReportEndDate),
+        loadLcs(true),
+        loadLcFinanceSummary()
       ]);
     } catch (err) {
       showInlineNotice(err.message || "Gagal memproses pembayaran di muka.", "error");
