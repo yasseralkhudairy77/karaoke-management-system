@@ -12,6 +12,7 @@ const masterDataController = require('../controllers/masterDataController');
 const mirrorController = require('../controllers/mirrorController');
 const auditController = require('../controllers/auditController');
 const expensesController = require('../controllers/expensesController');
+const backupController = require('../controllers/backupController');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // Helper to handle Apps Script GET actions
@@ -106,6 +107,10 @@ async function handleGetAction(action, req, res) {
       return successResponse(res, { local_first: true, postgresql: true, outbox_sync: true, owner_mirror_snapshot: true });
     case 'getOwnerMirrorSnapshot':
       return mirrorController.getOwnerMirrorSnapshot(req, res);
+    case 'getDatabaseBackupStatus':
+      return backupController.getDatabaseStatus(req, res);
+    case 'exportDatabaseBackup':
+      return backupController.exportDatabase(req, res);
     default:
       return errorResponse(res, `Aksi GET tidak dikenal: ${action}`, 'UNKNOWN_ACTION');
   }
@@ -315,6 +320,12 @@ async function handlePostAction(action, req, res, payload) {
       return masterDataController.seedReceptionistEmployee(req, res, payload);
     case 'validateAdminPin':
       return masterDataController.validateAdminPin(req, res, payload);
+    case 'getDatabaseBackupStatus':
+      return backupController.getDatabaseStatus(req, res);
+    case 'exportDatabaseBackup':
+      return backupController.exportDatabase(req, res);
+    case 'restoreDatabaseBackup':
+      return backupController.restoreDatabase(req, res, payload);
     default:
       return errorResponse(res, `Aksi POST tidak dikenal: ${action}`, 'UNKNOWN_ACTION');
   }
@@ -390,5 +401,9 @@ router.get('/menu', (req, res) => fnbController.getMenuItems(req, res));
 router.get('/inventory', (req, res) => inventoryController.getInventoryItems(req, res));
 router.get('/transactions', (req, res) => transactionsController.getTodayTransactions(req, res));
 router.get('/closings', (req, res) => closingsController.getTodayCashierClosings(req, res));
+router.get('/backup/status', (req, res) => backupController.getDatabaseStatus(req, res));
+router.get('/backup/export', (req, res) => backupController.exportDatabase(req, res));
+router.post('/backup/export', (req, res) => backupController.exportDatabase(req, res));
+router.post('/backup/restore', (req, res) => backupController.restoreDatabase(req, res));
 
 module.exports = router;

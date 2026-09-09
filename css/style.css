@@ -11761,5 +11761,353 @@ textarea.action-confirmation-input {
   cursor: not-allowed !important;
 }
 
+/* ==========================================================================
+   Database Backup & Restore Styling
+   ========================================================================== */
+.database-backup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
+.database-backup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
 
+.database-backup-card {
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 22px;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.database-backup-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-2px);
+}
+
+.database-backup-card.status-card {
+  border-left: 4px solid #38bdf8;
+}
+
+.database-backup-card.export-card {
+  border-left: 4px solid #10b981;
+}
+
+.database-backup-card.restore-card {
+  border-left: 4px solid #ef4444;
+}
+
+.db-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.db-card-title.text-danger {
+  color: #fca5a5;
+}
+
+.db-card-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.db-card-desc {
+  font-size: 0.88rem;
+  color: #94a3b8;
+  line-height: 1.55;
+  margin: 0 0 16px 0;
+}
+
+.db-card-note {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-top: 14px;
+  line-height: 1.4;
+}
+
+.db-status-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.db-conn-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.db-conn-badge.online {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.db-conn-badge.offline {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.db-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.db-status-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: auto;
+}
+
+.db-metric-item {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.db-metric-label {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.db-metric-value {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #f1f5f9;
+}
+
+.db-feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.84rem;
+  color: #cbd5e1;
+}
+
+.db-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 18px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  margin-top: auto;
+}
+
+.db-action-btn.btn-backup {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.db-action-btn.btn-backup:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+  transform: translateY(-1px);
+}
+
+.db-action-btn.btn-restore {
+  background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+}
+
+.db-action-btn.btn-restore:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+  transform: translateY(-1px);
+}
+
+.db-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.db-btn-help {
+  display: block;
+  font-size: 0.74rem;
+  color: #64748b;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.db-danger-alert {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+
+.restore-file-select-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.restore-file-select-area .no-file-text {
+  font-size: 0.84rem;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.restore-file-select-area .btn-choose-file {
+  width: 100%;
+  padding: 10px 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.restore-file-info-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.restore-file-info-box .file-name-line {
+  font-size: 0.88rem;
+  color: #f1f5f9;
+  word-break: break-all;
+}
+
+.restore-file-info-box .file-meta-line {
+  font-size: 0.76rem;
+  color: #38bdf8;
+}
+
+.restore-file-info-box .file-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.restore-file-info-box .btn-change-file,
+.restore-file-info-box .btn-cancel-file {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+
+/* Restore Modal Styling */
+.restore-dialog {
+  max-width: 540px !important;
+  width: 95% !important;
+}
+
+.restore-modal-warning-banner {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.restore-modal-file-summary {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.restore-summary-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  gap: 12px;
+}
+
+.restore-summary-row span {
+  color: #94a3b8;
+}
+
+.restore-summary-row strong {
+  color: #f8fafc;
+  word-break: break-all;
+}
+
+.restore-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.restore-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.restore-input-group label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.restore-modal-error-alert {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}

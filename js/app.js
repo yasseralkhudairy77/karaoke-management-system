@@ -899,6 +899,12 @@ let selectedSettingsPackageId = "";
 let packageDetailsByPackageId = {};
 let isLoadingPackageDetails = false;
 let activeSettingsSubTab = "rooms";
+let databaseBackupStatus = null;
+let isLoadingDatabaseBackupStatus = false;
+let isExportingDatabaseBackup = false;
+let selectedRestoreFile = null;
+let selectedRestoreContent = null;
+let restoreDatabaseModalState = null;
 let deleteMasterConfirmation = null;
 let isDeletingMasterData = false;
 let transactionDeleteConfirmation = null;
@@ -21697,6 +21703,7 @@ function createSettingsSubTabsElement() {
     ["access", "Akses"],
     ["audit", "Audit"],
     ["quality", "Kualitas Data"],
+    ["backup", "Backup & Restore"],
   ];
   const nav = document.createElement("div");
   nav.className = "settings-sub-tabs";
@@ -21737,6 +21744,10 @@ function getActiveSettingsSectionElement() {
 
   if (activeSettingsSubTab === "quality") {
     return createMasterDataQualitySection();
+  }
+
+  if (activeSettingsSubTab === "backup") {
+    return createDatabaseBackupSection();
   }
 
   return createRoomSettingsSection();
@@ -22614,6 +22625,450 @@ function createMasterDataQualitySection() {
   section.append(header, createQualitySummaryCards(report.summary), createQualityIssueTable(report.issues));
 
   return section;
+}
+
+async function loadDatabaseBackupStatus() {
+  isLoadingDatabaseBackupStatus = true;
+  renderRooms();
+  try {
+    const url = buildApiUrl("getDatabaseBackupStatus");
+    const response = await fetch(url, { cache: "no-store" });
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.ok) {
+        databaseBackupStatus = data;
+      }
+    }
+  } catch (err) {
+    console.warn("Gagal memuat status database backup:", err);
+  } finally {
+    isLoadingDatabaseBackupStatus = false;
+    renderRooms();
+  }
+}
+
+async function downloadDatabaseBackup() {
+  if (isExportingDatabaseBackup) return;
+  isExportingDatabaseBackup = true;
+  renderRooms();
+
+  try {
+    showInlineNotice("Menyiapkan snapshot cadangan seluruh database...", "info");
+    const downloadUrl = buildApiUrl("exportDatabaseBackup");
+    const response = await fetch(downloadUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Gagal mengunduh backup (status ${response.status})`);
+    }
+
+    const blob = await response.blob();
+    let filename = `happy_song_backup_${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`;
+    const disposition = response.headers.get("Content-Disposition");
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) filename = match[1];
+    }
+
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(blobUrl);
+
+    showInlineNotice(`Berhasil membuat cadangan database: ${filename}`, "success");
+    await loadDatabaseBackupStatus();
+  } catch (error) {
+    console.error("Gagal mengekspor database:", error);
+    showInlineNotice(`Gagal mengunduh cadangan database: ${error.message}`, "error");
+  } finally {
+    isExportingDatabaseBackup = false;
+    renderRooms();
+  }
+}
+
+async function handleRestoreFileSelected(file) {
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || !parsed.data || typeof parsed.data !== "object") {
+      throw new Error("Format file cadangan tidak sesuai. Objek data tabel tidak ditemukan.");
+    }
+    const tableKeys = Object.keys(parsed.data);
+    const totalRecords = Object.values(parsed.data).reduce(
+      (acc, rows) => acc + (Array.isArray(rows) ? rows.length : 0),
+      0
+    );
+
+    selectedRestoreFile = {
+      name: file.name,
+      sizeBytes: file.size,
+      sizeFormatted: (file.size / (1024 * 1024)).toFixed(2) + " MB",
+      createdAt: parsed.created_at || "-",
+      totalTables: parsed.total_tables || tableKeys.length,
+      totalRecords: parsed.total_records || totalRecords,
+    };
+    selectedRestoreContent = parsed;
+    showInlineNotice(
+      `File backup "${file.name}" berhasil dibaca (${selectedRestoreFile.totalTables} tabel, ${selectedRestoreFile.totalRecords.toLocaleString("id-ID")} data). Siap dipulihkan.`,
+      "info"
+    );
+  } catch (err) {
+    console.error("Gagal membaca file restore:", err);
+    selectedRestoreFile = null;
+    selectedRestoreContent = null;
+    showInlineNotice(`Gagal membaca file: ${err.message}`, "error");
+  } finally {
+    renderRooms();
+  }
+}
+
+async function confirmRestoreDatabase() {
+  if (!restoreDatabaseModalState || restoreDatabaseModalState.busy) return;
+  if (!selectedRestoreContent) {
+    restoreDatabaseModalState.error = "File backup belum dipilih.";
+    renderRooms();
+    return;
+  }
+
+  const pin = String(restoreDatabaseModalState.adminPin || "").trim();
+  const confirmWord = String(restoreDatabaseModalState.confirmWord || "").trim().toUpperCase();
+
+  if (!pin) {
+    restoreDatabaseModalState.error = "PIN Otorisasi Owner/Manager wajib diisi.";
+    renderRooms();
+    return;
+  }
+
+  if (confirmWord !== "PULIHKAN") {
+    restoreDatabaseModalState.error = 'Ketik kata konfirmasi "PULIHKAN" dengan benar.';
+    renderRooms();
+    return;
+  }
+
+  restoreDatabaseModalState.busy = true;
+  restoreDatabaseModalState.error = "";
+  renderRooms();
+
+  try {
+    const payload = {
+      action: "restoreDatabaseBackup",
+      admin_pin: pin,
+      confirmation_text: confirmWord,
+      backup: selectedRestoreContent
+    };
+
+    const result = await postApiAction(payload);
+    if (!result || !result.ok) {
+      throw new Error(result?.error || result?.message || "Gagal memulihkan database.");
+    }
+
+    restoreDatabaseModalState = null;
+    selectedRestoreFile = null;
+    selectedRestoreContent = null;
+    showInlineNotice(`BERHASIL: ${result.message || "Database berhasil dipulihkan."} Memuat ulang halaman...`, "success");
+    renderRooms();
+
+    setTimeout(() => {
+      window.location.reload();
+    }, 1800);
+  } catch (error) {
+    console.error("Gagal melakukan restore database:", error);
+    if (restoreDatabaseModalState) {
+      restoreDatabaseModalState.busy = false;
+      restoreDatabaseModalState.error = error.message || "Terjadi kesalahan saat memulihkan database.";
+      renderRooms();
+    }
+  }
+}
+
+function createDatabaseBackupSection() {
+  const section = document.createElement("section");
+  section.className = "settings-section database-backup-section";
+
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Pusat Backup & Restore Database";
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Cadangkan seluruh database ke file JSON snapshot mandiri atau pulihkan data saat terjadi kendala.";
+  titleGroup.append(title, subtitle);
+
+  const refreshButton = document.createElement("button");
+  refreshButton.className = "master-button secondary";
+  refreshButton.type = "button";
+  refreshButton.dataset.action = "refresh-database-backup-status";
+  refreshButton.innerHTML = isLoadingDatabaseBackupStatus
+    ? "<span>Memeriksa Status...</span>"
+    : "<span>Segarkan Status 🔄</span>";
+  if (isLoadingDatabaseBackupStatus) refreshButton.disabled = true;
+
+  header.append(titleGroup, refreshButton);
+  section.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "database-backup-grid";
+
+  // Card A: Status Database
+  const statusCard = document.createElement("div");
+  statusCard.className = "database-backup-card status-card";
+
+  const statusTitle = document.createElement("h4");
+  statusTitle.className = "db-card-title";
+  statusTitle.innerHTML = `<span class="db-card-icon">🗄️</span> Status Database Sistem`;
+
+  const counts = databaseBackupStatus?.counts || {};
+  const isOnline = databaseBackupStatus?.status === "online" || !databaseBackupStatus;
+  const dbName = databaseBackupStatus?.database_name || "happy_song_pos";
+  const totalTables = databaseBackupStatus?.total_tables || 41;
+
+  const statusBadgeRow = document.createElement("div");
+  statusBadgeRow.className = "db-status-badge-row";
+  statusBadgeRow.innerHTML = `
+    <span class="db-conn-badge ${isOnline ? 'online' : 'offline'}">
+      ${isOnline ? '● Online (PostgreSQL Lokal)' : '● Database Offline'}
+    </span>
+    <span class="db-meta-badge">DB: ${dbName}</span>
+    <span class="db-meta-badge">${totalTables} Tabel Relasional</span>
+  `;
+
+  const metricsGrid = document.createElement("div");
+  metricsGrid.className = "db-status-metrics-grid";
+  metricsGrid.innerHTML = `
+    <div class="db-metric-item">
+      <span class="db-metric-label">Transaksi</span>
+      <strong class="db-metric-value">${(counts.transactions || 0).toLocaleString('id-ID')}</strong>
+    </div>
+    <div class="db-metric-item">
+      <span class="db-metric-label">Ruangan</span>
+      <strong class="db-metric-value">${counts.rooms || 0}</strong>
+    </div>
+    <div class="db-metric-item">
+      <span class="db-metric-label">Menu F&B</span>
+      <strong class="db-metric-value">${counts.menu || 0}</strong>
+    </div>
+    <div class="db-metric-item">
+      <span class="db-metric-label">Item Inventori</span>
+      <strong class="db-metric-value">${counts.inventory || 0}</strong>
+    </div>
+    <div class="db-metric-item">
+      <span class="db-metric-label">Karyawan</span>
+      <strong class="db-metric-value">${counts.employees || 0}</strong>
+    </div>
+    <div class="db-metric-item">
+      <span class="db-metric-label">Closing Kasir</span>
+      <strong class="db-metric-value">${counts.cashier_closings || 0}</strong>
+    </div>
+  `;
+
+  const statusNote = document.createElement("p");
+  statusNote.className = "db-card-note";
+  statusNote.textContent = "Data tersimpan secara lokal dan aman di engine database PostgreSQL PC kasir.";
+
+  statusCard.append(statusTitle, statusBadgeRow, metricsGrid, statusNote);
+
+  // Card B: Cadangkan Data (Backup)
+  const exportCard = document.createElement("div");
+  exportCard.className = "database-backup-card export-card";
+
+  const exportTitle = document.createElement("h4");
+  exportTitle.className = "db-card-title";
+  exportTitle.innerHTML = `<span class="db-card-icon">📥</span> Cadangkan Database (Backup)`;
+
+  const exportDesc = document.createElement("p");
+  exportDesc.className = "db-card-desc";
+  exportDesc.textContent = "Mengekstrak seluruh 41 tabel (master kamar, menu, inventori, riwayat transaksi, dan komisi) menjadi 1 file arsip snapshot JSON mandiri.";
+
+  const exportBenefits = document.createElement("ul");
+  exportBenefits.className = "db-feature-list";
+  exportBenefits.innerHTML = `
+    <li>✔️ <strong>Mandiri:</strong> Tidak bergantung pada tool Windows eksternal.</li>
+    <li>✔️ <strong>Lengkap:</strong> Seluruh tabel dan riwayat keuangan tersimpan utuh.</li>
+    <li>✔️ <strong>Praktis:</strong> Simpan file ke flashdisk pribadi untuk arsip darurat.</li>
+  `;
+
+  const exportBtn = document.createElement("button");
+  exportBtn.className = "db-action-btn btn-backup";
+  exportBtn.type = "button";
+  exportBtn.dataset.action = "download-db-backup";
+  exportBtn.innerHTML = isExportingDatabaseBackup
+    ? `<span>⏳ Menyiapkan File Cadangan...</span>`
+    : `<span>📥 Download Backup Database Sekarang</span>`;
+  if (isExportingDatabaseBackup) exportBtn.disabled = true;
+
+  const exportHelp = document.createElement("span");
+  exportHelp.className = "db-btn-help";
+  exportHelp.textContent = "File otomatis tersimpan di folder Download komputer Anda.";
+
+  exportCard.append(exportTitle, exportDesc, exportBenefits, exportBtn, exportHelp);
+
+  // Card C: Pulihkan Data (Restore)
+  const restoreCard = document.createElement("div");
+  restoreCard.className = "database-backup-card restore-card";
+
+  const restoreTitle = document.createElement("h4");
+  restoreTitle.className = "db-card-title text-danger";
+  restoreTitle.innerHTML = `<span class="db-card-icon">⚠️</span> Pulihkan Database (Restore)`;
+
+  const restoreWarning = document.createElement("div");
+  restoreWarning.className = "db-danger-alert";
+  restoreWarning.innerHTML = `
+    <strong>PERINGATAN KRUSIAL:</strong> Pemulihan data bersifat destruktif. Seluruh data database yang ada saat ini akan <strong>DITIMPA</strong> oleh file cadangan yang Anda pilih.
+  `;
+
+  const fileInputHidden = document.createElement("input");
+  fileInputHidden.type = "file";
+  fileInputHidden.id = "dbRestoreFileInput";
+  fileInputHidden.accept = ".json,application/json";
+  fileInputHidden.dataset.action = "select-restore-backup-file";
+  fileInputHidden.style.display = "none";
+
+  const fileSelectArea = document.createElement("div");
+  fileSelectArea.className = "restore-file-select-area";
+
+  if (selectedRestoreFile) {
+    fileSelectArea.innerHTML = `
+      <div class="restore-file-info-box">
+        <div class="file-name-line">📄 <strong>${selectedRestoreFile.name}</strong> (${selectedRestoreFile.sizeFormatted})</div>
+        <div class="file-meta-line">Tanggal: ${selectedRestoreFile.createdAt} | Cakupan: ${selectedRestoreFile.totalTables} tabel, ${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} rekaman</div>
+        <div class="file-actions-row">
+          <button type="button" class="master-button secondary btn-change-file" data-action="select-restore-file-click">Ganti File</button>
+          <button type="button" class="master-button secondary btn-cancel-file" data-action="reset-restore-file">Batal</button>
+        </div>
+      </div>
+    `;
+  } else {
+    fileSelectArea.innerHTML = `
+      <p class="no-file-text">Belum ada file backup yang dipilih.</p>
+      <button type="button" class="master-button primary btn-choose-file" data-action="select-restore-file-click">
+        📂 Pilih File Backup (.json)
+      </button>
+    `;
+  }
+
+  const restoreBtn = document.createElement("button");
+  restoreBtn.className = "db-action-btn btn-restore";
+  restoreBtn.type = "button";
+  restoreBtn.dataset.action = "trigger-db-restore";
+  restoreBtn.innerHTML = `<span>📤 Mulai Pemulihan Data</span>`;
+  if (!selectedRestoreContent) {
+    restoreBtn.disabled = true;
+  }
+
+  restoreCard.append(restoreTitle, restoreWarning, fileInputHidden, fileSelectArea, restoreBtn);
+
+  grid.append(statusCard, exportCard, restoreCard);
+  section.appendChild(grid);
+
+  return section;
+}
+
+function createRestoreDatabaseModalElement() {
+  if (!restoreDatabaseModalState || !restoreDatabaseModalState.isOpen) {
+    return document.createDocumentFragment();
+  }
+
+  const modal = restoreDatabaseModalState;
+  const overlay = document.createElement("section");
+  overlay.className = "action-confirmation-overlay restore-modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const dialog = document.createElement("div");
+  dialog.className = "action-confirmation-dialog action-confirmation-dialog--danger restore-dialog";
+
+  const title = document.createElement("h3");
+  title.className = "action-confirmation-title";
+  title.textContent = "⚠️ Konfirmasi Pemulihan Database (Restore)";
+
+  const banner = document.createElement("div");
+  banner.className = "restore-modal-warning-banner";
+  banner.innerHTML = `
+    <strong>PERHATIAN KRUSIAL:</strong> Tindakan ini akan <strong>MENGHAPUS & MENIMPA</strong> seluruh isi database saat ini dengan data dari file cadangan yang Anda pilih. Tindakan ini tidak dapat dibatalkan.
+  `;
+
+  const detailsList = document.createElement("div");
+  detailsList.className = "restore-modal-file-summary";
+  if (selectedRestoreFile) {
+    detailsList.innerHTML = `
+      <div class="restore-summary-row"><span>File Cadangan:</span><strong>${selectedRestoreFile.name}</strong></div>
+      <div class="restore-summary-row"><span>Ukuran File:</span><strong>${selectedRestoreFile.sizeFormatted}</strong></div>
+      <div class="restore-summary-row"><span>Tanggal Cadangan:</span><strong>${selectedRestoreFile.createdAt}</strong></div>
+      <div class="restore-summary-row"><span>Cakupan Data:</span><strong>${selectedRestoreFile.totalTables} tabel (${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} rekaman)</strong></div>
+    `;
+  }
+
+  const form = document.createElement("div");
+  form.className = "restore-modal-form";
+
+  // Field PIN
+  const pinGroup = document.createElement("div");
+  pinGroup.className = "restore-input-group";
+  const pinLabel = document.createElement("label");
+  pinLabel.textContent = "1. Masukkan PIN Owner / Manager:";
+  const pinInput = document.createElement("input");
+  pinInput.type = "password";
+  pinInput.className = "master-input";
+  pinInput.placeholder = "Ketik PIN Owner...";
+  pinInput.value = modal.adminPin || "";
+  pinInput.dataset.action = "update-restore-modal-field";
+  pinInput.dataset.field = "adminPin";
+  pinInput.disabled = modal.busy;
+  pinGroup.append(pinLabel, pinInput);
+
+  // Field Konfirmasi PULIHKAN
+  const confirmGroup = document.createElement("div");
+  confirmGroup.className = "restore-input-group";
+  const confirmLabel = document.createElement("label");
+  confirmLabel.textContent = '2. Ketik kata "PULIHKAN" (huruf besar):';
+  const confirmInput = document.createElement("input");
+  confirmInput.type = "text";
+  confirmInput.className = "master-input";
+  confirmInput.placeholder = "Ketik PULIHKAN";
+  confirmInput.value = modal.confirmWord || "";
+  confirmInput.dataset.action = "update-restore-modal-field";
+  confirmInput.dataset.field = "confirmWord";
+  confirmInput.disabled = modal.busy;
+  confirmGroup.append(confirmLabel, confirmInput);
+
+  form.append(pinGroup, confirmGroup);
+
+  if (modal.error) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "restore-modal-error-alert";
+    errorEl.textContent = `❌ ${modal.error}`;
+    form.appendChild(errorEl);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "action-confirmation-actions";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "master-button secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.dataset.action = "close-restore-modal";
+  cancelBtn.disabled = modal.busy;
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "master-button danger";
+  submitBtn.dataset.action = "confirm-restore-database";
+  submitBtn.innerHTML = modal.busy
+    ? "<span>⏳ Memulihkan Database... Jangan Tutup Browser</span>"
+    : "<span>⚠️ Pulihkan Database Sekarang</span>";
+  submitBtn.disabled = modal.busy;
+
+  actions.append(cancelBtn, submitBtn);
+
+  dialog.append(title, banner, detailsList, form, actions);
+  overlay.appendChild(dialog);
+  return overlay;
 }
 
 function getAuditBadgeTone(value) {
@@ -27089,6 +27544,10 @@ function renderDashboardGlobal() {
     fragment.appendChild(createFreeGiftModalElement());
   }
 
+  if (restoreDatabaseModalState) {
+    fragment.appendChild(createRestoreDatabaseModalElement());
+  }
+
   dashboardGlobal.replaceChildren(fragment);
 }
 
@@ -30354,7 +30813,64 @@ async function handleRoomAction(event) {
 
   if (action === "switch-settings-subtab") {
     activeSettingsSubTab = button.dataset.settingsTab || "rooms";
+    if (activeSettingsSubTab === "backup" && !databaseBackupStatus) {
+      loadDatabaseBackupStatus();
+    }
     renderRooms();
+    return;
+  }
+
+  if (action === "refresh-database-backup-status") {
+    await loadDatabaseBackupStatus();
+    return;
+  }
+
+  if (action === "download-db-backup") {
+    await downloadDatabaseBackup();
+    return;
+  }
+
+  if (action === "select-restore-file-click") {
+    const input = document.getElementById("dbRestoreFileInput");
+    if (input) {
+      input.value = "";
+      input.click();
+    }
+    return;
+  }
+
+  if (action === "reset-restore-file") {
+    selectedRestoreFile = null;
+    selectedRestoreContent = null;
+    const input = document.getElementById("dbRestoreFileInput");
+    if (input) input.value = "";
+    renderRooms();
+    return;
+  }
+
+  if (action === "trigger-db-restore") {
+    if (!selectedRestoreContent) return;
+    restoreDatabaseModalState = {
+      isOpen: true,
+      adminPin: "",
+      confirmWord: "",
+      error: "",
+      busy: false
+    };
+    renderRooms();
+    return;
+  }
+
+  if (action === "close-restore-modal") {
+    if (restoreDatabaseModalState && !restoreDatabaseModalState.busy) {
+      restoreDatabaseModalState = null;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "confirm-restore-database") {
+    await confirmRestoreDatabase();
     return;
   }
 
@@ -31449,6 +31965,18 @@ function handleDashboardInput(event) {
     return;
   }
 
+  if (action === "update-restore-modal-field") {
+    if (restoreDatabaseModalState) {
+      const prop = field.dataset.field;
+      if (prop === "adminPin") restoreDatabaseModalState.adminPin = field.value;
+      if (prop === "confirmWord") restoreDatabaseModalState.confirmWord = field.value;
+      if (restoreDatabaseModalState.error) {
+        restoreDatabaseModalState.error = "";
+      }
+    }
+    return;
+  }
+
   if (action === "filter-inventory-audit-items") {
     setInventoryAuditSearchQuery(field.value);
     return;
@@ -31572,6 +32100,15 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const restoreFileInput = event.target.closest("[data-action='select-restore-backup-file']");
+  if (restoreFileInput) {
+    const file = restoreFileInput.files && restoreFileInput.files[0];
+    if (file) {
+      handleRestoreFileSelected(file);
+    }
+    return;
+  }
+
   const auditPeriod = event.target.closest("[data-action='filter-operational-audit-period']");
   if (auditPeriod) {
     operationalAuditPeriod = auditPeriod.value || "today";
