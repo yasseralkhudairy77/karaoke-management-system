@@ -21549,6 +21549,19 @@ function createSettingsSearchControl(labelText, value, action, placeholder) {
   return searchWrap;
 }
 
+function restoreSettingsSearchFocus(action, cursorPosition) {
+  const searchInput = queryDashboard(`input[data-action='${action}']`);
+  if (searchInput) {
+    searchInput.focus();
+    try {
+      const pos = typeof cursorPosition === "number" ? cursorPosition : searchInput.value.length;
+      searchInput.setSelectionRange(pos, pos);
+    } catch (error) {
+      // Abaikan jika selection range tidak didukung pada browser tertentu
+    }
+  }
+}
+
 function createSettingsSelectControl(labelText, value, action, options) {
   const wrapper = document.createElement("label");
   wrapper.className = "master-form-field settings-search-field";
@@ -31311,23 +31324,29 @@ function handleDashboardInput(event) {
   }
 
   if (action === "filter-settings-menu") {
+    const cursor = field.selectionStart;
     settingsMenuSearchQuery = field.value;
     resetPaginationPage("settingsMenu");
     renderRooms();
+    restoreSettingsSearchFocus("filter-settings-menu", cursor);
     return;
   }
 
   if (action === "filter-settings-room") {
+    const cursor = field.selectionStart;
     settingsRoomSearchQuery = field.value;
     resetPaginationPage("settingsRooms");
     renderRooms();
+    restoreSettingsSearchFocus("filter-settings-room", cursor);
     return;
   }
 
   if (action === "filter-settings-inventory") {
+    const cursor = field.selectionStart;
     settingsInventorySearchQuery = field.value;
     resetPaginationPage("settingsInventory");
     renderRooms();
+    restoreSettingsSearchFocus("filter-settings-inventory", cursor);
     return;
   }
 
@@ -31337,16 +31356,20 @@ function handleDashboardInput(event) {
   }
 
   if (action === "filter-settings-package") {
+    const cursor = field.selectionStart;
     settingsPackageSearchQuery = field.value;
     resetPaginationPage("settingsPackages");
     renderRooms();
+    restoreSettingsSearchFocus("filter-settings-package", cursor);
     return;
   }
 
   if (action === "filter-settings-access") {
+    const cursor = field.selectionStart;
     settingsAccessSearchQuery = field.value;
     resetPaginationPage("settingsAccess");
     renderRooms();
+    restoreSettingsSearchFocus("filter-settings-access", cursor);
     return;
   }
 
