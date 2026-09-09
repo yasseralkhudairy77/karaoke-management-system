@@ -18256,9 +18256,25 @@ function createTransactionRowElement(transaction) {
   return row;
 }
 
+function closeAllTransactionActionMenus() {
+  document.querySelectorAll(".transaction-menu-dropdown.is-open").forEach((dropdown) => {
+    dropdown.classList.remove("is-open", "open-upward");
+    const trigger = dropdown.closest(".transaction-menu-wrapper")?.querySelector(".transaction-menu-trigger");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+  document.querySelectorAll(".transaction-row.has-open-menu").forEach((row) => {
+    row.classList.remove("has-open-menu");
+  });
+}
+
 function createTransactionActionsElement(transaction) {
   const actions = document.createElement("div");
   actions.className = "transaction-actions";
+
+  const primaryActions = document.createElement("div");
+  primaryActions.className = "transaction-primary-actions";
 
   const summaryButton = document.createElement("button");
   summaryButton.className = "transaction-action-button";
@@ -18266,7 +18282,8 @@ function createTransactionActionsElement(transaction) {
   summaryButton.dataset.action = "show-transaction-summary";
   summaryButton.dataset.transactionId = transaction?.transaction_id || "";
   summaryButton.textContent = "Lihat";
-  actions.appendChild(summaryButton);
+  summaryButton.title = "Lihat rincian transaksi";
+  primaryActions.appendChild(summaryButton);
 
   const printButton = document.createElement("button");
   printButton.className = "transaction-action-button";
@@ -18274,85 +18291,149 @@ function createTransactionActionsElement(transaction) {
   printButton.dataset.action = "show-receipt-print";
   printButton.dataset.transactionId = transaction?.transaction_id || "";
   printButton.textContent = transaction?.payment_status === "paid" ? "Cetak" : "Struk";
-  actions.appendChild(printButton);
-
-  const changeMethodButton = document.createElement("button");
-  changeMethodButton.className = "transaction-action-button";
-  changeMethodButton.type = "button";
-  changeMethodButton.dataset.action = "open-change-payment-method";
-  changeMethodButton.dataset.transactionId = transaction?.transaction_id || "";
-  changeMethodButton.textContent = "Ubah Metode";
-  actions.appendChild(changeMethodButton);
+  printButton.title = transaction?.payment_status === "paid" ? "Cetak struk transaksi" : "Cetak tagihan sementara";
+  primaryActions.appendChild(printButton);
 
   const operatorRole = getCurrentOperatorRole();
+  const secondaryItems = [];
+
+  // Aksi operasional
+  secondaryItems.push({
+    action: "open-change-payment-method",
+    label: "Ubah Metode Bayar",
+    icon: "💳",
+    category: "operational",
+    title: "Ubah metode pembayaran transaksi",
+  });
+
   if (operatorRole === "owner" || operatorRole === "manager") {
     if (String(transaction?.payment_status || "").toLowerCase() === "paid") {
-      const commissionButton = document.createElement("button");
       const hasCommission = getTransactionSalesCommissionAmount(transaction) > 0;
-      commissionButton.className = hasCommission
-        ? "transaction-action-button commission-recorded"
-        : "transaction-action-button";
-      commissionButton.type = "button";
-      if (hasCommission) {
-        commissionButton.dataset.action = "reprint-sales-commission";
-        commissionButton.dataset.transactionId = transaction?.transaction_id || "";
-        commissionButton.textContent = "Cetak Slip Komisi";
-        commissionButton.title = "Cetak ulang bukti serah terima komisi marketing";
-      } else {
-        commissionButton.dataset.action = "open-sales-commission";
-        commissionButton.dataset.transactionId = transaction?.transaction_id || "";
-        commissionButton.textContent = "Komisi Sales";
-        commissionButton.title = "Catat komisi marketing untuk transaksi ini";
-      }
-      actions.appendChild(commissionButton);
+      secondaryItems.push({
+        action: hasCommission ? "reprint-sales-commission" : "open-sales-commission",
+        label: hasCommission ? "Cetak Slip Komisi" : "Komisi Sales",
+        icon: "🏷️",
+        isCommission: hasCommission,
+        title: hasCommission
+          ? "Cetak ulang bukti serah terima komisi marketing"
+          : "Catat komisi marketing untuk transaksi ini",
+        category: "operational",
+      });
     }
 
-    const manualDiscountButton = document.createElement("button");
-    manualDiscountButton.className = "transaction-action-button";
-    manualDiscountButton.type = "button";
-    manualDiscountButton.dataset.action = "open-transaction-manual-discount";
-    manualDiscountButton.dataset.transactionId = transaction?.transaction_id || "";
-    manualDiscountButton.textContent = "Tambah Diskon";
-    actions.appendChild(manualDiscountButton);
+    secondaryItems.push({
+      action: "open-transaction-manual-discount",
+      label: "Tambah Diskon",
+      icon: "✂️",
+      category: "operational",
+      title: "Tambah diskon manual supervisor",
+    });
   }
 
+  // Aksi koreksi dan audit khusus Owner
   if (operatorRole === "owner") {
-    const correctionButton = document.createElement("button");
-    correctionButton.className = "transaction-action-button";
-    correctionButton.type = "button";
-    correctionButton.dataset.action = "open-transaction-package-correction";
-    correctionButton.dataset.transactionId = transaction?.transaction_id || "";
-    correctionButton.textContent = "Koreksi Paket";
-    actions.appendChild(correctionButton);
+    secondaryItems.push({
+      action: "open-transaction-package-correction",
+      label: "Koreksi Paket",
+      icon: "📦",
+      category: "correction",
+      title: "Koreksi paket transaksi room",
+    });
 
     if (!transactionHasPackage(transaction)) {
-      const freeRoomButton = document.createElement("button");
-      freeRoomButton.className = "transaction-action-button";
-      freeRoomButton.type = "button";
-      freeRoomButton.dataset.action = "open-transaction-free-room-correction";
-      freeRoomButton.dataset.transactionId = transaction?.transaction_id || "";
-      freeRoomButton.textContent = "Free Room";
-      actions.appendChild(freeRoomButton);
+      secondaryItems.push({
+        action: "open-transaction-free-room-correction",
+        label: "Free Room",
+        icon: "🎁",
+        category: "correction",
+        title: "Koreksi room gratis",
+      });
     }
 
     if (getTransactionFnbTotal(transaction) > 0 || getTransactionFnbOrderIds(transaction).length > 0) {
-      const voidFnbButton = document.createElement("button");
-      voidFnbButton.className = "transaction-action-button";
-      voidFnbButton.type = "button";
-      voidFnbButton.dataset.action = "open-transaction-fnb-void";
-      voidFnbButton.dataset.transactionId = transaction?.transaction_id || "";
-      voidFnbButton.textContent = "Void F&B";
-      actions.appendChild(voidFnbButton);
+      secondaryItems.push({
+        action: "open-transaction-fnb-void",
+        label: "Void F&B",
+        icon: "🍽️",
+        category: "correction",
+        title: "Koreksi void item F&B",
+      });
     }
 
-    const deleteButton = document.createElement("button");
-    deleteButton.className = "transaction-action-button transaction-delete-button";
-    deleteButton.type = "button";
-    deleteButton.dataset.action = "open-delete-transaction";
-    deleteButton.dataset.transactionId = transaction?.transaction_id || "";
-    deleteButton.textContent = "Hapus";
-    actions.appendChild(deleteButton);
+    secondaryItems.push({
+      action: "open-delete-transaction",
+      label: "Hapus Transaksi",
+      icon: "🗑️",
+      category: "danger",
+      title: "Hapus transaksi ini dari sistem",
+    });
   }
+
+  if (secondaryItems.length > 0) {
+    const menuWrapper = document.createElement("div");
+    menuWrapper.className = "transaction-menu-wrapper";
+
+    const triggerButton = document.createElement("button");
+    triggerButton.className = "transaction-action-button transaction-menu-trigger";
+    triggerButton.type = "button";
+    triggerButton.dataset.action = "toggle-transaction-menu";
+    triggerButton.setAttribute("aria-haspopup", "true");
+    triggerButton.setAttribute("aria-expanded", "false");
+    triggerButton.title = "Opsi transaksi lainnya";
+    triggerButton.innerHTML = '<span>Opsi</span> <span class="transaction-menu-chevron">▾</span>';
+    menuWrapper.appendChild(triggerButton);
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "transaction-menu-dropdown";
+
+    let lastCategory = null;
+    secondaryItems.forEach((item) => {
+      if (lastCategory && lastCategory !== item.category) {
+        const divider = document.createElement("div");
+        divider.className = "transaction-menu-divider";
+        dropdown.appendChild(divider);
+
+        if (item.category === "correction") {
+          const header = document.createElement("div");
+          header.className = "transaction-menu-header";
+          header.textContent = "Koreksi Data";
+          dropdown.appendChild(header);
+        }
+      }
+      lastCategory = item.category;
+
+      const itemButton = document.createElement("button");
+      itemButton.type = "button";
+      itemButton.className = [
+        "transaction-menu-item",
+        item.category === "danger" ? "menu-item-danger" : "",
+        item.isCommission ? "menu-item-commission" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      itemButton.dataset.action = item.action;
+      itemButton.dataset.transactionId = transaction?.transaction_id || "";
+      if (item.title) {
+        itemButton.title = item.title;
+      }
+
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "transaction-menu-item-icon";
+      iconSpan.textContent = item.icon || "";
+
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "transaction-menu-item-label";
+      labelSpan.textContent = item.label;
+
+      itemButton.append(iconSpan, labelSpan);
+      dropdown.appendChild(itemButton);
+    });
+
+    menuWrapper.appendChild(dropdown);
+    primaryActions.appendChild(menuWrapper);
+  }
+
+  actions.appendChild(primaryActions);
 
   if (transaction?.payment_status !== "unpaid") {
     return actions;
@@ -30121,6 +30202,34 @@ async function handleRoomAction(event) {
   const action = button.dataset.action;
   const roomId = card?.dataset.roomId;
 
+  if (action === "toggle-transaction-menu") {
+    event.stopPropagation();
+    const menuWrapper = button.closest(".transaction-menu-wrapper");
+    const dropdown = menuWrapper?.querySelector(".transaction-menu-dropdown");
+    const row = button.closest(".transaction-row");
+    const isCurrentlyOpen = dropdown?.classList.contains("is-open");
+
+    closeAllTransactionActionMenus();
+
+    if (!isCurrentlyOpen && dropdown) {
+      dropdown.classList.remove("open-upward");
+      dropdown.classList.add("is-open");
+      button.setAttribute("aria-expanded", "true");
+      if (row) {
+        row.classList.add("has-open-menu");
+      }
+      const rect = dropdown.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 20 && rect.top > rect.height) {
+        dropdown.classList.add("open-upward");
+      }
+    }
+    return;
+  }
+
+  if (button.closest(".transaction-menu-dropdown")) {
+    closeAllTransactionActionMenus();
+  }
+
   if (action === "switch-dashboard-tab") {
     setActiveDashboardTab(button.dataset.tab || "rooms");
     return;
@@ -31620,11 +31729,20 @@ document.addEventListener("submit", (event) => {
 document.addEventListener("click", (event) => {
   const logoutButton = event.target.closest("[data-action='logout-operator']");
 
-  if (!logoutButton) {
+  if (logoutButton) {
+    handleOperatorLogout();
     return;
   }
 
-  handleOperatorLogout();
+  if (!event.target.closest(".transaction-menu-wrapper")) {
+    closeAllTransactionActionMenus();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeAllTransactionActionMenus();
+  }
 });
 
 if (dashboardShell) {

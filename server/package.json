@@ -39,7 +39,8 @@
     "test:expenses": "node tests/operational-expenses.test.js",
     "test:fnb-complimentary": "node tests/fnb-complimentary-gift.test.js",
     "test:fnb-realtime-stock": "node tests/fnb-realtime-stock-deduction.test.js",
-    "test:lc-thermal": "node tests/lc-thermal-reports.test.js"
+    "test:lc-thermal": "node tests/lc-thermal-reports.test.js",
+    "test:transaction-action-menu-ui": "node tests/transaction-action-menu-ui.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

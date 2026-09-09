@@ -6592,6 +6592,7 @@ textarea.action-confirmation-input {
 }
 
 .transaction-row {
+  position: relative;
   display: grid;
   grid-template-columns:
     minmax(132px, 1.05fr)
@@ -6602,13 +6603,17 @@ textarea.action-confirmation-input {
     minmax(112px, 0.9fr)
     minmax(82px, 0.62fr)
     minmax(100px, 0.78fr)
-    minmax(148px, 1fr);
+    minmax(186px, auto);
   gap: 8px 10px;
   align-items: start;
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+.transaction-row.has-open-menu {
+  z-index: 50;
 }
 
 .transaction-cell {
@@ -7769,36 +7774,207 @@ textarea.action-confirmation-input {
 
 .transaction-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  position: relative;
+}
+
+.transaction-primary-actions {
+  display: flex;
+  align-items: center;
   gap: 6px;
   justify-content: flex-end;
 }
 
 .transaction-action-button,
 .transaction-pay-button {
-  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
   width: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
   font: inherit;
   font-size: 0.78rem;
-  font-weight: 900;
+  font-weight: 800;
   padding: 0 10px;
   white-space: nowrap;
-}
-
-.transaction-action-button {
   background: rgba(214, 222, 234, 0.12);
   color: #d6deea;
+  transition: all 0.18s ease;
+  user-select: none;
 }
 
 .transaction-action-button:hover,
 .transaction-action-button:focus-visible {
   border-color: rgba(214, 222, 234, 0.55);
-  background: rgba(214, 222, 234, 0.18);
-  outline: 3px solid rgba(214, 222, 234, 0.2);
-  outline-offset: 2px;
+  background: rgba(214, 222, 234, 0.22);
+  color: #ffffff;
+  outline: none;
+}
+
+/* Trigger Button 'Opsi ▾' */
+.transaction-menu-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.transaction-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 193, 102, 0.08);
+  border-color: rgba(255, 193, 102, 0.35);
+  color: var(--billing-amber, #ffc166);
+}
+
+.transaction-menu-trigger:hover,
+.transaction-menu-trigger:focus-visible,
+.transaction-menu-trigger[aria-expanded="true"] {
+  background: rgba(255, 193, 102, 0.2);
+  border-color: rgba(255, 193, 102, 0.75);
+  color: #fff2cc;
+  outline: none;
+}
+
+.transaction-menu-chevron {
+  font-size: 0.72rem;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.transaction-menu-trigger[aria-expanded="true"] .transaction-menu-chevron {
+  transform: rotate(180deg);
+}
+
+/* Dropdown Menu Popup */
+.transaction-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  display: none;
+  flex-direction: column;
+  padding: 6px;
+  background: #191921;
+  background: linear-gradient(180deg, rgba(28, 28, 36, 0.98), rgba(20, 20, 26, 0.99));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 120;
+  animation: transactionMenuFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.transaction-menu-dropdown.is-open {
+  display: flex;
+}
+
+.transaction-menu-dropdown.open-upward {
+  top: auto;
+  bottom: calc(100% + 6px);
+  animation: transactionMenuFadeInUp 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes transactionMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes transactionMenuFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.transaction-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.transaction-menu-header {
+  padding: 4px 8px 2px;
+  color: var(--muted, #94a3b8);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.transaction-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+  white-space: nowrap;
+}
+
+.transaction-menu-item:hover,
+.transaction-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+  outline: none;
+}
+
+.transaction-menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.88rem;
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.transaction-menu-item-label {
+  flex: 1;
+}
+
+.transaction-menu-item.menu-item-commission {
+  color: #6ee7b7;
+}
+
+.transaction-menu-item.menu-item-commission:hover,
+.transaction-menu-item.menu-item-commission:focus-visible {
+  background: rgba(52, 211, 153, 0.14);
+  color: #a7f3d0;
+}
+
+.transaction-menu-item.menu-item-danger {
+  color: #fca5a5;
+}
+
+.transaction-menu-item.menu-item-danger:hover,
+.transaction-menu-item.menu-item-danger:focus-visible {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fecaca;
 }
 
 .transaction-action-button.commission-recorded {
@@ -7816,15 +7992,15 @@ textarea.action-confirmation-input {
 
 .transaction-pay-control {
   display: flex;
-  flex: 1 1 100%;
+  align-items: center;
   gap: 6px;
   justify-content: flex-end;
-  min-width: 0;
+  width: 100%;
 }
 
 .transaction-pay-select {
-  min-height: 34px;
-  width: min(100%, 96px);
+  min-height: 32px;
+  width: min(100%, 100px);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -8970,6 +9146,23 @@ textarea.action-confirmation-input {
     grid-column: auto;
   }
 
+  .transaction-actions {
+    align-items: flex-start;
+  }
+
+  .transaction-primary-actions {
+    justify-content: flex-start;
+  }
+
+  .transaction-pay-control {
+    justify-content: flex-start;
+  }
+
+  .transaction-menu-dropdown {
+    right: auto;
+    left: 0;
+  }
+
   .room-actions {
     grid-template-columns: 1fr;
   }
@@ -9061,18 +9254,10 @@ textarea.action-confirmation-input {
   background: rgba(255, 255, 255, 0.025);
 }
 
-.transaction-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: flex-end;
-}
-
 .transaction-actions .transaction-action-button,
 .transaction-actions .transaction-pay-button {
   width: auto;
   min-width: 0;
-  flex: 0 0 auto;
 }
 
 .transaction-actions .transaction-delete-button {
@@ -9084,11 +9269,6 @@ textarea.action-confirmation-input {
 .transaction-actions .transaction-delete-button:focus-visible {
   border-color: var(--color-danger, #ff3d68);
   background: rgba(255, 61, 104, 0.14);
-}
-
-.transaction-pay-control {
-  flex: 1 1 100%;
-  min-width: 0;
 }
 
 .general-fnb-bills {
