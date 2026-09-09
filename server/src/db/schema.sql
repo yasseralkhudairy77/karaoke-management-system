@@ -277,9 +277,17 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_upfront BOOLEAN DEFAULT FALSE;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS upfront_parent_session_id VARCHAR(100);
 ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_method_check;
 ALTER TABLE transactions ADD CONSTRAINT transactions_payment_method_check
 CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', ''));
+
+ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_transaction_id VARCHAR(50);
+ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_paid_total NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_paid_duration_minutes INT DEFAULT 0;
+
+ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS upfront_transaction_id VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS transaction_correction_logs (
     correction_id VARCHAR(80) PRIMARY KEY,

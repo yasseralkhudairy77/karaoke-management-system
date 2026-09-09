@@ -170,6 +170,8 @@ async function handlePostAction(action, req, res, payload) {
       return roomsController.previewSessionPricing(req, res, payload);
     case 'payAndStartSession':
       return roomsController.payAndStartSession(req, res, payload);
+    case 'payUpfrontSession':
+      return roomsController.payUpfrontSession(req, res, payload);
     case 'cancelBooking':
       return roomsController.cancelBooking(req, res, payload);
     case 'activatePreparedSession':

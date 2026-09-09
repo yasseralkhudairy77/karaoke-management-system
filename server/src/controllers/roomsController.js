@@ -24,8 +24,23 @@ function calculateLcCharge(durationMinutes, ratePerHour) {
   return Math.ceil(duration / 60) * rate;
 }
 
+let upfrontPaymentSchemaChecked = false;
+async function ensureUpfrontPaymentSchema(client) {
+  if (upfrontPaymentSchemaChecked) return;
+  await client.query(`
+    ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_transaction_id VARCHAR(50);
+    ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_paid_total NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE room_sessions ADD COLUMN IF NOT EXISTS upfront_paid_duration_minutes INT DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_upfront BOOLEAN DEFAULT FALSE;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS upfront_parent_session_id VARCHAR(100);
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS upfront_transaction_id VARCHAR(50);
+  `);
+  upfrontPaymentSchemaChecked = true;
+}
+
 let packageLcBillingSchemaChecked = false;
 async function ensurePackageLcBillingSchema(client) {
+  await ensureUpfrontPaymentSchema(client);
   if (packageLcBillingSchemaChecked) return;
   await client.query(`
     ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
@@ -314,7 +329,8 @@ async function getRooms(req, res) {
     }
 
     const activeSessionsRes = await db.query(`
-      SELECT session_id, room_id, booking_mode, status, note, booked_duration_minutes, package_included_minutes
+      SELECT session_id, room_id, booking_mode, status, note, booked_duration_minutes, package_included_minutes,
+             upfront_transaction_id, upfront_paid_total, upfront_paid_duration_minutes
       FROM room_sessions
       WHERE status IN ('starting', 'active')
       ORDER BY created_at DESC
@@ -393,7 +409,11 @@ async function getRooms(req, res) {
         open_fnb_total: roomOpenFnbOrders.reduce((total, order) => total + Number(order.order_total || 0), 0),
         lc_ids: lcIds,
         lc_companion_ids: lcIds,
-        lc_assignments: JSON.stringify(lcAssignments)
+        lc_assignments: JSON.stringify(lcAssignments),
+        is_upfront_paid: Boolean(activeSession?.upfront_transaction_id),
+        upfront_transaction_id: activeSession?.upfront_transaction_id || "",
+        upfront_paid_total: Number(activeSession?.upfront_paid_total || 0),
+        upfront_paid_duration_minutes: Number(activeSession?.upfront_paid_duration_minutes || 0)
       };
     });
 
@@ -739,6 +759,290 @@ async function payAndStartSession(req, res, payload) {
         payment_method: paymentMethod,
         payment_status: 'paid'
       }
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function payUpfrontSession(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensurePackageLcBillingSchema(client);
+    await ensureUpfrontPaymentSchema(client);
+
+    const roomId = payload.room_id;
+    const paymentMethod = String(payload.payment_method || 'cash').toLowerCase();
+    const cashierName = payload.cashier_name || 'Kasir';
+    const idempotencyKey = payload.idempotency_key || null;
+
+    if (!roomId) throw new Error('room_id wajib diisi.');
+    if (!['cash', 'qris', 'transfer', 'split'].includes(paymentMethod)) {
+      throw new Error('Metode pembayaran wajib cash, qris, transfer, atau split.');
+    }
+
+    if (idempotencyKey) {
+      const existingTx = await client.query('SELECT * FROM transactions WHERE idempotency_key = $1', [idempotencyKey]);
+      if (existingTx.rowCount > 0) {
+        await client.query('COMMIT');
+        return successResponse(res, { message: 'Pembayaran di muka sudah pernah diproses (idempotent).', transaction: existingTx.rows[0], idempotent_replay: true });
+      }
+    }
+
+    const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
+    if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+    const room = roomRes.rows[0];
+    if (room.status !== 'occupied') throw new Error('Pembayaran di muka hanya bisa dilakukan saat ruangan berstatus occupied.');
+
+    const activeSessionRes = await client.query(`
+      SELECT * FROM room_sessions
+      WHERE room_id = $1 AND status IN ('starting', 'active')
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [roomId]);
+    if (activeSessionRes.rowCount === 0) throw new Error('Sesi aktif tidak ditemukan.');
+    const activeSession = activeSessionRes.rows[0];
+
+    if (activeSession.upfront_transaction_id) {
+      throw new Error('Sesi ini sudah pernah melakukan pembayaran di muka.');
+    }
+
+    const now = new Date();
+    const startTime = new Date(room.start_time || activeSession.start_time || now);
+    const durationMinutes = Number(activeSession.booked_duration_minutes || room.booked_duration_minutes || 60);
+    const scheduledEndTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+    const ratePerHour = Number(activeSession.rate_per_hour || room.rate_per_hour || 0);
+
+    let roomTotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+    let roomUpgradeTotal = 0;
+    let roomJourney = [];
+    let bookingMode = 'regular';
+    let transactionPackageId = '';
+    let transactionPackageName = '';
+    let transactionPackageTotal = 0;
+
+    const pricing = await finalizeAndPriceRoomSegments(client, activeSession, room, scheduledEndTime);
+    roomTotal = pricing.roomTotal;
+    roomUpgradeTotal = pricing.upgradeTotal;
+    roomJourney = pricing.segments;
+
+    if (activeSession.booking_mode === 'package') {
+      bookingMode = 'package';
+      transactionPackageId = pricing.packageMeta.packageId;
+      transactionPackageName = pricing.packageMeta.packageName;
+      transactionPackageTotal = pricing.packageMeta.packageTotal;
+    }
+
+    // F&B
+    const fnbRes = await client.query(`
+      SELECT order_id, order_total FROM fnb_orders 
+      WHERE order_status = 'open'
+        AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
+    `, [activeSession.session_id, roomId]);
+
+    let fnbTotal = 0;
+    const fnbOrderIds = fnbRes.rows.map(r => r.order_id);
+    fnbRes.rows.forEach(r => { fnbTotal += Number(r.order_total || 0); });
+
+    const transactionId = `TRX-${Date.now()}`;
+    if (fnbOrderIds.length > 0) {
+      await client.query(`
+        UPDATE fnb_orders SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP
+        WHERE order_id = ANY($1)
+      `, [fnbOrderIds]);
+
+      await deductStockForFnbOrders(client, fnbOrderIds, transactionId, cashierName);
+    }
+
+    if (transactionPackageId) {
+      await deductStockForRoomPackage(client, transactionPackageId, transactionPackageName, transactionId, cashierName);
+    }
+
+    // LC Calculation: allocate for booked duration
+    const lcRes = await client.query(`
+      SELECT
+        log_id, session_id, room_id, room_name, lc_id, lc_name,
+        duration_minutes, rate_per_hour, rate, status, created_at
+      FROM lc_work_logs
+      WHERE closed_at IS NULL AND status != 'cancelled'
+        AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
+      ORDER BY created_at ASC
+    `, [activeSession.session_id, roomId]);
+
+    const uniqueLcRows = Array.from(lcRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, {
+        ...row,
+        duration_minutes: durationMinutes
+      });
+      return map;
+    }, new Map()).values());
+
+    const packageLcRule = bookingMode === 'package'
+      ? await getPackageLcRule(client, transactionPackageId)
+      : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+    const allocatedLcRows = allocatePackageLcBilling(uniqueLcRows, packageLcRule);
+    let lcTotal = 0;
+    let lcPayableTotal = 0;
+    allocatedLcRows.forEach(r => {
+      lcTotal += Number(r.customer_charge_amount || 0);
+      lcPayableTotal += Number(r.payable_amount || r.rate || 0);
+    });
+
+    const lcLogsForReceipt = allocatedLcRows.map(row => ({
+      ...row,
+      created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+    }));
+    const lcDetails = {
+      detail_available: lcLogsForReceipt.length > 0,
+      lc_logs: lcLogsForReceipt,
+      items: lcLogsForReceipt,
+      customer_items: lcLogsForReceipt.filter(row => Number(row.customer_charge_amount || 0) > 0),
+      item_total: lcLogsForReceipt.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0),
+      payable_total: lcPayableTotal,
+      included_total: lcPayableTotal - lcTotal,
+      billing_adjustment: 0,
+      total: lcTotal
+    };
+
+    const grandTotal = roomTotal + fnbTotal + lcTotal;
+    const opDate = getOperationalDate(now);
+
+    const billableRoomMinutes = activeSession.billable_room_minutes !== null && activeSession.billable_room_minutes !== undefined
+      ? Number(activeSession.billable_room_minutes)
+      : durationMinutes;
+    const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+
+    let cashAmount = 0;
+    let transferAmount = 0;
+    if (paymentMethod === 'cash') {
+      cashAmount = grandTotal;
+    } else if (paymentMethod === 'split') {
+      cashAmount = Number(payload.cash_amount || 0);
+      transferAmount = Number(payload.transfer_amount || 0);
+    } else {
+      transferAmount = grandTotal;
+    }
+
+    await client.query(`
+      INSERT INTO transactions (
+        transaction_id, room_id, room_name, start_time, end_time,
+        duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
+        grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total, room_upgrade_total, room_journey_json,
+        billable_room_minutes, free_room_minutes, cash_amount, transfer_amount,
+        is_upfront, upfront_parent_session_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'paid', $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, true, $27)
+    `, [
+      transactionId, roomId, room.room_name, startTime, scheduledEndTime,
+      durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal,
+      grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey,
+      bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney),
+      billableRoomMinutes, freeRoomMinutes, cashAmount, transferAmount,
+      activeSession.session_id
+    ]);
+
+    if (allocatedLcRows.length > 0) {
+      await client.query(`
+        UPDATE lc_work_logs
+        SET upfront_transaction_id = $1,
+            duration_minutes = data.duration_minutes,
+            rate = data.rate,
+            customer_charge_amount = data.customer_charge_amount,
+            included_minutes = data.included_minutes,
+            extra_minutes = data.extra_minutes,
+            billing_source = data.billing_source,
+            package_id = data.package_id
+        FROM (
+          SELECT *
+          FROM jsonb_to_recordset($4::jsonb) AS x(
+            log_id varchar,
+            duration_minutes int,
+            rate numeric,
+            customer_charge_amount numeric,
+            included_minutes int,
+            extra_minutes int,
+            billing_source varchar,
+            package_id varchar
+          )
+        ) AS data
+        WHERE closed_at IS NULL AND status != 'cancelled'
+          AND ($2::varchar IS NOT NULL AND session_id = $2 OR session_id IS NULL AND room_id = $3)
+          AND lc_work_logs.log_id = data.log_id
+      `, [
+        transactionId,
+        activeSession.session_id,
+        roomId,
+        JSON.stringify(allocatedLcRows.map(row => ({
+          log_id: row.log_id,
+          duration_minutes: row.duration_minutes,
+          rate: row.payable_amount,
+          customer_charge_amount: row.customer_charge_amount,
+          included_minutes: row.included_minutes,
+          extra_minutes: row.extra_minutes,
+          billing_source: row.billing_source,
+          package_id: row.package_id || null
+        })))
+      ]);
+    }
+
+    await client.query(`
+      UPDATE room_sessions
+      SET upfront_transaction_id = $1,
+          upfront_paid_total = $2,
+          upfront_paid_duration_minutes = $3,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = $4
+    `, [transactionId, grandTotal, durationMinutes, activeSession.session_id]);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [transactionId, JSON.stringify({ transaction_id: transactionId, room_id: roomId, grand_total: grandTotal, payment_status: 'paid', operational_date: opDate, is_upfront: true })]);
+
+    await client.query('COMMIT');
+
+    const transaction = {
+      transaction_id: transactionId,
+      room_id: roomId,
+      room_name: room.room_name,
+      start_time: startTime.toISOString(),
+      end_time: scheduledEndTime.toISOString(),
+      duration_minutes: durationMinutes,
+      billable_room_minutes: billableRoomMinutes,
+      free_room_minutes: freeRoomMinutes,
+      rate_per_hour: ratePerHour,
+      room_total: roomTotal,
+      fnb_total: fnbTotal,
+      lc_total: lcTotal,
+      grand_total: grandTotal,
+      fnb_order_ids: fnbOrderIds.join(','),
+      payment_status: 'paid',
+      payment_method: paymentMethod,
+      cashier_name: cashierName,
+      operational_date: opDate,
+      booking_mode: bookingMode,
+      package_id: transactionPackageId,
+      package_name: transactionPackageName,
+      package_total: transactionPackageTotal,
+      room_upgrade_total: roomUpgradeTotal,
+      room_journey: roomJourney,
+      lc_details: lcDetails,
+      is_upfront: true,
+      cash_amount: cashAmount,
+      transfer_amount: transferAmount
+    };
+
+    return successResponse(res, {
+      message: `Pembayaran di muka room ${room.room_name} berhasil diproses. Struk siap dicetak.`,
+      transaction
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
@@ -1483,6 +1787,184 @@ async function closeSession(req, res, payload) {
         transactionPackageName = pricing.packageMeta.packageName;
         transactionPackageTotal = pricing.packageMeta.packageTotal;
       }
+
+      // Penanganan khusus jika sesi sudah dibayar di muka
+      if (activeSession.upfront_transaction_id) {
+        const upfrontTxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1', [activeSession.upfront_transaction_id]);
+        const upfrontTx = upfrontTxRes.rows[0];
+
+        const upfrontPaidDuration = Number(activeSession.upfront_paid_duration_minutes || upfrontTx?.duration_minutes || 0);
+        const totalBookedDuration = Number(activeSession.booked_duration_minutes || durationMinutes);
+        const extraRoomDuration = Math.max(0, totalBookedDuration - upfrontPaidDuration);
+        let extraRoomTotal = 0;
+        if (extraRoomDuration > 0) {
+          extraRoomTotal = Math.ceil((extraRoomDuration / 60) * ratePerHour);
+        }
+
+        // Cek apakah ada F&B tambahan yang statusnya open
+        const fnbRes = await client.query(`
+          SELECT order_id, order_total FROM fnb_orders 
+          WHERE order_status = 'open'
+            AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
+        `, [activeSession.session_id, roomId]);
+
+        let fnbTotal = 0;
+        const fnbOrderIds = fnbRes.rows.map(r => r.order_id);
+        fnbRes.rows.forEach(r => { fnbTotal += Number(r.order_total || 0); });
+
+        // Cek LC tambahan
+        const lcRes = await client.query(`
+          SELECT
+            log_id, session_id, room_id, room_name, lc_id, lc_name,
+            duration_minutes, rate_per_hour, rate, status, created_at, upfront_transaction_id
+          FROM lc_work_logs
+          WHERE closed_at IS NULL AND status != 'cancelled'
+            AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
+          ORDER BY created_at ASC
+        `, [activeSession.session_id, roomId]);
+
+        let extraLcTotal = 0;
+        lcRes.rows.forEach(row => {
+          const lcRatePerHour = Number(row.rate_per_hour || 0);
+          let extraMinutes = 0;
+          if (!row.upfront_transaction_id) {
+            extraMinutes = totalBookedDuration;
+          } else if (extraRoomDuration > 0) {
+            extraMinutes = extraRoomDuration;
+          }
+          extraLcTotal += calculateLcCharge(extraMinutes, lcRatePerHour);
+        });
+
+        const additionalGrandTotal = extraRoomTotal + fnbTotal + extraLcTotal;
+
+        if (additionalGrandTotal === 0) {
+          // Kasus A: Seluruh tagihan sudah lunas di muka (Sisa Rp 0)
+          await client.query(`
+            UPDATE lc_work_logs
+            SET closed_at = CURRENT_TIMESTAMP,
+                closed_transaction_id = $1,
+                status = 'closed'
+            WHERE closed_at IS NULL AND status != 'cancelled'
+              AND ($2::varchar IS NOT NULL AND session_id = $2 OR session_id IS NULL AND room_id = $3)
+          `, [activeSession.upfront_transaction_id, activeSession.session_id, roomId]);
+
+          await client.query(`
+            UPDATE rooms 
+            SET status = 'cleaning',
+                start_time = NULL,
+                booked_duration_minutes = 0,
+                scheduled_end_time = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE room_id = $1
+          `, [roomId]);
+
+          await client.query(`
+            UPDATE room_sessions
+            SET status = 'closed', end_time = $1, closed_transaction_id = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = $3
+          `, [endTime, activeSession.upfront_transaction_id, activeSession.session_id]);
+
+          await client.query('COMMIT');
+
+          return successResponse(res, {
+            message: `Sesi room ${room.room_name} berhasil ditutup. Seluruh tagihan sudah lunas di muka (Rp 0).`,
+            fully_settled_upfront: true,
+            transaction: {
+              ...(upfrontTx || {}),
+              fnb_orders: [],
+              stock_movements: [],
+              is_upfront_fully_paid: true,
+              grand_total: 0
+            }
+          });
+        }
+
+        // Kasus B: Ada tagihan tambahan
+        const additionalTxId = `TRX-${Date.now()}`;
+        if (fnbOrderIds.length > 0) {
+          await client.query(`
+            UPDATE fnb_orders SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ANY($1)
+          `, [fnbOrderIds]);
+          await deductStockForFnbOrders(client, fnbOrderIds, additionalTxId, cashierName);
+        }
+
+        const opDate = getOperationalDate(endTime);
+
+        await client.query(`
+          INSERT INTO transactions (
+            transaction_id, room_id, room_name, start_time, end_time,
+            duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
+            grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+            booking_mode, billable_room_minutes, free_room_minutes, correction_note
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, 'regular', $16, 0, $17)
+        `, [
+          additionalTxId, roomId, room.room_name, startTime, endTime,
+          extraRoomDuration, ratePerHour, extraRoomTotal, fnbTotal, extraLcTotal,
+          additionalGrandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey,
+          extraRoomDuration, 'TAGIHAN TAMBAHAN (Pelunasan Akhir)'
+        ]);
+
+        await client.query(`
+          UPDATE lc_work_logs
+          SET closed_at = CURRENT_TIMESTAMP,
+              closed_transaction_id = $1,
+              status = 'closed'
+          WHERE closed_at IS NULL AND status != 'cancelled'
+            AND ($2::varchar IS NOT NULL AND session_id = $2 OR session_id IS NULL AND room_id = $3)
+        `, [additionalTxId, activeSession.session_id, roomId]);
+
+        await client.query(`
+          UPDATE rooms 
+          SET status = 'cleaning',
+              start_time = NULL,
+              booked_duration_minutes = 0,
+              scheduled_end_time = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE room_id = $1
+        `, [roomId]);
+
+        await client.query(`
+          UPDATE room_sessions
+          SET status = 'closed', end_time = $1, closed_transaction_id = $2, updated_at = CURRENT_TIMESTAMP
+          WHERE session_id = $3
+        `, [endTime, additionalTxId, activeSession.session_id]);
+
+        await client.query(`
+          INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+          VALUES ('transactions', $1, 'INSERT', $2)
+          ON CONFLICT DO NOTHING
+        `, [additionalTxId, JSON.stringify({ transaction_id: additionalTxId, room_id: roomId, grand_total: additionalGrandTotal, payment_status: 'unpaid', operational_date: opDate })]);
+
+        await client.query('COMMIT');
+
+        return successResponse(res, {
+          message: `Sesi room ${room.room_name} berhasil ditutup. Tagihan tambahan dibuat (unpaid).`,
+          has_additional_charges: true,
+          transaction: {
+            transaction_id: additionalTxId,
+            room_id: roomId,
+            room_name: room.room_name,
+            start_time: startTime.toISOString(),
+            end_time: endTime.toISOString(),
+            duration_minutes: extraRoomDuration,
+            billable_room_minutes: extraRoomDuration,
+            free_room_minutes: 0,
+            rate_per_hour: ratePerHour,
+            room_total: extraRoomTotal,
+            fnb_total: fnbTotal,
+            lc_total: extraLcTotal,
+            grand_total: additionalGrandTotal,
+            fnb_order_ids: fnbOrderIds.join(','),
+            payment_status: 'unpaid',
+            payment_method: '',
+            cashier_name: cashierName,
+            operational_date: opDate,
+            booking_mode: 'regular',
+            correction_note: 'TAGIHAN TAMBAHAN (Pelunasan Akhir)'
+          }
+        });
+      }
     }
 
     const fnbRes = await client.query(`
@@ -1994,6 +2476,7 @@ module.exports = {
   getRooms,
   prepareRoomSession,
   payAndStartSession,
+  payUpfrontSession,
   activatePreparedSession,
   startSession,
   extendSession,

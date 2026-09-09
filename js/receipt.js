@@ -51,6 +51,11 @@ export function formatReceipt58mm(receiptData, options = {}) {
 
   pushReceiptHeader(lines, business, width);
 
+  if (transaction.isUpfront || transaction.raw?.is_upfront) {
+    lines.push(centerReceiptText("*** STRUK DIBAYAR DIMUKA ***", width));
+    lines.push(centerReceiptText("LUNAS DI MUKA", width));
+  }
+
   if (print.isReprint) {
     lines.push(centerReceiptText("*** CETAK ULANG ***", width));
     lines.push(centerReceiptText(`Cetak ulang ke-${getNumber(print.reprintNumber)}`, width));
@@ -1079,6 +1084,7 @@ function normalizeTransaction(transaction) {
     id: getText(transaction.transaction_id),
     createdAt: getText(transaction.created_at || transaction.end_time),
     cashierName: getText(transaction.cashier_name || "Kasir"),
+    isUpfront: Boolean(transaction.is_upfront || transaction.raw?.is_upfront),
     raw: transaction,
   };
 }

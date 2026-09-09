@@ -8352,6 +8352,163 @@ textarea.action-confirmation-input {
   transform: translateY(-1px) !important;
 }
 
+/* Bayar di Muka (Full Width Action Button) */
+.room-actions-occupied .room-button-upfront,
+.room-actions-occupied > [data-action="show-upfront-payment"] {
+  grid-column: 1 / -1 !important;
+  min-height: 42px !important;
+  font-size: 0.95rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.01em !important;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(167, 243, 208, 0.45) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.room-actions-occupied .room-button-upfront:hover:not(:disabled),
+.room-actions-occupied > [data-action="show-upfront-payment"]:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%) !important;
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.5) !important;
+  transform: translateY(-1px) !important;
+}
+
+.room-actions-occupied .room-button-upfront.is-settled,
+.room-actions-occupied > [data-action="show-upfront-payment"].is-settled {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border: 1px solid rgba(52, 211, 153, 0.45) !important;
+  color: #34d399 !important;
+  box-shadow: none !important;
+}
+
+.upfront-modal-overlay {
+  position: fixed;
+  z-index: 13000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 7, 12, 0.85);
+  backdrop-filter: blur(4px);
+}
+.upfront-modal-dialog {
+  box-sizing: border-box;
+  display: grid;
+  gap: 16px;
+  width: min(100%, 520px);
+  max-height: calc(100vh - 40px);
+  padding: 24px;
+  overflow-y: auto;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  border-radius: 12px;
+  background: #111827;
+  color: #f3f4f6;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+}
+.upfront-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 12px;
+}
+.upfront-modal-title {
+  margin: 0;
+  color: #34d399;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.upfront-summary-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.upfront-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.95rem;
+}
+.upfront-total-row {
+  border-top: 1px dashed rgba(255, 255, 255, 0.2);
+  padding-top: 8px;
+  font-weight: bold;
+  font-size: 1.15rem;
+  color: #34d399;
+}
+.upfront-payment-field {
+  display: grid;
+  gap: 6px;
+}
+.upfront-payment-field label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #9ca3af;
+}
+.upfront-payment-select,
+.upfront-payment-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  color: #f9fafb;
+  font-size: 1rem;
+}
+.upfront-payment-select:focus,
+.upfront-payment-input:focus {
+  outline: none;
+  border-color: #34d399;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.2);
+}
+.upfront-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+.upfront-btn-cancel {
+  padding: 10px 16px;
+  background: #374151;
+  border: none;
+  border-radius: 6px;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-weight: 600;
+}
+.upfront-btn-cancel:hover {
+  background: #4b5563;
+}
+.upfront-btn-submit {
+  padding: 10px 20px;
+  background: #059669;
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.upfront-btn-submit:hover:not(:disabled) {
+  background: #10b981;
+}
+.upfront-btn-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .room-button-full {
   grid-column: 1 / -1;
 }

@@ -8900,7 +8900,7 @@ function createReceiptPrintElement(transaction) {
   const title = document.createElement("h2");
   title.className = "receipt-print-title";
   title.id = "receipt-print-title";
-  title.textContent = "Struk Tagihan";
+  title.textContent = (receiptData?.transaction?.isUpfront || transaction?.is_upfront) ? "STRUK DIBAYAR DIMUKA" : "Struk Tagihan";
 
   const meta = document.createElement("p");
   meta.className = "receipt-print-meta";
@@ -9540,17 +9540,38 @@ function createRoomCard(room) {
   status.textContent = statusLabel;
 
   if (room.status === "occupied") {
-    const openBillBadge = document.createElement("span");
-    openBillBadge.className = "room-status-badge open-bill-badge";
-    openBillBadge.style.backgroundColor = "rgba(124, 58, 237, 0.15)";
-    openBillBadge.style.color = "#a78bfa";
-    openBillBadge.style.fontSize = "11px";
-    openBillBadge.style.padding = "2px 6px";
-    openBillBadge.style.borderRadius = "4px";
-    openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
-    openBillBadge.style.fontWeight = "bold";
-    openBillBadge.textContent = "Open Bill";
-    topLine.append(name, status, openBillBadge);
+    if (room.is_upfront_paid) {
+      const upfrontPaidBadge = document.createElement("span");
+      upfrontPaidBadge.className = "room-status-badge upfront-paid-badge";
+      upfrontPaidBadge.style.backgroundColor = "rgba(16, 185, 129, 0.18)";
+      upfrontPaidBadge.style.color = "#34d399";
+      upfrontPaidBadge.style.fontSize = "11px";
+      upfrontPaidBadge.style.padding = "2px 6px";
+      upfrontPaidBadge.style.borderRadius = "4px";
+      upfrontPaidBadge.style.border = "1px solid rgba(52, 211, 153, 0.4)";
+      upfrontPaidBadge.style.fontWeight = "bold";
+
+      const openOrders = getOpenFnbOrdersForRoom(room);
+      if (openOrders.length > 0) {
+        const extraTotal = openOrders.reduce((sum, o) => sum + Number(o.order_total || 0), 0);
+        upfrontPaidBadge.textContent = `🟢 Lunas di Muka (+${formatCurrency(extraTotal)})`;
+      } else {
+        upfrontPaidBadge.textContent = "🟢 Lunas di Muka";
+      }
+      topLine.append(name, status, upfrontPaidBadge);
+    } else {
+      const openBillBadge = document.createElement("span");
+      openBillBadge.className = "room-status-badge open-bill-badge";
+      openBillBadge.style.backgroundColor = "rgba(124, 58, 237, 0.15)";
+      openBillBadge.style.color = "#a78bfa";
+      openBillBadge.style.fontSize = "11px";
+      openBillBadge.style.padding = "2px 6px";
+      openBillBadge.style.borderRadius = "4px";
+      openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
+      openBillBadge.style.fontWeight = "bold";
+      openBillBadge.textContent = "Open Bill";
+      topLine.append(name, status, openBillBadge);
+    }
   } else {
     topLine.append(name, status);
   }
@@ -9599,6 +9620,18 @@ function createRoomCard(room) {
   if (room.status === "occupied") {
     actions.classList.add("room-actions-occupied");
 
+    const upfrontPayButton = document.createElement("button");
+    upfrontPayButton.className = "room-button room-button-upfront";
+    upfrontPayButton.type = "button";
+    upfrontPayButton.dataset.action = "show-upfront-payment";
+    upfrontPayButton.dataset.roomId = room.room_id;
+    if (room.is_upfront_paid && getOpenFnbOrdersForRoom(room).length === 0) {
+      upfrontPayButton.classList.add("is-settled");
+      upfrontPayButton.innerHTML = `<span class="room-btn-icon">✅</span> <span>Sudah Lunas di Muka</span>`;
+    } else {
+      upfrontPayButton.innerHTML = `<span class="room-btn-icon">💳</span> <span>Bayar di Muka</span>`;
+    }
+
     const extendButton = document.createElement("button");
     extendButton.className = "room-button room-button-extend";
     extendButton.type = "button";
@@ -9634,7 +9667,7 @@ function createRoomCard(room) {
     freeGiftButton.innerHTML = `<span class="room-btn-icon">🎁</span> <span>Free Gift</span>`;
     freeGiftButton.disabled = getCurrentOperatorRole() === "receptionist";
 
-    actions.append(sessionButton, extendButton, selectLcButton, changePackageButton, moveRoomButton, freeGiftButton);
+    actions.append(sessionButton, upfrontPayButton, extendButton, selectLcButton, changePackageButton, moveRoomButton, freeGiftButton);
   } else if (["booked", "waiting_payment"].includes(room.status)) {
     const cancelBookingButton = document.createElement("button");
     cancelBookingButton.className = "room-button room-button-secondary";
@@ -29833,7 +29866,7 @@ async function activatePreparedSession(roomId) {
   }
 }
 
-function showLcWarningModal(roomId) {
+function showLcWarningModal(roomId, options = {}) {
   const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId, room_name: roomId };
   document.querySelectorAll('[data-modal="lc-warning"]').forEach((element) => element.remove());
 
@@ -29893,7 +29926,11 @@ function showLcWarningModal(roomId) {
     btnInputNow.disabled = true;
     btnProceedNoLc.textContent = "Memproses...";
     try {
-      await closeSession(roomId, { skipLcWarning: true });
+      if (typeof options?.onProceed === "function") {
+        await options.onProceed();
+      } else {
+        await closeSession(roomId, { skipLcWarning: true });
+      }
     } finally {
       cleanupModal();
     }
@@ -29904,6 +29941,207 @@ function showLcWarningModal(roomId) {
   modalOverlay.appendChild(modalBox);
   document.body.appendChild(modalOverlay);
   btnProceedNoLc.focus();
+}
+
+async function showUpfrontPaymentModal(roomId, options = {}) {
+  const room = rooms.find(r => r.room_id === roomId);
+  if (!room) {
+    showInlineNotice("Ruangan tidak ditemukan.", "error");
+    return;
+  }
+
+  // Cek apakah kamar sudah memiliki LC
+  const currentLcIdsRaw = String(room.lc_ids || "").trim();
+  const activeLcIds = selectedLcIdsForRoom[roomId] || (currentLcIdsRaw ? currentLcIdsRaw.split(",").map(i => i.trim()).filter(Boolean) : []);
+
+  if (activeLcIds.length === 0 && !options.skipLcWarning) {
+    showLcWarningModal(roomId, {
+      onProceed: () => showUpfrontPaymentModal(roomId, { skipLcWarning: true })
+    });
+    return;
+  }
+
+  document.querySelectorAll('[data-modal="upfront-payment"]').forEach(el => el.remove());
+
+  const durationMinutes = Number(room.booked_duration_minutes || 60);
+  const ratePerHour = Number(room.rate_per_hour || 0);
+  let roomSubtotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+  let roomLabel = `${durationMinutes} Menit (${formatCurrency(ratePerHour)}/jam)`;
+
+  if (room.booking_mode === "package" || room.package_id) {
+    const pkg = packages.find(p => p.package_id === room.package_id);
+    roomSubtotal = Number(room.package_total || pkg?.selling_price || 0);
+    roomLabel = `Paket ${pkg ? pkg.package_name : (room.package_name || room.package_id)}`;
+  }
+
+  const openOrders = getOpenFnbOrdersForRoom(room);
+  const fnbSubtotal = openOrders.reduce((sum, o) => sum + Number(o.order_total || 0), 0);
+
+  // Perhitungan LC untuk durasi booking
+  ensureLcSelectionStateForRoom(room);
+  const lcAssignments = buildLcAssignmentsForRoom(room);
+  const calculatedLcs = calculateLcCustomerChargeForRoom(room, lcAssignments.map(a => ({
+    name: a.lc_name || a.lc_id,
+    lc_id: a.lc_id,
+    durationMinutes: a.duration_minutes || durationMinutes,
+    ratePerHour: a.rate_per_hour
+  })));
+  const lcSubtotal = calculatedLcs.reduce((sum, item) => sum + Number(item.customerCharge || 0), 0);
+
+  const grandTotal = roomSubtotal + fnbSubtotal + lcSubtotal;
+
+  const overlay = document.createElement("div");
+  overlay.className = "upfront-modal-overlay";
+  overlay.dataset.modal = "upfront-payment";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const dialog = document.createElement("div");
+  dialog.className = "upfront-modal-dialog";
+
+  const header = document.createElement("div");
+  header.className = "upfront-modal-header";
+  header.innerHTML = `
+    <span style="font-size: 1.4rem;">💳</span>
+    <h3 class="upfront-modal-title">Pembayaran di Muka - ${escapeHtml(room.room_name)}</h3>
+  `;
+
+  const summaryCard = document.createElement("div");
+  summaryCard.className = "upfront-summary-card";
+  summaryCard.innerHTML = `
+    <div class="upfront-summary-row">
+      <span><strong>Sesi Ruangan:</strong> ${escapeHtml(roomLabel)}</span>
+      <span>${formatCurrency(roomSubtotal)}</span>
+    </div>
+    <div class="upfront-summary-row">
+      <span><strong>Pesanan F&B (${openOrders.length} Order):</strong></span>
+      <span>${formatCurrency(fnbSubtotal)}</span>
+    </div>
+    <div class="upfront-summary-row">
+      <span><strong>Pemandu Lagu (${calculatedLcs.length} LC):</strong> ${calculatedLcs.length > 0 ? escapeHtml(calculatedLcs.map(l => l.name).join(", ")) : "(Tanpa LC)"}</span>
+      <span>${formatCurrency(lcSubtotal)}</span>
+    </div>
+    <div class="upfront-summary-row upfront-total-row">
+      <span>TOTAL BAYAR DI MUKA:</span>
+      <span>${formatCurrency(grandTotal)}</span>
+    </div>
+  `;
+
+  const paymentMethodField = document.createElement("div");
+  paymentMethodField.className = "upfront-payment-field";
+  paymentMethodField.innerHTML = `
+    <label for="upfront-pay-method">Metode Pembayaran:</label>
+    <select id="upfront-pay-method" class="upfront-payment-select">
+      <option value="cash">Cash (Tunai)</option>
+      <option value="qris">QRIS</option>
+      <option value="transfer">Transfer Bank</option>
+    </select>
+  `;
+
+  const cashAmountField = document.createElement("div");
+  cashAmountField.className = "upfront-payment-field";
+  cashAmountField.id = "upfront-cash-field";
+  cashAmountField.innerHTML = `
+    <label for="upfront-cash-input">Uang Tunai Diterima:</label>
+    <input type="number" id="upfront-cash-input" class="upfront-payment-input" value="${grandTotal}" min="0" step="1000" />
+    <div id="upfront-change-display" style="font-size: 0.9rem; color: #9ca3af; margin-top: 4px;">
+      Kembalian: <strong style="color: #34d399;" id="upfront-change-val">Rp 0</strong>
+    </div>
+  `;
+
+  const actions = document.createElement("div");
+  actions.className = "upfront-modal-actions";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "upfront-btn-cancel";
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => overlay.remove();
+
+  const submitBtn = document.createElement("button");
+  submitBtn.className = "upfront-btn-submit";
+  submitBtn.type = "button";
+  submitBtn.innerHTML = `<span>💳</span> <span>Proses Bayar di Muka</span>`;
+
+  actions.append(cancelBtn, submitBtn);
+
+  dialog.append(header, summaryCard, paymentMethodField, cashAmountField, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const methodSelect = dialog.querySelector("#upfront-pay-method");
+  const cashInput = dialog.querySelector("#upfront-cash-input");
+  const changeVal = dialog.querySelector("#upfront-change-val");
+  const cashFieldContainer = dialog.querySelector("#upfront-cash-field");
+
+  const updateChange = () => {
+    const cashVal = Number(cashInput.value || 0);
+    const diff = cashVal - grandTotal;
+    changeVal.textContent = diff >= 0 ? formatCurrency(diff) : `Kurang ${formatCurrency(Math.abs(diff))}`;
+    changeVal.style.color = diff >= 0 ? "#34d399" : "#f87171";
+  };
+
+  cashInput.oninput = updateChange;
+  methodSelect.onchange = () => {
+    if (methodSelect.value === "cash") {
+      cashFieldContainer.style.display = "grid";
+      cashInput.value = grandTotal;
+      updateChange();
+    } else {
+      cashFieldContainer.style.display = "none";
+    }
+  };
+
+  submitBtn.onclick = async () => {
+    const method = methodSelect.value;
+    const cashGiven = Number(cashInput.value || 0);
+    if (method === "cash" && cashGiven < grandTotal) {
+      showInlineNotice("Nominal uang tunai kurang dari total tagihan.", "error");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    submitBtn.textContent = "Memproses Pembayaran...";
+
+    try {
+      const res = await postApiAction({
+        action: "payUpfrontSession",
+        room_id: roomId,
+        payment_method: method,
+        cashier_name: getLoggedInOperatorName(),
+        cash_amount: method === "cash" ? grandTotal : 0,
+        transfer_amount: method !== "cash" ? grandTotal : 0,
+        lc_ids: activeLcIds.join(","),
+        lc_assignments: buildLcAssignmentsPayloadForRoom(room)
+      });
+
+      if (!res || res.ok !== true) {
+        throw new Error(res?.error || "Gagal memproses pembayaran di muka.");
+      }
+
+      overlay.remove();
+
+      showInlineNotice("Pembayaran di muka berhasil! Kamar tetap aktif berkaraoke.", "success");
+
+      if (res.transaction) {
+        showBillingSummary(res.transaction);
+        showReceiptPrint(res.transaction);
+      }
+
+      await Promise.all([
+        loadRooms(),
+        loadOpenFnbOrders(),
+        loadTodayFnbOrders(),
+        loadTodayTransactions()
+      ]);
+    } catch (err) {
+      showInlineNotice(err.message || "Gagal memproses pembayaran di muka.", "error");
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+      submitBtn.innerHTML = `<span>💳</span> <span>Proses Bayar di Muka</span>`;
+    }
+  };
 }
 
 async function closeSession(roomId, options = {}) {
@@ -29918,6 +30156,12 @@ async function closeSession(roomId, options = {}) {
   }
 
   const room = rooms.find(r => r.room_id === roomId) || { room_id: roomId };
+
+  if (room.is_upfront_paid && getOpenFnbOrdersForRoom(room).length === 0 && !options?.skipUpfrontConfirm) {
+    const confirmClose = window.confirm(`Semua tagihan room ${room.room_name || roomId} sudah lunas di muka (Sisa Rp 0). Selesaikan sesi dan matikan TV?`);
+    if (!confirmClose) return;
+  }
+
   const currentLcIdsRaw = String(room.lc_ids || "").trim();
   const activeLcIds = selectedLcIdsForRoom[roomId] || (currentLcIdsRaw ? currentLcIdsRaw.split(",").map(i => i.trim()).filter(Boolean) : []);
 
@@ -29958,7 +30202,14 @@ async function closeSession(roomId, options = {}) {
         showInlineNotice(`TV gagal dimatikan: ${tvError.message}`, "warning");
       });
 
-    if (transaction.transaction_id) {
+    if (data.fully_settled_upfront || transaction.is_upfront_fully_paid) {
+      clearBillingSummary();
+      showInlineNotice(
+        `Sesi room ${room.room_name || roomId} selesai. Seluruh tagihan sudah lunas di muka (Rp 0).`,
+        "success"
+      );
+      await loadTodayTransactions();
+    } else if (transaction.transaction_id) {
       showBillingSummary(transaction);
       showInlineNotice(
         "Sesi selesai. Periksa durasi LC dan total tagihan sebelum mencetak struk.",
@@ -31674,6 +31925,16 @@ async function handleRoomAction(event) {
   if (action === "cancel-booking") {
     const bookingRoomId = button.dataset.roomId || roomId || "";
     requestCancelBooking(bookingRoomId);
+    return;
+  }
+
+  if (action === "show-upfront-payment") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan memproses pembayaran di muka.", "error");
+      return;
+    }
+    const targetRoomId = button.dataset.roomId || roomId || "";
+    showUpfrontPaymentModal(targetRoomId);
     return;
   }
 
