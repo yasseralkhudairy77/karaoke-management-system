@@ -1162,23 +1162,44 @@ async function cancelBooking(req, res, payload) {
       throw new Error('Hanya kamar berstatus booking atau menunggu mulai yang dapat dibatalkan.');
     }
 
-    await client.query(`
+    const voidSessionRes = await client.query(`
       UPDATE room_sessions
-      SET status = 'voided', note = CONCAT(COALESCE(note, ''), $1), updated_at = CURRENT_TIMESTAMP
+      SET status = 'voided', note = COALESCE(note, '') || $1::text, updated_at = CURRENT_TIMESTAMP
       WHERE room_id = $2 AND status = 'starting'
+      RETURNING session_id
     `, [` | cancel_reason=${reason}`, roomId]);
+
+    if (voidSessionRes.rowCount > 0) {
+      for (const row of voidSessionRes.rows) {
+        await client.query(`
+          INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+          VALUES ('room_sessions', $1, 'UPDATE', $2)
+          ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+          SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0,
+              last_attempt_at = NULL, error_message = NULL
+        `, [row.session_id, JSON.stringify({ session_id: row.session_id, status: 'voided', reason })]);
+      }
+    }
 
     await client.query(`
       UPDATE fnb_orders
-      SET order_status = 'cancelled', cancel_reason = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE room_id = $2 AND order_status = 'open'
-    `, [reason, roomId]);
+      SET order_status = 'cancelled', cancel_reason = $1, cancelled_by = $2, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE room_id = $3 AND order_status = 'open'
+    `, [reason, cancelledBy, roomId]);
 
     await client.query(`
       UPDATE rooms
       SET status = 'available', start_time = NULL, booked_duration_minutes = 0, scheduled_end_time = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE room_id = $1
     `, [roomId]);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('rooms', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0,
+          last_attempt_at = NULL, error_message = NULL
+    `, [roomId, JSON.stringify({ room_id: roomId, status: 'available' })]);
 
     await writeOperationalAudit(client, {
       risk_level: room.status === 'paid_waiting_start' ? 'critical' : 'high',
