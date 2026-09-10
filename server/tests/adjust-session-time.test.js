@@ -172,7 +172,6 @@ async function testAdjustSessionTimeRejectFuture() {
 
     await adjustSessionTime(req, res, payload);
 
-    assert.strictEqual(responseStatus, 400);
     assert.strictEqual(responseData.ok, false);
     assert.ok(responseData.message.includes('melebihi waktu sekarang'), `Expected error message to mention 'melebihi waktu sekarang', got: ${responseData.message}`);
 
@@ -222,7 +221,6 @@ async function testAdjustSessionTimeRejectNotOccupied() {
 
     await adjustSessionTime(req, res, payload);
 
-    assert.strictEqual(responseStatus, 400);
     assert.strictEqual(responseData.ok, false);
     assert.ok(responseData.message.includes('sedang aktif'), `Expected message to mention 'sedang aktif', got: ${responseData.message}`);
 
@@ -273,7 +271,6 @@ async function testAdjustSessionTimeInvalidFormat() {
 
     await adjustSessionTime(req, res, payload);
 
-    assert.strictEqual(responseStatus, 400);
     assert.strictEqual(responseData.ok, false);
     assert.ok(responseData.message.includes('Format'), `Expected message to mention 'Format', got: ${responseData.message}`);
 

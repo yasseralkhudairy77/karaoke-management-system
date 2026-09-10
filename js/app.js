@@ -30924,7 +30924,16 @@ async function postApiAction(payload) {
   });
 
   if (!response.ok) {
-    throw new Error(`Permintaan gagal dengan status ${response.status}.`);
+    let serverMessage = "";
+    try {
+      const errData = await response.json();
+      serverMessage = errData?.message || errData?.error || "";
+    } catch (_) {
+      try {
+        serverMessage = await response.text();
+      } catch (_) {}
+    }
+    throw new Error(serverMessage || `Permintaan gagal dengan status ${response.status}.`);
   }
 
   return response.json();

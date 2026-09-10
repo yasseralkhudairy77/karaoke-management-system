@@ -2562,38 +2562,26 @@ async function adjustSessionTime(req, res, payload) {
       throw new Error('Format waktu mulai baru tidak valid.');
     }
 
-    if (newStartTime.getTime() > now.getTime() + 60 * 1000) {
+    if (newStartTime.getTime() > now.getTime() + 5 * 60 * 1000) {
       throw new Error('Waktu mulai baru tidak boleh melebihi waktu sekarang.');
     }
 
     const sessionRes = await client.query(`
       SELECT * FROM room_sessions
-      WHERE room_id = $1 AND status = 'active'
+      WHERE room_id = $1 AND status IN ('starting', 'active')
       ORDER BY created_at DESC
       LIMIT 1
       FOR UPDATE
     `, [roomId]);
-    if (sessionRes.rowCount === 0) throw new Error('Sesi aktif tidak ditemukan.');
-    const activeSession = sessionRes.rows[0];
+    
+    const activeSession = sessionRes.rowCount > 0
+      ? sessionRes.rows[0]
+      : { session_id: null, booked_duration_minutes: room.booked_duration_minutes || 60, start_time: room.start_time, scheduled_end_time: room.scheduled_end_time };
 
     const durationMinutes = Number(activeSession.booked_duration_minutes || room.booked_duration_minutes || 60);
-    const oldStartTime = new Date(room.start_time || activeSession.start_time);
+    const oldStartTime = new Date(room.start_time || activeSession.start_time || now);
     const oldScheduledEndTime = new Date(room.scheduled_end_time || activeSession.scheduled_end_time || (oldStartTime.getTime() + durationMinutes * 60 * 1000));
     const newScheduledEndTime = new Date(newStartTime.getTime() + durationMinutes * 60 * 1000);
-
-    const prevSessionRes = await client.query(`
-      SELECT session_id, end_time FROM room_sessions
-      WHERE room_id = $1 AND status = 'completed' AND end_time IS NOT NULL AND session_id != $2
-      ORDER BY end_time DESC
-      LIMIT 1
-    `, [roomId, activeSession.session_id]);
-    if (prevSessionRes.rowCount > 0 && prevSessionRes.rows[0].end_time) {
-      const prevEndTime = new Date(prevSessionRes.rows[0].end_time);
-      if (newStartTime.getTime() < prevEndTime.getTime()) {
-        const prevEndStr = prevEndTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-        throw new Error(`Waktu mulai baru tidak boleh lebih awal dari sesi sebelumnya yang selesai pada ${prevEndStr}.`);
-      }
-    }
 
     await client.query(`
       UPDATE rooms
@@ -2603,20 +2591,22 @@ async function adjustSessionTime(req, res, payload) {
       WHERE room_id = $3
     `, [newStartTime, newScheduledEndTime, roomId]);
 
-    await client.query(`
-      UPDATE room_sessions
-      SET start_time = $1,
-          scheduled_end_time = $2,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE session_id = $3
-    `, [newStartTime, newScheduledEndTime, activeSession.session_id]);
+    if (activeSession.session_id) {
+      await client.query(`
+        UPDATE room_sessions
+        SET start_time = $1,
+            scheduled_end_time = $2,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = $3
+      `, [newStartTime, newScheduledEndTime, activeSession.session_id]);
 
-    await client.query(`
-      UPDATE room_session_segments
-      SET start_time = $1,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE session_id = $2 AND end_time IS NULL
-    `, [newStartTime, activeSession.session_id]);
+      await client.query(`
+        UPDATE room_session_segments
+        SET start_time = $1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = $2 AND end_time IS NULL
+      `, [newStartTime, activeSession.session_id]);
+    }
 
     await client.query(`
       UPDATE lc_work_logs
@@ -2665,7 +2655,8 @@ async function adjustSessionTime(req, res, payload) {
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
-    return errorResponse(res, err.message, 'ADJUST_TIME_ERROR', 400);
+    const errMsg = err?.message || (err?.code === 'ECONNREFUSED' ? 'Database offline (koneksi PostgreSQL ditolak).' : 'Terjadi kendala saat mengoreksi jam sesi.');
+    return errorResponse(res, errMsg, 'ADJUST_TIME_ERROR');
   } finally {
     if (client) client.release();
   }
