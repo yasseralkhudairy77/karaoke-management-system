@@ -210,14 +210,29 @@ async function getLcWorkReports(req, res) {
       db.query('SELECT * FROM lc_master ORDER BY lc_name ASC'),
       db.query(`
         SELECT
-          log_id, session_id, room_id, room_name, lc_id, lc_name,
-          duration_minutes, rate_per_hour, rate, status,
-          created_at, closed_at, payroll_id, closed_transaction_id, upfront_transaction_id
-        FROM lc_work_logs
-        WHERE status <> 'cancelled'
-          AND (((COALESCE(closed_at, created_at) AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) >= $1::date
-          AND (((COALESCE(closed_at, created_at) AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date) <= $2::date
-        ORDER BY created_at DESC, log_id DESC
+          lwl.log_id, lwl.session_id, lwl.room_id, lwl.room_name, lwl.lc_id, lwl.lc_name,
+          lwl.duration_minutes, lwl.rate_per_hour, lwl.rate, lwl.status,
+          lwl.created_at, lwl.closed_at, lwl.payroll_id, lwl.closed_transaction_id, lwl.upfront_transaction_id,
+          COALESCE(
+            t_closed.operational_date,
+            t_upfront.operational_date,
+            (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+          ) AS operational_date
+        FROM lc_work_logs lwl
+        LEFT JOIN transactions t_closed ON t_closed.transaction_id = lwl.closed_transaction_id
+        LEFT JOIN transactions t_upfront ON t_upfront.transaction_id = lwl.upfront_transaction_id
+        WHERE lwl.status <> 'cancelled'
+          AND COALESCE(
+            t_closed.operational_date,
+            t_upfront.operational_date,
+            (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+          ) >= $1::date
+          AND COALESCE(
+            t_closed.operational_date,
+            t_upfront.operational_date,
+            (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+          ) <= $2::date
+        ORDER BY lwl.created_at DESC, lwl.log_id DESC
       `, [startDate, endDate]),
       db.query(`
         SELECT
@@ -292,6 +307,7 @@ async function getLcWorkReports(req, res) {
         upfront_transaction_id: row.upfront_transaction_id || '',
         created_at: toIsoString(row.created_at),
         closed_at: toIsoString(row.closed_at),
+        operational_date: row.operational_date ? new Date(row.operational_date).toISOString().slice(0, 10) : '',
         payroll_id: row.payroll_id || '',
         closed_transaction_id: row.closed_transaction_id || ''
       };

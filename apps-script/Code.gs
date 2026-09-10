@@ -7587,6 +7587,12 @@ function getLcWorkReports_(period, startDate, endDate) {
   var logs = readSheetAsObjects_("LcWorkLogs");
   var lcs = readSheetAsObjects_("LcMaster");
   var salesBonusLogs = readSheetAsObjects_("LcSalesBonusLogs");
+  var transactions = readSheetAsObjects_("Transactions");
+  var transactionMap = {};
+  transactions.forEach(function (tx) {
+    var id = String(tx.transaction_id || "").trim();
+    if (id) transactionMap[id] = tx;
+  });
   var reportsByLcId = {};
 
   lcs.forEach(function (lc) {
@@ -7617,7 +7623,7 @@ function getLcWorkReports_(period, startDate, endDate) {
       return;
     }
 
-    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
+    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log, transactionMap);
 
     if (!matchesOperationalPeriod_(logOperationalDate, range)) {
       return;
@@ -7642,6 +7648,10 @@ function getLcWorkReports_(period, startDate, endDate) {
       status: log.status,
       created_at: log.created_at,
       closed_at: log.closed_at,
+      operational_date: logOperationalDate,
+      is_upfront: Boolean(log.upfront_transaction_id),
+      upfront_transaction_id: log.upfront_transaction_id || "",
+      closed_transaction_id: log.closed_transaction_id || "",
     });
 
     if (log.status === "done") {
@@ -9597,9 +9607,19 @@ function resolveFnbOrderOperationalDateString_(order) {
     || "";
 }
 
-function resolveLcWorkLogOperationalDateString_(log) {
+function resolveLcWorkLogOperationalDateString_(log, transactionMap) {
+  if (transactionMap) {
+    var txId = String(log.closed_transaction_id || log.upfront_transaction_id || "").trim();
+    if (txId && transactionMap[txId]) {
+      var tx = transactionMap[txId];
+      var txOpDate = normalizeJakartaDateString_(tx.operational_date)
+        || getOperationalDateString_(tx.start_time || tx.created_at);
+      if (txOpDate) return txOpDate;
+    }
+  }
   return normalizeJakartaDateString_(log.operational_date)
-    || getOperationalDateString_(log.created_at || log.closed_at)
+    || getOperationalDateString_(log.created_at)
+    || getOperationalDateString_(log.closed_at)
     || "";
 }
 

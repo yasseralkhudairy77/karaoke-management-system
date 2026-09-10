@@ -102,7 +102,10 @@ async function testReportAggregation() {
   assert.strictEqual(karin.logs.length, 2);
   assert.strictEqual(karin.sales_bonus_logs.length, 1);
 
-  assert(queries.some(query => query.text.includes('COALESCE(closed_at, created_at)')));
+  assert(queries.some(query => (
+    query.text.includes('operational_date')
+    || query.text.includes('COALESCE(closed_at, created_at)')
+  )));
   assert(queries.every(query => (
     query.text.includes('ALTER TABLE')
     || query.text.includes('FROM lc_master')
