@@ -9664,7 +9664,7 @@ function createRoomCard(room) {
     adjustTimeButton.type = "button";
     adjustTimeButton.dataset.action = "show-adjust-time";
     adjustTimeButton.dataset.roomId = room.room_id;
-    adjustTimeButton.innerHTML = `<span class="room-btn-icon">⏳</span> <span>Koreksi Jam</span>`;
+    adjustTimeButton.innerHTML = `<span class="room-btn-icon">⏳</span> <span>Koreksi Jam & Durasi</span>`;
     adjustTimeButton.disabled = getCurrentOperatorRole() === "receptionist";
 
     const freeGiftButton = document.createElement("button");
@@ -11561,6 +11561,15 @@ function createExtendSelectionElement(room) {
   title.className = "extend-selection-title";
   title.textContent = `Tambah waktu untuk ${room.room_name}`;
 
+  const helperNotice = document.createElement("div");
+  helperNotice.style.margin = "4px 0 10px";
+  helperNotice.style.textAlign = "center";
+  helperNotice.innerHTML = `
+    <button type="button" class="extend-correct-link" data-action="show-adjust-time" data-room-id="${room.room_id}" style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.5); border-radius: 6px; padding: 6px 14px; color: #38bdf8; font-size: 0.82rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+      <span>⏳</span> <span>Salah tambah jam? Klik di sini untuk turunkan durasi</span>
+    </button>
+  `;
+
   const options = document.createElement("div");
   options.className = "extend-options";
 
@@ -11643,7 +11652,7 @@ function createExtendSelectionElement(room) {
   cancelButton.dataset.action = "cancel-extend-selection";
   cancelButton.textContent = "Batal";
 
-  panel.append(title, options, custom, paymentField, noteField, cancelButton);
+  panel.append(title, helperNotice, options, custom, paymentField, noteField, cancelButton);
 
   return panel;
 }

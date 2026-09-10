@@ -47,6 +47,12 @@ app.use('/', apiRoutes);
 app.use('/api', apiRoutes);
 
 const frontendRoot = path.join(__dirname, '../..');
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 app.use(express.static(frontendRoot, {
   index: 'index.html',
   extensions: ['html']
