@@ -180,6 +180,8 @@ async function handlePostAction(action, req, res, payload) {
       return roomsController.recoverExpiredRoomSession(req, res, payload);
     case 'correctActiveRoomDuration':
       return roomsController.correctActiveRoomDuration(req, res, payload);
+    case 'adjustSessionTime':
+      return roomsController.adjustSessionTime(req, res, payload);
     case 'startSession':
       return roomsController.startSession(req, res, payload);
     case 'extendSession':

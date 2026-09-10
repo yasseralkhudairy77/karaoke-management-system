@@ -8509,6 +8509,149 @@ textarea.action-confirmation-input {
   cursor: not-allowed;
 }
 
+/* Koreksi Jam (Backdated Start Time Modal & Button) */
+.room-actions-occupied .room-button-adjust-time,
+.room-actions-occupied > [data-action="show-adjust-time"] {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(125, 211, 252, 0.4) !important;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25) !important;
+}
+
+.room-actions-occupied .room-button-adjust-time:hover:not(:disabled),
+.room-actions-occupied > [data-action="show-adjust-time"]:hover:not(:disabled) {
+  background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%) !important;
+  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.45) !important;
+  transform: translateY(-1px) !important;
+}
+
+.adjust-time-modal-overlay {
+  position: fixed;
+  z-index: 13000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 7, 12, 0.85);
+  backdrop-filter: blur(4px);
+}
+.adjust-time-modal-dialog {
+  box-sizing: border-box;
+  display: grid;
+  gap: 16px;
+  width: min(100%, 480px);
+  max-height: calc(100vh - 40px);
+  padding: 24px;
+  overflow-y: auto;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f1f5f9;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+}
+.adjust-time-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 12px;
+}
+.adjust-time-modal-title {
+  margin: 0;
+  color: #38bdf8;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.adjust-time-info-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.adjust-time-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.92rem;
+}
+.adjust-time-field {
+  display: grid;
+  gap: 6px;
+}
+.adjust-time-field label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+.adjust-time-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  background: #1e293b;
+  color: #38bdf8;
+  outline: none;
+}
+.adjust-time-input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+}
+.adjust-time-preview-card {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+.adjust-time-preview-row {
+  display: flex;
+  justify-content: space-between;
+}
+.adjust-time-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+.adjust-time-btn-cancel {
+  padding: 10px 16px;
+  background: #334155;
+  border: none;
+  border-radius: 6px;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-weight: 600;
+}
+.adjust-time-btn-cancel:hover {
+  background: #475569;
+}
+.adjust-time-btn-submit {
+  padding: 10px 20px;
+  background: #0284c7;
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.adjust-time-btn-submit:hover:not(:disabled) {
+  background: #0369a1;
+}
+.adjust-time-btn-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .room-button-full {
   grid-column: 1 / -1;
 }

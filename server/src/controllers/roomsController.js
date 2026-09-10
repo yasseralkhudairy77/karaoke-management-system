@@ -72,6 +72,26 @@ async function getPackageLcRule(client, packageId) {
   };
 }
 
+function parseAdjustedStartTime(input, referenceDate = new Date()) {
+  if (!input) return null;
+  if (typeof input === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(input.trim())) {
+    const parts = input.trim().split(':');
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    const seconds = parts[2] ? parseInt(parts[2], 10) : 0;
+    const d = new Date(referenceDate);
+    d.setHours(hours, minutes, seconds, 0);
+
+    // Deteksi rollover tengah malam untuk shift malam karaoke (misal sekarang dini hari < 08:00 dan input >= 18:00 malam kemarin)
+    if (referenceDate.getHours() < 8 && hours >= 18) {
+      d.setDate(d.getDate() - 1);
+    }
+    return d;
+  }
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function allocatePackageLcBilling(lcRows, packageRule) {
   const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
   const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
@@ -476,7 +496,13 @@ async function startSession(req, res, payload) {
       }
     }
 
-    const startTime = new Date();
+    let startTime = new Date();
+    if (payload.start_time) {
+      const parsed = parseAdjustedStartTime(payload.start_time, startTime);
+      if (parsed) {
+        startTime = parsed;
+      }
+    }
     const scheduledEndTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
 
     await client.query(`
@@ -2328,7 +2354,13 @@ async function activatePreparedSession(req, res, payload) {
       ? Number(sessionRes.rows[0].booked_duration_minutes || room.booked_duration_minutes || 0)
       : Number(room.booked_duration_minutes || 0);
 
-    const startTime = new Date();
+    let startTime = new Date();
+    if (payload.start_time) {
+      const parsed = parseAdjustedStartTime(payload.start_time, startTime);
+      if (parsed) {
+        startTime = parsed;
+      }
+    }
     const scheduledEndTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
 
     await client.query(`
@@ -2501,6 +2533,144 @@ async function correctActiveRoomDuration(req, res, payload) {
   }
 }
 
+async function adjustSessionTime(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const roomId = payload.room_id || req.params?.id;
+    const newStartTimeRaw = payload.new_start_time || payload.start_time;
+    const cashierName = payload.cashier_name || 'Kasir';
+    const reason = payload.reason || payload.note || 'Koreksi jam masuk konsumen';
+
+    if (!roomId) throw new Error('room_id wajib diisi.');
+    if (!newStartTimeRaw) throw new Error('Waktu mulai baru (new_start_time) wajib diisi.');
+
+    const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
+    if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+    const room = roomRes.rows[0];
+
+    if (room.status !== 'occupied') {
+      throw new Error(`Koreksi jam hanya dapat dilakukan untuk room yang sedang aktif (status saat ini: ${room.status}).`);
+    }
+
+    const now = new Date();
+    const referenceDate = room.start_time ? new Date(room.start_time) : now;
+    const newStartTime = parseAdjustedStartTime(newStartTimeRaw, referenceDate);
+    if (!newStartTime) {
+      throw new Error('Format waktu mulai baru tidak valid.');
+    }
+
+    if (newStartTime.getTime() > now.getTime() + 60 * 1000) {
+      throw new Error('Waktu mulai baru tidak boleh melebihi waktu sekarang.');
+    }
+
+    const sessionRes = await client.query(`
+      SELECT * FROM room_sessions
+      WHERE room_id = $1 AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [roomId]);
+    if (sessionRes.rowCount === 0) throw new Error('Sesi aktif tidak ditemukan.');
+    const activeSession = sessionRes.rows[0];
+
+    const durationMinutes = Number(activeSession.booked_duration_minutes || room.booked_duration_minutes || 60);
+    const oldStartTime = new Date(room.start_time || activeSession.start_time);
+    const oldScheduledEndTime = new Date(room.scheduled_end_time || activeSession.scheduled_end_time || (oldStartTime.getTime() + durationMinutes * 60 * 1000));
+    const newScheduledEndTime = new Date(newStartTime.getTime() + durationMinutes * 60 * 1000);
+
+    const prevSessionRes = await client.query(`
+      SELECT session_id, end_time FROM room_sessions
+      WHERE room_id = $1 AND status = 'completed' AND end_time IS NOT NULL AND session_id != $2
+      ORDER BY end_time DESC
+      LIMIT 1
+    `, [roomId, activeSession.session_id]);
+    if (prevSessionRes.rowCount > 0 && prevSessionRes.rows[0].end_time) {
+      const prevEndTime = new Date(prevSessionRes.rows[0].end_time);
+      if (newStartTime.getTime() < prevEndTime.getTime()) {
+        const prevEndStr = prevEndTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        throw new Error(`Waktu mulai baru tidak boleh lebih awal dari sesi sebelumnya yang selesai pada ${prevEndStr}.`);
+      }
+    }
+
+    await client.query(`
+      UPDATE rooms
+      SET start_time = $1,
+          scheduled_end_time = $2,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE room_id = $3
+    `, [newStartTime, newScheduledEndTime, roomId]);
+
+    await client.query(`
+      UPDATE room_sessions
+      SET start_time = $1,
+          scheduled_end_time = $2,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = $3
+    `, [newStartTime, newScheduledEndTime, activeSession.session_id]);
+
+    await client.query(`
+      UPDATE room_session_segments
+      SET start_time = $1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = $2 AND end_time IS NULL
+    `, [newStartTime, activeSession.session_id]);
+
+    await client.query(`
+      UPDATE lc_work_logs
+      SET created_at = $1
+      WHERE closed_at IS NULL AND status != 'cancelled'
+        AND (session_id = $2 OR (session_id IS NULL AND room_id = $3))
+    `, [newStartTime, activeSession.session_id, roomId]);
+
+    const logId = `RTL-${Date.now()}`;
+    const diffMinutes = Math.round((newScheduledEndTime.getTime() - oldScheduledEndTime.getTime()) / 60000);
+    const oldTimeStr = oldStartTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const newTimeStr = newStartTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    
+    await client.query(`
+      INSERT INTO room_time_logs (
+        log_id, action_type, room_id, room_name,
+        old_booked_duration_minutes, new_booked_duration_minutes,
+        old_scheduled_end_time, new_scheduled_end_time,
+        add_minutes, cashier_name, note
+      ) VALUES ($1, 'adjust_start_time', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [
+      logId,
+      roomId,
+      room.room_name,
+      durationMinutes,
+      durationMinutes,
+      oldScheduledEndTime,
+      newScheduledEndTime,
+      diffMinutes,
+      cashierName,
+      `${reason} (${oldTimeStr} -> ${newTimeStr})`
+    ]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      status: 'success',
+      message: `Waktu mulai ${room.room_name} berhasil dikoreksi ke ${newTimeStr}.`,
+      room: {
+        room_id: roomId,
+        room_name: room.room_name,
+        status: 'occupied',
+        start_time: newStartTime.toISOString(),
+        scheduled_end_time: newScheduledEndTime.toISOString(),
+        booked_duration_minutes: durationMinutes
+      }
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message, 'ADJUST_TIME_ERROR', 400);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function previewSessionPricing(req, res, payload) {
   try {
     const roomId = payload.room_id;
@@ -2556,6 +2726,7 @@ module.exports = {
   getExpiredRoomRecoveryList,
   recoverExpiredRoomSession,
   correctActiveRoomDuration,
+  adjustSessionTime,
   previewSessionPricing,
   deductStockForFnbOrders,
   deductStockForRoomPackage,

@@ -9659,6 +9659,14 @@ function createRoomCard(room) {
     moveRoomButton.innerHTML = `<span class="room-btn-icon">🔁</span> <span>${isMovingRoomSession && moveRoomSourceId === room.room_id ? "Memindahkan..." : "Pindah Room"}</span>`;
     moveRoomButton.disabled = isMovingRoomSession || getCurrentOperatorRole() === "receptionist";
 
+    const adjustTimeButton = document.createElement("button");
+    adjustTimeButton.className = "room-button room-button-adjust-time";
+    adjustTimeButton.type = "button";
+    adjustTimeButton.dataset.action = "show-adjust-time";
+    adjustTimeButton.dataset.roomId = room.room_id;
+    adjustTimeButton.innerHTML = `<span class="room-btn-icon">⏳</span> <span>Koreksi Jam</span>`;
+    adjustTimeButton.disabled = getCurrentOperatorRole() === "receptionist";
+
     const freeGiftButton = document.createElement("button");
     freeGiftButton.className = "room-button room-button-gift";
     freeGiftButton.type = "button";
@@ -9667,7 +9675,7 @@ function createRoomCard(room) {
     freeGiftButton.innerHTML = `<span class="room-btn-icon">🎁</span> <span>Free Gift</span>`;
     freeGiftButton.disabled = getCurrentOperatorRole() === "receptionist";
 
-    actions.append(sessionButton, upfrontPayButton, extendButton, selectLcButton, changePackageButton, moveRoomButton, freeGiftButton);
+    actions.append(sessionButton, upfrontPayButton, extendButton, selectLcButton, adjustTimeButton, changePackageButton, moveRoomButton, freeGiftButton);
   } else if (["booked", "waiting_payment"].includes(room.status)) {
     const cancelBookingButton = document.createElement("button");
     cancelBookingButton.className = "room-button room-button-secondary";
@@ -30180,6 +30188,201 @@ async function showUpfrontPaymentModal(roomId, options = {}) {
   };
 }
 
+async function showAdjustRoomTimeModal(roomId) {
+  const room = rooms.find(r => r.room_id === roomId);
+  if (!room) {
+    showInlineNotice("Ruangan tidak ditemukan.", "error");
+    return;
+  }
+  if (room.status !== "occupied") {
+    showInlineNotice("Koreksi jam hanya dapat dilakukan untuk room yang sedang aktif (occupied).", "error");
+    return;
+  }
+
+  document.querySelectorAll('[data-modal="adjust-session-time"]').forEach(el => el.remove());
+
+  const padZero = (n) => String(n).padStart(2, "0");
+  const startDate = room.start_time ? new Date(room.start_time) : new Date();
+  const currentStartHHMM = `${padZero(startDate.getHours())}:${padZero(startDate.getMinutes())}`;
+  const bookedDuration = Number(room.booked_duration_minutes || 60);
+
+  const overlay = document.createElement("div");
+  overlay.className = "adjust-time-modal-overlay";
+  overlay.dataset.modal = "adjust-session-time";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const dialog = document.createElement("div");
+  dialog.className = "adjust-time-modal-dialog";
+
+  const header = document.createElement("div");
+  header.className = "adjust-time-modal-header";
+  header.innerHTML = `
+    <span style="font-size: 1.4rem;">⏳</span>
+    <h3 class="adjust-time-modal-title">Koreksi Jam Masuk - ${escapeHtml(room.room_name)}</h3>
+  `;
+
+  const infoCard = document.createElement("div");
+  infoCard.className = "adjust-time-info-card";
+  infoCard.innerHTML = `
+    <div class="adjust-time-info-row">
+      <span style="color: #94a3b8;">Jam Mulai Tercatat:</span>
+      <strong style="color: #f1f5f9;">${currentStartHHMM} WIB</strong>
+    </div>
+    <div class="adjust-time-info-row">
+      <span style="color: #94a3b8;">Durasi Terdaftar:</span>
+      <strong style="color: #38bdf8;">${bookedDuration} Menit (${(bookedDuration / 60).toFixed(1).replace('.0', '')} Jam)</strong>
+    </div>
+  `;
+
+  const field = document.createElement("div");
+  field.className = "adjust-time-field";
+  field.innerHTML = `
+    <label for="adjust-session-time-input">Jam Masuk Pelanggan Sebenarnya (HH:MM):</label>
+    <input type="time" id="adjust-session-time-input" class="adjust-time-input" value="${currentStartHHMM}" />
+    <small style="color: #94a3b8; font-size: 0.82rem; margin-top: 2px;">
+      💡 Gunakan fitur ini jika ada kendala teknis (PC kasir/server baru dinyalakan setelah pelanggan masuk room).
+    </small>
+  `;
+
+  const previewCard = document.createElement("div");
+  previewCard.className = "adjust-time-preview-card";
+
+  const actions = document.createElement("div");
+  actions.className = "adjust-time-actions";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "adjust-time-btn-cancel";
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => overlay.remove();
+
+  const submitBtn = document.createElement("button");
+  submitBtn.className = "adjust-time-btn-submit";
+  submitBtn.type = "button";
+  submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi Jam</span>`;
+
+  actions.append(cancelBtn, submitBtn);
+  dialog.append(header, infoCard, field, previewCard, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const inputEl = dialog.querySelector("#adjust-session-time-input");
+
+  const computeNewTimes = (timeStr) => {
+    if (!timeStr || !timeStr.includes(":")) return null;
+    const [hStr, mStr] = timeStr.split(":");
+    const h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (isNaN(h) || isNaN(m)) return null;
+
+    const baseDate = new Date(startDate.getTime());
+    baseDate.setHours(h, m, 0, 0);
+
+    const now = new Date();
+    // Jika waktu hasil lebih dari sekarang lebih dari 10 menit, kemungkinan shift malam rollover
+    if (baseDate > now && (baseDate.getTime() - now.getTime()) > 10 * 60 * 1000) {
+      baseDate.setDate(baseDate.getDate() - 1);
+    }
+
+    const newEnd = new Date(baseDate.getTime() + bookedDuration * 60 * 1000);
+    const remainingMs = newEnd.getTime() - Date.now();
+    const remainingMinutes = Math.floor(remainingMs / 60000);
+
+    return {
+      newStart: baseDate,
+      newEnd: newEnd,
+      remainingMinutes: remainingMinutes,
+      isFuture: baseDate > now,
+      isExpired: remainingMinutes <= 0
+    };
+  };
+
+  const updatePreview = () => {
+    const timeVal = inputEl.value;
+    const calc = computeNewTimes(timeVal);
+
+    if (!calc) {
+      previewCard.innerHTML = `<span style="color: #ef4444;">Format jam tidak valid.</span>`;
+      submitBtn.disabled = true;
+      return;
+    }
+
+    const newEndHHMM = `${padZero(calc.newEnd.getHours())}:${padZero(calc.newEnd.getMinutes())}`;
+    let remainingText = `${calc.remainingMinutes} Menit`;
+    let remainingColor = "#38bdf8";
+
+    if (calc.remainingMinutes < 0) {
+      remainingText = `Sudah Lewat (${Math.abs(calc.remainingMinutes)} menit lalu)`;
+      remainingColor = "#ef4444";
+    } else if (calc.remainingMinutes <= 10) {
+      remainingColor = "#f59e0b";
+    }
+
+    let warningHtml = "";
+    if (calc.isFuture) {
+      warningHtml = `<div style="color: #f87171; font-size: 0.82rem; margin-top: 4px;">⚠️ Jam mulai tidak boleh di masa depan.</div>`;
+      submitBtn.disabled = true;
+    } else if (calc.isExpired) {
+      warningHtml = `<div style="color: #fb923c; font-size: 0.82rem; margin-top: 4px;">⚠️ Perhatian: Durasi booking akan langsung habis/selesai.</div>`;
+      submitBtn.disabled = false;
+    } else {
+      submitBtn.disabled = false;
+    }
+
+    previewCard.innerHTML = `
+      <div class="adjust-time-preview-row">
+        <span>Perkiraan Jam Selesai Baru:</span>
+        <strong style="color: #a78bfa;">${newEndHHMM} WIB</strong>
+      </div>
+      <div class="adjust-time-preview-row">
+        <span>Sisa Waktu Sesi:</span>
+        <strong style="color: ${remainingColor};">${remainingText}</strong>
+      </div>
+      ${warningHtml}
+    `;
+  };
+
+  inputEl.addEventListener("input", updatePreview);
+  inputEl.addEventListener("change", updatePreview);
+  updatePreview();
+
+  submitBtn.onclick = async () => {
+    const timeVal = inputEl.value;
+    if (!timeVal) {
+      showInlineNotice("Silakan masukkan jam masuk yang valid.", "error");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    submitBtn.innerHTML = `<span>⏳</span> <span>Menyimpan...</span>`;
+
+    try {
+      const res = await postApiAction({
+        action: "adjustSessionTime",
+        room_id: roomId,
+        new_start_time: timeVal,
+        cashier_name: getLoggedInOperatorName() || "Kasir"
+      });
+
+      if (!res || res.status !== "success") {
+        throw new Error(res?.message || res?.error || "Gagal mengoreksi jam sesi.");
+      }
+
+      overlay.remove();
+      showInlineNotice(res.message || "Waktu mulai sesi berhasil dikoreksi.", "success");
+
+      await loadRooms(true);
+    } catch (err) {
+      showInlineNotice(err.message || "Gagal mengoreksi jam sesi.", "error");
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+      submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi Jam</span>`;
+    }
+  };
+}
+
 async function closeSession(roomId, options = {}) {
   if (getCurrentOperatorRole() === "receptionist") {
     showInlineNotice("Resepsionis tidak diizinkan menyelesaikan sesi.", "error");
@@ -31989,6 +32192,15 @@ async function handleRoomAction(event) {
       return;
     }
     await showLcSelection(button.dataset.roomId || roomId || "");
+    return;
+  }
+
+  if (action === "show-adjust-time") {
+    if (getCurrentOperatorRole() === "receptionist") {
+      showInlineNotice("Resepsionis tidak diizinkan mengoreksi waktu sesi.", "error");
+      return;
+    }
+    showAdjustRoomTimeModal(button.dataset.roomId || roomId || "");
     return;
   }
 
