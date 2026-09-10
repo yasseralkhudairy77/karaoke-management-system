@@ -43,7 +43,7 @@ async function testAdjustSessionTimeSuccess() {
       if (text.includes('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE')) {
         return { rows: [mockRoom], rowCount: 1 };
       }
-      if (text.includes("FROM room_sessions") && text.includes("status = 'active'")) {
+      if (text.includes("FROM room_sessions") && (text.includes("status = 'active'") || text.includes("status IN"))) {
         return {
           rows: [{
             session_id: 'SESS-100',

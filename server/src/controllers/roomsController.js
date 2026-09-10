@@ -2602,9 +2602,9 @@ async function adjustSessionTime(req, res, payload) {
 
       await client.query(`
         UPDATE room_session_segments
-        SET start_time = $1,
+        SET started_at = $1,
             updated_at = CURRENT_TIMESTAMP
-        WHERE session_id = $2 AND end_time IS NULL
+        WHERE session_id = $2 AND ended_at IS NULL
       `, [newStartTime, activeSession.session_id]);
     }
 
