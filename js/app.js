@@ -8734,7 +8734,11 @@ function createBillingBreakdownElement(transaction) {
 
   const lcTotal = Number(transaction?.lc_total || 0);
   if (lcTotal > 0) {
-    rows.push(["Jasa LC", formatCurrency(lcTotal)]);
+    const freeRoomMins = getTransactionFreeRoomMinutes(transaction);
+    const lcLabel = freeRoomMins > 0
+      ? "Jasa LC (Penuh)"
+      : "Jasa LC";
+    rows.push([lcLabel, formatCurrency(lcTotal)]);
   }
 
   if (manualFnbDiscount > 0) {
@@ -29396,6 +29400,13 @@ async function executeExtendSession(roomId, addMinutes) {
 
     if (!data || data.ok !== true) {
       throw new Error(data?.error || "Gagal menambah waktu sesi.");
+    }
+
+    if (selectedLcDurationsForRoom[roomId]) {
+      Object.keys(selectedLcDurationsForRoom[roomId]).forEach((lcId) => {
+        selectedLcDurationsForRoom[roomId][lcId] =
+          (Number(selectedLcDurationsForRoom[roomId][lcId]) || 0) + selectedMinutes;
+      });
     }
 
     showInlineNotice(getExtendSuccessMessage(roomName, selectedMinutes));

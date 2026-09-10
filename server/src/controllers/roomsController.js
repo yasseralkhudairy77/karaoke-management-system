@@ -1267,6 +1267,31 @@ async function extendSession(req, res, payload) {
       WHERE room_id = $5 AND status = 'active'
     `, [newDuration, newEndTime, oldDuration, addMinutes, roomId]);
 
+    // Otomatis sinkronkan durasi dan rate LC aktif pada room ini
+    const activeLcsRes = await client.query(`
+      SELECT log_id, duration_minutes, rate_per_hour, billing_source
+      FROM lc_work_logs
+      WHERE closed_at IS NULL AND status = 'active'
+        AND (room_id = $1 OR session_id IN (
+          SELECT session_id FROM room_sessions WHERE room_id = $1 AND status IN ('starting', 'active')
+        ))
+      FOR UPDATE
+    `, [roomId]);
+
+    for (const lcRow of activeLcsRes.rows) {
+      const newLcDuration = Number(lcRow.duration_minutes || 0) + addMinutes;
+      const lcRatePerHour = Number(lcRow.rate_per_hour || 0);
+      const newRate = calculateLcCharge(newLcDuration, lcRatePerHour);
+      const newCustomerCharge = lcRow.billing_source === 'package_included' ? 0 : newRate;
+      await client.query(`
+        UPDATE lc_work_logs
+        SET duration_minutes = $1,
+            rate = $2,
+            customer_charge_amount = $3
+        WHERE log_id = $4
+      `, [newLcDuration, newRate, newCustomerCharge, lcRow.log_id]);
+    }
+
     const logId = `RTL-${Date.now()}`;
     await client.query(`
       INSERT INTO room_time_logs (
@@ -2118,6 +2143,20 @@ async function closeSession(req, res, payload) {
       map.set(row.lc_id, row);
       return map;
     }, new Map()).values());
+
+    // Pastikan durasi LC aktif minimal mencakup jam riil sesi ruangan fisik (LC dibayar penuh, tidak terpotong free room)
+    const totalPhysicalRoomMinutes = Math.max(
+      0,
+      Number(activeSession?.booked_duration_minutes || room.booked_duration_minutes || durationMinutes || 0)
+    );
+    uniqueLcRows.forEach(row => {
+      const curDur = Number(row.duration_minutes || 0);
+      if (curDur < totalPhysicalRoomMinutes) {
+        row.duration_minutes = totalPhysicalRoomMinutes;
+        row.rate = calculateLcCharge(totalPhysicalRoomMinutes, Number(row.rate_per_hour || 0));
+      }
+    });
+
     const packageLcRule = bookingMode === 'package'
       ? await getPackageLcRule(client, transactionPackageId)
       : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
@@ -2665,6 +2704,30 @@ async function adjustSessionTime(req, res, payload) {
       WHERE closed_at IS NULL AND status != 'cancelled'
         AND (session_id = $2 OR (session_id IS NULL AND room_id = $3))
     `, [newStartTime, activeSession.session_id, roomId]);
+
+    if (durationDiff !== 0) {
+      const activeLcsToAdjust = await client.query(`
+        SELECT log_id, duration_minutes, rate_per_hour, billing_source
+        FROM lc_work_logs
+        WHERE closed_at IS NULL AND status != 'cancelled'
+          AND (session_id = $1 OR (session_id IS NULL AND room_id = $2))
+        FOR UPDATE
+      `, [activeSession.session_id, roomId]);
+
+      for (const lcRow of activeLcsToAdjust.rows) {
+        const newLcDuration = Math.max(15, Number(lcRow.duration_minutes || 0) + durationDiff);
+        const lcRatePerHour = Number(lcRow.rate_per_hour || 0);
+        const newRate = calculateLcCharge(newLcDuration, lcRatePerHour);
+        const newCustomerCharge = lcRow.billing_source === 'package_included' ? 0 : newRate;
+        await client.query(`
+          UPDATE lc_work_logs
+          SET duration_minutes = $1,
+              rate = $2,
+              customer_charge_amount = $3
+          WHERE log_id = $4
+        `, [newLcDuration, newRate, newCustomerCharge, lcRow.log_id]);
+      }
+    }
 
     const logId = `RTL-${Date.now()}`;
     const diffMinutes = Math.round((newScheduledEndTime.getTime() - oldScheduledEndTime.getTime()) / 60000);

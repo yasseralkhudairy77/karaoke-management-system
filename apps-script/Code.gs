@@ -10943,9 +10943,38 @@ function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, pa
           updated_at: now
         });
         
-        // LC durations remain fixed based on cashier selection and do not auto-extend with room extension
+        // Otomatis perpanjang durasi dan rate LC aktif saat room di-extend
         try {
-          Logger.log("Room session extended. LC work log rates remain fixed based on selected LC duration.");
+          var lcSheet = getSheet_("LcWorkLogs");
+          if (lcSheet) {
+            var lcHeaderMap = getHeaderMap_(lcSheet);
+            var lcRows = lcSheet.getDataRange().getValues();
+            var sessionIdCol = lcHeaderMap.session_id ? lcHeaderMap.session_id - 1 : -1;
+            var roomIdCol = lcHeaderMap.room_id ? lcHeaderMap.room_id - 1 : -1;
+            var statusCol = lcHeaderMap.status ? lcHeaderMap.status - 1 : -1;
+            var durCol = lcHeaderMap.duration_minutes ? lcHeaderMap.duration_minutes - 1 : -1;
+            var ratePerHourCol = lcHeaderMap.rate_per_hour ? lcHeaderMap.rate_per_hour - 1 : -1;
+            var rateCol = lcHeaderMap.rate ? lcHeaderMap.rate - 1 : -1;
+            var closedTxCol = lcHeaderMap.closed_transaction_id ? lcHeaderMap.closed_transaction_id - 1 : -1;
+
+            for (var rIdx = 1; rIdx < lcRows.length; rIdx++) {
+              var rowSessionId = sessionIdCol >= 0 ? String(lcRows[rIdx][sessionIdCol] || "").trim() : "";
+              var rowRoomId = roomIdCol >= 0 ? String(lcRows[rIdx][roomIdCol] || "").trim() : "";
+              var rowStatus = statusCol >= 0 ? String(lcRows[rIdx][statusCol] || "").trim().toLowerCase() : "";
+              var rowClosedTx = closedTxCol >= 0 ? String(lcRows[rIdx][closedTxCol] || "").trim() : "";
+
+              var matchesSession = (sessionObj.session_id && rowSessionId === String(sessionObj.session_id).trim()) || (rowRoomId === String(roomId).trim());
+              if (matchesSession && (rowStatus === "active" || (!rowClosedTx && rowStatus !== "cancelled"))) {
+                var curDur = durCol >= 0 ? Number(lcRows[rIdx][durCol]) || 0 : 0;
+                var newLcDur = curDur + addedMinutes;
+                var curRatePerHour = ratePerHourCol >= 0 ? Number(lcRows[rIdx][ratePerHourCol]) || 0 : 0;
+                var newRate = Math.ceil(newLcDur / 60) * curRatePerHour;
+
+                if (durCol >= 0) lcSheet.getRange(rIdx + 1, durCol + 1).setValue(newLcDur);
+                if (rateCol >= 0) lcSheet.getRange(rIdx + 1, rateCol + 1).setValue(newRate);
+              }
+            }
+          }
         } catch (lcExtErr) {
           Logger.log("Error during LC extension handling: " + lcExtErr.message);
         }
@@ -11204,13 +11233,18 @@ function closeSession_(roomId, cashierName, requestPayload) {
         });
 
         var totalLcCost = 0;
+        var physicalRoomDuration = Number(durationMinutes) || 0;
         Object.keys(uniqueLcLogsMap).forEach(function(selId) {
-          totalLcCost += Number(uniqueLcLogsMap[selId].rate) || 0;
+          var log = uniqueLcLogsMap[selId];
+          var curLcDur = Number(log.duration_minutes) || 0;
+          var ratePerHour = Number(log.rate_per_hour) || 0;
+          var finalLcDur = Math.max(curLcDur, physicalRoomDuration);
+          var finalRate = Math.ceil(finalLcDur / 60) * ratePerHour;
+          totalLcCost += finalRate;
         });
         
-        // Hak LC selalu dibayar penuh berdasarkan work log. Komponen Talent
-        // dalam paket adalah benefit paket dan tidak boleh mengurangi tagihan
-        // maupun hak pembayaran LC.
+        // Hak LC selalu dibayar penuh berdasarkan work log dan durasi riil sesi,
+        // tidak terpotong oleh Free Room maupun benefit sewa room lainnya.
         lcFeeTotal = Math.max(0, totalLcCost);
       } catch (lcErr) {
         Logger.log("Error calculating LC checkout fee: " + lcErr.message);
