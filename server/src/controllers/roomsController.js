@@ -1159,7 +1159,7 @@ async function cancelBooking(req, res, payload) {
     if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
     const room = roomRes.rows[0];
     if (!['paid_waiting_start', 'waiting_payment', 'booked'].includes(room.status)) {
-      throw new Error('Hanya booking yang menunggu pembayaran yang bisa dibatalkan.');
+      throw new Error('Hanya kamar berstatus booking atau menunggu mulai yang dapat dibatalkan.');
     }
 
     await client.query(`

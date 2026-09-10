@@ -9676,6 +9676,16 @@ function createRoomCard(room) {
     freeGiftButton.disabled = getCurrentOperatorRole() === "receptionist";
 
     actions.append(sessionButton, upfrontPayButton, extendButton, selectLcButton, adjustTimeButton, changePackageButton, moveRoomButton, freeGiftButton);
+  } else if (room.status === "paid_waiting_start") {
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "room-button room-button-cancel-waiting";
+    cancelButton.type = "button";
+    cancelButton.dataset.action = "cancel-booking";
+    cancelButton.dataset.roomId = room.room_id;
+    cancelButton.innerHTML = `<span class="room-btn-icon">❌</span> <span>Batal</span>`;
+    cancelButton.disabled = isCancellingBooking || getCurrentOperatorRole() === "receptionist";
+    sessionButton.disabled = isActivatingPreparedSession || getCurrentOperatorRole() === "receptionist";
+    actions.append(sessionButton, cancelButton);
   } else if (["booked", "waiting_payment"].includes(room.status)) {
     const cancelBookingButton = document.createElement("button");
     cancelBookingButton.className = "room-button room-button-secondary";
@@ -29675,10 +29685,13 @@ async function executePayAndStartSession(roomId, paymentMethod, promoCode = "") 
 
 function requestCancelBooking(roomId) {
   const room = rooms.find((item) => item.room_id === roomId);
+  const isPaidWaitingStart = room?.status === "paid_waiting_start";
   openActionConfirmation({
     tone: "danger",
-    title: "Batalkan Booking Room",
-    message: "Booking dan data persiapan sesi akan dibatalkan. Pastikan pelanggan memang tidak melanjutkan.",
+    title: isPaidWaitingStart ? "Batalkan Persiapan Room" : "Batalkan Booking Room",
+    message: isPaidWaitingStart
+      ? "Sesi dan persiapan kamar akan dibatalkan. Status kamar akan dikembalikan menjadi Kosong."
+      : "Booking dan data persiapan sesi akan dibatalkan. Pastikan pelanggan memang tidak melanjutkan.",
     details: [
       ["Room", room?.room_name || roomId],
       ["Pelanggan", room?.customer_name || "-"],
@@ -29686,13 +29699,13 @@ function requestCancelBooking(roomId) {
     ],
     field: {
       label: "Alasan pembatalan",
-      placeholder: "Contoh: pelanggan membatalkan reservasi",
+      placeholder: isPaidWaitingStart ? "Contoh: salah pilih room / pelanggan batal" : "Contoh: pelanggan membatalkan reservasi",
       multiline: true,
       required: true,
       minLength: 5,
       errorMessage: "Alasan pembatalan minimal 5 karakter.",
     },
-    confirmLabel: "Ya, Batalkan Booking",
+    confirmLabel: isPaidWaitingStart ? "Ya, Batalkan Sesi" : "Ya, Batalkan Booking",
     cancelLabel: "Kembali",
     onConfirm: (reason) => cancelBooking(roomId, reason),
   });
@@ -29715,6 +29728,16 @@ async function cancelBooking(roomId, reason) {
     }
     showInlineNotice("Pemesanan berhasil dibatalkan.", "success");
     paymentSelectionRoomId = "";
+
+    const room = rooms.find(r => r.room_id === roomId);
+    if (room) {
+      room.status = "available";
+      room.start_time = null;
+      room.booked_duration_minutes = 0;
+      room.scheduled_end_time = null;
+      renderRooms();
+    }
+
     await loadRooms();
   } catch (error) {
     showInlineNotice(error.message || "Gagal membatalkan booking.", "error");
