@@ -11169,6 +11169,12 @@ function closeSession_(roomId, cashierName, requestPayload) {
     var endDate = new Date();
     var endTime = toJakartaIsoString_(endDate);
     var startTime = room.start_time instanceof Date ? toJakartaIsoString_(room.start_time) : room.start_time;
+    if (activeRoomSession && activeRoomSession.session) {
+      var sessBookedMin = Number(activeRoomSession.session.booked_duration_minutes) || 0;
+      if (sessBookedMin > 0 && (!room.booked_duration_minutes || Number(room.booked_duration_minutes) <= 0)) {
+        room.booked_duration_minutes = sessBookedMin;
+      }
+    }
     var billing = resolveSessionBilling_(room, startDate, endDate);
     var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
@@ -18297,21 +18303,33 @@ function calculateDurationMinutes_(startTime, endTime) {
 function resolveSessionBilling_(room, startDate, endDate) {
   var bookedDurationMinutes = Number(room.booked_duration_minutes) || 0;
   var ratePerHour = Number(room.rate_per_hour) || 0;
+  var diffMs = endDate.getTime() - startDate.getTime();
+  var physicalMinutes = Math.max(0, Math.ceil(diffMs / 60000));
+  var GRACE_PERIOD_MINUTES = 5;
 
-  if (isFinite(bookedDurationMinutes) && bookedDurationMinutes > 0) {
-    return {
-      duration_minutes: bookedDurationMinutes,
-      room_total: calculateRoomTotal_(bookedDurationMinutes, ratePerHour),
-      billing_basis: "booked_duration",
-    };
+  // Aturan Happy Song Karaoke: Tidak main hitungan menit.
+  // 1. Durasi sewa yang dipilih (booked_duration_minutes) adalah minimal yang ditagihkan.
+  // 2. Durasi fisik dibulatkan ke atas per jam penuh jika overtime melebihi batas toleransi (grace period 5 menit).
+  var totalMinutes;
+  var billableHours;
+
+  if (bookedDurationMinutes > 0) {
+    if (physicalMinutes <= bookedDurationMinutes + GRACE_PERIOD_MINUTES) {
+      totalMinutes = bookedDurationMinutes;
+      billableHours = Math.ceil(bookedDurationMinutes / 60);
+    } else {
+      billableHours = Math.ceil(physicalMinutes / 60);
+      totalMinutes = Math.max(bookedDurationMinutes, billableHours * 60);
+    }
+  } else {
+    billableHours = Math.max(1, Math.ceil(physicalMinutes / 60));
+    totalMinutes = billableHours * 60;
   }
 
-  var actualDurationMinutes = calculateDurationMinutes_(startDate, endDate);
-
   return {
-    duration_minutes: actualDurationMinutes,
-    room_total: calculateRoomTotal_(actualDurationMinutes, ratePerHour),
-    billing_basis: "actual_duration",
+    duration_minutes: totalMinutes,
+    room_total: billableHours * ratePerHour,
+    billing_basis: bookedDurationMinutes > 0 ? "booked_duration" : "actual_duration",
   };
 }
 

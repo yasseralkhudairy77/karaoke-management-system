@@ -213,7 +213,28 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
     ORDER BY sequence_no ASC
     FOR UPDATE
   `, [session.session_id]);
-  const totalMinutes = Math.max(0, Number(session.booked_duration_minutes || room.booked_duration_minutes || 0));
+
+  // Aturan Happy Song Karaoke: Tidak main hitungan menit.
+  // 1. Durasi sewa yang dipilih (booked_duration_minutes) adalah minimal yang ditagihkan.
+  // 2. Durasi fisik dihitung dari start_time ke endTime dan dibulatkan ke atas per jam penuh jika overtime melebihi batas toleransi (grace period 5 menit).
+  const startTime = new Date(session.start_time || room.start_time || endTime);
+  const physicalMinutes = Math.max(0, Math.ceil((endTime - startTime) / (60 * 1000)));
+  const bookedMinutes = Number(session.booked_duration_minutes || room.booked_duration_minutes || 0);
+  const GRACE_PERIOD_MINUTES = 5;
+
+  let totalMinutes;
+  if (bookedMinutes > 0) {
+    if (physicalMinutes <= bookedMinutes + GRACE_PERIOD_MINUTES) {
+      totalMinutes = bookedMinutes;
+    } else {
+      const billableHours = Math.ceil(physicalMinutes / 60);
+      totalMinutes = Math.max(bookedMinutes, billableHours * 60);
+    }
+  } else {
+    const billableHours = Math.max(1, Math.ceil(physicalMinutes / 60));
+    totalMinutes = billableHours * 60;
+  }
+
   let allocatedBeforeActive = segmentsRes.rows
     .filter(segment => segment.ended_at)
     .reduce((total, segment) => total + Math.max(0, Number(segment.allocated_minutes || 0)), 0);
@@ -233,7 +254,7 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
   }
 
   const segments = segmentsRes.rows.map(serializeRoomSegment);
-  const baseRate = Number(session.rate_per_hour || 0);
+  const baseRate = Number(session.rate_per_hour || room.rate_per_hour || 0);
   const isPackage = String(session.booking_mode || '').toLowerCase() === 'package';
   const packageMeta = parseSessionPackageMeta(session);
   let regularTotal = 0;
@@ -248,9 +269,11 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
     }
   }
 
-  const billableMinutes = (session.billable_room_minutes !== null && session.billable_room_minutes !== undefined)
-    ? Math.max(0, Number(session.billable_room_minutes))
-    : totalMinutes;
+  const billableMinutes = isPackage
+    ? 0
+    : ((session.billable_room_minutes !== null && session.billable_room_minutes !== undefined)
+      ? Math.max(0, Number(session.billable_room_minutes))
+      : totalMinutes);
   const freeMinutes = Math.max(0, totalMinutes - billableMinutes);
 
   if (!isPackage && freeMinutes > 0) {
@@ -260,6 +283,7 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
 
   return {
     segments,
+    totalMinutes,
     roomTotal: isPackage
       ? Math.ceil(Number(packageMeta.packageTotal || 0) + upgradeTotal)
       : Math.ceil(regularTotal),
@@ -1894,7 +1918,12 @@ async function closeSession(req, res, payload) {
 
     const endTime = new Date();
     const startTime = new Date(room.start_time);
-    let durationMinutes = room.booked_duration_minutes || Math.ceil((endTime - startTime) / (60 * 1000));
+
+    // Aturan Happy Song Karaoke: Tidak main hitungan menit
+    const physicalMinutes = Math.max(0, Math.ceil((endTime - startTime) / (60 * 1000)));
+    const physicalHours = Math.ceil(physicalMinutes / 60);
+    const roomBookedHours = Math.ceil((Number(room.booked_duration_minutes) || 0) / 60);
+    let durationMinutes = Math.max(1, roomBookedHours, physicalHours) * 60;
     let ratePerHour = Number(room.rate_per_hour || 0);
     let roomTotal = Math.ceil((durationMinutes / 60) * ratePerHour);
     let roomUpgradeTotal = 0;
@@ -1913,9 +1942,12 @@ async function closeSession(req, res, payload) {
     `, [roomId]);
     const activeSession = activeSessionRes.rows[0] || null;
     if (activeSession) {
-      durationMinutes = Number(activeSession.booked_duration_minutes || durationMinutes);
+      const sessionBookedHours = Math.ceil((Number(activeSession.booked_duration_minutes) || 0) / 60);
+      const effectiveHours = Math.max(1, sessionBookedHours, roomBookedHours, physicalHours);
+      durationMinutes = effectiveHours * 60;
       ratePerHour = Number(activeSession.rate_per_hour || ratePerHour);
       const pricing = await finalizeAndPriceRoomSegments(client, activeSession, room, endTime);
+      durationMinutes = pricing.totalMinutes || durationMinutes;
       roomTotal = pricing.roomTotal;
       roomUpgradeTotal = pricing.upgradeTotal;
       roomJourney = pricing.segments;

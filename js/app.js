@@ -360,7 +360,10 @@ function calculateLcCustomerChargeForRoom(room, lcItems) {
 }
 
 function formatLcDurationShort(minutes) {
-  const duration = Math.max(1, Math.round(Number(minutes) || 0));
+  const duration = Math.round(Number(minutes) || 0);
+  if (duration <= 0) {
+    return "0 menit";
+  }
   const hours = Math.floor(duration / 60);
   const remainingMinutes = duration % 60;
 
@@ -8647,7 +8650,7 @@ function createBillingSummaryElement(transaction) {
     ...(transactionHasPackage(transaction) ? [["Paket", getTransactionPackageLabel(transaction)]] : []),
     ["Waktu Mulai", formatTransactionDateTime(transaction?.start_time)],
     ["Waktu Selesai", formatTransactionDateTime(transaction?.end_time)],
-    ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
+    ["Durasi", formatLcDurationShort(transaction?.duration_minutes)],
     ...(getTransactionFreeRoomMinutes(transaction) > 0 ? [
       ["Free Room", formatDurationMinutes(getTransactionFreeRoomMinutes(transaction))],
       ["Durasi Ditagihkan", formatDurationMinutes(getTransactionBillableRoomMinutes(transaction))],
