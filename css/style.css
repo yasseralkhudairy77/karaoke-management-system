@@ -8601,6 +8601,38 @@ textarea.action-confirmation-input {
   border-color: #38bdf8;
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
 }
+.adjust-time-duration-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.adjust-dur-btn {
+  padding: 8px 12px;
+  background: #1e293b;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.adjust-dur-btn:hover {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+.adjust-dur-btn.btn-decrease {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.adjust-dur-btn.btn-decrease:hover {
+  background: #dc2626;
+  border-color: #ef4444;
+  color: #ffffff;
+}
 .adjust-time-preview-card {
   background: rgba(56, 189, 248, 0.08);
   border: 1px solid rgba(56, 189, 248, 0.25);

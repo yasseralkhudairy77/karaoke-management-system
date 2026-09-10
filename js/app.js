@@ -30219,7 +30219,7 @@ async function showAdjustRoomTimeModal(roomId) {
   header.className = "adjust-time-modal-header";
   header.innerHTML = `
     <span style="font-size: 1.4rem;">⏳</span>
-    <h3 class="adjust-time-modal-title">Koreksi Jam Masuk - ${escapeHtml(room.room_name)}</h3>
+    <h3 class="adjust-time-modal-title">Koreksi Jam & Durasi - ${escapeHtml(room.room_name)}</h3>
   `;
 
   const infoCard = document.createElement("div");
@@ -30235,13 +30235,30 @@ async function showAdjustRoomTimeModal(roomId) {
     </div>
   `;
 
-  const field = document.createElement("div");
-  field.className = "adjust-time-field";
-  field.innerHTML = `
+  const timeField = document.createElement("div");
+  timeField.className = "adjust-time-field";
+  timeField.innerHTML = `
     <label for="adjust-session-time-input">Jam Masuk Pelanggan Sebenarnya (HH:MM):</label>
     <input type="time" id="adjust-session-time-input" class="adjust-time-input" value="${currentStartHHMM}" />
     <small style="color: #94a3b8; font-size: 0.82rem; margin-top: 2px;">
-      💡 Gunakan fitur ini jika ada kendala teknis (PC kasir/server baru dinyalakan setelah pelanggan masuk room).
+      💡 Koreksi jam masuk jika PC/server kasir terlambat menyala.
+    </small>
+  `;
+
+  const durationField = document.createElement("div");
+  durationField.className = "adjust-time-field";
+  durationField.style.marginTop = "10px";
+  durationField.innerHTML = `
+    <label for="adjust-session-duration-input">Total Durasi Booking (Menit):</label>
+    <div class="adjust-time-duration-ctrl">
+      <button type="button" class="adjust-dur-btn btn-decrease" data-delta="-60" title="Kurangi 1 Jam">-1 Jam</button>
+      <button type="button" class="adjust-dur-btn btn-decrease" data-delta="-30" title="Kurangi 30 Menit">-30 Mnt</button>
+      <input type="number" id="adjust-session-duration-input" class="adjust-time-input" min="15" step="15" value="${bookedDuration}" style="width: 100px; text-align: center;" />
+      <button type="button" class="adjust-dur-btn" data-delta="30" title="Tambah 30 Menit">+30 Mnt</button>
+      <button type="button" class="adjust-dur-btn" data-delta="60" title="Tambah 1 Jam">+1 Jam</button>
+    </div>
+    <small style="color: #94a3b8; font-size: 0.82rem; margin-top: 2px;">
+      💡 Klik <strong>-1 Jam</strong> atau kurangi menit di atas jika salah tambah durasi room.
     </small>
   `;
 
@@ -30260,21 +30277,35 @@ async function showAdjustRoomTimeModal(roomId) {
   const submitBtn = document.createElement("button");
   submitBtn.className = "adjust-time-btn-submit";
   submitBtn.type = "button";
-  submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi Jam</span>`;
+  submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi</span>`;
 
   actions.append(cancelBtn, submitBtn);
-  dialog.append(header, infoCard, field, previewCard, actions);
+  dialog.append(header, infoCard, timeField, durationField, previewCard, actions);
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
 
   const inputEl = dialog.querySelector("#adjust-session-time-input");
+  const durationInputEl = dialog.querySelector("#adjust-session-duration-input");
 
-  const computeNewTimes = (timeStr) => {
+  dialog.querySelectorAll(".adjust-dur-btn").forEach(btn => {
+    btn.onclick = () => {
+      const delta = parseInt(btn.dataset.delta, 10);
+      let currentVal = parseInt(durationInputEl.value, 10) || bookedDuration;
+      let newVal = Math.max(15, currentVal + delta);
+      durationInputEl.value = newVal;
+      updatePreview();
+    };
+  });
+
+  const computeNewTimes = (timeStr, durationVal) => {
     if (!timeStr || !timeStr.includes(":")) return null;
     const [hStr, mStr] = timeStr.split(":");
     const h = parseInt(hStr, 10);
     const m = parseInt(mStr, 10);
     if (isNaN(h) || isNaN(m)) return null;
+
+    const dur = Number(durationVal);
+    if (!Number.isFinite(dur) || dur <= 0) return null;
 
     const baseDate = new Date(startDate.getTime());
     baseDate.setHours(h, m, 0, 0);
@@ -30285,13 +30316,15 @@ async function showAdjustRoomTimeModal(roomId) {
       baseDate.setDate(baseDate.getDate() - 1);
     }
 
-    const newEnd = new Date(baseDate.getTime() + bookedDuration * 60 * 1000);
+    const newEnd = new Date(baseDate.getTime() + dur * 60 * 1000);
     const remainingMs = newEnd.getTime() - Date.now();
     const remainingMinutes = Math.floor(remainingMs / 60000);
 
     return {
       newStart: baseDate,
       newEnd: newEnd,
+      durationVal: dur,
+      durationDiff: dur - bookedDuration,
       remainingMinutes: remainingMinutes,
       isFuture: baseDate > now,
       isExpired: remainingMinutes <= 0
@@ -30300,10 +30333,11 @@ async function showAdjustRoomTimeModal(roomId) {
 
   const updatePreview = () => {
     const timeVal = inputEl.value;
-    const calc = computeNewTimes(timeVal);
+    const durVal = parseInt(durationInputEl.value, 10);
+    const calc = computeNewTimes(timeVal, durVal);
 
     if (!calc) {
-      previewCard.innerHTML = `<span style="color: #ef4444;">Format jam tidak valid.</span>`;
+      previewCard.innerHTML = `<span style="color: #ef4444;">Format jam atau durasi tidak valid.</span>`;
       submitBtn.disabled = true;
       return;
     }
@@ -30330,7 +30364,20 @@ async function showAdjustRoomTimeModal(roomId) {
       submitBtn.disabled = false;
     }
 
+    let durationChangeRow = "";
+    if (calc.durationDiff !== 0) {
+      const diffColor = calc.durationDiff < 0 ? "#fca5a5" : "#86efac";
+      const diffSign = calc.durationDiff > 0 ? "+" : "";
+      durationChangeRow = `
+        <div class="adjust-time-preview-row">
+          <span>Perubahan Durasi:</span>
+          <strong style="color: ${diffColor};">${bookedDuration} mnt ➔ ${calc.durationVal} mnt (${diffSign}${calc.durationDiff} mnt)</strong>
+        </div>
+      `;
+    }
+
     previewCard.innerHTML = `
+      ${durationChangeRow}
       <div class="adjust-time-preview-row">
         <span>Perkiraan Jam Selesai Baru:</span>
         <strong style="color: #a78bfa;">${newEndHHMM} WIB</strong>
@@ -30345,12 +30392,20 @@ async function showAdjustRoomTimeModal(roomId) {
 
   inputEl.addEventListener("input", updatePreview);
   inputEl.addEventListener("change", updatePreview);
+  durationInputEl.addEventListener("input", updatePreview);
+  durationInputEl.addEventListener("change", updatePreview);
   updatePreview();
 
   submitBtn.onclick = async () => {
     const timeVal = inputEl.value;
+    const durVal = parseInt(durationInputEl.value, 10);
+
     if (!timeVal) {
       showInlineNotice("Silakan masukkan jam masuk yang valid.", "error");
+      return;
+    }
+    if (!Number.isFinite(durVal) || durVal <= 0) {
+      showInlineNotice("Durasi harus berupa angka positif.", "error");
       return;
     }
 
@@ -30363,22 +30418,24 @@ async function showAdjustRoomTimeModal(roomId) {
         action: "adjustSessionTime",
         room_id: roomId,
         new_start_time: timeVal,
-        cashier_name: getLoggedInOperatorName() || "Kasir"
+        duration_minutes: durVal,
+        cashier_name: getLoggedInOperatorName() || "Kasir",
+        reason: "Koreksi jam/durasi room oleh kasir"
       });
 
       if (!res || res.status !== "success") {
-        throw new Error(res?.message || res?.error || "Gagal mengoreksi jam sesi.");
+        throw new Error(res?.message || res?.error || "Gagal mengoreksi waktu/durasi sesi.");
       }
 
       overlay.remove();
-      showInlineNotice(res.message || "Waktu mulai sesi berhasil dikoreksi.", "success");
+      showInlineNotice(res.message || "Waktu & durasi sesi berhasil dikoreksi.", "success");
 
       await loadRooms(true);
     } catch (err) {
-      showInlineNotice(err.message || "Gagal mengoreksi jam sesi.", "error");
+      showInlineNotice(err.message || "Gagal mengoreksi waktu/durasi sesi.", "error");
       submitBtn.disabled = false;
       cancelBtn.disabled = false;
-      submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi Jam</span>`;
+      submitBtn.innerHTML = `<span>💾</span> <span>Simpan Koreksi</span>`;
     }
   };
 }

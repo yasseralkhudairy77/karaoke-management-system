@@ -2510,10 +2510,23 @@ async function correctActiveRoomDuration(req, res, payload) {
     const startTime = room.start_time || new Date();
     const newEndTime = new Date(new Date(startTime).getTime() + newDuration * 60 * 1000);
     const oldDuration = Number(room.booked_duration_minutes || 0);
+    const durationDiff = newDuration - oldDuration;
 
     await client.query(`
       UPDATE rooms SET booked_duration_minutes = $1, scheduled_end_time = $2, updated_at = CURRENT_TIMESTAMP WHERE room_id = $3
     `, [newDuration, newEndTime, roomId]);
+
+    await client.query(`
+      UPDATE room_sessions
+      SET booked_duration_minutes = $1,
+          scheduled_end_time = $2,
+          billable_room_minutes = CASE
+            WHEN booking_mode = 'regular' THEN GREATEST(0, COALESCE(billable_room_minutes, $3) + $4)
+            ELSE billable_room_minutes
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE room_id = $5 AND status = 'active'
+    `, [newDuration, newEndTime, oldDuration, durationDiff, roomId]);
 
     const logId = `RTL-${Date.now()}`;
     await client.query(`
@@ -2521,7 +2534,7 @@ async function correctActiveRoomDuration(req, res, payload) {
         log_id, action_type, room_id, room_name, old_booked_duration_minutes, new_booked_duration_minutes,
         old_scheduled_end_time, new_scheduled_end_time, add_minutes, cashier_name, note
       ) VALUES ($1, 'correct_duration', $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    `, [logId, roomId, room.room_name, oldDuration, newDuration, room.scheduled_end_time, newEndTime, newDuration - oldDuration, cashierName, note]);
+    `, [logId, roomId, room.room_name, oldDuration, newDuration, room.scheduled_end_time, newEndTime, durationDiff, cashierName, note]);
 
     await client.query('COMMIT');
     return successResponse(res, { message: 'Durasi room berhasil dikoreksi.', room_id: roomId, booked_duration_minutes: newDuration });
@@ -2542,7 +2555,7 @@ async function adjustSessionTime(req, res, payload) {
     const roomId = payload.room_id || req.params?.id;
     const newStartTimeRaw = payload.new_start_time || payload.start_time;
     const cashierName = payload.cashier_name || 'Kasir';
-    const reason = payload.reason || payload.note || 'Koreksi jam masuk konsumen';
+    const reason = payload.reason || payload.note || 'Koreksi jam masuk/durasi room';
 
     if (!roomId) throw new Error('room_id wajib diisi.');
     if (!newStartTimeRaw) throw new Error('Waktu mulai baru (new_start_time) wajib diisi.');
@@ -2578,27 +2591,44 @@ async function adjustSessionTime(req, res, payload) {
       ? sessionRes.rows[0]
       : { session_id: null, booked_duration_minutes: room.booked_duration_minutes || 60, start_time: room.start_time, scheduled_end_time: room.scheduled_end_time };
 
-    const durationMinutes = Number(activeSession.booked_duration_minutes || room.booked_duration_minutes || 60);
+    const durationInput = (payload.duration_minutes !== undefined && payload.duration_minutes !== null && payload.duration_minutes !== '')
+      ? Number(payload.duration_minutes)
+      : ((payload.new_duration_minutes !== undefined && payload.new_duration_minutes !== null && payload.new_duration_minutes !== '')
+        ? Number(payload.new_duration_minutes)
+        : null);
+
+    const oldDuration = Number(activeSession.booked_duration_minutes || room.booked_duration_minutes || 60);
+    const durationMinutes = (durationInput !== null && Number.isFinite(durationInput) && durationInput > 0)
+      ? Math.round(durationInput)
+      : oldDuration;
+
+    const durationDiff = durationMinutes - oldDuration;
     const oldStartTime = new Date(room.start_time || activeSession.start_time || now);
-    const oldScheduledEndTime = new Date(room.scheduled_end_time || activeSession.scheduled_end_time || (oldStartTime.getTime() + durationMinutes * 60 * 1000));
+    const oldScheduledEndTime = new Date(room.scheduled_end_time || activeSession.scheduled_end_time || (oldStartTime.getTime() + oldDuration * 60 * 1000));
     const newScheduledEndTime = new Date(newStartTime.getTime() + durationMinutes * 60 * 1000);
 
     await client.query(`
       UPDATE rooms
       SET start_time = $1,
-          scheduled_end_time = $2,
+          booked_duration_minutes = $2,
+          scheduled_end_time = $3,
           updated_at = CURRENT_TIMESTAMP
-      WHERE room_id = $3
-    `, [newStartTime, newScheduledEndTime, roomId]);
+      WHERE room_id = $4
+    `, [newStartTime, durationMinutes, newScheduledEndTime, roomId]);
 
     if (activeSession.session_id) {
       await client.query(`
         UPDATE room_sessions
         SET start_time = $1,
-            scheduled_end_time = $2,
+            booked_duration_minutes = $2,
+            scheduled_end_time = $3,
+            billable_room_minutes = CASE
+              WHEN booking_mode = 'regular' THEN GREATEST(0, COALESCE(billable_room_minutes, $4) + $5)
+              ELSE billable_room_minutes
+            END,
             updated_at = CURRENT_TIMESTAMP
-        WHERE session_id = $3
-      `, [newStartTime, newScheduledEndTime, activeSession.session_id]);
+        WHERE session_id = $6
+      `, [newStartTime, durationMinutes, newScheduledEndTime, oldDuration, durationDiff, activeSession.session_id]);
 
       await client.query(`
         UPDATE room_session_segments
@@ -2619,38 +2649,46 @@ async function adjustSessionTime(req, res, payload) {
     const diffMinutes = Math.round((newScheduledEndTime.getTime() - oldScheduledEndTime.getTime()) / 60000);
     const oldTimeStr = oldStartTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
     const newTimeStr = newStartTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const actionType = durationDiff !== 0 ? 'adjust_time_and_duration' : 'adjust_start_time';
     
+    let noteDetails = `${reason} (${oldTimeStr} -> ${newTimeStr})`;
+    if (durationDiff !== 0) {
+      noteDetails += ` | Durasi: ${oldDuration}m -> ${durationMinutes}m (${durationDiff > 0 ? '+' : ''}${durationDiff}m)`;
+    }
+
     await client.query(`
       INSERT INTO room_time_logs (
         log_id, action_type, room_id, room_name,
         old_booked_duration_minutes, new_booked_duration_minutes,
         old_scheduled_end_time, new_scheduled_end_time,
         add_minutes, cashier_name, note
-      ) VALUES ($1, 'adjust_start_time', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, '${actionType}', $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `, [
       logId,
       roomId,
       room.room_name,
-      durationMinutes,
+      oldDuration,
       durationMinutes,
       oldScheduledEndTime,
       newScheduledEndTime,
       diffMinutes,
       cashierName,
-      `${reason} (${oldTimeStr} -> ${newTimeStr})`
+      noteDetails
     ]);
 
     await client.query('COMMIT');
     return successResponse(res, {
       status: 'success',
-      message: `Waktu mulai ${room.room_name} berhasil dikoreksi ke ${newTimeStr}.`,
+      message: durationDiff !== 0
+        ? `Waktu & durasi ${room.room_name} berhasil dikoreksi (Mulai: ${newTimeStr}, Durasi: ${durationMinutes} mnt).`
+        : `Waktu mulai ${room.room_name} berhasil dikoreksi ke ${newTimeStr}.`,
       room: {
         room_id: roomId,
         room_name: room.room_name,
         status: 'occupied',
         start_time: newStartTime.toISOString(),
-        scheduled_end_time: newScheduledEndTime.toISOString(),
-        booked_duration_minutes: durationMinutes
+        booked_duration_minutes: durationMinutes,
+        scheduled_end_time: newScheduledEndTime.toISOString()
       }
     });
   } catch (err) {

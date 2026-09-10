@@ -280,11 +280,134 @@ async function testAdjustSessionTimeInvalidFormat() {
   }
 }
 
+async function testAdjustSessionDurationReduction() {
+  const originalConnect = db.pool.connect;
+  const queries = [];
+
+  const now = new Date();
+  const originalStartTime = new Date(now.getTime() - 40 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const inputHHMM = `${pad(originalStartTime.getHours())}:${pad(originalStartTime.getMinutes())}`;
+
+  // Kamar salah ditambah jadi 180 menit, kasir menurunkan kembali ke 120 menit
+  const mockRoom = {
+    room_id: 'ROOM-TEST-05',
+    room_name: 'Room VIP 5',
+    status: 'occupied',
+    start_time: originalStartTime.toISOString(),
+    scheduled_end_time: new Date(originalStartTime.getTime() + 180 * 60 * 1000).toISOString(),
+    booked_duration_minutes: 180,
+    active_session_id: 'SESS-500'
+  };
+
+  const mockClient = {
+    query: async (sql, params = []) => {
+      const text = String(sql);
+      queries.push({ text, params });
+
+      if (text.includes('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE')) {
+        return { rows: [mockRoom], rowCount: 1 };
+      }
+      if (text.includes("FROM room_sessions") && (text.includes("status = 'active'") || text.includes("status IN"))) {
+        return {
+          rows: [{
+            session_id: 'SESS-500',
+            room_id: 'ROOM-TEST-05',
+            status: 'active',
+            start_time: originalStartTime.toISOString(),
+            scheduled_end_time: new Date(originalStartTime.getTime() + 180 * 60 * 1000).toISOString(),
+            booked_duration_minutes: 180,
+            billable_room_minutes: 180
+          }],
+          rowCount: 1
+        };
+      }
+      if (text.includes('UPDATE rooms SET')) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes('UPDATE room_sessions SET')) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes('UPDATE room_session_segments SET')) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes('UPDATE lc_work_logs SET')) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes('INSERT INTO room_time_logs')) {
+        return { rowCount: 1, rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {}
+  };
+
+  db.pool.connect = async () => mockClient;
+
+  try {
+    let responseData = null;
+    let responseStatus = 200;
+    const req = {};
+    const res = {
+      status: (code) => { responseStatus = code; return res; },
+      json: (data) => { responseData = data; return data; }
+    };
+
+    const payload = {
+      room_id: 'ROOM-TEST-05',
+      new_start_time: inputHHMM,
+      duration_minutes: 120, // Diturunkan dari 180 ke 120 menit
+      cashier_name: 'Kasir Test',
+      reason: 'Salah tambah jam, diturunkan kembali'
+    };
+
+    await adjustSessionTime(req, res, payload);
+
+    assert.strictEqual(responseStatus, 200);
+    assert.strictEqual(responseData.status, 'success');
+    assert.strictEqual(responseData.room.booked_duration_minutes, 120);
+
+    // Cek query UPDATE rooms menurunkan booked_duration_minutes ke 120
+    const updateRoomQuery = queries.find(q => q.text.includes('UPDATE rooms') && q.text.includes('booked_duration_minutes'));
+    assert.ok(updateRoomQuery, 'Should execute UPDATE rooms query with booked_duration_minutes');
+    assert.strictEqual(updateRoomQuery.params[1], 120, 'Rooms booked_duration_minutes should be updated to 120');
+
+    // Cek query UPDATE room_sessions menurunkan booked_duration_minutes dan billable_room_minutes
+    const updateSessionQuery = queries.find(q => q.text.includes('UPDATE room_sessions') && q.text.includes('billable_room_minutes'));
+    assert.ok(updateSessionQuery, 'Should execute UPDATE room_sessions query');
+    assert.strictEqual(updateSessionQuery.params[1], 120, 'Session booked_duration_minutes should be updated to 120');
+    assert.strictEqual(updateSessionQuery.params[4], -60, 'Duration diff should be -60 minutes');
+
+    // Cek audit log
+    const auditLogQuery = queries.find(q => q.text.includes('INSERT INTO room_time_logs'));
+    assert.ok(auditLogQuery, 'Should insert into room_time_logs');
+    assert.ok(auditLogQuery.text.includes('adjust_time_and_duration'), 'Action type should be adjust_time_and_duration');
+    assert.strictEqual(auditLogQuery.params[3], 180, 'Old duration was 180');
+    assert.strictEqual(auditLogQuery.params[4], 120, 'New duration is 120');
+
+    console.log('  ✓ PASS: testAdjustSessionDurationReduction');
+  } finally {
+    db.pool.connect = originalConnect;
+  }
+}
+
+async function runTests() {
+  console.log('🧪 Running Adjust Session Time (Koreksi Jam Sesi / Waktu Mundur) Tests...');
+
+  await testAdjustSessionTimeSuccess();
+  await testAdjustSessionTimeRejectFuture();
+  await testAdjustSessionTimeRejectNotOccupied();
+  await testAdjustSessionTimeInvalidFormat();
+  await testAdjustSessionDurationReduction();
+
+  console.log('✅ ALL Adjust Session Time Tests PASSED SUCCESSFULLY!');
+}
+
+module.exports = { runTests };
+
 if (require.main === module) {
   runTests().catch(err => {
     console.error('❌ Test failed:', err);
     process.exit(1);
   });
 }
-
-module.exports = { runTests };
