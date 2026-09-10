@@ -8116,6 +8116,9 @@ function canOpenLcDurationEditor(transaction) {
 }
 
 async function openLcDurationEditor(transactionId) {
+  if (Array.isArray(lcs) && lcs.length === 0) {
+    loadLcs().catch(() => {});
+  }
   const normalizedTransactionId = String(transactionId || "").trim();
   if (!normalizedTransactionId || isLoadingLcDurationEditor || isSavingLcDurationEditor) {
     return;
@@ -8239,6 +8242,7 @@ function getLcDurationEditorPreview() {
   const newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
   const changed = (details.lc_logs || []).some((log) => (
     Number(lcDurationEditor.durations?.[log.lc_id]) !== Number(log.duration_minutes)
+    || (lcDurationEditor.replacements?.[log.lc_id] && lcDurationEditor.replacements[log.lc_id] !== log.lc_id)
   )) || newLcTotal !== oldLcTotal;
 
   return {
@@ -8248,6 +8252,24 @@ function getLcDurationEditorPreview() {
     newGrandTotal,
     changed,
   };
+}
+
+function setLcDurationEditorReplacement(lcId, newLcId) {
+  if (!lcDurationEditor || isSavingLcDurationEditor) {
+    return;
+  }
+  if (!lcDurationEditor.replacements) {
+    lcDurationEditor.replacements = {};
+  }
+  lcDurationEditor.replacements[lcId] = String(newLcId || "").trim();
+  const saveButton = queryDashboard("[data-action='save-lc-duration-editor']");
+  if (saveButton) {
+    const preview = getLcDurationEditorPreview();
+    saveButton.disabled = !lcDurationEditor.details?.can_edit
+      || !preview.changed
+      || String(lcDurationEditor.reason || "").trim().length < 3;
+  }
+  renderRooms();
 }
 
 function setLcDurationEditorDuration(lcId, value) {
@@ -8332,6 +8354,7 @@ async function saveLcDurationEditor() {
       assignments: (details.lc_logs || []).map((log) => ({
         log_id: log.log_id,
         lc_id: log.lc_id,
+        new_lc_id: editor.replacements?.[log.lc_id] || log.lc_id,
         duration_minutes: Number(editor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60,
       })),
       reason: String(editor.reason || "").trim(),
@@ -8380,7 +8403,7 @@ function createLcDurationEditorElement() {
   const title = document.createElement("h2");
   title.className = "lc-duration-editor-title";
   title.id = "lc-duration-editor-title";
-  title.textContent = "Edit Durasi LC";
+  title.textContent = "Revisi & Ganti LC";
   const subtitle = document.createElement("p");
   subtitle.className = "lc-duration-editor-subtitle";
   subtitle.textContent = details
@@ -8473,7 +8496,38 @@ function createLcDurationEditorElement() {
     amountValue.textContent = formatCurrency(calculateLcCharge(chargeDuration, log.rate_per_hour));
     amount.append(amountLabel, amountValue);
 
-    row.append(identity, durationField, amount);
+    const replaceField = document.createElement("label");
+    replaceField.className = "lc-duration-editor-field lc-duration-editor-replace-field";
+    const replaceLabel = document.createElement("span");
+    replaceLabel.textContent = "Ganti LC";
+    const replaceSelect = document.createElement("select");
+    replaceSelect.className = "lc-duration-editor-select";
+    replaceSelect.disabled = !details.can_edit || isSavingLcDurationEditor;
+
+    const currentSelectedLcId = editor.replacements?.[log.lc_id] || log.lc_id;
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = log.lc_id;
+    defaultOpt.textContent = `Tetap: ${log.lc_name || log.lc_id}`;
+    defaultOpt.selected = currentSelectedLcId === log.lc_id;
+    replaceSelect.appendChild(defaultOpt);
+
+    const activeMasterLcs = Array.isArray(lcs) ? lcs.filter(l => String(l.status || "").toLowerCase() === "active") : [];
+    activeMasterLcs.forEach(m => {
+      if (m.lc_id !== log.lc_id) {
+        const opt = document.createElement("option");
+        opt.value = m.lc_id;
+        opt.textContent = `Ganti ke: ${m.lc_name || m.lc_id}`;
+        opt.selected = currentSelectedLcId === m.lc_id;
+        replaceSelect.appendChild(opt);
+      }
+    });
+
+    replaceSelect.addEventListener("change", (e) => {
+      setLcDurationEditorReplacement(log.lc_id, e.target.value);
+    });
+    replaceField.append(replaceLabel, replaceSelect);
+
+    row.append(identity, replaceField, durationField, amount);
     list.appendChild(row);
   });
   dialog.appendChild(list);
@@ -8505,7 +8559,7 @@ function createLcDurationEditorElement() {
   reasonLabel.textContent = "Alasan Perubahan";
   const reasonInput = document.createElement("textarea");
   reasonInput.className = "lc-duration-editor-textarea";
-  reasonInput.placeholder = "Contoh: LC bekerja mengikuti durasi room 2 jam";
+  reasonInput.placeholder = "Contoh: Ganti LC ke Siti (salah pilih orang) / koreksi durasi 3 jam";
   reasonInput.value = editor.reason || "";
   reasonInput.disabled = !details.can_edit || isSavingLcDurationEditor;
   reasonInput.addEventListener("input", (event) => {
@@ -8577,7 +8631,7 @@ function createBillingSummaryElement(transaction) {
     editLcButton.type = "button";
     editLcButton.dataset.action = "open-lc-duration-editor";
     editLcButton.dataset.transactionId = transaction.transaction_id;
-    editLcButton.textContent = "Revisi Durasi LC";
+    editLcButton.textContent = "Revisi & Ganti LC";
     actions.appendChild(editLcButton);
   }
 
@@ -18354,11 +18408,16 @@ function createTransactionRowElement(transaction) {
       ? "transaction-status-cancelled"
       : "transaction-status-unpaid";
 
+  const lcTotal = Number(transaction?.lc_total || 0);
+  const lcSummary = transaction?.lc_summary || "";
+  const lcDisplayText = lcTotal > 0 ? formatCurrency(lcTotal) : "-";
+
   [
     ["ID Transaksi", transaction?.transaction_id || "-", "transaction-id-cell"],
     ["Ruangan", transaction?.room_name || transaction?.room_id || "-"],
     ["Durasi", `${Number(transaction?.duration_minutes) || 0} menit`],
     [transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room", formatCurrency(getTransactionRoomTotal(transaction))],
+    ["Jasa LC", lcDisplayText, "transaction-lc-cell"],
     ["F&B", formatCurrency(getTransactionFnbTotal(transaction))],
     ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction)), getTransactionFnbTotal(transaction) > 0 ? "transaction-has-fnb" : ""],
     ["Status", formatPaymentStatusLabel(transaction?.payment_status), statusClass],
@@ -18386,6 +18445,13 @@ function createTransactionRowElement(transaction) {
         value.title = valueText;
       }
       item.append(label, value);
+
+      if (modifierClass === "transaction-lc-cell" && (lcSummary || lcTotal > 0)) {
+        const badge = document.createElement("span");
+        badge.className = "transaction-lc-badge";
+        badge.textContent = lcSummary || (lcTotal > 0 ? `${Math.round(lcTotal / 135000)} jam` : "");
+        item.appendChild(badge);
+      }
 
       if (modifierClass === "transaction-has-fnb") {
         const badge = document.createElement("span");
@@ -18457,6 +18523,16 @@ function createTransactionActionsElement(transaction) {
   const secondaryItems = [];
 
   // Aksi operasional
+  if (canOpenLcDurationEditor(transaction)) {
+    secondaryItems.push({
+      action: "open-lc-duration-editor",
+      label: "Revisi & Ganti LC",
+      icon: "👩",
+      category: "operational",
+      title: "Ubah durasi atau ganti LC jika salah pilih",
+    });
+  }
+
   secondaryItems.push({
     action: "open-change-payment-method",
     label: "Ubah Metode Bayar",

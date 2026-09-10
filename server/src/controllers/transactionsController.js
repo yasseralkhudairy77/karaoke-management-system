@@ -264,6 +264,10 @@ function serializeTransaction(row) {
     room_discount_amount: Number(row.room_discount_amount || 0),
     room_upgrade_total: Number(row.room_upgrade_total || 0),
     room_journey: Array.isArray(roomJourney) ? roomJourney : [],
+    lc_summary: row.lc_summary || '',
+    lc_duration_minutes: Number(row.lc_duration_minutes || 0),
+    lc_count: Number(row.lc_count || 0),
+    lc_logs: Array.isArray(row.lc_logs) ? row.lc_logs : [],
     created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
   };
 }
@@ -561,6 +565,23 @@ async function getTodayTransactions(req, res) {
     const commissionsByTransactionId = new Map(
       commissionRes.rows.map((row) => [row.transaction_id, row])
     );
+
+    const txIds = result.rows.map(r => r.transaction_id);
+    const lcLogsByTxId = new Map();
+    if (txIds.length > 0) {
+      const lcRes = await db.query(`
+        SELECT closed_transaction_id, lc_id, lc_name, duration_minutes, rate_per_hour, rate, customer_charge_amount
+        FROM lc_work_logs
+        WHERE closed_transaction_id = ANY($1) AND status != 'cancelled'
+        ORDER BY created_at ASC, log_id ASC
+      `, [txIds]);
+      lcRes.rows.forEach(r => {
+        const txId = r.closed_transaction_id;
+        if (!lcLogsByTxId.has(txId)) lcLogsByTxId.set(txId, []);
+        lcLogsByTxId.get(txId).push(r);
+      });
+    }
+
     const transactions = result.rows.map((row) => {
       const serialized = serializeTransaction(row);
       const commission = commissionsByTransactionId.get(row.transaction_id);
@@ -571,6 +592,33 @@ async function getTodayTransactions(req, res) {
         serialized.sales_commission = null;
         serialized.sales_commission_amount = 0;
       }
+
+      const lcLogs = lcLogsByTxId.get(row.transaction_id) || [];
+      const totalLcMinutes = lcLogs.reduce((sum, l) => sum + Number(l.duration_minutes || 0), 0);
+      let lcSummaryText = '';
+      if (lcLogs.length === 1) {
+        const l = lcLogs[0];
+        const hours = Number(l.duration_minutes || 0) / 60;
+        const hoursStr = Number.isInteger(hours) ? `${hours} jam` : `${hours.toFixed(1)} jam`;
+        lcSummaryText = `${hoursStr} • ${l.lc_name || l.lc_id}`;
+      } else if (lcLogs.length > 1) {
+        const totalHours = totalLcMinutes / 60;
+        const totalHoursStr = Number.isInteger(totalHours) ? `${totalHours} jam` : `${totalHours.toFixed(1)} jam`;
+        const names = lcLogs.map(l => {
+          const h = Number(l.duration_minutes || 0) / 60;
+          return `${l.lc_name || l.lc_id} (${Number.isInteger(h) ? h : h.toFixed(1)}j)`;
+        }).join(', ');
+        lcSummaryText = `${totalHoursStr} • ${names}`;
+      } else if (Number(row.lc_total || 0) > 0) {
+        const hours = Math.round(Number(row.lc_total) / 135000);
+        lcSummaryText = hours > 0 ? `${hours} jam` : 'Ada LC';
+      }
+
+      serialized.lc_summary = lcSummaryText;
+      serialized.lc_duration_minutes = totalLcMinutes;
+      serialized.lc_count = lcLogs.length;
+      serialized.lc_logs = lcLogs;
+
       return serialized;
     });
 
@@ -2013,10 +2061,29 @@ async function updateTransactionLcDurations(req, res, payload) {
       if (!Number.isFinite(duration) || duration < 30 || duration > 720 || duration % 30 !== 0) {
         throw new Error(`Durasi ${log.lc_name || log.lc_id} harus kelipatan 30 menit antara 30 menit sampai 12 jam.`);
       }
-      const hourlyRate = Number(log.rate_per_hour || 0);
-      if (hourlyRate <= 0) throw new Error(`Tarif historis ${log.lc_name || log.lc_id} tidak valid.`);
+
+      let currentLcId = log.lc_id;
+      let currentLcName = log.lc_name;
+      let hourlyRate = Number(log.rate_per_hour || 0);
+
+      const targetLcId = String(item?.new_lc_id || item?.target_lc_id || '').trim();
+      if (targetLcId && targetLcId !== log.lc_id) {
+        const masterRes = await client.query('SELECT lc_id, lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1', [targetLcId]);
+        if (masterRes.rowCount === 0) {
+          throw new Error(`LC pengganti dengan ID ${targetLcId} tidak ditemukan.`);
+        }
+        currentLcId = masterRes.rows[0].lc_id;
+        currentLcName = masterRes.rows[0].lc_name;
+        if (Number(masterRes.rows[0].rate_per_hour) > 0) {
+          hourlyRate = Number(masterRes.rows[0].rate_per_hour);
+        }
+      }
+
+      if (hourlyRate <= 0) throw new Error(`Tarif historis ${currentLcName || currentLcId} tidak valid.`);
       editedLogs.push({
         ...log,
+        lc_id: currentLcId,
+        lc_name: currentLcName,
         duration_minutes: duration,
         rate_per_hour: hourlyRate
       });
@@ -2028,16 +2095,20 @@ async function updateTransactionLcDurations(req, res, payload) {
       lcTotal += Number(item.customer_charge_amount || 0);
       await client.query(`
         UPDATE lc_work_logs
-        SET duration_minutes = $1,
-            rate_per_hour = $2,
-            rate = $3,
-            customer_charge_amount = $4,
-            included_minutes = $5,
-            extra_minutes = $6,
-            billing_source = $7,
-            package_id = $8
-        WHERE log_id = $9 AND closed_transaction_id = $10 AND status <> 'cancelled'
+        SET lc_id = $1,
+            lc_name = $2,
+            duration_minutes = $3,
+            rate_per_hour = $4,
+            rate = $5,
+            customer_charge_amount = $6,
+            included_minutes = $7,
+            extra_minutes = $8,
+            billing_source = $9,
+            package_id = $10
+        WHERE log_id = $11 AND closed_transaction_id = $12 AND status <> 'cancelled'
       `, [
+        item.lc_id,
+        item.lc_name,
         item.duration_minutes,
         item.rate_per_hour,
         item.payable_amount,

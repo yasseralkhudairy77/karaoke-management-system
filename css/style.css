@@ -874,6 +874,29 @@ body::after {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.transaction-lc-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-duration-editor-replace-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .room-recovery-item.recoverable {
   border-color: rgba(24, 199, 135, 0.36);
 }
@@ -6595,15 +6618,16 @@ textarea.action-confirmation-input {
   position: relative;
   display: grid;
   grid-template-columns:
-    minmax(132px, 1.05fr)
-    minmax(128px, 1fr)
-    minmax(74px, 0.6fr)
-    minmax(96px, 0.78fr)
-    minmax(96px, 0.78fr)
-    minmax(112px, 0.9fr)
-    minmax(82px, 0.62fr)
-    minmax(100px, 0.78fr)
-    minmax(186px, auto);
+    minmax(120px, 0.95fr)
+    minmax(120px, 0.95fr)
+    minmax(70px, 0.55fr)
+    minmax(90px, 0.72fr)
+    minmax(110px, 0.88fr)
+    minmax(90px, 0.72fr)
+    minmax(105px, 0.85fr)
+    minmax(78px, 0.58fr)
+    minmax(95px, 0.72fr)
+    minmax(180px, auto);
   gap: 8px 10px;
   align-items: start;
   padding: 12px 14px;

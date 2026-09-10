@@ -117,6 +117,7 @@ function loadTransactionActionsSandbox() {
     transactionHasPackage: () => mockHasPackage,
     getTransactionFnbTotal: () => mockFnbTotal,
     getTransactionFnbOrderIds: () => mockFnbOrderIds,
+    canOpenLcDurationEditor: (tx) => Boolean(tx && Number(tx?.lc_total || 0) > 0),
     console,
     Array,
     String,

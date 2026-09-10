@@ -8960,6 +8960,50 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
       return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
     });
 
+  try {
+    var allWorkLogs = readSheetAsObjects_("LcWorkLogs");
+    var lcLogsByTxId = {};
+    allWorkLogs.forEach(function (l) {
+      var txId = String(l.closed_transaction_id || "").trim();
+      var status = String(l.status || "").trim().toLowerCase();
+      if (txId && status !== "cancelled") {
+        if (!lcLogsByTxId[txId]) lcLogsByTxId[txId] = [];
+        lcLogsByTxId[txId].push(l);
+      }
+    });
+
+    transactions.forEach(function (transaction) {
+      var logs = lcLogsByTxId[transaction.transaction_id] || [];
+      var totalLcMinutes = logs.reduce(function (sum, item) {
+        return sum + (Number(item.duration_minutes) || 0);
+      }, 0);
+      var lcSummaryText = "";
+      if (logs.length === 1) {
+        var l = logs[0];
+        var hours = (Number(l.duration_minutes) || 0) / 60;
+        var hoursStr = (hours % 1 === 0) ? (hours + " jam") : (hours.toFixed(1) + " jam");
+        lcSummaryText = hoursStr + " • " + (l.lc_name || l.lc_id);
+      } else if (logs.length > 1) {
+        var totalHours = totalLcMinutes / 60;
+        var totalHoursStr = (totalHours % 1 === 0) ? (totalHours + " jam") : (totalHours.toFixed(1) + " jam");
+        var names = logs.map(function (item) {
+          var h = (Number(item.duration_minutes) || 0) / 60;
+          return (item.lc_name || item.lc_id) + " (" + ((h % 1 === 0) ? h : h.toFixed(1)) + "j)";
+        }).join(", ");
+        lcSummaryText = totalHoursStr + " • " + names;
+      } else if (Number(transaction.lc_total) > 0) {
+        var estHours = Math.round(Number(transaction.lc_total) / 135000);
+        lcSummaryText = estHours > 0 ? (estHours + " jam") : "Ada LC";
+      }
+      transaction.lc_summary = lcSummaryText;
+      transaction.lc_duration_minutes = totalLcMinutes;
+      transaction.lc_count = logs.length;
+      transaction.lc_logs = logs;
+    });
+  } catch (enrichErr) {
+    Logger.log("Error enriching transactions with LC summary: " + enrichErr.message);
+  }
+
   var summary = transactions.reduce(function (result, transaction) {
     var amount = getTransactionAmount_(transaction);
     var paymentStatus = String(transaction.payment_status || "").trim();
@@ -12244,10 +12288,32 @@ function updateTransactionLcDurations_(payload) {
       var oldRate = Number(log.rate) || 0;
       var newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
 
+      var newLcId = String(assignment.new_lc_id || assignment.target_lc_id || "").trim() || assignment.lc_id;
+      var newLcName = log.lc_name || assignment.lc_id;
+      if (newLcId !== assignment.lc_id) {
+        try {
+          var lcMasterRows = readSheetAsObjects_("LcMaster");
+          for (var mIdx = 0; mIdx < lcMasterRows.length; mIdx++) {
+            if (String(lcMasterRows[mIdx].lc_id || "").trim() === newLcId) {
+              newLcName = lcMasterRows[mIdx].lc_name || newLcId;
+              if (Number(lcMasterRows[mIdx].rate_per_hour) > 0) {
+                hourlyRate = Number(lcMasterRows[mIdx].rate_per_hour);
+                newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
+              }
+              break;
+            }
+          }
+        } catch (mErr) {
+          Logger.log("Error finding LC master for replacement: " + mErr.message);
+        }
+      }
+
       newLogTotal += newRate;
       changes.push({
         lc_id: assignment.lc_id,
         lc_name: log.lc_name || assignment.lc_id,
+        new_lc_id: newLcId,
+        new_lc_name: newLcName,
         row_number: assignment.context_entry.row_number,
         old_duration_minutes: oldDuration,
         new_duration_minutes: assignment.duration_minutes,
@@ -12263,7 +12329,8 @@ function updateTransactionLcDurations_(payload) {
     var newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
     var hasChanges = changes.some(function (change) {
       return change.old_duration_minutes !== change.new_duration_minutes
-        || change.old_rate !== change.new_rate;
+        || change.old_rate !== change.new_rate
+        || (change.new_lc_id && change.new_lc_id !== change.lc_id);
     }) || oldLcTotal !== newLcTotal || oldGrandTotal !== newGrandTotal;
 
     if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
@@ -12299,6 +12366,14 @@ function updateTransactionLcDurations_(payload) {
 
     try {
       changes.forEach(function (change) {
+        if (change.new_lc_id && change.new_lc_id !== change.lc_id) {
+          if (context.work_log_headers.lc_id) {
+            context.work_logs_sheet.getRange(change.row_number, context.work_log_headers.lc_id).setValue(change.new_lc_id);
+          }
+          if (context.work_log_headers.lc_name) {
+            context.work_logs_sheet.getRange(change.row_number, context.work_log_headers.lc_name).setValue(change.new_lc_name);
+          }
+        }
         context.work_logs_sheet
           .getRange(change.row_number, context.work_log_headers.duration_minutes)
           .setValue(change.new_duration_minutes);
