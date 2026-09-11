@@ -204,11 +204,58 @@ async function buildLcPerformanceSummary(startDate, endDate) {
   };
 }
 
+function getInventoryStockStatus(stockQty, minStock) {
+  if (stockQty < 0) return 'negative';
+  if (stockQty <= minStock) return 'low';
+  return 'safe';
+}
+
+async function buildInventorySnapshot() {
+  const result = await db.query(`
+    SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status, updated_at
+    FROM inventory
+    WHERE (status = 'active' OR status IS NULL OR status = '')
+    ORDER BY category ASC, stock_item_name ASC
+  `);
+
+  const items = result.rows.map(row => {
+    const stockQty = Number(row.stock_qty || 0);
+    const minStock = Number(row.min_stock || 0);
+    const category = String(row.category || 'General').trim() || 'General';
+    return {
+      stock_item_id: row.stock_item_id,
+      stock_item_name: row.stock_item_name,
+      category,
+      unit: row.unit || 'pcs',
+      stock_qty: stockQty,
+      min_stock: minStock,
+      status: row.status || 'active',
+      stock_status: getInventoryStockStatus(stockQty, minStock),
+      updated_at: iso(row.updated_at)
+    };
+  });
+
+  const categories = Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort();
+
+  const summary = {
+    total_items: items.length,
+    safe_items: items.filter(i => i.stock_status === 'safe').length,
+    low_items: items.filter(i => i.stock_status === 'low').length,
+    negative_items: items.filter(i => i.stock_status === 'negative').length,
+    categories
+  };
+
+  return {
+    summary,
+    items
+  };
+}
+
 async function buildOwnerMirrorSnapshot(options = {}) {
   const period = options.period || 'today';
   const { startDate, endDate } = getOperationalDateRange(period, options.start_date, options.end_date);
 
-  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance] = await Promise.all([
+  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance, inventoryData] = await Promise.all([
     db.query(`
       SELECT room_id, room_name, status, start_time, booked_duration_minutes,
              scheduled_end_time, rate_per_hour, tv_device_id, updated_at
@@ -231,7 +278,12 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     `, [startDate, endDate]),
     getSyncStatus().catch(err => ({ error: err.message })),
     getOpenFnbOrders(),
-    buildLcPerformanceSummary(startDate, endDate)
+    buildLcPerformanceSummary(startDate, endDate),
+    buildInventorySnapshot().catch(err => ({
+      summary: { total_items: 0, safe_items: 0, low_items: 0, negative_items: 0, categories: [] },
+      items: [],
+      error: err.message
+    }))
   ]);
 
   const rooms = roomsRes.rows.map(room => {
@@ -375,6 +427,8 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     open_fnb_orders: openFnbOrders,
     transactions,
     cashier_closings: closings,
+    inventory_summary: inventoryData?.summary || { total_items: 0, safe_items: 0, low_items: 0, negative_items: 0, categories: [] },
+    inventory_items: inventoryData?.items || [],
     sync_status: outboxStatus
   };
 }

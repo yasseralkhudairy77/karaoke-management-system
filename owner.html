@@ -218,10 +218,54 @@
       text-transform: uppercase;
     }
 
-    .available { color: var(--green); }
-    .occupied { color: var(--red); }
-    .cleaning { color: var(--amber); }
+    .available, .safe { color: var(--green); }
+    .occupied, .negative { color: var(--red); }
+    .cleaning, .low { color: var(--amber); }
     .info { color: var(--purple); }
+
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .search-input, .select-filter {
+      background: var(--panel-soft);
+      border: 1px solid rgba(242, 196, 91, 0.28);
+      color: var(--text);
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-input:focus, .select-filter:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 10px rgba(242, 196, 91, 0.2);
+    }
+
+    .search-input {
+      flex: 1 1 200px;
+      min-width: 160px;
+    }
+
+    .select-filter {
+      cursor: pointer;
+    }
+
+    .select-filter option {
+      background: #18120b;
+      color: #fff7df;
+    }
+
+    .stock-qty-val {
+      font-weight: 800;
+      font-size: 1.05rem;
+    }
 
     .room-meta {
       color: var(--muted);
@@ -314,6 +358,7 @@
       { key: "overview", label: "Overview" },
       { key: "rooms", label: "Room" },
       { key: "transactions", label: "Transaksi" },
+      { key: "inventory", label: "Stok" },
       { key: "fnb", label: "F&B Terjual" },
       { key: "lc", label: "LC Performance" },
       { key: "closing", label: "Closing" },
@@ -322,6 +367,9 @@
     let activePeriod = new URLSearchParams(window.location.search).get("period") || "today";
     let activeTab = new URLSearchParams(window.location.search).get("tab") || "overview";
     let currentSnapshot = null;
+    let inventoryCategoryFilter = "all";
+    let inventoryStatusFilter = "all";
+    let inventorySearchKeyword = "";
 
     const formatCurrency = (value) => new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -544,6 +592,92 @@
       `;
     }
 
+    function renderInventory(snapshot) {
+      const summary = snapshot.inventory_summary || {};
+      const allItems = Array.isArray(snapshot.inventory_items)
+        ? snapshot.inventory_items
+        : (Array.isArray(snapshot.inventory?.items) ? snapshot.inventory.items : []);
+
+      const categories = Array.isArray(summary.categories) && summary.categories.length > 0
+        ? summary.categories
+        : Array.from(new Set(allItems.map(item => String(item.category || "General").trim()).filter(Boolean))).sort();
+
+      const filteredItems = allItems.filter(item => {
+        if (inventoryCategoryFilter !== "all") {
+          const itemCat = String(item.category || "General").trim().toLowerCase();
+          if (itemCat !== inventoryCategoryFilter.toLowerCase()) return false;
+        }
+        if (inventoryStatusFilter !== "all") {
+          if (item.stock_status !== inventoryStatusFilter) return false;
+        }
+        if (inventorySearchKeyword.trim()) {
+          const q = inventorySearchKeyword.trim().toLowerCase();
+          const matchName = String(item.stock_item_name || "").toLowerCase().includes(q);
+          const matchId = String(item.stock_item_id || "").toLowerCase().includes(q);
+          const matchCat = String(item.category || "").toLowerCase().includes(q);
+          if (!matchName && !matchId && !matchCat) return false;
+        }
+        return true;
+      });
+
+      return `
+        <section class="metrics">
+          ${metric("Total Item", `${formatNumber(summary.total_items || allItems.length)} item`, "Seluruh barang aktif")}
+          ${metric("Stok Aman", `${formatNumber(summary.safe_items || allItems.filter(i => i.stock_status === 'safe').length)} item`, "Di atas batas minimum")}
+          ${metric("Perlu Restock", `${formatNumber(summary.low_items || allItems.filter(i => i.stock_status === 'low').length)} item`, "Mendekati / batas minimum")}
+          ${metric("Kritis / Minus", `${formatNumber(summary.negative_items || allItems.filter(i => i.stock_status === 'negative').length)} item`, "Stok habis / minus")}
+        </section>
+        <section class="panel">
+          <h2>Stok Inventori</h2>
+          <div class="filter-bar">
+            <input type="search" class="search-input" id="inventorySearch" placeholder="🔍 Cari nama barang..." value="${safe(inventorySearchKeyword)}">
+            <select class="select-filter" id="inventoryCategoryFilter" aria-label="Filter Kategori">
+              <option value="all" ${inventoryCategoryFilter === "all" ? "selected" : ""}>📂 Semua Kategori (${allItems.length})</option>
+              ${categories.map(cat => {
+                const count = allItems.filter(i => String(i.category || "General").trim().toLowerCase() === cat.toLowerCase()).length;
+                return `<option value="${safe(cat)}" ${inventoryCategoryFilter.toLowerCase() === cat.toLowerCase() ? "selected" : ""}>${safe(cat)} (${count})</option>`;
+              }).join("")}
+            </select>
+            <select class="select-filter" id="inventoryStatusFilter" aria-label="Filter Status">
+              <option value="all" ${inventoryStatusFilter === "all" ? "selected" : ""}>⚡ Semua Status</option>
+              <option value="low" ${inventoryStatusFilter === "low" ? "selected" : ""}>⚠️ Menipis (Low Stock)</option>
+              <option value="negative" ${inventoryStatusFilter === "negative" ? "selected" : ""}>🚨 Kritis / Minus</option>
+              <option value="safe" ${inventoryStatusFilter === "safe" ? "selected" : ""}>✅ Stok Aman</option>
+            </select>
+            <div class="small">Menampilkan ${formatNumber(filteredItems.length)} dari ${formatNumber(allItems.length)} item</div>
+          </div>
+          ${table(
+            [
+              { label: "Nama Barang" },
+              { label: "Kategori" },
+              { label: "Sisa Stok", right: true },
+              { label: "Min. Stok", right: true },
+              { label: "Satuan" },
+              { label: "Status" },
+            ],
+            filteredItems.map(item => {
+              const tone = item.stock_status === "negative" ? "negative" : item.stock_status === "low" ? "low" : "safe";
+              const label = item.stock_status === "negative" ? "MINUS" : item.stock_status === "low" ? "MENIPIS" : "AMAN";
+              return `
+                <tr>
+                  <td>
+                    <strong>${safe(item.stock_item_name || "-")}</strong>
+                    <div class="small muted">${safe(item.stock_item_id || "-")}</div>
+                  </td>
+                  <td>${safe(item.category || "General")}</td>
+                  <td class="right"><span class="stock-qty-val ${tone}">${formatNumber(item.stock_qty)}</span></td>
+                  <td class="right">${formatNumber(item.min_stock)}</td>
+                  <td>${safe(item.unit || "pcs")}</td>
+                  <td><span class="badge ${tone}">${label}</span></td>
+                </tr>
+              `;
+            }),
+            "Tidak ada barang inventori yang cocok dengan filter."
+          )}
+        </section>
+      `;
+    }
+
     function renderFnb(snapshot) {
       const summary = snapshot.fnb_sold_summary || {};
       const items = summary.items || snapshot.fnb_sold_items || [];
@@ -654,6 +788,7 @@
         overview: renderOverview,
         rooms: renderRooms,
         transactions: renderTransactions,
+        inventory: renderInventory,
         fnb: renderFnb,
         lc: renderLc,
         closing: renderClosing,
@@ -691,6 +826,28 @@
         document.getElementById("lastUpdate").innerHTML = `<span class="error">${safe(error.message)}</span>`;
       }
     }
+
+    document.getElementById("content").addEventListener("input", (event) => {
+      if (event.target && event.target.id === "inventorySearch") {
+        inventorySearchKeyword = event.target.value;
+        renderContent();
+        const searchBox = document.getElementById("inventorySearch");
+        if (searchBox) {
+          searchBox.focus();
+          searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length);
+        }
+      }
+    });
+
+    document.getElementById("content").addEventListener("change", (event) => {
+      if (event.target && event.target.id === "inventoryCategoryFilter") {
+        inventoryCategoryFilter = event.target.value;
+        renderContent();
+      } else if (event.target && event.target.id === "inventoryStatusFilter") {
+        inventoryStatusFilter = event.target.value;
+        renderContent();
+      }
+    });
 
     document.getElementById("refreshButton").addEventListener("click", loadSnapshot);
     document.getElementById("periodButtons").addEventListener("click", (event) => {

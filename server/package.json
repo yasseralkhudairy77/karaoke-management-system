@@ -49,7 +49,8 @@
     "test:room-instant-ui": "node tests/room-countdown-instant-ui.test.js",
     "test:cancel-booking": "node tests/cancel-booking.test.js",
     "test:room-card-layout": "node tests/room-card-layout-fix.test.js",
-    "test:lc-full-billing": "node tests/lc-full-billing-free-room.test.js"
+    "test:lc-full-billing": "node tests/lc-full-billing-free-room.test.js",
+    "test:owner-mirror-inventory": "node tests/owner-mirror-inventory.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
