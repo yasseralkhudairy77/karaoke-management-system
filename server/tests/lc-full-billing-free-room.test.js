@@ -9,8 +9,9 @@ async function runTests() {
 
   await testExtendSessionSyncsLcWorkLogs();
   await testAdjustSessionTimeSyncsLcWorkLogs();
-  await testCloseSessionLcPaidFullDespiteFreeRoom();
-  await testAppJsAndAppsScriptConsistency();
+    await testCloseSessionLcPaidFullDespiteFreeRoom();
+    await testCloseSessionRespectsCustomLcDuration();
+    await testAppJsAndAppsScriptConsistency();
 
   console.log('✅ ALL LC Full Billing & Free Room Tests PASSED SUCCESSFULLY!');
 }
@@ -175,6 +176,8 @@ async function testAdjustSessionTimeSyncsLcWorkLogs() {
 async function testCloseSessionLcPaidFullDespiteFreeRoom() {
   const originalPoolConnect = db.pool.connect;
   const queries = [];
+  const now = new Date();
+  const sessionStartTime = new Date(now.getTime() - 300 * 60 * 1000);
   try {
     const mockClient = {
       query: async (sql, params = []) => {
@@ -188,9 +191,9 @@ async function testCloseSessionLcPaidFullDespiteFreeRoom() {
               room_id: 'ROOM-05',
               room_name: 'Ruangan 5 - VIP 5',
               status: 'occupied',
-              start_time: new Date('2026-09-10T20:00:00Z'),
+              start_time: sessionStartTime,
               booked_duration_minutes: 300,
-              scheduled_end_time: new Date('2026-09-11T01:00:00Z'),
+              scheduled_end_time: now,
               rate_per_hour: 135000
             }]
           };
@@ -220,7 +223,7 @@ async function testCloseSessionLcPaidFullDespiteFreeRoom() {
               room_id: 'ROOM-05',
               room_name: 'Ruangan 5 - VIP 5',
               rate_per_hour: 135000,
-              started_at: new Date('2026-09-10T20:00:00Z'),
+              started_at: sessionStartTime,
               ended_at: null,
               allocated_minutes: null
             }]
@@ -241,11 +244,11 @@ async function testCloseSessionLcPaidFullDespiteFreeRoom() {
               room_name: 'Ruangan 5 - VIP 5',
               lc_id: 'LC-01',
               lc_name: 'Bella',
-              duration_minutes: 180, // Sebelumnya tercatat 180m, tapi room 300m
+              duration_minutes: 300, // LC bertugas penuh 300m (5 jam)
               rate_per_hour: 135000,
-              rate: 405000,
+              rate: 675000,
               status: 'active',
-              created_at: new Date('2026-09-10T20:00:00Z')
+              created_at: sessionStartTime
             }]
           };
         }
@@ -276,7 +279,7 @@ async function testCloseSessionLcPaidFullDespiteFreeRoom() {
     assert.ok(insertTxQuery, 'Query INSERT INTO transactions wajib dieksekusi');
 
     // Kolom transactions: room_total (params[7]), fnb_total (params[8]), lc_total (params[9]), grand_total (params[10])
-    // billable_room_minutes (params[22]), free_room_minutes (params[23])
+    // billable_room_minutes (params[21]), free_room_minutes (params[22])
     const roomTotal = insertTxQuery.params[7];
     const lcTotal = insertTxQuery.params[9];
     const grandTotal = insertTxQuery.params[10];
@@ -290,6 +293,138 @@ async function testCloseSessionLcPaidFullDespiteFreeRoom() {
     assert.strictEqual(grandTotal, 540000 + 675000, 'Grand total harus Rp 1.215.000');
 
     console.log('  ✓ closeSession berhasil memastikan LC dibayar PENUH (Rp 675.000 / 5 jam) dan Free Room hanya memotong sewa room (Rp 540.000 / 4 jam)');
+  } finally {
+    db.pool.connect = originalPoolConnect;
+  }
+}
+
+async function testCloseSessionRespectsCustomLcDuration() {
+  const originalPoolConnect = db.pool.connect;
+  const queries = [];
+  const now = new Date();
+  const sessionStartTime = new Date(now.getTime() - 240 * 60 * 1000);
+  try {
+    const mockClient = {
+      query: async (sql, params = []) => {
+        const text = String(sql);
+        queries.push({ sql: text, params });
+
+        if (text.includes('SELECT * FROM rooms WHERE room_id = $1')) {
+          return {
+            rowCount: 1,
+            rows: [{
+              room_id: 'ROOM-VIP4',
+              room_name: 'VIP 4',
+              status: 'occupied',
+              start_time: sessionStartTime,
+              booked_duration_minutes: 240, // 4 jam
+              scheduled_end_time: now,
+              rate_per_hour: 135000
+            }]
+          };
+        }
+
+        if (text.includes('SELECT * FROM room_sessions')) {
+          return {
+            rowCount: 1,
+            rows: [{
+              session_id: 'SES-VIP4-TEST',
+              room_id: 'ROOM-VIP4',
+              booked_duration_minutes: 240,
+              billable_room_minutes: 240,
+              rate_per_hour: 135000,
+              booking_mode: 'regular'
+            }]
+          };
+        }
+
+        if (text.includes('SELECT * FROM room_session_segments')) {
+          return {
+            rowCount: 1,
+            rows: [{
+              segment_id: 'SEG-VIP4-1',
+              session_id: 'SES-VIP4-TEST',
+              sequence_no: 1,
+              room_id: 'ROOM-VIP4',
+              room_name: 'VIP 4',
+              rate_per_hour: 135000,
+              started_at: sessionStartTime,
+              ended_at: null,
+              allocated_minutes: null
+            }]
+          };
+        }
+
+        if (text.includes('SELECT order_id, order_total FROM fnb_orders')) {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (text.includes('SELECT') && text.includes('FROM lc_work_logs')) {
+          return {
+            rowCount: 1,
+            rows: [{
+              log_id: 'LCW-VIP4-LENI',
+              session_id: 'SES-VIP4-TEST',
+              room_id: 'ROOM-VIP4',
+              room_name: 'VIP 4',
+              lc_id: 'LC-LENI',
+              lc_name: 'Leni',
+              duration_minutes: 180, // Durasi LC diubah kasir di card jadi 3 jam (180 menit)
+              rate_per_hour: 135000,
+              rate: 405000,
+              status: 'active',
+              created_at: sessionStartTime
+            }]
+          };
+        }
+
+        return { rowCount: 1, rows: [] };
+      },
+      release: () => {}
+    };
+
+    db.pool.connect = async () => mockClient;
+
+    let responseData = null;
+    const req = {};
+    const res = {
+      json: (data) => { responseData = data; return data; },
+      status: () => res
+    };
+
+    await closeSession(req, res, {
+      room_id: 'ROOM-VIP4',
+      cashier_name: 'Kasir VIP'
+    });
+
+    assert.ok(responseData, 'Response harus ada');
+    assert.strictEqual(responseData.ok, true);
+
+    const insertTxQuery = queries.find(q => q.sql.includes('INSERT INTO transactions'));
+    assert.ok(insertTxQuery, 'Query INSERT INTO transactions wajib dieksekusi');
+
+    const roomTotal = insertTxQuery.params[7];
+    const lcTotal = insertTxQuery.params[9];
+    const grandTotal = insertTxQuery.params[10];
+
+    assert.strictEqual(roomTotal, 540000, 'Biaya room 4 jam x Rp 135.000 = Rp 540.000');
+    assert.strictEqual(lcTotal, 405000, 'Jasa LC WAJIB menghormati durasi kustom 3 jam x Rp 135.000 = Rp 405.000 (TIDAK tertimpa ke 4 jam)');
+    assert.strictEqual(grandTotal, 540000 + 405000, 'Grand total harus Rp 945.000');
+
+    // Pastikan receipt detail untuk LC Leni tetap 180 menit (3 jam)
+    const receiptLcItems = responseData.lc_details?.customer_items || responseData.lc_details?.items || [];
+    assert.strictEqual(receiptLcItems.length, 1, 'Harus ada 1 item LC pada receipt detail');
+    assert.strictEqual(Number(receiptLcItems[0].duration_minutes), 180, 'Durasi LC di receipt wajib 180 menit (3 jam)');
+    assert.strictEqual(Number(receiptLcItems[0].customer_charge_amount), 405000, 'Tagihan LC di receipt wajib Rp 405.000');
+
+    // Pastikan UPDATE lc_work_logs menyimpan duration_minutes: 180
+    const updateLcQuery = queries.find(q => q.sql.includes('UPDATE lc_work_logs') && q.sql.includes('duration_minutes = data.duration_minutes'));
+    assert.ok(updateLcQuery, 'Query UPDATE lc_work_logs wajib mengupdate duration_minutes');
+    const updateRecords = JSON.parse(updateLcQuery.params[3]);
+    assert.strictEqual(updateRecords[0].duration_minutes, 180, 'duration_minutes yang disimpan ke lc_work_logs harus 180');
+    assert.strictEqual(updateRecords[0].rate, 405000, 'rate yang disimpan ke lc_work_logs harus 405000');
+
+    console.log('  ✓ closeSession BERHASIL menghormati durasi kustom LC (3 jam / Rp 405.000) dan tidak menimpa ke durasi room (4 jam)');
   } finally {
     db.pool.connect = originalPoolConnect;
   }

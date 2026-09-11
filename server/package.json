@@ -48,7 +48,8 @@
     "test:backup-restore-ui": "node tests/backup-restore-ui.test.js",
     "test:room-instant-ui": "node tests/room-countdown-instant-ui.test.js",
     "test:cancel-booking": "node tests/cancel-booking.test.js",
-    "test:room-card-layout": "node tests/room-card-layout-fix.test.js"
+    "test:room-card-layout": "node tests/room-card-layout-fix.test.js",
+    "test:lc-full-billing": "node tests/lc-full-billing-free-room.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

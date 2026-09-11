@@ -11394,7 +11394,7 @@ function closeSession_(roomId, cashierName, requestPayload) {
           var log = uniqueLcLogsMap[selId];
           var curLcDur = Number(log.duration_minutes) || 0;
           var ratePerHour = Number(log.rate_per_hour) || 0;
-          var finalLcDur = Math.max(curLcDur, physicalRoomDuration);
+          var finalLcDur = curLcDur > 0 ? curLcDur : physicalRoomDuration;
           var finalRate = Math.ceil(finalLcDur / 60) * ratePerHour;
           totalLcCost += finalRate;
         });

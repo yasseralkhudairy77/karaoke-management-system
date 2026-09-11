@@ -1998,7 +1998,7 @@ async function closeSession(req, res, payload) {
           const lcRatePerHour = Number(row.rate_per_hour || 0);
           let extraMinutes = 0;
           if (!row.upfront_transaction_id) {
-            extraMinutes = totalBookedDuration;
+            extraMinutes = Number(row.duration_minutes || totalBookedDuration);
           } else if (extraRoomDuration > 0) {
             extraMinutes = extraRoomDuration;
           }
@@ -2161,6 +2161,15 @@ async function closeSession(req, res, payload) {
       await deductStockForRoomPackage(client, transactionPackageId, transactionPackageName, transactionId, cashierName);
     }
 
+    let passedAssignments = [];
+    try {
+      if (typeof payload.lc_assignments === 'string' && payload.lc_assignments.trim()) {
+        passedAssignments = JSON.parse(payload.lc_assignments);
+      } else if (Array.isArray(payload.lc_assignments)) {
+        passedAssignments = payload.lc_assignments;
+      }
+    } catch (e) {}
+
     const lcRes = await client.query(`
       SELECT
         log_id, session_id, room_id, room_name, lc_id, lc_name,
@@ -2176,17 +2185,24 @@ async function closeSession(req, res, payload) {
       return map;
     }, new Map()).values());
 
-    // Pastikan durasi LC aktif minimal mencakup jam riil sesi ruangan fisik (LC dibayar penuh, tidak terpotong free room)
+    // Durasi ruangan fisik hanya sebagai fallback jika LC belum memiliki durasi
     const totalPhysicalRoomMinutes = Math.max(
       0,
       Number(activeSession?.booked_duration_minutes || room.booked_duration_minutes || durationMinutes || 0)
     );
     uniqueLcRows.forEach(row => {
-      const curDur = Number(row.duration_minutes || 0);
-      if (curDur < totalPhysicalRoomMinutes) {
-        row.duration_minutes = totalPhysicalRoomMinutes;
-        row.rate = calculateLcCharge(totalPhysicalRoomMinutes, Number(row.rate_per_hour || 0));
+      const assignMeta = passedAssignments.find(a => a.lc_id === row.lc_id);
+      if (assignMeta && Number(assignMeta.duration_minutes) > 0) {
+        row.duration_minutes = Number(assignMeta.duration_minutes);
       }
+      if (assignMeta && Number(assignMeta.rate_per_hour) > 0) {
+        row.rate_per_hour = Number(assignMeta.rate_per_hour);
+      }
+      const curDur = Number(row.duration_minutes || 0);
+      if (curDur <= 0) {
+        row.duration_minutes = totalPhysicalRoomMinutes;
+      }
+      row.rate = calculateLcCharge(row.duration_minutes, Number(row.rate_per_hour || 0));
     });
 
     const packageLcRule = bookingMode === 'package'
@@ -2239,6 +2255,7 @@ async function closeSession(req, res, payload) {
       SET closed_at = CURRENT_TIMESTAMP,
           closed_transaction_id = $1,
           status = 'closed',
+          duration_minutes = data.duration_minutes,
           rate = data.rate,
           customer_charge_amount = data.customer_charge_amount,
           included_minutes = data.included_minutes,
@@ -2249,6 +2266,7 @@ async function closeSession(req, res, payload) {
         SELECT *
         FROM jsonb_to_recordset($4::jsonb) AS x(
           log_id varchar,
+          duration_minutes int,
           rate numeric,
           customer_charge_amount numeric,
           included_minutes int,
@@ -2266,6 +2284,7 @@ async function closeSession(req, res, payload) {
       roomId,
       JSON.stringify(allocatedLcRows.map(row => ({
         log_id: row.log_id,
+        duration_minutes: row.duration_minutes,
         rate: row.payable_amount,
         customer_charge_amount: row.customer_charge_amount,
         included_minutes: row.included_minutes,
