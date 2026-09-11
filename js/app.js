@@ -1755,7 +1755,7 @@ async function loadInventoryItems() {
 }
 
 async function fetchInventoryItemsFromApi() {
-  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems`);
+  const response = await fetch(`${API_BASE_URL}?action=getInventoryItems&status=all`);
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -2152,6 +2152,42 @@ async function executeStockAdjustment() {
     isSavingStockAdjustment = false;
     renderRooms();
   }
+}
+
+async function handleToggleInventoryItemStatus(stockItemId, targetStatus) {
+  const payload = {
+    action: "toggleInventoryItemStatus",
+    stock_item_id: stockItemId,
+    status: targetStatus,
+    cashier_name: getLoggedInOperatorName(),
+  };
+
+  const res = await postApiAction(payload);
+  if (!res || (res.ok !== true && res.success !== true)) {
+    throw new Error(res?.message || res?.error || "Gagal mengubah status material.");
+  }
+
+  const item = inventoryItems.find((i) => i.stock_item_id === stockItemId);
+  if (item) {
+    item.status = targetStatus;
+  }
+
+  menuItems.forEach((menu) => {
+    if (menu.stock_item_id === stockItemId) {
+      menu.status = targetStatus;
+    }
+  });
+
+  const statusLabel = targetStatus === "active" ? "Aktif" : "Non-Aktif";
+  const itemName = item?.stock_item_name || stockItemId;
+  showFloatingToast(`Material '${itemName}' sekarang ${statusLabel}.`, "success");
+
+  renderRooms();
+
+  loadInventoryItems().catch(() => {});
+  loadMenuItems().catch(() => {});
+
+  return res;
 }
 
 function openAddInventoryItemModal() {
@@ -4660,6 +4696,13 @@ function getFilteredMenuItems() {
   return menuItems.filter((menuItem) => {
     const classification = getFnbMenuClassification(menuItem);
     const isActive = String(menuItem.status || "").trim().toLowerCase() === "active";
+    let isStockActive = true;
+    if (menuItem.stock_item_id) {
+      const linkedInv = inventoryItems.find((inv) => String(inv.stock_item_id).trim() === String(menuItem.stock_item_id).trim());
+      if (linkedInv && String(linkedInv.status || "active").trim().toLowerCase() === "inactive") {
+        isStockActive = false;
+      }
+    }
     const matchesCategory = menuCategoryFilter === "all" ||
       (menuCategoryFilter === "favorites" && isFavoriteFnbMenuItem(menuItem)) ||
       classification.primary === menuCategoryFilter;
@@ -4672,7 +4715,7 @@ function getFilteredMenuItems() {
         .toLowerCase()
         .includes(normalizedSearch);
 
-    return isActive && matchesCategory && matchesSpirit && matchesSearch;
+    return isActive && isStockActive && matchesCategory && matchesSpirit && matchesSearch;
   });
 }
 
@@ -14087,6 +14130,11 @@ function createInventoryErpTableElement(sourceItems = null) {
     const tr = document.createElement("tr");
     tr.className = "erp-inventory-tr";
 
+    const isInactive = String(item.status || "active").toLowerCase() === "inactive";
+    if (isInactive) {
+      tr.classList.add("is-inactive");
+    }
+
     const skuTd = document.createElement("td");
     skuTd.innerHTML = `<span class="erp-sku-badge">${item.stock_item_id || "-"}</span>`;
 
@@ -14109,20 +14157,75 @@ function createInventoryErpTableElement(sourceItems = null) {
     minTd.textContent = `${Number(item.min_stock) || 0} ${item.unit || ""}`.trim();
 
     const statusTd = document.createElement("td");
-    const stockStatus = resolveInventoryItemStockStatus(item);
-    const statusSpan = document.createElement("span");
-    statusSpan.className = withStatusBadge(
-      `inventory-status ${getInventoryStockStatusClass(stockStatus)}`,
-      getInventoryStockStatusTone(stockStatus)
-    );
-    statusSpan.textContent = getInventoryStockStatusLabel(stockStatus);
-    statusTd.appendChild(statusSpan);
+    if (isInactive) {
+      const statusSpan = document.createElement("span");
+      statusSpan.className = "status-badge tone-inactive";
+      statusSpan.textContent = "Non-Aktif";
+      statusSpan.title = "Stok material dinonaktifkan (disembunyikan dari POS kasir)";
+      statusTd.appendChild(statusSpan);
+    } else {
+      const stockStatus = resolveInventoryItemStockStatus(item);
+      const statusSpan = document.createElement("span");
+      statusSpan.className = withStatusBadge(
+        `inventory-status ${getInventoryStockStatusClass(stockStatus)}`,
+        getInventoryStockStatusTone(stockStatus)
+      );
+      statusSpan.textContent = getInventoryStockStatusLabel(stockStatus);
+      statusTd.appendChild(statusSpan);
+    }
 
     const rowCells = [skuTd, nameTd, catTd, qtyTd, minTd, statusTd];
 
     if (canAdjustStock) {
       const actionTd = document.createElement("td");
       actionTd.style.textAlign = "right";
+
+      const actionGroup = document.createElement("div");
+      actionGroup.className = "erp-action-group";
+
+      // Modern Toggle Switch
+      const switchLabel = document.createElement("label");
+      switchLabel.className = "erp-switch";
+      switchLabel.title = isInactive
+        ? "Material Non-Aktif - Klik untuk aktifkan kembali"
+        : "Material Aktif - Klik untuk nonaktifkan";
+
+      const switchInput = document.createElement("input");
+      switchInput.type = "checkbox";
+      switchInput.className = "erp-switch-input";
+      switchInput.checked = !isInactive;
+
+      const switchSlider = document.createElement("span");
+      switchSlider.className = "erp-switch-slider";
+
+      switchLabel.append(switchInput, switchSlider);
+
+      switchInput.addEventListener("change", async () => {
+        const willBeActive = switchInput.checked;
+        const targetStatus = willBeActive ? "active" : "inactive";
+        const itemName = item.stock_item_name || item.stock_item_id || "Material";
+
+        if (!willBeActive) {
+          const confirmed = window.confirm(
+            `Nonaktifkan ${itemName}? Menu F&B terkait tidak akan bisa ditransaksikan oleh kasir.`
+          );
+          if (!confirmed) {
+            switchInput.checked = true;
+            return;
+          }
+        }
+
+        switchInput.disabled = true;
+        try {
+          await handleToggleInventoryItemStatus(item.stock_item_id, targetStatus);
+        } catch (err) {
+          switchInput.checked = !willBeActive;
+          showFloatingToast(`Gagal mengubah status: ${err.message}`, "error");
+        } finally {
+          switchInput.disabled = false;
+        }
+      });
+
       const adjustBtn = document.createElement("button");
       adjustBtn.className = "erp-quick-adjust-btn";
       adjustBtn.type = "button";
@@ -14131,7 +14234,9 @@ function createInventoryErpTableElement(sourceItems = null) {
         updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
         focusStockAdjustmentField(".stock-adjustment-quantity");
       };
-      actionTd.appendChild(adjustBtn);
+
+      actionGroup.append(switchLabel, adjustBtn);
+      actionTd.appendChild(actionGroup);
       rowCells.push(actionTd);
     }
 

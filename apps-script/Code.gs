@@ -1192,6 +1192,14 @@ function doPost(e) {
       ));
     }
 
+    if (action === "toggleInventoryItemStatus") {
+      return jsonResponse(toggleInventoryItemStatus_(
+        payload.stock_item_id,
+        payload.status,
+        payload.cashier_name
+      ));
+    }
+
     if (action === "initializeStockFromJul31") {
       return jsonResponse(initializeStockFromJul31_(payload));
     }
@@ -5810,6 +5818,84 @@ function adjustInventoryStock_(stockItemId, adjustmentType, quantity, note, cash
       },
       item: updatedItem,
       movement: movement,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function toggleInventoryItemStatus_(stockItemId, status, cashierName) {
+  var normalizedStockItemId = String(stockItemId || "").trim();
+  var normalizedStatus = String(status || "").trim().toLowerCase();
+
+  if (!normalizedStockItemId) {
+    return {
+      ok: false,
+      error: "stock_item_id wajib diisi.",
+    };
+  }
+
+  if (normalizedStatus !== "active" && normalizedStatus !== "inactive") {
+    return {
+      ok: false,
+      error: "Status harus bernilai 'active' atau 'inactive'.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses pembaruan data lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var rowNumber = findInventoryRowByStockItemId_(normalizedStockItemId, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        error: "Item stok tidak ditemukan.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+
+    if (inventoryHeaderMap.status) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.status).setValue(normalizedStatus);
+    }
+    if (inventoryHeaderMap.updated_at) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+    }
+
+    var updatedMenusCount = 0;
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet ? SpreadsheetApp.getActiveSpreadsheet() : null;
+      var menuSheet = ss ? (ss.getSheetByName("Menu") || ss.getSheetByName("menu")) : null;
+      if (menuSheet) {
+        var menuHeaderMap = getHeaderMap_(menuSheet);
+        if (menuHeaderMap.stock_item_id && menuHeaderMap.status) {
+          var menuData = menuSheet.getDataRange().getValues();
+          for (var i = 1; i < menuData.length; i++) {
+            var rowStockItemId = String(menuData[i][menuHeaderMap.stock_item_id - 1] || "").trim();
+            if (rowStockItemId === normalizedStockItemId) {
+              menuSheet.getRange(i + 1, menuHeaderMap.status).setValue(normalizedStatus);
+              if (menuHeaderMap.updated_at) {
+                menuSheet.getRange(i + 1, menuHeaderMap.updated_at).setValue(now);
+              }
+              updatedMenusCount++;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    return {
+      ok: true,
+      message: "Status material berhasil diubah menjadi " + (normalizedStatus === "active" ? "Aktif" : "Non-Aktif") + ".",
+      stock_item_id: normalizedStockItemId,
+      status: normalizedStatus,
+      updated_menus_count: updatedMenusCount
     };
   } finally {
     lock.releaseLock();

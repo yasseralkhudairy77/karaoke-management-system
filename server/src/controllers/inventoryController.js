@@ -419,6 +419,83 @@ async function receiveGoodsBatch(req, res, payload) {
   }
 }
 
+async function toggleInventoryItemStatus(req, res, payload = {}) {
+  let client;
+  try {
+    const data = payload && Object.keys(payload).length > 0 ? payload : (req.body || {});
+    const stockItemId = String(data.stock_item_id || data.itemId || '').trim();
+    if (!stockItemId) {
+      return errorResponse(res, 'stock_item_id wajib diisi.');
+    }
+
+    let targetStatus = '';
+    if (typeof data.status === 'string') {
+      targetStatus = data.status.trim().toLowerCase();
+    } else if (typeof data.status === 'boolean') {
+      targetStatus = data.status ? 'active' : 'inactive';
+    } else if (typeof data.is_active === 'boolean') {
+      targetStatus = data.is_active ? 'active' : 'inactive';
+    }
+
+    if (targetStatus !== 'active' && targetStatus !== 'inactive') {
+      return errorResponse(res, "Status harus bernilai 'active' atau 'inactive'.");
+    }
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const invRes = await client.query('SELECT stock_item_id, stock_item_name, status FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+    if (invRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return errorResponse(res, `Material dengan ID '${stockItemId}' tidak ditemukan.`);
+    }
+
+    const currentItem = invRes.rows[0];
+    const oldStatus = currentItem.status || 'active';
+
+    await client.query('UPDATE inventory SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [targetStatus, stockItemId]);
+
+    const menuUpdateRes = await client.query('UPDATE menu SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2 RETURNING menu_id, menu_name', [targetStatus, stockItemId]);
+
+    const changedBy = data.changed_by || data.cashier_name || req.user?.username || 'Operator';
+    try {
+      await client.query(`
+        INSERT INTO master_data_audit_logs (
+          log_id, entity_type, entity_id, entity_name, action_type, old_value_json, new_value_json, changed_by, note, result
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `, [
+        `MDA-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        'inventory',
+        stockItemId,
+        currentItem.stock_item_name,
+        'toggle_status',
+        JSON.stringify({ status: oldStatus }),
+        JSON.stringify({ status: targetStatus, updated_menus_count: menuUpdateRes.rowCount }),
+        changedBy,
+        `Status material diubah menjadi ${targetStatus}`,
+        'success'
+      ]);
+    } catch (auditErr) {
+      console.warn('[Audit Log Warning]', auditErr.message);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Status material '${currentItem.stock_item_name}' berhasil diubah menjadi ${targetStatus === 'active' ? 'Aktif' : 'Non-Aktif'}.`,
+      stock_item_id: stockItemId,
+      status: targetStatus,
+      updated_menus_count: menuUpdateRes.rowCount,
+      affected_menus: menuUpdateRes.rows
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => { });
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getInventoryItems,
   getInventoryStatus,
@@ -432,4 +509,5 @@ module.exports = {
   approveInventoryAudit,
   adjustInventoryStock,
   receiveGoodsBatch,
+  toggleInventoryItemStatus,
 };

@@ -206,6 +206,8 @@ async function handlePostAction(action, req, res, payload) {
       return fnbController.settleGeneralFnbBill(req, res, payload);
     case 'adjustInventoryStock':
       return inventoryController.adjustInventoryStock(req, res, payload);
+    case 'toggleInventoryItemStatus':
+      return inventoryController.toggleInventoryItemStatus(req, res, payload);
     case 'receiveGoodsBatch':
       return inventoryController.receiveGoodsBatch(req, res, payload);
     case 'createInventoryAudit':
@@ -403,6 +405,7 @@ router.post('/exec', async (req, res) => {
 router.get('/rooms', (req, res) => roomsController.getRooms(req, res));
 router.get('/menu', (req, res) => fnbController.getMenuItems(req, res));
 router.get('/inventory', (req, res) => inventoryController.getInventoryItems(req, res));
+router.post('/inventory/toggle-status', (req, res) => inventoryController.toggleInventoryItemStatus(req, res, req.body));
 router.get('/transactions', (req, res) => transactionsController.getTodayTransactions(req, res));
 router.get('/closings', (req, res) => closingsController.getTodayCashierClosings(req, res));
 router.get('/backup/status', (req, res) => backupController.getDatabaseStatus(req, res));
