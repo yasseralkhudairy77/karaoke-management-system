@@ -2177,7 +2177,7 @@ async function closeSession(req, res, payload) {
       FROM lc_work_logs
       WHERE closed_at IS NULL AND status != 'cancelled'
         AND ($1::varchar IS NOT NULL AND session_id = $1 OR session_id IS NULL AND room_id = $2)
-      ORDER BY created_at ASC
+      ORDER BY created_at DESC, log_id DESC
     `, [activeSession?.session_id || null, roomId]);
     const uniqueLcRows = Array.from(lcRes.rows.reduce((map, row) => {
       if (!row.lc_id || map.has(row.lc_id)) return map;

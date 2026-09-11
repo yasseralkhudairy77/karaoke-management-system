@@ -570,15 +570,18 @@ async function getTodayTransactions(req, res) {
     const lcLogsByTxId = new Map();
     if (txIds.length > 0) {
       const lcRes = await db.query(`
-        SELECT closed_transaction_id, lc_id, lc_name, duration_minutes, rate_per_hour, rate, customer_charge_amount
+        SELECT closed_transaction_id, lc_id, lc_name, duration_minutes, upfront_transaction_id, rate_per_hour, rate, customer_charge_amount
         FROM lc_work_logs
-        WHERE closed_transaction_id = ANY($1) AND status != 'cancelled'
-        ORDER BY created_at ASC, log_id ASC
+        WHERE (closed_transaction_id = ANY($1) OR upfront_transaction_id = ANY($1)) AND status != 'cancelled'
+        ORDER BY created_at DESC, log_id DESC
       `, [txIds]);
       lcRes.rows.forEach(r => {
-        const txId = r.closed_transaction_id;
+        const txId = r.closed_transaction_id || r.upfront_transaction_id;
         if (!lcLogsByTxId.has(txId)) lcLogsByTxId.set(txId, []);
-        lcLogsByTxId.get(txId).push(r);
+        const existingLogs = lcLogsByTxId.get(txId);
+        if (!existingLogs.some(l => l.lc_id === r.lc_id)) {
+          existingLogs.push(r);
+        }
       });
     }
 
@@ -618,6 +621,15 @@ async function getTodayTransactions(req, res) {
       serialized.lc_duration_minutes = totalLcMinutes;
       serialized.lc_count = lcLogs.length;
       serialized.lc_logs = lcLogs;
+      if (lcLogs.length > 0) {
+        serialized.lc_details = {
+          detail_available: true,
+          lc_logs: lcLogs,
+          items: lcLogs,
+          customer_items: lcLogs.filter(l => Number(l.customer_charge_amount || 0) > 0),
+          total: Number(row.lc_total || 0)
+        };
+      }
 
       return serialized;
     });
@@ -1890,8 +1902,8 @@ async function getTransactionLcDetails(req, res) {
     const trx = trxRes.rows[0];
     let logsRes = await db.query(`
       SELECT * FROM lc_work_logs
-      WHERE closed_transaction_id = $1 AND status != 'cancelled'
-      ORDER BY created_at ASC, log_id ASC
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1) AND status != 'cancelled'
+      ORDER BY created_at DESC, log_id DESC
     `, [transactionId]);
 
     // Fallback read-only untuk transaksi lama sebelum kolom relasi langsung tersedia.
@@ -1902,7 +1914,7 @@ async function getTransactionLcDetails(req, res) {
           AND created_at >= $2::timestamptz
           AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
           AND status != 'cancelled'
-        ORDER BY created_at ASC, log_id ASC
+        ORDER BY created_at DESC, log_id DESC
         LIMIT 20
       `, [trx.room_id, trx.start_time, trx.end_time]);
     }
@@ -2000,8 +2012,9 @@ async function updateTransactionLcDurations(req, res, payload) {
 
     let logsRes = await client.query(`
       SELECT * FROM lc_work_logs
-      WHERE closed_transaction_id = $1 AND status != 'cancelled'
-      ORDER BY created_at ASC, log_id ASC
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1)
+        AND status != 'cancelled'
+      ORDER BY created_at DESC, log_id DESC
       FOR UPDATE
     `, [transactionId]);
 
@@ -2014,7 +2027,7 @@ async function updateTransactionLcDurations(req, res, payload) {
           AND created_at >= $2::timestamptz
           AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
           AND status != 'cancelled'
-        ORDER BY created_at ASC, log_id ASC
+        ORDER BY created_at DESC, log_id DESC
         FOR UPDATE
       `, [trx.room_id, trx.start_time, trx.end_time]);
       if (logsRes.rowCount > 0) {
@@ -2053,10 +2066,8 @@ async function updateTransactionLcDurations(req, res, payload) {
     const editedLogs = [];
     const newItems = [];
     for (const log of uniqueLogs) {
-      const item = updates.find(update => (
-        (update.log_id && String(update.log_id) === String(log.log_id))
-        || (!update.log_id && update.lc_id && String(update.lc_id) === String(log.lc_id))
-      ));
+      const item = updates.find(update => (update.log_id && String(update.log_id) === String(log.log_id)))
+        || updates.find(update => (update.lc_id && String(update.lc_id) === String(log.lc_id)));
       const duration = Math.round(Number(item?.duration_minutes ?? log.duration_minutes));
       if (!Number.isFinite(duration) || duration < 30 || duration > 720 || duration % 30 !== 0) {
         throw new Error(`Durasi ${log.lc_name || log.lc_id} harus kelipatan 30 menit antara 30 menit sampai 12 jam.`);
@@ -2104,8 +2115,9 @@ async function updateTransactionLcDurations(req, res, payload) {
             included_minutes = $7,
             extra_minutes = $8,
             billing_source = $9,
-            package_id = $10
-        WHERE log_id = $11 AND closed_transaction_id = $12 AND status <> 'cancelled'
+            package_id = $10,
+            closed_transaction_id = COALESCE(closed_transaction_id, $12)
+        WHERE log_id = $11 AND status <> 'cancelled'
       `, [
         item.lc_id,
         item.lc_name,
@@ -2183,6 +2195,27 @@ async function updateTransactionLcDurations(req, res, payload) {
       new_value: { lc_total: lcTotal, grand_total: grandTotal, items: newItems }
     });
 
+    const normalizedLogs = allocatedItems.map(row => normalizeLcBillingRow(row, transactionIsPackage));
+    const itemTotal = normalizedLogs.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0);
+    const payableTotal = normalizedLogs.reduce((total, row) => total + Number(row.payable_amount || row.rate || 0), 0);
+    const lcDetails = {
+      detail_available: normalizedLogs.length > 0,
+      lc_logs: normalizedLogs,
+      items: normalizedLogs,
+      customer_items: normalizedLogs.filter(row => Number(row.customer_charge_amount || 0) > 0),
+      item_total: itemTotal,
+      payable_total: payableTotal,
+      included_total: payableTotal - itemTotal,
+      billing_adjustment: lcTotal - itemTotal,
+      total: lcTotal
+    };
+
+    const serializedTransaction = {
+      ...serializeTransaction(updatedTransaction),
+      lc_details: lcDetails,
+      lc_logs: normalizedLogs
+    };
+
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
     await client.query(`
       INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
@@ -2190,18 +2223,19 @@ async function updateTransactionLcDurations(req, res, payload) {
       ON CONFLICT (entity_type, entity_id, action) DO UPDATE
       SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0,
           last_attempt_at = NULL, error_message = NULL
-    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+    `, [transactionId, JSON.stringify(serializedTransaction)]);
 
     await client.query('COMMIT');
     return successResponse(res, {
       message: 'Durasi LC dan total tagihan berhasil diperbarui.',
-      transaction: serializeTransaction(updatedTransaction),
+      transaction: serializedTransaction,
       transaction_id: transactionId,
       old_lc_total: oldLcTotal,
       lc_total: lcTotal,
       difference: lcTotal - oldLcTotal,
       grand_total: grandTotal,
-      lc_logs: newItems,
+      lc_logs: normalizedLogs,
+      lc_details: lcDetails,
       can_edit: true,
       requires_admin_pin: false
     });

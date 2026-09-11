@@ -17,11 +17,17 @@ export function buildReceiptData(transaction, options = {}) {
   const normalizedFnbOrders = normalizeFnbOrders(fnbOrders);
   const totals = normalizeTotals(safeTransaction);
 
+  const rawLcDetails = options.lcDetails
+    ?? safeTransaction.lc_details
+    ?? (Array.isArray(safeTransaction.lc_logs) && safeTransaction.lc_logs.length > 0
+        ? { lc_logs: safeTransaction.lc_logs, detail_available: true }
+        : null);
+
   return {
     business: normalizeBusiness(options.business),
     transaction: normalizeTransaction(safeTransaction),
     room: normalizeRoom(safeTransaction),
-    lc: normalizeLcDetails(options.lcDetails ?? safeTransaction.lc_details, totals.lcTotal),
+    lc: normalizeLcDetails(rawLcDetails, totals.lcTotal),
     fnb: {
       hasFnb: getNumber(safeTransaction.fnb_total) > 0 || normalizedFnbOrders.length > 0,
       orderIds,

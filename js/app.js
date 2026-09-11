@@ -3970,17 +3970,28 @@ async function prepareReceiptTransaction(transaction) {
     return null;
   }
 
-  const needsFnb = transactionHasFnbForReceipt(transaction)
-    && !transactionHasLoadedFnbDetails(transaction);
-  const needsLc = transactionHasLcForReceipt(transaction)
-    && !transactionHasLoadedLcReceiptDetails(transaction);
+  const transactionId = transaction?.transaction_id || "";
+  let currentTx = transaction;
+  if (transactionId) {
+    if (selectedReceiptTransaction?.transaction_id === transactionId) {
+      currentTx = selectedReceiptTransaction;
+    } else {
+      const foundInToday = todayTransactions.find((t) => t?.transaction_id === transactionId);
+      if (foundInToday) currentTx = foundInToday;
+    }
+  }
+
+  const needsFnb = transactionHasFnbForReceipt(currentTx)
+    && !transactionHasLoadedFnbDetails(currentTx);
+  const needsLc = transactionHasLcForReceipt(currentTx)
+    && !transactionHasLoadedLcReceiptDetails(currentTx);
 
   if (needsFnb || needsLc) {
     showInlineNotice("Memuat rincian struk...");
-    await loadReceiptDetailsForTransaction(transaction);
+    await loadReceiptDetailsForTransaction(currentTx);
   }
 
-  return transaction;
+  return currentTx;
 }
 
 function normalizeReceiptPrintAudit(audit) {
@@ -6388,11 +6399,25 @@ function getReceiptLcDetails(transaction) {
   if (
     transactionId
     && Object.prototype.hasOwnProperty.call(transactionLcReceiptDetails, transactionId)
+    && transactionLcReceiptDetails[transactionId]
   ) {
     return transactionLcReceiptDetails[transactionId];
   }
 
-  return transaction?.lc_details || null;
+  if (transaction?.lc_details) {
+    return transaction.lc_details;
+  }
+
+  if (Array.isArray(transaction?.lc_logs) && transaction.lc_logs.length > 0) {
+    return {
+      detail_available: true,
+      lc_logs: transaction.lc_logs,
+      items: transaction.lc_logs,
+      customer_items: transaction.lc_logs.filter((log) => Number(log.customer_charge_amount || 0) > 0),
+    };
+  }
+
+  return null;
 }
 
 function transactionHasLoadedLcReceiptDetails(transaction) {
@@ -8351,18 +8376,30 @@ function mergeUpdatedTransactionIntoState(updatedTransaction) {
   }
 
   const transactionId = updatedTransaction.transaction_id;
-  delete transactionLcReceiptDetails[transactionId];
+  if (updatedTransaction.lc_details) {
+    transactionLcReceiptDetails[transactionId] = updatedTransaction.lc_details;
+  } else {
+    delete transactionLcReceiptDetails[transactionId];
+  }
   delete transactionFnbDetails[transactionId];
-  const mergeTransaction = (existing) => existing?.transaction_id === transactionId
-    ? { ...existing, ...updatedTransaction }
-    : existing;
+  const mergeTransaction = (existing) => {
+    if (existing?.transaction_id !== transactionId) return existing;
+    const merged = { ...existing, ...updatedTransaction };
+    if (updatedTransaction.lc_details) {
+      merged.lc_details = updatedTransaction.lc_details;
+    }
+    if (updatedTransaction.lc_logs) {
+      merged.lc_logs = updatedTransaction.lc_logs;
+    }
+    return merged;
+  };
 
   todayTransactions = todayTransactions.map(mergeTransaction);
   if (lastTransaction?.transaction_id === transactionId) {
-    lastTransaction = { ...lastTransaction, ...updatedTransaction };
+    lastTransaction = mergeTransaction(lastTransaction);
   }
   if (selectedReceiptTransaction?.transaction_id === transactionId) {
-    selectedReceiptTransaction = { ...selectedReceiptTransaction, ...updatedTransaction };
+    selectedReceiptTransaction = mergeTransaction(selectedReceiptTransaction);
   }
 }
 
@@ -8411,10 +8448,20 @@ async function saveLcDurationEditor() {
       throw new Error(data?.error || "Gagal memperbarui durasi LC.");
     }
 
-    mergeUpdatedTransactionIntoState(data.transaction);
+    const updatedTx = {
+      ...(data.transaction || {}),
+      transaction_id: data.transaction?.transaction_id || editor.transaction_id,
+      lc_details: data.lc_details || data.transaction?.lc_details || null,
+      lc_logs: data.lc_logs || data.transaction?.lc_logs || null,
+    };
+
+    if (updatedTx.lc_details) {
+      transactionLcReceiptDetails[updatedTx.transaction_id] = updatedTx.lc_details;
+    }
+    mergeUpdatedTransactionIntoState(updatedTx);
     lcDurationEditor = null;
     showInlineNotice(data.message || "Durasi LC berhasil diperbarui.", "success");
-    await loadReceiptDetailsForTransaction(data.transaction);
+    await loadReceiptDetailsForTransaction(updatedTx);
   } catch (error) {
     lcDurationEditor = {
       ...editor,
