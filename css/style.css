@@ -815,7 +815,7 @@ body::after {
 
 .rooms-tab-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 18px;
 }
 
@@ -11368,7 +11368,7 @@ textarea.action-confirmation-input {
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 0 24px rgba(225, 29, 72, 0.22) !important;
   position: relative;
   overflow: hidden;
-  padding: 16px !important;
+  padding: 14px 12px !important;
   box-sizing: border-box !important;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -11380,6 +11380,8 @@ textarea.action-confirmation-input {
 
 .room-card.occupied .room-meta {
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
 }
 
@@ -11388,9 +11390,11 @@ textarea.action-confirmation-input {
   background: rgba(0, 0, 0, 0.28) !important;
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   border-radius: 10px !important;
-  padding: 10px 12px !important;
-  gap: 6px !important;
+  padding: 8px 10px !important;
+  gap: 5px !important;
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
   margin: 0 !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
@@ -11400,21 +11404,28 @@ textarea.action-confirmation-input {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
+  gap: 8px !important;
   padding: 2px 0 !important;
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
 }
 
 .room-card.occupied .room-booking-label {
   color: rgba(255, 255, 255, 0.65) !important;
-  font-size: 0.82rem !important;
+  font-size: 0.8rem !important;
   font-weight: 700 !important;
+  flex-shrink: 0 !important;
 }
 
 .room-card.occupied .room-booking-value {
   color: #ffffff !important;
-  font-size: 0.88rem !important;
+  font-size: 0.84rem !important;
   font-weight: 800 !important;
+  text-align: right !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 
 /* Digital LED Countdown Display inside Occupied Card */
@@ -11427,8 +11438,10 @@ textarea.action-confirmation-input {
   border: 1px solid rgba(255, 255, 255, 0.14) !important;
   border-radius: 8px !important;
   padding: 6px 10px !important;
-  margin-top: 6px !important;
+  margin-top: 5px !important;
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35) !important;
 }
@@ -11464,13 +11477,15 @@ textarea.action-confirmation-input {
 
 /* Redesigned F&B Breakdown Panel */
 .room-card-fnb-breakdown {
-  margin-top: 8px !important;
-  padding: 8px 12px !important;
+  margin-top: 7px !important;
+  padding: 7px 10px !important;
   background: rgba(0, 0, 0, 0.32) !important;
   border-radius: 8px !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  font-size: 0.8rem !important;
+  font-size: 0.78rem !important;
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
 }
@@ -11479,65 +11494,86 @@ textarea.action-confirmation-input {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
+  gap: 6px !important;
   font-weight: 800 !important;
   color: #fef08a !important;
-  font-size: 0.82rem !important;
-  margin-bottom: 6px !important;
-  padding-bottom: 4px !important;
+  font-size: 0.78rem !important;
+  margin-bottom: 5px !important;
+  padding-bottom: 3px !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.fnb-breakdown-title > span:first-child {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
 }
 
 .fnb-count-pill {
-  font-size: 0.72rem !important;
-  padding: 1px 6px !important;
+  font-size: 0.7rem !important;
+  padding: 1px 5px !important;
   border-radius: 10px !important;
   background: rgba(254, 240, 138, 0.2) !important;
   color: #fef08a !important;
   border: 1px solid rgba(254, 240, 138, 0.35) !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
 }
 
 .fnb-breakdown-list {
   display: flex !important;
   flex-direction: column !important;
-  gap: 4px !important;
+  gap: 3px !important;
   max-height: none !important;
   overflow: visible !important;
   padding-right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .fnb-breakdown-item {
   display: flex !important;
   align-items: baseline !important;
-  gap: 4px !important;
+  gap: 3px !important;
   color: rgba(255, 255, 255, 0.9) !important;
-  font-size: 0.78rem !important;
+  font-size: 0.75rem !important;
   line-height: 1.35 !important;
   padding: 1px 0 !important;
   width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
 }
 
 .fnb-breakdown-item-name {
   color: rgba(255, 255, 255, 0.95) !important;
   font-weight: 700 !important;
-  max-width: 48% !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
-  flex-shrink: 1 !important;
 }
 
 .fnb-breakdown-item-qty {
   color: #93c5fd !important;
-  font-size: 0.74rem !important;
+  font-size: 0.7rem !important;
   font-weight: 800 !important;
   flex-shrink: 0 !important;
 }
 
 .fnb-breakdown-item-dots {
-  flex: 1 1 auto !important;
+  flex: 0 1 12px !important;
+  min-width: 3px !important;
   border-bottom: 1px dotted rgba(255, 255, 255, 0.35) !important;
-  min-width: 6px !important;
   height: 1px !important;
   margin: 0 1px 3px 1px !important;
 }
@@ -11546,30 +11582,38 @@ textarea.action-confirmation-input {
   flex-shrink: 0 !important;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   color: #fef08a !important;
-  font-size: 0.8rem !important;
+  font-size: 0.76rem !important;
   font-weight: 800 !important;
   text-align: right !important;
+  white-space: nowrap !important;
 }
 
 .fnb-breakdown-footer {
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
+  gap: 6px !important;
   font-weight: 900 !important;
   color: #34d399 !important;
-  margin-top: 6px !important;
-  padding-top: 6px !important;
+  margin-top: 5px !important;
+  padding-top: 5px !important;
   border-top: 1px dashed rgba(52, 211, 153, 0.4) !important;
-  font-size: 0.88rem !important;
+  font-size: 0.82rem !important;
   line-height: 1.2 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .fnb-breakdown-total {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   color: #34d399 !important;
   font-weight: 950 !important;
-  font-size: 0.92rem !important;
+  font-size: 0.88rem !important;
   text-align: right !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 
 /* Rate badge in card */
