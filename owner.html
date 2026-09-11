@@ -593,6 +593,23 @@
     }
 
     function renderInventory(snapshot) {
+      const hasInventoryData = snapshot.inventory_items !== undefined || snapshot.inventory_summary !== undefined;
+      if (!hasInventoryData) {
+        return `
+          <section class="panel">
+            <h2>Stok Inventori</h2>
+            <div class="empty" style="text-align: center; padding: 36px 16px;">
+              <p style="font-size: 1.15rem; font-weight: 800; color: var(--amber); margin-bottom: 8px;">⏳ Menunggu Pengiriman Snapshot Stok dari Server Kasir Lokal</p>
+              <p class="muted" style="max-width: 600px; margin: 0 auto 16px; line-height: 1.5;">
+                Snapshot yang tersimpan di cloud saat ini dikirim oleh server kasir sebelum pembaruan fitur stok diaktifkan.
+                Begitu server kasir lokal di-restart atau script snapshot berjalan berikutnya, seluruh data stok barang fisik akan otomatis tampil di sini.
+              </p>
+              <button type="button" onclick="loadSnapshot()">Cek Pembaruan Snapshot</button>
+            </div>
+          </section>
+        `;
+      }
+
       const summary = snapshot.inventory_summary || {};
       const allItems = Array.isArray(snapshot.inventory_items)
         ? snapshot.inventory_items
