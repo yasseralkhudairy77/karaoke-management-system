@@ -62,7 +62,8 @@ async function runTests() {
   const mockTransaction = {
     transaction_id: 'TRX-TEMP-CLOSING-123',
     payment_status: 'unpaid',
-    is_voided: false
+    is_voided: false,
+    fnb_order_ids: 'FNB-ORDER-1'
   };
 
   const mockFnbOrders = [
@@ -94,7 +95,7 @@ async function runTests() {
       }
 
       // SELECT transactions FOR UPDATE
-      if (text.includes('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE')) {
+      if (text.includes('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE') || text.includes('SELECT * FROM transactions WHERE transaction_id = $1')) {
         return { rows: [mockTransaction], rowCount: 1 };
       }
 
@@ -114,6 +115,11 @@ async function runTests() {
       if (text.includes('UPDATE fnb_orders') && text.includes("SET order_status = 'open'")) {
         mockFnbOrders.forEach(o => { o.order_status = 'open'; });
         return { rows: mockFnbOrders, rowCount: mockFnbOrders.length };
+      }
+
+      // UPDATE fnb_orders (billed)
+      if (text.includes('UPDATE fnb_orders') && text.includes("SET order_status = 'billed'")) {
+        return { rows: [], rowCount: 1 };
       }
 
       // UPDATE lc_work_logs (reopen)

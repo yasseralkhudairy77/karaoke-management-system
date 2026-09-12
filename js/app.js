@@ -5244,9 +5244,18 @@ function isFnbOrderForActiveRoomSession(order, room, roomStartTime = "") {
 
 function mergeOpenFnbOrdersForRoom(room, roomStartTime = "") {
   const merged = new Map();
+  const roomStartMs = room?.start_time ? new Date(room.start_time).getTime() : 0;
+
   [...openFnbOrders, ...parseRoomOpenFnbOrders(room)].forEach((order) => {
     if (!isFnbOrderForActiveRoomSession(order, room, roomStartTime)) {
       return;
+    }
+    // Proteksi: Jangan tampilkan order masa lampau yang dibuat sebelum sesi aktif kamar ini dimulai
+    if (roomStartMs > 0 && order.created_at) {
+      const orderMs = new Date(order.created_at).getTime();
+      if (!Number.isNaN(orderMs) && orderMs < (roomStartMs - 120000)) {
+        return;
+      }
     }
     merged.set(order.order_id || `${order.room_id}-${order.created_at}-${merged.size}`, order);
   });

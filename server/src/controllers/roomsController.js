@@ -314,6 +314,22 @@ async function getRooms(req, res) {
       ORDER BY created_at ASC
     `);
 
+    // Sanitasi otomatis: Pastikan pesanan lampau (sebelum start_time sesi aktif) berstatus 'billed'
+    try {
+      await db.query(`
+        UPDATE fnb_orders fo
+        SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP
+        FROM rooms r
+        WHERE fo.room_id = r.room_id
+          AND fo.order_status = 'open'
+          AND r.status = 'occupied'
+          AND r.start_time IS NOT NULL
+          AND fo.created_at < (r.start_time - INTERVAL '2 minutes')
+      `);
+    } catch (cleanErr) {
+      console.warn('Sanitasi open F&B lampau dilewati:', cleanErr.message);
+    }
+
     const openFnbOrdersRes = await db.query(`
       SELECT *
       FROM fnb_orders
@@ -2433,14 +2449,51 @@ async function restoreClosedSession(req, res, payload) {
       }
     }
 
-    // 4. Pulihkan pesanan F&B yang sempat ter-billed pada penutupan sesi ini
-    await client.query(`
-      UPDATE fnb_orders
-      SET order_status = 'open',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE (session_id = $1 OR (session_id IS NULL AND room_id = $2))
-        AND order_status = 'billed'
-    `, [sessionId, roomId]);
+    // 4. Pulihkan HANYA pesanan F&B sesi ini (bukan riwayat hari/minggu lalu!)
+    let restoredFnb = false;
+    if (closedTxId) {
+      const txRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1', [closedTxId]);
+      if (txRes.rowCount > 0) {
+        const tx = txRes.rows[0];
+        const rawIds = String(tx.fnb_order_ids || '').trim();
+        if (rawIds) {
+          const validIds = rawIds.split(',').map(s => s.trim()).filter(Boolean);
+          if (validIds.length > 0) {
+            await client.query(`
+              UPDATE fnb_orders
+              SET order_status = 'open', updated_at = CURRENT_TIMESTAMP
+              WHERE order_id = ANY($1)
+            `, [validIds]);
+
+            await client.query(`
+              UPDATE fnb_orders
+              SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP
+              WHERE room_id = $1 AND order_status = 'open' AND NOT (order_id = ANY($2))
+            `, [roomId, validIds]);
+            restoredFnb = true;
+          }
+        }
+      }
+    }
+
+    if (!restoredFnb) {
+      // Fallback aman: Hanya order yang dibuat SETELAH start_time sesi ini
+      await client.query(`
+        UPDATE fnb_orders
+        SET order_status = 'open', updated_at = CURRENT_TIMESTAMP
+        WHERE room_id = $1
+          AND order_status = 'billed'
+          AND created_at >= ($2::timestamptz - INTERVAL '2 minutes')
+      `, [roomId, originalStartTime]);
+
+      await client.query(`
+        UPDATE fnb_orders
+        SET order_status = 'billed', updated_at = CURRENT_TIMESTAMP
+        WHERE room_id = $1
+          AND order_status = 'open'
+          AND created_at < ($2::timestamptz - INTERVAL '2 minutes')
+      `, [roomId, originalStartTime]);
+    }
 
     // 5. Pulihkan LC Work Logs jika ada yang ter-close
     await client.query(`
