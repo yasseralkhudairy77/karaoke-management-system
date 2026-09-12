@@ -573,6 +573,239 @@ async function cancelFnbOrder(req, res, payload) {
   }
 }
 
+async function restoreStockForSingleOrderItem(client, item, qtyToRestore, cancelledBy = 'Kasir', cancelReason = 'Void item F&B') {
+  const returnQty = Number(qtyToRestore || item.quantity || 1);
+  const movements = [];
+
+  if (item.stock_tracking === 'yes' && item.stock_item_id) {
+    const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [item.stock_item_id]);
+    if (invRes.rowCount > 0) {
+      const inv = invRes.rows[0];
+      const actualQty = returnQty * Number(item.stock_qty_per_unit || 1);
+      const stockBefore = Number(inv.stock_qty || 0);
+      const stockAfter = stockBefore + actualQty;
+
+      await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
+
+      const movId = `MOV-VOID-${item.order_id}-${item.order_item_id}-${item.stock_item_id}-${Date.now()}`;
+      await client.query(`
+        INSERT INTO stock_movements (
+          movement_id, stock_item_id, stock_item_name, movement_type,
+          reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+        ) VALUES ($1, $2, $3, 'in', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [movId, item.stock_item_id, inv.stock_item_name, item.order_id, actualQty, stockBefore, stockAfter, `Pengembalian Stok Void: ${item.menu_name} (${returnQty}x) | ${cancelReason}`, cancelledBy]);
+
+      movements.push({ stock_item_id: item.stock_item_id, stock_before: stockBefore, stock_after: stockAfter, returnQty: actualQty });
+    }
+  }
+
+  const snapshotRes = await client.query(`
+    SELECT item_id, component_name, total_qty, component_mode
+    FROM fnb_order_item_components
+    WHERE order_item_id = $1
+    ORDER BY created_at ASC, component_snapshot_id ASC
+  `, [item.order_item_id]);
+
+  const baseOrderQty = Number(item.quantity || 1);
+  const ratio = baseOrderQty > 0 ? (returnQty / baseOrderQty) : 1;
+
+  const componentRows = snapshotRes.rowCount > 0
+    ? snapshotRes.rows.map(component => ({
+        item_id: component.item_id,
+        component_name: component.component_name,
+        component_mode: component.component_mode,
+        qty_to_restore: Number(component.total_qty || 0) * ratio
+      }))
+    : (await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id])).rows.map(recipe => ({
+        item_id: recipe.item_id,
+        component_name: recipe.item_id,
+        component_mode: recipe.component_mode || 'included',
+        qty_to_restore: returnQty * Number(recipe.qty_used || 1)
+      }));
+
+  for (const component of componentRows) {
+    const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [component.item_id]);
+    if (recipeInvRes.rowCount > 0) {
+      const rInv = recipeInvRes.rows[0];
+      const recipeReturn = Number(component.qty_to_restore || 0);
+      const rStockBefore = Number(rInv.stock_qty || 0);
+      const rStockAfter = rStockBefore + recipeReturn;
+
+      await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
+
+      const rMovId = `MOV-VOID-${item.order_id}-${item.order_item_id}-RECIPE-${component.item_id}-${Date.now()}`;
+      await client.query(`
+        INSERT INTO stock_movements (
+          movement_id, stock_item_id, stock_item_name, movement_type,
+          reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+        ) VALUES ($1, $2, $3, 'in', 'fnb_order', $4, $5, $6, $7, $8, $9, $1)
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [rMovId, component.item_id, rInv.stock_item_name, item.order_id, recipeReturn, rStockBefore, rStockAfter, `Pengembalian Stok Void Komponen: ${item.menu_name} (${component.component_name}) | ${cancelReason}`, cancelledBy]);
+
+      movements.push({ stock_item_id: component.item_id, stock_before: rStockBefore, stock_after: rStockAfter, returnQty: recipeReturn });
+    }
+  }
+
+  return { movements };
+}
+
+async function voidOpenFnbOrderItem(req, res, payload) {
+  let client;
+  try {
+    const {
+      order_item_id,
+      order_item_ids,
+      qty_to_void,
+      reason = 'Dibatalkan konsumen',
+      voided_by = 'Kasir'
+    } = payload;
+
+    const targetItemIds = Array.isArray(order_item_ids) && order_item_ids.length > 0
+      ? order_item_ids.map(id => String(id).trim()).filter(Boolean)
+      : (order_item_id ? [String(order_item_id).trim()] : []);
+
+    if (targetItemIds.length === 0) {
+      throw new Error('order_item_id atau order_item_ids wajib diisi.');
+    }
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const itemsRes = await client.query(`
+      SELECT foi.*, fo.order_status, fo.room_id, fo.room_name,
+             m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name AS m_name
+      FROM fnb_order_items foi
+      JOIN fnb_orders fo ON foi.order_id = fo.order_id
+      LEFT JOIN menu m ON foi.menu_id = m.menu_id
+      WHERE foi.order_item_id = ANY($1)
+      FOR UPDATE OF foi, fo
+    `, [targetItemIds]);
+
+    if (itemsRes.rowCount === 0) {
+      throw new Error('Item F&B tidak ditemukan.');
+    }
+
+    const items = itemsRes.rows;
+    const affectedOrderIds = new Set();
+    const voidedSummary = [];
+
+    for (const item of items) {
+      if (String(item.order_status || '').toLowerCase() !== 'open') {
+        throw new Error(`Order ${item.order_id} sudah tidak open (status: ${item.order_status}). Gunakan menu Transaksi untuk void transaksi tertagih.`);
+      }
+
+      if (item.is_voided) {
+        continue;
+      }
+
+      affectedOrderIds.add(item.order_id);
+      const currentQty = Number(item.quantity || 1);
+      const itemPrice = Number(item.price || 0);
+
+      const isPartial = targetItemIds.length === 1 && Number(qty_to_void) > 0 && Number(qty_to_void) < currentQty;
+      const numVoid = isPartial ? Number(qty_to_void) : currentQty;
+
+      if (item.stock_deducted) {
+        await restoreStockForSingleOrderItem(client, item, numVoid, voided_by, reason);
+      }
+
+      if (isPartial) {
+        const remainingQty = currentQty - numVoid;
+        const remainingSubtotal = remainingQty * itemPrice;
+        await client.query(`
+          UPDATE fnb_order_items
+          SET quantity = $1, subtotal = $2
+          WHERE order_item_id = $3
+        `, [remainingQty, remainingSubtotal, item.order_item_id]);
+
+        await client.query(`
+          INSERT INTO fnb_order_items (
+            order_id, menu_id, menu_name, category, price, quantity, subtotal,
+            is_voided, void_reason, voided_at, voided_by, is_complimentary,
+            original_price, stock_deducted
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, CURRENT_TIMESTAMP, $9, $10, $11, FALSE)
+        `, [
+          item.order_id, item.menu_id, item.menu_name, item.category, itemPrice,
+          numVoid, numVoid * itemPrice, reason, voided_by,
+          Boolean(item.is_complimentary), Number(item.original_price || 0)
+        ]);
+
+        voidedSummary.push(`${item.menu_name} (${numVoid}x)`);
+      } else {
+        await client.query(`
+          UPDATE fnb_order_items
+          SET is_voided = TRUE,
+              void_reason = $1,
+              voided_at = CURRENT_TIMESTAMP,
+              voided_by = $2,
+              stock_deducted = FALSE
+          WHERE order_item_id = $3
+        `, [reason, voided_by, item.order_item_id]);
+
+        voidedSummary.push(`${item.menu_name} (${currentQty}x)`);
+      }
+    }
+
+    for (const ordId of affectedOrderIds) {
+      const activeItemsRes = await client.query(`
+        SELECT COALESCE(SUM(subtotal), 0) AS remaining_total, COUNT(*)::int AS active_count
+        FROM fnb_order_items
+        WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL)
+      `, [ordId]);
+
+      const remainingTotal = Number(activeItemsRes.rows[0]?.remaining_total || 0);
+      const activeCount = Number(activeItemsRes.rows[0]?.active_count || 0);
+
+      if (activeCount === 0) {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_status = 'cancelled',
+              order_total = 0,
+              cancel_reason = $1,
+              cancelled_by = $2,
+              cancelled_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $3
+        `, [reason, voided_by, ordId]);
+      } else {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_total = $1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $2
+        `, [remainingTotal, ordId]);
+      }
+    }
+
+    const sampleItem = items[0];
+    await writeOperationalAudit(client, {
+      risk_level: 'medium', domain: 'fnb', event_type: 'fnb_open_item_voided',
+      source_action: 'voidOpenFnbOrderItem', source_table: 'fnb_order_items',
+      source_record_id: targetItemIds.join(','),
+      initiated_by: voided_by,
+      target_type: 'fnb_order_item', target_id: targetItemIds.join(','),
+      order_id: sampleItem?.order_id,
+      room_id: sampleItem?.room_id, room_name: sampleItem?.room_name,
+      reason: reason,
+      note: `Void open item: ${voidedSummary.join(', ')} | Alasan: ${reason}`
+    });
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Item ${voidedSummary.join(', ')} berhasil dibatalkan dan stok telah dikembalikan.`,
+      voided_items: voidedSummary,
+      affected_orders: Array.from(affectedOrderIds)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function cancelGeneralFnbBill(req, res, payload) {
   let client;
   try {
@@ -1355,6 +1588,7 @@ module.exports = {
   saveFnbOrder,
   sendComplimentaryGift,
   cancelFnbOrder,
+  voidOpenFnbOrderItem,
   cancelGeneralFnbBill,
   settleGeneralFnbBill,
   restoreStockForFnbOrders,

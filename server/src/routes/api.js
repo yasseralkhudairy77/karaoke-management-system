@@ -200,6 +200,8 @@ async function handlePostAction(action, req, res, payload) {
       return fnbController.sendComplimentaryGift(req, res, payload);
     case 'cancelFnbOrder':
       return fnbController.cancelFnbOrder(req, res, payload);
+    case 'voidOpenFnbOrderItem':
+      return fnbController.voidOpenFnbOrderItem(req, res, payload);
     case 'cancelGeneralFnbBill':
       return fnbController.cancelGeneralFnbBill(req, res, payload);
     case 'settleGeneralFnbBill':

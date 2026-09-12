@@ -1019,6 +1019,7 @@ let isSavingFnbOrder = false;
 let fnbOrderIdempotencyKey = "";
 let activeFnbOrderSavePromise = null;
 let isCancellingFnbOrder = false;
+let isVoidingOpenFnbItem = false;
 let fnbOrderNote = "";
 let fnbOrderPaymentMethod = "room_bill";
 let generalFnbCustomerName = "";
@@ -1183,6 +1184,7 @@ function isUserBusy() {
     isSavingFnbOrder ||
     isSettlingGeneralFnbBill ||
     isCancellingFnbOrder ||
+    isVoidingOpenFnbItem ||
     isSavingStockAdjustment ||
     isSavingAddInventoryItem ||
     isSavingLc ||
@@ -5718,6 +5720,132 @@ async function cancelFnbOrder(orderId, reason) {
   }
 }
 
+function requestVoidRoomFnbItem(itemData) {
+  const roomName = itemData.roomName || "Ruangan";
+  const itemName = itemData.itemName || "Item F&B";
+  const totalQty = Number(itemData.itemQty || 1);
+  const price = Number(itemData.itemPrice || 0);
+  const totalSubtotal = totalQty * price;
+  let itemIds = [];
+  try {
+    itemIds = JSON.parse(itemData.itemIds || "[]");
+  } catch (e) {
+    itemIds = [];
+  }
+
+  if (itemIds.length === 0) {
+    showInlineNotice("Item pesanan tidak ditemukan atau sudah dibatalkan.", "error");
+    return;
+  }
+
+  openActionConfirmation({
+    tone: "danger",
+    title: `Void Item F&B - ${roomName}`,
+    message: `Batalkan pesanan ${itemName} (${totalQty}x) dari ${roomName}? Stok fisik akan otomatis dikembalikan ke inventori.`,
+    details: [
+      ["Ruangan", roomName],
+      ["Item Pesanan", itemName],
+      ["Jumlah Dibatalkan", `${totalQty}x`],
+      ["Pengurangan Tagihan", formatCurrency(totalSubtotal)],
+    ],
+    field: {
+      label: "Alasan pembatalan / void",
+      placeholder: "Contoh: Konsumen cancel pesanan",
+      multiline: true,
+      required: true,
+      minLength: 3,
+      value: "Konsumen cancel item",
+      errorMessage: "Alasan pembatalan minimal 3 karakter.",
+    },
+    confirmLabel: "Ya, Void Item",
+    cancelLabel: "Kembali",
+    onConfirm: (reason) => {
+      executeVoidOpenFnbOrderItem({
+        order_item_ids: itemIds,
+        reason: reason || "Konsumen cancel item",
+        voided_by: getLoggedInOperatorName(),
+      });
+    },
+  });
+}
+
+function requestVoidOpenFnbOrderItem(orderItemId, itemMeta = {}) {
+  if (!orderItemId) {
+    showInlineNotice("ID item F&B tidak valid.", "error");
+    return;
+  }
+
+  const itemName = itemMeta.menuName || "Item F&B";
+  const qty = Number(itemMeta.quantity || 1);
+  const price = Number(itemMeta.price || 0);
+
+  openActionConfirmation({
+    tone: "danger",
+    title: "Void Item F&B",
+    message: `Batalkan item ${itemName} (${qty}x) dari antrean F&B? Stok fisik akan otomatis dikembalikan ke inventori.`,
+    details: [
+      ["ID Item", orderItemId],
+      ["Item Pesanan", itemName],
+      ["Jumlah Dibatalkan", `${qty}x`],
+      ["Pengurangan Tagihan", formatCurrency(qty * price)],
+    ],
+    field: {
+      label: "Alasan pembatalan / void",
+      placeholder: "Contoh: Konsumen cancel pesanan",
+      multiline: true,
+      required: true,
+      minLength: 3,
+      value: "Konsumen cancel item",
+      errorMessage: "Alasan pembatalan minimal 3 karakter.",
+    },
+    confirmLabel: "Ya, Void Item",
+    cancelLabel: "Kembali",
+    onConfirm: (reason) => {
+      executeVoidOpenFnbOrderItem({
+        order_item_ids: [orderItemId],
+        reason: reason || "Konsumen cancel item",
+        voided_by: getLoggedInOperatorName(),
+      });
+    },
+  });
+}
+
+async function executeVoidOpenFnbOrderItem(payload) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (isVoidingOpenFnbItem) {
+    return;
+  }
+
+  isVoidingOpenFnbItem = true;
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "voidOpenFnbOrderItem",
+      ...payload,
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal membatalkan item F&B.");
+    }
+
+    showFloatingToast(data.message || "Item F&B berhasil dibatalkan dan stok dikembalikan.");
+    await loadOpenFnbOrders();
+    await loadTodayFnbOrders();
+    await loadInventoryItems();
+    await loadMenuItems();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal membatalkan item F&B.", "error");
+  } finally {
+    isVoidingOpenFnbItem = false;
+    renderRooms();
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -9583,7 +9711,7 @@ function getOpenFnbOrdersForRoom(room) {
   return mergeOpenFnbOrdersForRoom(room, roomStartTime);
 }
 
-function createRoomOpenFnbBreakdownElement(openOrders) {
+function createRoomOpenFnbBreakdownElement(openOrders, room) {
   const container = document.createElement("div");
   container.className = "room-card-fnb-breakdown";
 
@@ -9599,9 +9727,18 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
       const isComplimentary = Boolean(item.is_complimentary || item.isComplimentary);
       const key = isComplimentary ? `${name} [Gift]` : name;
       if (!aggregatedItems[key]) {
-        aggregatedItems[key] = { name, quantity: 0, price: price, isComplimentary };
+        aggregatedItems[key] = {
+          name,
+          quantity: 0,
+          price: price,
+          isComplimentary,
+          itemIds: []
+        };
       }
       aggregatedItems[key].quantity += qty;
+      if (item.order_item_id) {
+        aggregatedItems[key].itemIds.push(item.order_item_id);
+      }
       totalFbAmount += qty * price;
       totalFbQuantity += qty;
     });
@@ -9641,7 +9778,22 @@ function createRoomOpenFnbBreakdownElement(openOrders) {
       priceSpan.textContent = formatCurrency(data.quantity * data.price);
     }
 
-    itemRow.append(nameLine, qtySpan, dotsSpan, priceSpan);
+    const voidBtn = document.createElement("button");
+    voidBtn.className = "fnb-breakdown-void-btn";
+    voidBtn.type = "button";
+    voidBtn.dataset.action = "void-room-fnb-item";
+    voidBtn.dataset.roomId = room?.room_id || "";
+    voidBtn.dataset.roomName = room?.room_name || "";
+    voidBtn.dataset.itemName = data.name;
+    voidBtn.dataset.itemQty = String(data.quantity);
+    voidBtn.dataset.itemPrice = String(data.price);
+    voidBtn.dataset.itemIds = JSON.stringify(data.itemIds);
+    voidBtn.disabled = isVoidingOpenFnbItem;
+    voidBtn.title = `Void / Hapus item ${data.name}`;
+    voidBtn.setAttribute("aria-label", `Void item ${data.name}`);
+    voidBtn.textContent = "🗑️";
+
+    itemRow.append(nameLine, qtySpan, dotsSpan, priceSpan, voidBtn);
     itemsList.appendChild(itemRow);
   });
 
@@ -9735,7 +9887,7 @@ function createRoomCard(room) {
     meta.appendChild(createRoomBookingInfoElement(room));
     const openOrders = getOpenFnbOrdersForRoom(room);
     if (openOrders.length > 0) {
-      meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders));
+      meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders, room));
     }
   } else if (["booked", "waiting_payment", "paid_waiting_start"].includes(room.status)) {
     meta.appendChild(createRoomWaitingPaymentInfoElement(room));
@@ -13677,7 +13829,25 @@ function createOpenFnbOrderItemElement(item) {
   subtotal.className = "open-fnb-total";
   subtotal.textContent = formatCurrency(item.subtotal);
 
-  row.append(info, subtotal);
+  const voidBtn = document.createElement("button");
+  voidBtn.className = "open-fnb-item-void-btn";
+  voidBtn.type = "button";
+  voidBtn.dataset.action = "void-open-fnb-order-item";
+  voidBtn.dataset.orderItemId = item.order_item_id || "";
+  voidBtn.dataset.menuName = item.menu_name || "";
+  voidBtn.dataset.quantity = String(item.quantity || 1);
+  voidBtn.dataset.price = String(item.price || 0);
+  voidBtn.disabled = isVoidingOpenFnbItem;
+  voidBtn.title = `Void item ${item.menu_name}`;
+  voidBtn.textContent = "🗑️ Void";
+
+  const rightWrap = document.createElement("div");
+  rightWrap.style.display = "flex";
+  rightWrap.style.alignItems = "center";
+  rightWrap.style.gap = "8px";
+  rightWrap.append(subtotal, voidBtn);
+
+  row.append(info, rightWrap);
 
   return row;
 }
@@ -32472,6 +32642,27 @@ async function handleRoomAction(event) {
 
   if (action === "cancel-fnb-order") {
     requestCancelFnbOrder(button.dataset.orderId || "");
+    return;
+  }
+
+  if (action === "void-room-fnb-item") {
+    requestVoidRoomFnbItem({
+      roomId: button.dataset.roomId || "",
+      roomName: button.dataset.roomName || "",
+      itemName: button.dataset.itemName || "",
+      itemQty: button.dataset.itemQty || "1",
+      itemPrice: button.dataset.itemPrice || "0",
+      itemIds: button.dataset.itemIds || "[]",
+    });
+    return;
+  }
+
+  if (action === "void-open-fnb-order-item") {
+    requestVoidOpenFnbOrderItem(button.dataset.orderItemId || "", {
+      menuName: button.dataset.menuName || "",
+      quantity: button.dataset.quantity || "1",
+      price: button.dataset.price || "0",
+    });
     return;
   }
 
