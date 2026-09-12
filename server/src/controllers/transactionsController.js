@@ -2601,17 +2601,21 @@ async function appendFnbToUnpaidTransaction(req, res, payload) {
           const movementId = `SM-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
           await client.query(`
             INSERT INTO stock_movements (
-              movement_id, stock_item_id, movement_type, source, qty_change, stock_before, stock_after, note, cashier_name, reference_id, created_at
-            ) VALUES ($1, $2, 'fnb_sale', 'pos_fnb', $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+            ON CONFLICT (idempotency_key) DO NOTHING
           `, [
             movementId,
             menu.stock_item_id,
+            inv.stock_item_name || menu.menu_name,
+            transactionId,
             -totalStockDeduct,
             stockBefore,
             stockAfter,
             `Susulan F&B transaksi ${transactionId} (${qty}x ${menu.menu_name})`,
-            cashierName,
-            transactionId
+            cashierName
           ]);
         }
       }
