@@ -136,8 +136,38 @@ async function runTests() {
         return { rows: [], rowCount: 1 };
       }
 
+      // UPDATE fnb_order_items (partial)
+      if (text.includes('UPDATE fnb_order_items') && text.includes('SET quantity = $1, subtotal = $2')) {
+        const itemId = params[2];
+        const it = mockOrderItems.find(i => i.order_item_id === itemId);
+        if (it) {
+          it.quantity = params[0];
+          it.subtotal = params[1];
+        }
+        return { rows: [], rowCount: 1 };
+      }
+
+      // INSERT INTO fnb_order_items (partial void row)
+      if (text.includes('INSERT INTO fnb_order_items')) {
+        mockOrderItems.push({
+          order_item_id: 'ITEM-VOIDED-PARTIAL',
+          order_id: params[0],
+          menu_id: params[1],
+          menu_name: params[2],
+          category: params[3],
+          price: params[4],
+          quantity: params[5],
+          subtotal: params[6],
+          is_voided: true,
+          void_reason: params[7],
+          voided_by: params[8],
+          stock_deducted: false
+        });
+        return { rows: [], rowCount: 1 };
+      }
+
       // SELECT remaining active total
-      if (text.includes('SELECT COALESCE(SUM(subtotal), 0) AS remaining_total, COUNT(*)::int AS active_count FROM fnb_order_items')) {
+      if (text.includes('remaining_total') && text.includes('active_count')) {
         const ordId = params[0];
         const active = mockOrderItems.filter(it => it.order_id === ordId && !it.is_voided);
         const remTotal = active.reduce((sum, it) => sum + Number(it.subtotal), 0);
@@ -198,6 +228,48 @@ async function runTests() {
     assert(stockMovements.length > 0, 'Harus ada riwayat pergerakan stok');
     assert.strictEqual(stockMovements[0].qty_change, 2, 'Pengembalian stok harus 2 botol');
     console.log('  ✓ PASS: Full void correctly restored 2 bottles of Captain Morgan, cancelled order, and logged audit.');
+
+    // 3c. Successful Partial Void (Mengurangi 1 saja dari 2 botol)
+    mockInventory['ITEM-CAPTAIN-APPLE'].stock_qty = 10;
+    mockOrder.order_status = 'open';
+    mockOrder.order_total = 600000;
+    mockOrderItems = [
+      {
+        order_item_id: 'ITEM-UUID-2',
+        order_id: 'FNB-TEST-ROOM9',
+        menu_id: 'MENU-CAPTAIN-APPLE',
+        menu_name: 'CAPTEIN MORGAN APPLE',
+        category: 'Spirit',
+        price: 300000,
+        quantity: 2,
+        subtotal: 600000,
+        is_voided: false,
+        stock_deducted: true,
+        stock_tracking: 'yes',
+        stock_item_id: 'ITEM-CAPTAIN-APPLE',
+        stock_qty_per_unit: 1,
+        order_status: 'open',
+        room_id: '9',
+        room_name: 'Ruangan 9'
+      }
+    ];
+
+    responseData = null;
+    await voidOpenFnbOrderItem({}, res, {
+      order_item_ids: ['ITEM-UUID-2'],
+      qty_to_void: 1,
+      reason: 'Konsumen minta kurangi 1 botol Captain Morgan saja',
+      voided_by: 'Manager 1 (Owner)'
+    });
+
+    assert.strictEqual(responseData.ok, true, 'Partial void harus sukses');
+    assert.strictEqual(mockOrderItems[0].quantity, 1, 'Sisa item aktif harus 1x');
+    assert.strictEqual(mockOrderItems[0].subtotal, 300000, 'Subtotal sisa harus Rp 300.000');
+    assert.strictEqual(mockOrderItems[0].is_voided, false, 'Item sisa harus tetap aktif (is_voided = false)');
+    assert.strictEqual(mockInventory['ITEM-CAPTAIN-APPLE'].stock_qty, 11, 'Stok harus kembali 1 botol (dari 10 menjadi 11)');
+    assert.strictEqual(mockOrder.order_status, 'open', 'Order harus tetap OPEN karena masih ada sisa 1 botol');
+    assert.strictEqual(mockOrder.order_total, 300000, 'Total order harus terpotong Rp 300.000 menjadi Rp 300.000');
+    console.log('  ✓ PASS: Partial void correctly reduced 1 bottle, kept 1 bottle active in room, restored 1 bottle to inventory, and updated order total to Rp 300.000.');
 
   } finally {
     db.pool.connect = originalPoolConnect;

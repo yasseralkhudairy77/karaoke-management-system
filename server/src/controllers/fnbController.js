@@ -690,12 +690,14 @@ async function voidOpenFnbOrderItem(req, res, payload) {
     const affectedOrderIds = new Set();
     const voidedSummary = [];
 
+    let remainingVoidCount = Number(qty_to_void) > 0 ? Number(qty_to_void) : Infinity;
+
     for (const item of items) {
       if (String(item.order_status || '').toLowerCase() !== 'open') {
         throw new Error(`Order ${item.order_id} sudah tidak open (status: ${item.order_status}). Gunakan menu Transaksi untuk void transaksi tertagih.`);
       }
 
-      if (item.is_voided) {
+      if (item.is_voided || remainingVoidCount <= 0) {
         continue;
       }
 
@@ -703,8 +705,9 @@ async function voidOpenFnbOrderItem(req, res, payload) {
       const currentQty = Number(item.quantity || 1);
       const itemPrice = Number(item.price || 0);
 
-      const isPartial = targetItemIds.length === 1 && Number(qty_to_void) > 0 && Number(qty_to_void) < currentQty;
-      const numVoid = isPartial ? Number(qty_to_void) : currentQty;
+      const numVoid = Math.min(remainingVoidCount, currentQty);
+      remainingVoidCount -= numVoid;
+      const isPartial = numVoid < currentQty;
 
       if (item.stock_deducted) {
         await restoreStockForSingleOrderItem(client, item, numVoid, voided_by, reason);

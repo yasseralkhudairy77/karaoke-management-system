@@ -3052,6 +3052,17 @@ textarea.action-confirmation-input {
   min-height: 86px;
 }
 
+select.action-confirmation-input {
+  cursor: pointer;
+  appearance: auto;
+}
+
+select.action-confirmation-input option {
+  background: #181512;
+  color: #ffffff;
+  padding: 6px 10px;
+}
+
 .action-confirmation-input:focus {
   border-color: var(--gold-strong);
   outline: 3px solid var(--gold-smoke);

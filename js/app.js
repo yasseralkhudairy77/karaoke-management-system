@@ -3731,6 +3731,17 @@ function showFloatingToast(message, type = "info") {
 }
 
 function openActionConfirmation(options = {}) {
+  const initialFields = Array.isArray(options.fields)
+    ? options.fields
+    : (options.field ? [options.field] : []);
+  const initialFieldValues = { ...(options.fieldValues || {}) };
+  initialFields.forEach((f, idx) => {
+    const key = f.name || (idx === 0 ? "default" : `field_${idx}`);
+    if (initialFieldValues[key] === undefined && f.value !== undefined) {
+      initialFieldValues[key] = f.value;
+    }
+  });
+
   actionConfirmationModal = {
     id: `action-modal-${Date.now()}-${++actionModalSequence}`,
     mode: options.mode || "confirm",
@@ -3741,7 +3752,9 @@ function openActionConfirmation(options = {}) {
     confirmLabel: options.confirmLabel || "Lanjutkan",
     cancelLabel: options.cancelLabel || "Kembali",
     field: options.field || null,
-    fieldValue: options.field?.value || "",
+    fieldValue: options.field?.value || (initialFields[0]?.value || ""),
+    fields: initialFields,
+    fieldValues: initialFieldValues,
     busy: false,
     onConfirm: typeof options.onConfirm === "function" ? options.onConfirm : null,
   };
@@ -3764,9 +3777,21 @@ function closeActionConfirmation() {
   renderRooms();
 }
 
-function updateActionConfirmationField(value) {
+function updateActionConfirmationField(value, key = null) {
   if (actionConfirmationModal) {
-    actionConfirmationModal.fieldValue = value;
+    if (!key || key === "default") {
+      actionConfirmationModal.fieldValue = value;
+      actionConfirmationModal.fieldValues = actionConfirmationModal.fieldValues || {};
+      actionConfirmationModal.fieldValues["default"] = value;
+      const firstField = actionConfirmationModal.fields?.[0];
+      if (firstField?.name) {
+        actionConfirmationModal.fieldValues[firstField.name] = value;
+      }
+    } else {
+      actionConfirmationModal.fieldValues = actionConfirmationModal.fieldValues || {};
+      actionConfirmationModal.fieldValues[key] = value;
+      actionConfirmationModal.fieldValue = value;
+    }
   }
 }
 
@@ -3782,7 +3807,21 @@ async function confirmActionConfirmation() {
   }
 
   const fieldValue = String(modal.fieldValue || "").trim();
-  if (modal.field?.required && fieldValue.length < Number(modal.field.minLength || 1)) {
+  const fieldValues = modal.fieldValues || {};
+
+  if (Array.isArray(modal.fields) && modal.fields.length > 0) {
+    for (const f of modal.fields) {
+      const key = f.name || "";
+      const val = String(fieldValues[key] ?? f.value ?? "").trim();
+      if (f.required && val.length < Number(f.minLength || 1)) {
+        showFloatingToast(
+          f.errorMessage || `${f.label || "Kolom"} wajib diisi.`,
+          "error"
+        );
+        return;
+      }
+    }
+  } else if (modal.field?.required && fieldValue.length < Number(modal.field.minLength || 1)) {
     showFloatingToast(
       modal.field.errorMessage || `${modal.field.label || "Kolom"} wajib diisi.`,
       "error"
@@ -3794,7 +3833,7 @@ async function confirmActionConfirmation() {
   renderRooms();
 
   try {
-    await modal.onConfirm?.(fieldValue);
+    await modal.onConfirm?.(fieldValue, fieldValues);
   } catch (error) {
     showFloatingToast(error.message || "Tindakan tidak dapat diproses.", "error");
   } finally {
@@ -3858,7 +3897,58 @@ function createActionConfirmationElement() {
     dialog.appendChild(details);
   }
 
-  if (modal.field) {
+  if (Array.isArray(modal.fields) && modal.fields.length > 0) {
+    modal.fields.forEach((f, idx) => {
+      const field = document.createElement("label");
+      field.className = "action-confirmation-field";
+      const fieldLabel = document.createElement("span");
+      fieldLabel.textContent = f.label || "Catatan";
+
+      let input;
+      const key = f.name || (idx === 0 && !f.name ? "default" : `field_${idx}`);
+      const val = modal.fieldValues?.[key] !== undefined
+        ? modal.fieldValues[key]
+        : (f.value ?? (idx === 0 ? modal.fieldValue : ""));
+
+      if (Array.isArray(f.options)) {
+        input = document.createElement("select");
+        input.className = "action-confirmation-input action-confirmation-select";
+        f.options.forEach(([optVal, optText]) => {
+          const opt = document.createElement("option");
+          opt.value = optVal;
+          opt.textContent = optText;
+          if (String(optVal) === String(val)) {
+            opt.selected = true;
+          }
+          input.appendChild(opt);
+        });
+        input.onchange = (event) => {
+          updateActionConfirmationField(event.target.value, key);
+          if (typeof f.onChange === "function") {
+            f.onChange(event.target.value, modal);
+            renderRooms();
+          }
+        };
+      } else if (f.multiline) {
+        input = document.createElement("textarea");
+        input.className = "action-confirmation-input";
+        input.value = val;
+        input.placeholder = f.placeholder || "";
+        input.oninput = (event) => updateActionConfirmationField(event.target.value, key);
+      } else {
+        input = document.createElement("input");
+        input.className = "action-confirmation-input";
+        input.type = f.type || "text";
+        input.value = val;
+        input.placeholder = f.placeholder || "";
+        input.oninput = (event) => updateActionConfirmationField(event.target.value, key);
+      }
+
+      input.disabled = modal.busy;
+      field.append(fieldLabel, input);
+      dialog.appendChild(field);
+    });
+  } else if (modal.field) {
     const field = document.createElement("label");
     field.className = "action-confirmation-field";
     const fieldLabel = document.createElement("span");
@@ -5725,7 +5815,6 @@ function requestVoidRoomFnbItem(itemData) {
   const itemName = itemData.itemName || "Item F&B";
   const totalQty = Number(itemData.itemQty || 1);
   const price = Number(itemData.itemPrice || 0);
-  const totalSubtotal = totalQty * price;
   let itemIds = [];
   try {
     itemIds = JSON.parse(itemData.itemIds || "[]");
@@ -5738,31 +5827,81 @@ function requestVoidRoomFnbItem(itemData) {
     return;
   }
 
+  const buildDetails = (qtyToCancel) => {
+    const cancelSubtotal = qtyToCancel * price;
+    const remainingQty = totalQty - qtyToCancel;
+    const details = [
+      ["Ruangan", roomName],
+      ["Item Pesanan", itemName],
+      ["Jumlah Dibatalkan", `${qtyToCancel}x`],
+      ["Pengurangan Tagihan", formatCurrency(cancelSubtotal)],
+    ];
+    if (remainingQty > 0) {
+      details.push(["Sisa di Ruangan", `${remainingQty}x (${formatCurrency(remainingQty * price)})`]);
+    }
+    return details;
+  };
+
+  const fields = [];
+
+  if (totalQty > 1) {
+    const qtyOptions = [];
+    for (let q = totalQty; q >= 1; q--) {
+      const isAll = q === totalQty;
+      const sub = q * price;
+      const rem = totalQty - q;
+      const label = isAll
+        ? `Semua (${q}x) — Potong ${formatCurrency(sub)} (Sisa: 0)`
+        : `${q}x saja — Potong ${formatCurrency(sub)} (Sisa: ${rem}x)`;
+      qtyOptions.push([String(q), label]);
+    }
+
+    fields.push({
+      name: "qty_to_void",
+      label: "Pilih jumlah yang ingin dibatalkan",
+      options: qtyOptions,
+      value: String(totalQty),
+      onChange: (newVal, modal) => {
+        const num = Number(newVal) || totalQty;
+        modal.details = buildDetails(num);
+        modal.message = num < totalQty
+          ? `Batalkan ${num}x pesanan ${itemName} dari ${roomName}? Sisa ${totalQty - num}x tetap aktif di tagihan ruangan.`
+          : `Batalkan semua pesanan ${itemName} (${totalQty}x) dari ${roomName}? Stok fisik akan otomatis dikembalikan ke inventori.`;
+      },
+    });
+  }
+
+  fields.push({
+    name: "reason",
+    label: "Alasan pembatalan / void",
+    placeholder: "Contoh: Konsumen cancel pesanan",
+    multiline: true,
+    required: true,
+    minLength: 3,
+    value: "Konsumen cancel item",
+    errorMessage: "Alasan pembatalan minimal 3 karakter.",
+  });
+
   openActionConfirmation({
     tone: "danger",
     title: `Void Item F&B - ${roomName}`,
-    message: `Batalkan pesanan ${itemName} (${totalQty}x) dari ${roomName}? Stok fisik akan otomatis dikembalikan ke inventori.`,
-    details: [
-      ["Ruangan", roomName],
-      ["Item Pesanan", itemName],
-      ["Jumlah Dibatalkan", `${totalQty}x`],
-      ["Pengurangan Tagihan", formatCurrency(totalSubtotal)],
-    ],
-    field: {
-      label: "Alasan pembatalan / void",
-      placeholder: "Contoh: Konsumen cancel pesanan",
-      multiline: true,
-      required: true,
-      minLength: 3,
-      value: "Konsumen cancel item",
-      errorMessage: "Alasan pembatalan minimal 3 karakter.",
-    },
+    message: totalQty > 1
+      ? `Pilih berapa jumlah pesanan ${itemName} (${totalQty}x) yang ingin dibatalkan. Stok fisik akan otomatis dikembalikan ke inventori.`
+      : `Batalkan pesanan ${itemName} (1x) dari ${roomName}? Stok fisik akan otomatis dikembalikan ke inventori.`,
+    details: buildDetails(totalQty),
+    fields: fields,
     confirmLabel: "Ya, Void Item",
     cancelLabel: "Kembali",
-    onConfirm: (reason) => {
+    onConfirm: (defaultVal, fieldValues) => {
+      const chosenQty = totalQty > 1
+        ? Number(fieldValues?.qty_to_void || totalQty)
+        : 1;
+      const reasonVal = fieldValues?.reason || defaultVal || "Konsumen cancel item";
+
       executeVoidOpenFnbOrderItem({
         order_item_ids: itemIds,
-        reason: reason || "Konsumen cancel item",
+        qty_to_void: chosenQty,
+        reason: reasonVal,
         voided_by: getLoggedInOperatorName(),
       });
     },
@@ -5776,34 +5915,84 @@ function requestVoidOpenFnbOrderItem(orderItemId, itemMeta = {}) {
   }
 
   const itemName = itemMeta.menuName || "Item F&B";
-  const qty = Number(itemMeta.quantity || 1);
+  const totalQty = Number(itemMeta.quantity || 1);
   const price = Number(itemMeta.price || 0);
+
+  const buildDetails = (qtyToCancel) => {
+    const cancelSubtotal = qtyToCancel * price;
+    const remainingQty = totalQty - qtyToCancel;
+    const details = [
+      ["ID Item", orderItemId],
+      ["Item Pesanan", itemName],
+      ["Jumlah Dibatalkan", `${qtyToCancel}x`],
+      ["Pengurangan Tagihan", formatCurrency(cancelSubtotal)],
+    ];
+    if (remainingQty > 0) {
+      details.push(["Sisa Item", `${remainingQty}x (${formatCurrency(remainingQty * price)})`]);
+    }
+    return details;
+  };
+
+  const fields = [];
+
+  if (totalQty > 1) {
+    const qtyOptions = [];
+    for (let q = totalQty; q >= 1; q--) {
+      const isAll = q === totalQty;
+      const sub = q * price;
+      const rem = totalQty - q;
+      const label = isAll
+        ? `Semua (${q}x) — Potong ${formatCurrency(sub)} (Sisa: 0)`
+        : `${q}x saja — Potong ${formatCurrency(sub)} (Sisa: ${rem}x)`;
+      qtyOptions.push([String(q), label]);
+    }
+
+    fields.push({
+      name: "qty_to_void",
+      label: "Pilih jumlah yang ingin dibatalkan",
+      options: qtyOptions,
+      value: String(totalQty),
+      onChange: (newVal, modal) => {
+        const num = Number(newVal) || totalQty;
+        modal.details = buildDetails(num);
+        modal.message = num < totalQty
+          ? `Batalkan ${num}x ${itemName} dari antrean F&B? Sisa ${totalQty - num}x tetap aktif.`
+          : `Batalkan semua item ${itemName} (${totalQty}x) dari antrean F&B? Stok fisik akan otomatis dikembalikan ke inventori.`;
+      },
+    });
+  }
+
+  fields.push({
+    name: "reason",
+    label: "Alasan pembatalan / void",
+    placeholder: "Contoh: Konsumen cancel pesanan",
+    multiline: true,
+    required: true,
+    minLength: 3,
+    value: "Konsumen cancel item",
+    errorMessage: "Alasan pembatalan minimal 3 karakter.",
+  });
 
   openActionConfirmation({
     tone: "danger",
     title: "Void Item F&B",
-    message: `Batalkan item ${itemName} (${qty}x) dari antrean F&B? Stok fisik akan otomatis dikembalikan ke inventori.`,
-    details: [
-      ["ID Item", orderItemId],
-      ["Item Pesanan", itemName],
-      ["Jumlah Dibatalkan", `${qty}x`],
-      ["Pengurangan Tagihan", formatCurrency(qty * price)],
-    ],
-    field: {
-      label: "Alasan pembatalan / void",
-      placeholder: "Contoh: Konsumen cancel pesanan",
-      multiline: true,
-      required: true,
-      minLength: 3,
-      value: "Konsumen cancel item",
-      errorMessage: "Alasan pembatalan minimal 3 karakter.",
-    },
+    message: totalQty > 1
+      ? `Pilih berapa jumlah item ${itemName} (${totalQty}x) yang ingin dibatalkan. Stok fisik akan otomatis dikembalikan ke inventori.`
+      : `Batalkan item ${itemName} (1x) dari antrean F&B? Stok fisik akan otomatis dikembalikan ke inventori.`,
+    details: buildDetails(totalQty),
+    fields: fields,
     confirmLabel: "Ya, Void Item",
     cancelLabel: "Kembali",
-    onConfirm: (reason) => {
+    onConfirm: (defaultVal, fieldValues) => {
+      const chosenQty = totalQty > 1
+        ? Number(fieldValues?.qty_to_void || totalQty)
+        : 1;
+      const reasonVal = fieldValues?.reason || defaultVal || "Konsumen cancel item";
+
       executeVoidOpenFnbOrderItem({
         order_item_ids: [orderItemId],
-        reason: reason || "Konsumen cancel item",
+        qty_to_void: chosenQty,
+        reason: reasonVal,
         voided_by: getLoggedInOperatorName(),
       });
     },
