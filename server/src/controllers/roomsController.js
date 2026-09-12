@@ -2420,11 +2420,11 @@ async function restoreClosedSession(req, res, payload) {
         await client.query(`
           UPDATE transactions
           SET payment_status = 'cancelled',
-              is_voided = TRUE,
-              notes = COALESCE(notes, '') || ' [Dibatalkan karena sesi dipulihkan]',
-              updated_at = CURRENT_TIMESTAMP
-          WHERE transaction_id = $1
-        `, [closedTxId]);
+              corrected_at = CURRENT_TIMESTAMP,
+              corrected_by = $1,
+              correction_note = COALESCE(correction_note, '') || ' [Dibatalkan karena sesi dipulihkan]'
+          WHERE transaction_id = $2
+        `, [restoredBy, closedTxId]);
 
         await client.query(`
           DELETE FROM sync_outbox
@@ -2439,7 +2439,7 @@ async function restoreClosedSession(req, res, payload) {
       SET order_status = 'open',
           updated_at = CURRENT_TIMESTAMP
       WHERE (session_id = $1 OR (session_id IS NULL AND room_id = $2))
-        AND (order_status = 'billed' OR order_status = 'closed')
+        AND order_status = 'billed'
     `, [sessionId, roomId]);
 
     // 5. Pulihkan LC Work Logs jika ada yang ter-close
@@ -2483,32 +2483,31 @@ async function restoreClosedSession(req, res, payload) {
           start_time = $1,
           booked_duration_minutes = $2,
           scheduled_end_time = $3,
-          is_upfront_paid = $4,
           updated_at = CURRENT_TIMESTAMP
-      WHERE room_id = $5
-    `, [originalStartTime, originalDuration, originalScheduledEndTime, isUpfrontPaid, roomId]);
+      WHERE room_id = $4
+    `, [originalStartTime, originalDuration, originalScheduledEndTime, roomId]);
 
     // 8. Log audit operasional
-    const auditId = `AUDIT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-    await client.query(`
-      INSERT INTO operational_audit_events (
-        event_id, event_type, room_id, room_name, cashier_name, description, payload_json
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, [
-      auditId,
-      'RESTORE_CLOSED_SESSION',
-      roomId,
-      room.room_name || roomId,
-      restoredBy,
-      `Sesi room ${room.room_name || roomId} dipulihkan. Alasan: ${reason}`,
-      JSON.stringify({
+    try {
+      const { writeOperationalAudit } = require('../services/operationalAuditService');
+      await writeOperationalAudit(client, {
+        domain: 'room',
+        event_type: 'restore_closed_session',
+        room_id: roomId,
+        room_name: room.room_name || roomId,
         session_id: sessionId,
-        restored_start_time: originalStartTime,
-        restored_scheduled_end_time: originalScheduledEndTime,
-        booked_duration_minutes: originalDuration,
-        voided_transaction_id: closedTxId || null
-      })
-    ]);
+        initiated_by: { name: restoredBy },
+        reason: `Sesi room ${room.room_name || roomId} dipulihkan. Alasan: ${reason}`,
+        metadata: {
+          restored_start_time: originalStartTime,
+          restored_scheduled_end_time: originalScheduledEndTime,
+          booked_duration_minutes: originalDuration,
+          voided_transaction_id: closedTxId || null
+        }
+      });
+    } catch (auditErr) {
+      console.warn('Gagal mencatat operational audit event:', auditErr.message);
+    }
 
     await client.query('COMMIT');
 

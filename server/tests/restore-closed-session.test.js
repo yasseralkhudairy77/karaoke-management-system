@@ -136,14 +136,13 @@ async function runTests() {
         mockRoom.start_time = params[0];
         mockRoom.booked_duration_minutes = params[1];
         mockRoom.scheduled_end_time = params[2];
-        mockRoom.is_upfront_paid = params[3];
         return { rows: [mockRoom], rowCount: 1 };
       }
 
       // INSERT INTO operational_audit_events
       if (text.includes('INSERT INTO operational_audit_events')) {
         auditEvents.push(params);
-        return { rows: [], rowCount: 1 };
+        return { rows: [{ event_id: 'AUDIT-TEST' }], rowCount: 1 };
       }
 
       return { rows: [], rowCount: 0 };
