@@ -269,12 +269,22 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
     }
   }
 
+  const packageIncludedMinutes = isPackage ? Number(session.package_included_minutes || 0) : 0;
+  const extraPackageMinutes = isPackage && packageIncludedMinutes > 0
+    ? Math.max(0, totalMinutes - packageIncludedMinutes)
+    : 0;
+  const extraPackageRoomCharge = isPackage && extraPackageMinutes > 0
+    ? (extraPackageMinutes / 60) * baseRate
+    : 0;
+
   const billableMinutes = isPackage
-    ? 0
+    ? extraPackageMinutes
     : ((session.billable_room_minutes !== null && session.billable_room_minutes !== undefined)
       ? Math.max(0, Number(session.billable_room_minutes))
       : totalMinutes);
-  const freeMinutes = Math.max(0, totalMinutes - billableMinutes);
+  const freeMinutes = isPackage
+    ? (packageIncludedMinutes > 0 ? Math.min(totalMinutes, packageIncludedMinutes) : 0)
+    : Math.max(0, totalMinutes - billableMinutes);
 
   if (!isPackage && freeMinutes > 0) {
     const freeAmount = (freeMinutes / 60) * baseRate;
@@ -285,12 +295,15 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
     segments,
     totalMinutes,
     roomTotal: isPackage
-      ? Math.ceil(Number(packageMeta.packageTotal || 0) + upgradeTotal)
+      ? Math.ceil(Number(packageMeta.packageTotal || 0) + upgradeTotal + extraPackageRoomCharge)
       : Math.ceil(regularTotal),
     upgradeTotal: Math.ceil(upgradeTotal),
     billableMinutes,
     freeMinutes,
-    packageMeta
+    packageMeta,
+    packageIncludedMinutes,
+    extraPackageMinutes,
+    extraPackageRoomCharge: Math.ceil(extraPackageRoomCharge)
   };
 }
 
@@ -1302,6 +1315,7 @@ async function extendSession(req, res, payload) {
           scheduled_end_time = $2,
           billable_room_minutes = CASE
             WHEN booking_mode = 'regular' THEN COALESCE(billable_room_minutes, $3) + $4
+            WHEN booking_mode = 'package' THEN GREATEST(0, $1 - COALESCE(package_included_minutes, 0))
             ELSE billable_room_minutes
           END,
           updated_at = CURRENT_TIMESTAMP
@@ -2251,10 +2265,16 @@ async function closeSession(req, res, payload) {
     const grandTotal = roomTotal + fnbTotal + lcTotal;
     const opDate = getOperationalDate(endTime);
 
-    const billableRoomMinutes = activeSession?.billable_room_minutes !== null && activeSession?.billable_room_minutes !== undefined
-      ? Number(activeSession.billable_room_minutes)
-      : durationMinutes;
-    const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+    const isPkgSession = bookingMode === 'package';
+    const pkgIncluded = isPkgSession ? Number(activeSession?.package_included_minutes || 0) : 0;
+    const billableRoomMinutes = isPkgSession
+      ? Math.max(0, durationMinutes - pkgIncluded)
+      : (activeSession?.billable_room_minutes !== null && activeSession?.billable_room_minutes !== undefined
+          ? Number(activeSession.billable_room_minutes)
+          : durationMinutes);
+    const freeRoomMinutes = isPkgSession
+      ? (pkgIncluded > 0 ? Math.min(durationMinutes, pkgIncluded) : 0)
+      : Math.max(0, durationMinutes - billableRoomMinutes);
     const roomDiscountAmount = freeRoomMinutes > 0 ? Math.ceil((freeRoomMinutes / 60) * ratePerHour) : 0;
 
     // CRITICAL: Postpaid flow produces payment_status = 'unpaid'
@@ -2847,6 +2867,7 @@ async function correctActiveRoomDuration(req, res, payload) {
           scheduled_end_time = $2,
           billable_room_minutes = CASE
             WHEN booking_mode = 'regular' THEN GREATEST(0, COALESCE(billable_room_minutes, $3) + $4)
+            WHEN booking_mode = 'package' THEN GREATEST(0, $1 - COALESCE(package_included_minutes, 0))
             ELSE billable_room_minutes
           END,
           updated_at = CURRENT_TIMESTAMP
@@ -2949,6 +2970,7 @@ async function adjustSessionTime(req, res, payload) {
             scheduled_end_time = $3,
             billable_room_minutes = CASE
               WHEN booking_mode = 'regular' THEN GREATEST(0, COALESCE(billable_room_minutes, $4) + $5)
+              WHEN booking_mode = 'package' THEN GREATEST(0, $2 - COALESCE(package_included_minutes, 0))
               ELSE billable_room_minutes
             END,
             updated_at = CURRENT_TIMESTAMP
@@ -3107,6 +3129,7 @@ module.exports = {
   correctActiveRoomDuration,
   adjustSessionTime,
   previewSessionPricing,
+  finalizeAndPriceRoomSegments,
   deductStockForFnbOrders,
   deductStockForRoomPackage,
 };

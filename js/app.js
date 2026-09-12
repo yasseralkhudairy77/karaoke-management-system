@@ -19021,6 +19021,18 @@ function createTransactionRowElement(transaction) {
         badge.textContent = getTransactionPackageLabel(transaction);
         item.appendChild(badge);
       }
+
+      if (labelText === (transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room") && transactionHasPackage(transaction)) {
+        const packageTotal = Number(transaction?.package_total || 0);
+        const roomTotal = Number(transaction?.room_total || 0);
+        if (roomTotal > packageTotal && packageTotal > 0) {
+          const extraOvertime = roomTotal - packageTotal;
+          const overtimeBadge = document.createElement("span");
+          overtimeBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
+          overtimeBadge.textContent = `+Room Extra ${formatCurrency(extraOvertime)}`;
+          item.appendChild(overtimeBadge);
+        }
+      }
     }
 
     row.appendChild(item);
