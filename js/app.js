@@ -19089,6 +19089,16 @@ function createTransactionActionsElement(transaction) {
     title: "Ubah metode pembayaran transaksi",
   });
 
+  if (String(transaction?.payment_status || "").toLowerCase() === "unpaid") {
+    secondaryItems.push({
+      action: "open-append-fnb-transaction",
+      label: "Susulkan F&B",
+      icon: "🍽️",
+      category: "operational",
+      title: "Tambah pesanan F&B susulan ke tagihan ini",
+    });
+  }
+
   if (operatorRole === "owner" || operatorRole === "manager") {
     if (String(transaction?.payment_status || "").toLowerCase() === "paid") {
       const hasCommission = getTransactionSalesCommissionAmount(transaction) > 0;
@@ -19123,15 +19133,13 @@ function createTransactionActionsElement(transaction) {
       title: "Koreksi paket transaksi room",
     });
 
-    if (!transactionHasPackage(transaction)) {
-      secondaryItems.push({
-        action: "open-transaction-free-room-correction",
-        label: "Free Room",
-        icon: "🎁",
-        category: "correction",
-        title: "Koreksi room gratis",
-      });
-    }
+    secondaryItems.push({
+      action: "open-transaction-free-room-correction",
+      label: "Free Room",
+      icon: "🎁",
+      category: "correction",
+      title: "Koreksi room gratis",
+    });
 
     if (getTransactionFnbTotal(transaction) > 0 || getTransactionFnbOrderIds(transaction).length > 0) {
       secondaryItems.push({
@@ -20208,14 +20216,10 @@ function openTransactionFreeRoomCorrection(transactionId) {
     showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
     return;
   }
-  if (transactionHasPackage(transaction)) {
-    showInlineNotice("Free room hanya untuk transaksi regular, bukan paket.", "error");
-    return;
-  }
 
   transactionFreeRoomCorrection = {
     transactionId,
-    freeRoomMinutes: transaction.free_room_minutes || 60,
+    freeRoomMinutes: transaction.free_room_minutes || 0,
     reason: "",
   };
   renderRooms();
@@ -20250,14 +20254,26 @@ function getTransactionFreeRoomCorrectionPreview() {
   const manualDiscountRoom = Number(transaction.manual_discount_room || 0);
   const manualDiscountFnb = Number(transaction.manual_discount_fnb || 0);
 
+  const isPkg = transactionHasPackage(transaction);
+
   let ratePerHour = Number(transaction.rate_per_hour) || 0;
-  if (ratePerHour <= 0 && actualMinutes > 0) {
+  if (ratePerHour <= 0) {
+    const rObj = (typeof rooms !== "undefined" && Array.isArray(rooms)) ? rooms.find(r => r.room_id === transaction.room_id) : null;
+    ratePerHour = Number(rObj?.rate_per_hour || 135000);
+  }
+  if (ratePerHour <= 0 && actualMinutes > 0 && !isPkg) {
     const existingGross = Number(transaction.room_total || 0) + Number(transaction.room_discount_amount || 0) + promoDiscount + manualDiscountRoom;
     ratePerHour = Math.round(existingGross / (actualMinutes / 60));
   }
+  if (ratePerHour <= 0) {
+    ratePerHour = 135000;
+  }
 
-  const grossRoomTotal = Math.ceil((actualMinutes / 60) * ratePerHour);
-  const discountAmount = Math.max(0, Math.ceil((freeMinutes / 60) * ratePerHour));
+  const grossRoomTotal = isPkg
+    ? (Number(transaction.package_total || 0) || (Number(transaction.room_total || 0) + Number(transaction.room_discount_amount || 0)) || 650000)
+    : Math.ceil((actualMinutes / 60) * ratePerHour);
+
+  const discountAmount = Math.min(grossRoomTotal, Math.max(0, Math.ceil((freeMinutes / 60) * ratePerHour)));
   const baseBilledRoomTotal = Math.max(0, grossRoomTotal - discountAmount);
   const nextRoomTotal = Math.max(0, baseBilledRoomTotal - promoDiscount - manualDiscountRoom);
   const fnbTotal = Number(transaction.fnb_total || 0);
@@ -20289,7 +20305,7 @@ function syncTransactionFreeRoomCorrectionControls() {
   const submitButton = modal.querySelector("[data-role='transaction-free-room-correction-submit']");
   if (submitButton) {
     submitButton.disabled = isSavingTransactionFreeRoomCorrection
-      || preview.freeMinutes <= 0
+      || preview.freeMinutes < 0
       || preview.freeMinutes > preview.actualMinutes
       || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
   }
@@ -20317,7 +20333,7 @@ function createTransactionFreeRoomCorrectionElement() {
 
   const warning = document.createElement("p");
   warning.className = "master-delete-warning";
-  warning.textContent = "Durasi aktual room tetap dicatat penuh. Koreksi ini hanya mengurangi menit room yang ditagihkan. LC dan F&B tidak berubah.";
+  warning.textContent = "Koreksi free room akan menyesuaikan potongan durasi dan total akhir transaksi. Jasa LC dan F&B tetap utuh.";
 
   const details = document.createElement("div");
   details.className = "master-delete-details";
@@ -20328,17 +20344,17 @@ function createTransactionFreeRoomCorrectionElement() {
     ...(Number(transaction.free_room_minutes || 0) > 0 ? [
       ["Free Room Awal", formatDurationMinutes(transaction.free_room_minutes)]
     ] : []),
-    ["Free Room Baru", formatDurationMinutes(preview.freeMinutes)],
+    ["Free Room Baru", preview.freeMinutes > 0 ? formatDurationMinutes(preview.freeMinutes) : "0 menit (Dihapus)"],
     ["Durasi Ditagihkan", formatDurationMinutes(preview.billableMinutes)],
-    ["Biaya Room Normal", formatCurrency(preview.grossRoomTotal)],
-    ["Potongan Free Room", `-${formatCurrency(preview.discountAmount)}`],
+    ["Biaya Room/Paket Normal", formatCurrency(preview.grossRoomTotal)],
+    ["Potongan Free Room", preview.discountAmount > 0 ? `-${formatCurrency(preview.discountAmount)}` : "Rp 0 (Tanpa Potongan)"],
     ...(preview.promoDiscount > 0 ? [
       [`Promo (${transaction.promo_code || "Promo"})`, `-${formatCurrency(preview.promoDiscount)}`]
     ] : []),
     ...(preview.manualDiscountRoom > 0 ? [
       ["Diskon Management", `-${formatCurrency(preview.manualDiscountRoom)}`]
     ] : []),
-    ["Biaya Room Baru", formatCurrency(preview.nextRoomTotal)],
+    ["Biaya Room/Paket Baru", formatCurrency(preview.nextRoomTotal)],
     ["Total Baru", formatCurrency(preview.nextGrandTotal)],
   ];
   detailItems.forEach(([labelText, valueText]) => {
@@ -20357,11 +20373,18 @@ function createTransactionFreeRoomCorrectionElement() {
   minutesField.className = "master-form-field";
   const minutesLabel = document.createElement("span");
   minutesLabel.className = "master-form-label";
-  minutesLabel.textContent = "Free Room";
+  minutesLabel.textContent = "Free Room Baru";
   const minutesSelect = document.createElement("select");
   minutesSelect.className = "master-form-input";
   minutesSelect.dataset.action = "update-transaction-free-room-correction";
   minutesSelect.dataset.field = "freeRoomMinutes";
+
+  const zeroOption = document.createElement("option");
+  zeroOption.value = "0";
+  zeroOption.textContent = "0 menit (Hapus Free Room / Tanpa Potongan)";
+  zeroOption.selected = preview.freeMinutes === 0;
+  minutesSelect.appendChild(zeroOption);
+
   for (let minutes = 30; minutes <= Math.max(30, preview.actualMinutes); minutes += 30) {
     const option = document.createElement("option");
     option.value = String(minutes);
@@ -20379,10 +20402,10 @@ function createTransactionFreeRoomCorrectionElement() {
   const reasonInput = document.createElement("input");
   reasonInput.className = "master-form-input";
   reasonInput.type = "text";
-  reasonInput.placeholder = "Contoh: Owner memberikan free room 1 jam, LC tetap 3 jam";
+  reasonInput.placeholder = "Contoh: Koreksi pengurangan free room oleh owner";
   reasonInput.dataset.action = "update-transaction-free-room-correction";
   reasonInput.dataset.field = "reason";
-  reasonInput.value = transactionFreeRoomCorrection.reason || "";
+  reasonInput.value = transactionFreeRoomCorrection.reason || "Koreksi pengurangan free room oleh owner";
   reasonField.append(reasonLabel, reasonInput);
 
   const actions = document.createElement("div");
@@ -20400,7 +20423,7 @@ function createTransactionFreeRoomCorrectionElement() {
   submitButton.dataset.action = "submit-transaction-free-room-correction";
   submitButton.dataset.role = "transaction-free-room-correction-submit";
   submitButton.disabled = isSavingTransactionFreeRoomCorrection
-    || preview.freeMinutes <= 0
+    || preview.freeMinutes < 0
     || preview.freeMinutes > preview.actualMinutes
     || String(transactionFreeRoomCorrection.reason || "").trim().length < 5;
   submitButton.textContent = isSavingTransactionFreeRoomCorrection ? "Menyimpan..." : "Simpan Free Room";
@@ -20417,7 +20440,7 @@ function submitTransactionFreeRoomCorrection() {
   }
 
   const preview = getTransactionFreeRoomCorrectionPreview();
-  if (preview.freeMinutes <= 0 || preview.freeMinutes > preview.actualMinutes || String(transactionFreeRoomCorrection.reason || "").trim().length < 5) {
+  if (preview.freeMinutes < 0 || preview.freeMinutes > preview.actualMinutes || String(transactionFreeRoomCorrection.reason || "").trim().length < 5) {
     showInlineNotice("Pilih durasi free room yang valid dan isi alasan minimal 5 karakter.", "error");
     return;
   }
@@ -20480,6 +20503,135 @@ async function executeTransactionFreeRoomCorrection(ownerPin) {
     return { success: false, message };
   } finally {
     isSavingTransactionFreeRoomCorrection = false;
+    renderRooms();
+  }
+}
+
+let isAppendingFnbToTransaction = false;
+
+function openAppendFnbTransactionModal(transactionId) {
+  const transaction = getTransactionById(transactionId);
+  if (!transaction) {
+    showInlineNotice("Transaksi tidak ditemukan pada riwayat yang sedang tampil.", "error");
+    return;
+  }
+
+  if (String(transaction.payment_status || "").toLowerCase() === "paid") {
+    showInlineNotice("Transaksi sudah lunas. F&B susulan hanya bisa ditambahkan ke transaksi yang belum dibayar.", "error");
+    return;
+  }
+
+  if (String(transaction.payment_status || "").toLowerCase() === "cancelled") {
+    showInlineNotice("Transaksi sudah dibatalkan.", "error");
+    return;
+  }
+
+  const roomName = transaction.room_name || transaction.room_id || "Ruangan";
+  const activeMenus = (menuItems || []).filter(m => m.status === "active");
+
+  if (activeMenus.length === 0) {
+    showInlineNotice("Daftar menu F&B belum dimuat.", "error");
+    return;
+  }
+
+  const menuOptions = [["", "-- Pilih Menu F&B (Rokok / Minuman / Snack) --"]];
+  activeMenus.forEach(m => {
+    menuOptions.push([m.menu_id, `${m.menu_name} - ${formatCurrency(m.price)} (${m.category || 'F&B'})`]);
+  });
+
+  const qtyOptions = [];
+  for (let q = 1; q <= 20; q++) {
+    qtyOptions.push([String(q), `${q}x`]);
+  }
+
+  openActionConfirmation({
+    tone: "info",
+    title: `Susulkan F&B - ${roomName}`,
+    message: `Pilih item F&B (misal rokok, minuman, snack) untuk disusulkan ke nota transaksi ${transactionId}. Stok fisik otomatis dipotong dan total tagihan akan bertambah.`,
+    details: [
+      ["ID Transaksi", transactionId],
+      ["Ruangan", roomName],
+      ["Status Tagihan", "Belum Dibayar (Unpaid)"],
+      ["Total Sebelum Tambahan", formatCurrency(transaction.grand_total)],
+    ],
+    fields: [
+      {
+        name: "menu_id",
+        label: "Pilih Menu F&B",
+        options: menuOptions,
+        value: "",
+        required: true,
+        errorMessage: "Pilih salah satu menu F&B.",
+      },
+      {
+        name: "quantity",
+        label: "Jumlah / Qty",
+        options: qtyOptions,
+        value: "1",
+        required: true,
+      },
+      {
+        name: "note",
+        label: "Keterangan / Alasan",
+        placeholder: "Contoh: Rokok susulan meja VIP",
+        multiline: false,
+        required: false,
+        value: "Susulan pesanan F&B rokok",
+      },
+    ],
+    confirmLabel: "Ya, Susulkan ke Tagihan",
+    cancelLabel: "Batal",
+    onConfirm: (defaultVal, fieldValues) => {
+      const menuId = fieldValues?.menu_id;
+      const qty = Number(fieldValues?.quantity || 1);
+      const noteVal = fieldValues?.note || "Susulan pesanan F&B";
+
+      if (!menuId) {
+        showInlineNotice("Pilih menu F&B yang ingin disusulkan.", "error");
+        return;
+      }
+
+      executeAppendFnbToTransaction({
+        transaction_id: transactionId,
+        items: [{ menu_id: menuId, quantity: qty }],
+        note: noteVal,
+        cashier_name: getLoggedInOperatorName(),
+      });
+    },
+  });
+}
+
+async function executeAppendFnbToTransaction(payload) {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (isAppendingFnbToTransaction) return;
+  isAppendingFnbToTransaction = true;
+  setActionButtonsDisabled(true);
+
+  try {
+    const data = await postApiAction({
+      action: "appendFnbToUnpaidTransaction",
+      ...payload,
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal menyusulkan F&B ke transaksi.");
+    }
+
+    showFloatingToast(data.message || "Pesanan F&B berhasil disusulkan ke transaksi.");
+
+    await loadTodayTransactions();
+    await loadOpenFnbOrders();
+    await loadTodayFnbOrders();
+    await loadInventoryItems();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal menyusulkan F&B.", "error");
+  } finally {
+    isAppendingFnbToTransaction = false;
+    setActionButtonsDisabled(false);
     renderRooms();
   }
 }
@@ -32338,6 +32490,11 @@ async function handleRoomAction(event) {
 
   if (action === "open-transaction-free-room-correction") {
     openTransactionFreeRoomCorrection(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "open-append-fnb-transaction") {
+    openAppendFnbTransactionModal(button.dataset.transactionId || "");
     return;
   }
 

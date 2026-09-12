@@ -1159,7 +1159,7 @@ async function correctTransactionFreeRoom(req, res, payload) {
     const correctedBy = String(payload.changed_by || payload.corrected_by || 'Owner').trim();
 
     if (!transactionId) throw new Error('transaction_id wajib diisi.');
-    if (freeRoomMinutes <= 0) throw new Error('Free room wajib lebih dari 0 menit.');
+    if (freeRoomMinutes < 0) throw new Error('Durasi free room tidak valid.');
     if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
 
     const authorizationActor = await validateOwnerPin(adminPin);
@@ -1171,13 +1171,12 @@ async function correctTransactionFreeRoom(req, res, payload) {
     if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
       throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
     }
-    if (String(oldTransaction.package_id || '').trim()) {
-      throw new Error('Transaksi paket tidak bisa memakai koreksi free room. Gunakan koreksi paket bila perlu.');
-    }
+
+    const isPackage = Boolean(String(oldTransaction.package_id || '').trim()) || oldTransaction.booking_mode === 'package';
 
     const actualDurationMinutes = Math.max(0, Math.floor(toNumber(oldTransaction.duration_minutes)));
-    if (actualDurationMinutes <= 0) throw new Error('Durasi aktual transaksi tidak valid.');
-    if (freeRoomMinutes > actualDurationMinutes) {
+    if (actualDurationMinutes <= 0 && !isPackage) throw new Error('Durasi aktual transaksi tidak valid.');
+    if (actualDurationMinutes > 0 && freeRoomMinutes > actualDurationMinutes) {
       throw new Error('Free room tidak boleh lebih besar dari durasi aktual.');
     }
 
@@ -1186,15 +1185,26 @@ async function correctTransactionFreeRoom(req, res, payload) {
     const manualDiscountFnb = toNumber(oldTransaction.manual_discount_fnb);
 
     let ratePerHour = toNumber(oldTransaction.rate_per_hour);
-    if (ratePerHour <= 0 && actualDurationMinutes > 0) {
+    if (ratePerHour <= 0) {
+      const roomRow = await client.query('SELECT rate_per_hour FROM rooms WHERE room_id = $1', [oldTransaction.room_id]);
+      if (roomRow.rowCount > 0) {
+        ratePerHour = toNumber(roomRow.rows[0].rate_per_hour);
+      }
+    }
+    if (ratePerHour <= 0 && actualDurationMinutes > 0 && !isPackage) {
       const existingGross = toNumber(oldTransaction.room_total) + toNumber(oldTransaction.room_discount_amount) + promoDiscount + manualDiscountRoom;
       ratePerHour = Math.round(existingGross / (actualDurationMinutes / 60));
     }
-    if (ratePerHour <= 0) throw new Error('Tarif per jam transaksi tidak valid.');
+    if (ratePerHour <= 0) {
+      ratePerHour = 135000;
+    }
 
-    const grossRoomTotal = Math.ceil((actualDurationMinutes / 60) * ratePerHour);
+    const grossRoomTotal = isPackage
+      ? (toNumber(oldTransaction.package_total) || (toNumber(oldTransaction.room_total) + toNumber(oldTransaction.room_discount_amount)) || 650000)
+      : Math.ceil((actualDurationMinutes / 60) * ratePerHour);
+
     const billableRoomMinutes = Math.max(0, actualDurationMinutes - freeRoomMinutes);
-    const discountAmount = Math.max(0, Math.ceil((freeRoomMinutes / 60) * ratePerHour));
+    const discountAmount = Math.min(grossRoomTotal, Math.max(0, Math.ceil((freeRoomMinutes / 60) * ratePerHour)));
     const baseBilledRoomTotal = Math.max(0, grossRoomTotal - discountAmount);
     const nextRoomTotal = Math.max(0, baseBilledRoomTotal - promoDiscount - manualDiscountRoom);
     const fnbTotal = toNumber(oldTransaction.fnb_total);
@@ -1208,22 +1218,25 @@ async function correctTransactionFreeRoom(req, res, payload) {
       oldTransaction.transfer_amount
     );
 
+    const nextBookingMode = isPackage ? (oldTransaction.booking_mode || 'package') : 'free_room_correction';
+
     const updatedRes = await client.query(`
       UPDATE transactions
-      SET booking_mode = 'free_room_correction',
-          billable_room_minutes = $1,
-          free_room_minutes = $2,
-          room_discount_amount = $3,
-          room_total = $4,
-          grand_total = $5,
-          cash_amount = $6,
-          transfer_amount = $7,
+      SET booking_mode = $1,
+          billable_room_minutes = $2,
+          free_room_minutes = $3,
+          room_discount_amount = $4,
+          room_total = $5,
+          grand_total = $6,
+          cash_amount = $7,
+          transfer_amount = $8,
           corrected_at = CURRENT_TIMESTAMP,
-          corrected_by = $8,
-          correction_note = $9
-      WHERE transaction_id = $10
+          corrected_by = $9,
+          correction_note = $10
+      WHERE transaction_id = $11
       RETURNING *
     `, [
+      nextBookingMode,
       billableRoomMinutes,
       freeRoomMinutes,
       discountAmount,
@@ -2516,6 +2529,175 @@ async function createManualOutageTransaction(req, res, payload) {
   }
 }
 
+async function appendFnbToUnpaidTransaction(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const cashierName = String(payload.cashier_name || payload.operator_name || 'Kasir').trim();
+    const note = String(payload.note || 'Susulan pesanan F&B').trim();
+    const items = Array.isArray(payload.items) ? payload.items : [];
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (items.length === 0) throw new Error('Item F&B susulan wajib diisi minimal 1.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const transaction = trxRes.rows[0];
+
+    if (String(transaction.payment_status || '').toLowerCase() === 'paid') {
+      throw new Error('Transaksi sudah lunas. Pesanan susulan hanya bisa ditambahkan ke transaksi yang belum dibayar.');
+    }
+    if (String(transaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi sudah dibatalkan.');
+    }
+
+    const roomId = transaction.room_id;
+    const roomName = transaction.room_name || roomId;
+    const orderId = `FNB-EXTRA-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    let extraOrderTotal = 0;
+
+    // Insert new order header
+    await client.query(`
+      INSERT INTO fnb_orders (
+        order_id, room_id, room_name, order_status, order_total, cashier_name, note, created_at, updated_at
+      ) VALUES ($1, $2, $3, 'billed', 0, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [orderId, roomId, roomName, cashierName, note]);
+
+    // Insert items & deduct stock
+    for (const entry of items) {
+      const menuId = String(entry.menu_id || '').trim();
+      const qty = Math.max(1, Math.floor(toNumber(entry.quantity || 1)));
+
+      const menuRes = await client.query('SELECT * FROM menu WHERE menu_id = $1', [menuId]);
+      if (menuRes.rowCount === 0) throw new Error(`Menu ID ${menuId} tidak ditemukan.`);
+      const menu = menuRes.rows[0];
+
+      const price = Number(menu.price || 0);
+      const subtotal = price * qty;
+      extraOrderTotal += subtotal;
+
+      const orderItemId = require('crypto').randomUUID();
+      await client.query(`
+        INSERT INTO fnb_order_items (
+          order_item_id, order_id, menu_id, menu_name, category, price, quantity, subtotal, is_voided, stock_deducted, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, TRUE, CURRENT_TIMESTAMP)
+      `, [orderItemId, orderId, menuId, menu.menu_name, menu.category, price, qty, subtotal]);
+
+      // Potong stok fisik jika stock_tracking === 'yes'
+      if (menu.stock_tracking === 'yes' && menu.stock_item_id) {
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [menu.stock_item_id]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const qtyPerUnit = Number(menu.stock_qty_per_unit || 1);
+          const totalStockDeduct = qty * qtyPerUnit;
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore - totalStockDeduct;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, menu.stock_item_id]);
+
+          const movementId = `SM-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, movement_type, source, qty_change, stock_before, stock_after, note, cashier_name, reference_id, created_at
+            ) VALUES ($1, $2, 'fnb_sale', 'pos_fnb', $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+          `, [
+            movementId,
+            menu.stock_item_id,
+            -totalStockDeduct,
+            stockBefore,
+            stockAfter,
+            `Susulan F&B transaksi ${transactionId} (${qty}x ${menu.menu_name})`,
+            cashierName,
+            transactionId
+          ]);
+        }
+      }
+    }
+
+    // Update order header total
+    await client.query('UPDATE fnb_orders SET order_total = $1 WHERE order_id = $2', [extraOrderTotal, orderId]);
+
+    // Update transaction
+    const existingOrderIds = String(transaction.fnb_order_ids || '').trim();
+    const updatedOrderIds = existingOrderIds ? `${existingOrderIds},${orderId}` : orderId;
+    const newFnbTotal = Number(transaction.fnb_total || 0) + extraOrderTotal;
+    const newGrandTotal = Number(transaction.grand_total || 0) + extraOrderTotal;
+
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      transaction.payment_method,
+      newGrandTotal,
+      transaction.cash_amount,
+      transaction.transfer_amount
+    );
+
+    const extraTotalFormatted = `Rp ${Number(extraOrderTotal).toLocaleString('id-ID')}`;
+
+    const updateTxRes = await client.query(`
+      UPDATE transactions
+      SET fnb_order_ids = $1,
+          fnb_total = $2,
+          grand_total = $3,
+          cash_amount = $4,
+          transfer_amount = $5,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $6,
+          correction_note = COALESCE(correction_note, '') || ' [Susulan F&B +' || $7::varchar || ']'
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [
+      updatedOrderIds,
+      newFnbTotal,
+      newGrandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      cashierName,
+      extraTotalFormatted,
+      transactionId
+    ]);
+
+    // Audit log
+    try {
+      const { writeOperationalAudit } = require('../services/operationalAuditService');
+      await writeOperationalAudit(client, {
+        domain: 'transaction',
+        event_type: 'append_fnb_order',
+        transaction_id: transactionId,
+        room_id: roomId,
+        room_name: roomName,
+        initiated_by: { name: cashierName },
+        amount_before: Number(transaction.grand_total || 0),
+        amount_after: newGrandTotal,
+        amount_delta: extraOrderTotal,
+        reason: note,
+        metadata: {
+          added_order_id: orderId,
+          added_fnb_total: extraOrderTotal,
+          items_count: items.length
+        }
+      });
+    } catch (auditErr) {
+      console.warn('Audit append F&B error:', auditErr.message);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Berhasil menambahkan pesanan F&B susulan sebesar ${extraTotalFormatted} ke transaksi ${transactionId}.`,
+      transaction: updateTxRes.rows[0],
+      order_id: orderId,
+      added_total: extraOrderTotal
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getTodayTransactions,
   markTransactionPaid,
@@ -2523,6 +2705,7 @@ module.exports = {
   updateTransactionDetails,
   correctTransactionPackage,
   correctTransactionFreeRoom,
+  appendFnbToUnpaidTransaction,
   applyTransactionManualDiscount,
   createSalesCommission,
   deleteTransaction,
