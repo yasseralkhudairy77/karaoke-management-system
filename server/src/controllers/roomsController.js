@@ -762,6 +762,7 @@ async function payAndStartSession(req, res, payload) {
       ? Number(session.billable_room_minutes)
       : durationMinutes;
     const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+    const roomDiscountAmount = freeRoomMinutes > 0 ? Math.ceil((freeRoomMinutes / 60) * ratePerHour) : 0;
 
     await client.query(`
       INSERT INTO transactions (
@@ -769,9 +770,9 @@ async function payAndStartSession(req, res, payload) {
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
         grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
         booking_mode, package_id, package_name, package_total,
-        billable_room_minutes, free_room_minutes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15, $16, $17, $18, $19, $20, $21)
-    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, billableRoomMinutes, freeRoomMinutes]);
+        billable_room_minutes, free_room_minutes, room_discount_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, 'paid', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+    `, [transactionId, roomId, room.room_name, now, scheduledEndTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, grandTotal, fnbOrderIds.join(','), paymentMethod, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, billableRoomMinutes, freeRoomMinutes, roomDiscountAmount]);
 
     await client.query(`
       UPDATE room_sessions
@@ -2238,6 +2239,7 @@ async function closeSession(req, res, payload) {
       ? Number(activeSession.billable_room_minutes)
       : durationMinutes;
     const freeRoomMinutes = Math.max(0, durationMinutes - billableRoomMinutes);
+    const roomDiscountAmount = freeRoomMinutes > 0 ? Math.ceil((freeRoomMinutes / 60) * ratePerHour) : 0;
 
     // CRITICAL: Postpaid flow produces payment_status = 'unpaid'
     await client.query(`
@@ -2246,9 +2248,9 @@ async function closeSession(req, res, payload) {
         duration_minutes, rate_per_hour, room_total, fnb_total, lc_total,
         grand_total, fnb_order_ids, payment_method, payment_status, cashier_name, operational_date, idempotency_key,
         booking_mode, package_id, package_name, package_total, room_upgrade_total, room_journey_json,
-        billable_room_minutes, free_room_minutes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
-    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney), billableRoomMinutes, freeRoomMinutes]);
+        billable_room_minutes, free_room_minutes, room_discount_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', 'unpaid', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+    `, [transactionId, roomId, room.room_name, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, fnbOrderIds.join(','), cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal, roomUpgradeTotal, JSON.stringify(roomJourney), billableRoomMinutes, freeRoomMinutes, roomDiscountAmount]);
 
     await client.query(`
       UPDATE lc_work_logs

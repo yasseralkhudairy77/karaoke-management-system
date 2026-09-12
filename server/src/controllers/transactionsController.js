@@ -1181,16 +1181,26 @@ async function correctTransactionFreeRoom(req, res, payload) {
       throw new Error('Free room tidak boleh lebih besar dari durasi aktual.');
     }
 
-    const ratePerHour = toNumber(oldTransaction.rate_per_hour);
+    const promoDiscount = toNumber(oldTransaction.promo_discount);
+    const manualDiscountRoom = toNumber(oldTransaction.manual_discount_room);
+    const manualDiscountFnb = toNumber(oldTransaction.manual_discount_fnb);
+
+    let ratePerHour = toNumber(oldTransaction.rate_per_hour);
+    if (ratePerHour <= 0 && actualDurationMinutes > 0) {
+      const existingGross = toNumber(oldTransaction.room_total) + toNumber(oldTransaction.room_discount_amount) + promoDiscount + manualDiscountRoom;
+      ratePerHour = Math.round(existingGross / (actualDurationMinutes / 60));
+    }
     if (ratePerHour <= 0) throw new Error('Tarif per jam transaksi tidak valid.');
 
     const grossRoomTotal = Math.ceil((actualDurationMinutes / 60) * ratePerHour);
     const billableRoomMinutes = Math.max(0, actualDurationMinutes - freeRoomMinutes);
-    const nextRoomTotal = Math.ceil((billableRoomMinutes / 60) * ratePerHour);
-    const discountAmount = Math.max(0, grossRoomTotal - nextRoomTotal);
+    const discountAmount = Math.max(0, Math.ceil((freeRoomMinutes / 60) * ratePerHour));
+    const baseBilledRoomTotal = Math.max(0, grossRoomTotal - discountAmount);
+    const nextRoomTotal = Math.max(0, baseBilledRoomTotal - promoDiscount - manualDiscountRoom);
     const fnbTotal = toNumber(oldTransaction.fnb_total);
+    const nextFnbTotal = Math.max(0, fnbTotal - manualDiscountFnb);
     const lcTotal = toNumber(oldTransaction.lc_total);
-    const grandTotal = nextRoomTotal + fnbTotal + lcTotal;
+    const grandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
     const paymentBreakdown = adjustPaymentBreakdownForCorrection(
       oldTransaction.payment_method,
       grandTotal,

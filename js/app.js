@@ -8066,12 +8066,13 @@ function createPaymentControlElement(transaction) {
 
     const breakdownEl = payment.closest(".billing-summary")?.querySelector(".billing-breakdown");
     if (breakdownEl) {
-      const rows = breakdownEl.children;
-      if (rows && rows[0]) {
-        rows[0].querySelector("p:last-child").textContent = formatCurrency(discountedRoomTotal);
+      const firstRowVal = breakdownEl.querySelector(".billing-breakdown-row p:last-child");
+      if (firstRowVal) {
+        firstRowVal.textContent = formatCurrency(discountedRoomTotal);
       }
-      if (rows && rows[rows.length - 1]) {
-        rows[rows.length - 1].querySelector("p:last-child").textContent = formatCurrency(newGrandTotal);
+      const totalRowVal = breakdownEl.querySelector(".billing-breakdown-total p:last-child");
+      if (totalRowVal) {
+        totalRowVal.textContent = formatCurrency(newGrandTotal);
       }
     }
 
@@ -18615,6 +18616,20 @@ function createTransactionRowElement(transaction) {
         item.appendChild(badge);
       }
 
+      if (labelText === "Durasi" && getTransactionFreeRoomMinutes(transaction) > 0) {
+        const freeBadge = document.createElement("span");
+        freeBadge.className = withStatusBadge("transaction-fnb-badge", "success");
+        freeBadge.textContent = `Free ${formatLcDurationShort(getTransactionFreeRoomMinutes(transaction))}`;
+        item.appendChild(freeBadge);
+      }
+
+      if (labelText === "Total Akhir" && getTransactionRoomDiscountAmount(transaction) > 0) {
+        const freeDiscountBadge = document.createElement("span");
+        freeDiscountBadge.className = withStatusBadge("transaction-fnb-badge", "success");
+        freeDiscountBadge.textContent = `Free Room -${formatCurrency(getTransactionRoomDiscountAmount(transaction))}`;
+        item.appendChild(freeDiscountBadge);
+      }
+
       if (labelText === "Total Akhir" && getTransactionSalesCommissionAmount(transaction) > 0) {
         const commissionBadge = document.createElement("span");
         commissionBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
@@ -19853,11 +19868,24 @@ function getTransactionFreeRoomCorrectionPreview() {
   const actualMinutes = Number(transaction.duration_minutes) || 0;
   const freeMinutes = Math.max(0, Number(transactionFreeRoomCorrection?.freeRoomMinutes) || 0);
   const billableMinutes = Math.max(0, actualMinutes - freeMinutes);
-  const ratePerHour = Number(transaction.rate_per_hour) || 0;
+  const promoDiscount = Number(transaction.promo_discount || 0);
+  const manualDiscountRoom = Number(transaction.manual_discount_room || 0);
+  const manualDiscountFnb = Number(transaction.manual_discount_fnb || 0);
+
+  let ratePerHour = Number(transaction.rate_per_hour) || 0;
+  if (ratePerHour <= 0 && actualMinutes > 0) {
+    const existingGross = Number(transaction.room_total || 0) + Number(transaction.room_discount_amount || 0) + promoDiscount + manualDiscountRoom;
+    ratePerHour = Math.round(existingGross / (actualMinutes / 60));
+  }
+
   const grossRoomTotal = Math.ceil((actualMinutes / 60) * ratePerHour);
-  const nextRoomTotal = Math.ceil((billableMinutes / 60) * ratePerHour);
-  const discountAmount = Math.max(0, grossRoomTotal - nextRoomTotal);
-  const nextGrandTotal = nextRoomTotal + (Number(transaction.fnb_total) || 0) + (Number(transaction.lc_total) || 0);
+  const discountAmount = Math.max(0, Math.ceil((freeMinutes / 60) * ratePerHour));
+  const baseBilledRoomTotal = Math.max(0, grossRoomTotal - discountAmount);
+  const nextRoomTotal = Math.max(0, baseBilledRoomTotal - promoDiscount - manualDiscountRoom);
+  const fnbTotal = Number(transaction.fnb_total || 0);
+  const nextFnbTotal = Math.max(0, fnbTotal - manualDiscountFnb);
+  const lcTotal = Number(transaction.lc_total || 0);
+  const nextGrandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
 
   return {
     transaction,
@@ -19868,6 +19896,8 @@ function getTransactionFreeRoomCorrectionPreview() {
     nextRoomTotal,
     discountAmount,
     nextGrandTotal,
+    promoDiscount,
+    manualDiscountRoom,
   };
 }
 
@@ -19913,17 +19943,27 @@ function createTransactionFreeRoomCorrectionElement() {
 
   const details = document.createElement("div");
   details.className = "master-delete-details";
-  [
+  const detailItems = [
     ["ID", transaction.transaction_id],
     ["Room", transaction.room_name || transaction.room_id],
     ["Durasi Aktual", formatDurationMinutes(preview.actualMinutes)],
-    ["Free Room", formatDurationMinutes(preview.freeMinutes)],
+    ...(Number(transaction.free_room_minutes || 0) > 0 ? [
+      ["Free Room Awal", formatDurationMinutes(transaction.free_room_minutes)]
+    ] : []),
+    ["Free Room Baru", formatDurationMinutes(preview.freeMinutes)],
     ["Durasi Ditagihkan", formatDurationMinutes(preview.billableMinutes)],
     ["Biaya Room Normal", formatCurrency(preview.grossRoomTotal)],
-    ["Potongan Room", `-${formatCurrency(preview.discountAmount)}`],
+    ["Potongan Free Room", `-${formatCurrency(preview.discountAmount)}`],
+    ...(preview.promoDiscount > 0 ? [
+      [`Promo (${transaction.promo_code || "Promo"})`, `-${formatCurrency(preview.promoDiscount)}`]
+    ] : []),
+    ...(preview.manualDiscountRoom > 0 ? [
+      ["Diskon Management", `-${formatCurrency(preview.manualDiscountRoom)}`]
+    ] : []),
     ["Biaya Room Baru", formatCurrency(preview.nextRoomTotal)],
     ["Total Baru", formatCurrency(preview.nextGrandTotal)],
-  ].forEach(([labelText, valueText]) => {
+  ];
+  detailItems.forEach(([labelText, valueText]) => {
     const item = document.createElement("div");
     const label = document.createElement("p");
     label.className = "transaction-label";
