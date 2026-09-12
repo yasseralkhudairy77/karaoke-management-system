@@ -232,6 +232,8 @@ async function handlePostAction(action, req, res, payload) {
       return transactionsController.correctTransactionFreeRoom(req, res, payload);
     case 'appendFnbToUnpaidTransaction':
       return transactionsController.appendFnbToUnpaidTransaction(req, res, payload);
+    case 'recalculatePackageOvertime':
+      return transactionsController.recalculatePackageOvertime(req, res, payload);
     case 'applyTransactionManualDiscount':
       return transactionsController.applyTransactionManualDiscount(req, res, payload);
     case 'createSalesCommission':

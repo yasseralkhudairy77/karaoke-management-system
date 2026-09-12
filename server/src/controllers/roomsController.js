@@ -1691,8 +1691,10 @@ async function updateActiveSessionPackage(req, res, payload) {
       nextPackage = pkgRes.rows[0];
       nextBookingMode = 'package';
       nextNote = buildSessionPackageNote(session.note, nextPackage, reason);
-      nextBillableMinutes = 0;
-      nextIncludedMinutes = Number(session.booked_duration_minutes || room.booked_duration_minutes || nextPackage.duration_minutes || 0);
+      const pkgDuration = Number(nextPackage.duration_minutes || 0);
+      nextIncludedMinutes = pkgDuration;
+      const totalBooked = Number(session.booked_duration_minutes || room.booked_duration_minutes || 0);
+      nextBillableMinutes = Math.max(0, totalBooked - pkgDuration);
     }
 
     await client.query(`

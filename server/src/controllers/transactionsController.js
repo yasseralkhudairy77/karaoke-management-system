@@ -2702,6 +2702,105 @@ async function appendFnbToUnpaidTransaction(req, res, payload) {
   }
 }
 
+async function recalculatePackageOvertime(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const trx = trxRes.rows[0];
+
+    if (String(trx.payment_status || '').toLowerCase() === 'paid') {
+      throw new Error('Transaksi sudah lunas. Hanya transaksi belum dibayar yang dapat direkalkulasi.');
+    }
+    if (String(trx.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi sudah dibatalkan.');
+    }
+
+    const totalMinutes = Number(trx.duration_minutes || 0);
+    const ratePerHour = Number(trx.rate_per_hour || 135000);
+    const packageTotal = Number(trx.package_total || 650000);
+
+    let packageIncludedMinutes = 120;
+    if (trx.package_id) {
+      const pkgRes = await client.query('SELECT duration_minutes, selling_price FROM package_master WHERE package_id = $1', [trx.package_id]);
+      if (pkgRes.rowCount > 0) {
+        packageIncludedMinutes = Number(pkgRes.rows[0].duration_minutes || 120);
+      }
+    }
+
+    const extraMinutes = Math.max(0, totalMinutes - packageIncludedMinutes);
+    const extraRoomCharge = extraMinutes > 0 ? Math.ceil((extraMinutes / 60) * ratePerHour) : 0;
+    const newRoomTotal = packageTotal + extraRoomCharge;
+    const freeRoomMinutes = Math.min(totalMinutes, packageIncludedMinutes);
+    const roomDiscountAmount = freeRoomMinutes > 0 ? Math.ceil((freeRoomMinutes / 60) * ratePerHour) : 0;
+    const billableRoomMinutes = extraMinutes;
+
+    const fnbTotal = Number(trx.fnb_total || 0);
+    const lcTotal = Number(trx.lc_total || 0);
+    const promoDiscount = Number(trx.promo_discount || 0);
+    const manualDiscountRoom = Number(trx.manual_discount_room || 0);
+    const manualDiscountFnb = Number(trx.manual_discount_fnb || 0);
+
+    const newGrandTotal = Math.max(0, newRoomTotal - promoDiscount - manualDiscountRoom) +
+                          Math.max(0, fnbTotal - manualDiscountFnb) +
+                          lcTotal;
+
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      trx.payment_method,
+      newGrandTotal,
+      trx.cash_amount,
+      trx.transfer_amount
+    );
+
+    const updatedTrxRes = await client.query(`
+      UPDATE transactions
+      SET room_total = $1,
+          grand_total = $2,
+          billable_room_minutes = $3,
+          free_room_minutes = $4,
+          room_discount_amount = $5,
+          cash_amount = $6,
+          transfer_amount = $7,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [newRoomTotal, newGrandTotal, billableRoomMinutes, freeRoomMinutes, roomDiscountAmount, paymentBreakdown.cash_amount, paymentBreakdown.transfer_amount, transactionId]);
+
+    try {
+      const { writeOperationalAudit } = require('../services/operationalAuditService');
+      await writeOperationalAudit(client, {
+        domain: 'transaction',
+        event_type: 'recalculate_package_overtime',
+        transaction_id: transactionId,
+        room_id: trx.room_id,
+        room_name: trx.room_name,
+        initiated_by: { name: payload.cashier_name || 'Owner' },
+        amount_before: Number(trx.grand_total || 0),
+        amount_after: newGrandTotal,
+        reason: `Hitung ulang overtime sewa room: paket ${packageIncludedMinutes} menit, total ${totalMinutes} menit, room extra ${extraMinutes} menit (+Rp ${extraRoomCharge.toLocaleString('id-ID')})`
+      });
+    } catch (e) {}
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Transaksi ${transactionId} berhasil direkalkulasi. Room tambahan: ${extraMinutes} menit (Rp ${extraRoomCharge.toLocaleString('id-ID')}). Total baru: Rp ${newGrandTotal.toLocaleString('id-ID')}.`,
+      transaction: updatedTrxRes.rows[0]
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getTodayTransactions,
   markTransactionPaid,
@@ -2710,6 +2809,7 @@ module.exports = {
   correctTransactionPackage,
   correctTransactionFreeRoom,
   appendFnbToUnpaidTransaction,
+  recalculatePackageOvertime,
   applyTransactionManualDiscount,
   createSalesCommission,
   deleteTransaction,

@@ -19109,6 +19109,16 @@ function createTransactionActionsElement(transaction) {
       category: "operational",
       title: "Tambah pesanan F&B susulan ke tagihan ini",
     });
+
+    if (transactionHasPackage(transaction)) {
+      secondaryItems.push({
+        action: "recalculate-package-overtime",
+        label: "Hitung Ulang Overtime",
+        icon: "⏱️",
+        category: "operational",
+        title: "Hitung ulang biaya overtime room dan sesuaikan free room paket",
+      });
+    }
   }
 
   if (operatorRole === "owner" || operatorRole === "manager") {
@@ -20646,6 +20656,59 @@ async function executeAppendFnbToTransaction(payload) {
     setActionButtonsDisabled(false);
     renderRooms();
   }
+}
+
+let isRecalculatingPackageOvertime = false;
+
+function executeRecalculatePackageOvertime(transactionId) {
+  if (!transactionId) {
+    showInlineNotice("ID transaksi tidak ditemukan.", "error");
+    return;
+  }
+
+  const transaction = getTransactionById(transactionId);
+  const roomName = transaction?.room_name || transaction?.room_id || "Ruangan";
+
+  openActionConfirmation({
+    tone: "info",
+    title: `Hitung Ulang Overtime - ${roomName}`,
+    message: `Sistem akan menghitung ulang sewa room tambahan untuk sesi paket ${transactionId}. Durasi paket bawaan (misal 2 jam) tetap gratis, sedangkan jam kelebihannya akan ditagihkan sesuai tarif normal room.`,
+    details: [
+      ["ID Transaksi", transactionId],
+      ["Ruangan", roomName],
+      ["Durasi Total", `${Number(transaction?.duration_minutes) || 0} menit`],
+      ["Paket", getTransactionPackageLabel(transaction)],
+      ["Total Saat Ini", formatCurrency(transaction?.grand_total || 0)],
+    ],
+    confirmLabel: "Ya, Hitung Ulang Sekarang",
+    cancelLabel: "Batal",
+    onConfirm: async () => {
+      if (isRecalculatingPackageOvertime) return;
+      isRecalculatingPackageOvertime = true;
+      setActionButtonsDisabled(true);
+
+      try {
+        const data = await postApiAction({
+          action: "recalculatePackageOvertime",
+          transaction_id: transactionId,
+          cashier_name: getLoggedInOperatorName(),
+        });
+
+        if (!data || data.ok !== true) {
+          throw new Error(data?.error || data?.message || "Gagal menghitung ulang overtime paket.");
+        }
+
+        showFloatingToast(data.message || "Overtime paket berhasil dihitung ulang.");
+        await loadTodayTransactions();
+      } catch (err) {
+        showInlineNotice(err.message || "Gagal menghitung ulang overtime.", "error");
+      } finally {
+        isRecalculatingPackageOvertime = false;
+        setActionButtonsDisabled(false);
+        renderRooms();
+      }
+    }
+  });
 }
 
 function openTransactionManualDiscount(transactionId) {
@@ -32507,6 +32570,11 @@ async function handleRoomAction(event) {
 
   if (action === "open-append-fnb-transaction") {
     openAppendFnbTransactionModal(button.dataset.transactionId || "");
+    return;
+  }
+
+  if (action === "recalculate-package-overtime") {
+    executeRecalculatePackageOvertime(button.dataset.transactionId || "");
     return;
   }
 

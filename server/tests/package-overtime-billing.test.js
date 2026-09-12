@@ -211,6 +211,78 @@ async function runTests() {
     // Grand Total: 920.000 (Room/Paket) + 193.000 (F&B) + 520.000 (LC) = 1.633.000
     assert.strictEqual(insertedTransaction.grand_total, 1633000, 'Grand total harus Rp 1.633.000');
     console.log('  ✓ PASS: closeSession accurately persists 2-hour package free room and bills 2 hours extra room charge.\n');
+
+    // Test 4: Testing recalculatePackageOvertime on Old Existing VIP 2 Transaction
+    console.log('Test 4: Testing recalculatePackageOvertime on existing unpaid VIP 2 transaction...');
+    const { recalculatePackageOvertime } = require('../src/controllers/transactionsController');
+
+    const mockOldTrx = {
+      transaction_id: 'TRX-1789249721907',
+      room_id: '2',
+      room_name: 'Ruangan 2 - VIP 2',
+      duration_minutes: 240,
+      rate_per_hour: 135000,
+      room_total: 650000,
+      package_id: 'PKG-CM-2H',
+      package_name: 'PAKET CAPTAIN MORGAN APPLE 2 JAM',
+      package_total: 650000,
+      booking_mode: 'package',
+      free_room_minutes: 240,
+      room_discount_amount: 540000,
+      fnb_total: 193000,
+      lc_total: 520000,
+      grand_total: 1363000,
+      payment_method: 'cash',
+      payment_status: 'unpaid',
+      cash_amount: 1363000,
+      transfer_amount: 0
+    };
+
+    let updatedRecalcTrx = null;
+    mockDbClient.query = async (sql, params = []) => {
+      const text = String(sql).trim();
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
+      if (text.includes('FROM transactions WHERE transaction_id = $1 FOR UPDATE')) {
+        return { rows: [{ ...mockOldTrx }], rowCount: 1 };
+      }
+      if (text.includes('FROM package_master WHERE package_id = $1')) {
+        return { rows: [{ duration_minutes: 120, selling_price: 650000 }], rowCount: 1 };
+      }
+      if (text.includes('UPDATE transactions') && text.includes('room_total = $1')) {
+        mockOldTrx.room_total = params[0];
+        mockOldTrx.grand_total = params[1];
+        mockOldTrx.billable_room_minutes = params[2];
+        mockOldTrx.free_room_minutes = params[3];
+        mockOldTrx.room_discount_amount = params[4];
+        mockOldTrx.cash_amount = params[5];
+        mockOldTrx.transfer_amount = params[6];
+        updatedRecalcTrx = { ...mockOldTrx };
+        return { rows: [updatedRecalcTrx], rowCount: 1 };
+      }
+      if (text.includes('INSERT INTO operational_audit_events')) {
+        return { rows: [{ event_id: 'AUDIT-RECALC' }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+
+    let recalcResData = null;
+    const recalcRes = {
+      json: (data) => { recalcResData = data; return data; },
+      status: () => recalcRes
+    };
+
+    await recalculatePackageOvertime({}, recalcRes, {
+      transaction_id: 'TRX-1789249721907',
+      cashier_name: 'Manager 1 (Owner)'
+    });
+
+    assert.strictEqual(recalcResData.ok, true, 'Rekalkulasi overtime harus berhasil');
+    assert.strictEqual(updatedRecalcTrx.room_total, 920000, 'Room total lama harus diperbarui jadi Rp 920.000');
+    assert.strictEqual(updatedRecalcTrx.billable_room_minutes, 120, 'Billable room minutes harus 120 menit (2 jam)');
+    assert.strictEqual(updatedRecalcTrx.free_room_minutes, 120, 'Free room minutes harus dipangkas jadi 120 menit (2 jam)');
+    assert.strictEqual(updatedRecalcTrx.room_discount_amount, 270000, 'Diskon free room harus dipangkas jadi Rp 270.000');
+    assert.strictEqual(updatedRecalcTrx.grand_total, 1633000, 'Grand total lama harus naik jadi Rp 1.633.000');
+    console.log('  ✓ PASS: recalculatePackageOvertime successfully retroactively updates old VIP 2 transaction to Rp 1.633.000!\n');
   } finally {
     db.pool.connect = originalPoolConnect;
     db.query = originalQuery;
