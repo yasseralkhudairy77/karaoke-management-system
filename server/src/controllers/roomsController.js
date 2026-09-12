@@ -2375,6 +2375,166 @@ async function completeCleaning(req, res, payload) {
   }
 }
 
+async function restoreClosedSession(req, res, payload) {
+  let client;
+  try {
+    const roomId = payload.room_id;
+    const restoredBy = payload.restored_by || 'Kasir';
+    const reason = payload.reason || 'Tidak sengaja menyelesaikan sesi';
+
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    // 1. Lock room
+    const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
+    if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+    const room = roomRes.rows[0];
+
+    if (room.status !== 'cleaning') {
+      throw new Error(`Ruangan ${room.room_name || roomId} sedang berstatus '${room.status}'. Hanya ruangan yang berstatus 'cleaning' yang dapat dipulihkan sesinya.`);
+    }
+
+    // 2. Ambil sesi closed terakhir
+    const sessionRes = await client.query(`
+      SELECT * FROM room_sessions
+      WHERE room_id = $1 AND status = 'closed'
+      ORDER BY updated_at DESC, end_time DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [roomId]);
+
+    if (sessionRes.rowCount === 0) {
+      throw new Error(`Tidak ditemukan sesi sebelumnya yang dapat dipulihkan untuk room ${room.room_name || roomId}.`);
+    }
+
+    const lastSession = sessionRes.rows[0];
+    const sessionId = lastSession.session_id;
+    const closedTxId = lastSession.closed_transaction_id;
+
+    // 3. Batalkan transaksi penutupan jika ada (dan statusnya belum lunas / unpaid)
+    if (closedTxId) {
+      const txRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [closedTxId]);
+      if (txRes.rowCount > 0) {
+        await client.query(`
+          UPDATE transactions
+          SET payment_status = 'cancelled',
+              is_voided = TRUE,
+              notes = COALESCE(notes, '') || ' [Dibatalkan karena sesi dipulihkan]',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE transaction_id = $1
+        `, [closedTxId]);
+
+        await client.query(`
+          DELETE FROM sync_outbox
+          WHERE entity_type = 'transactions' AND entity_id = $1
+        `, [closedTxId]);
+      }
+    }
+
+    // 4. Pulihkan pesanan F&B yang sempat ter-billed pada penutupan sesi ini
+    await client.query(`
+      UPDATE fnb_orders
+      SET order_status = 'open',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE (session_id = $1 OR (session_id IS NULL AND room_id = $2))
+        AND (order_status = 'billed' OR order_status = 'closed')
+    `, [sessionId, roomId]);
+
+    // 5. Pulihkan LC Work Logs jika ada yang ter-close
+    await client.query(`
+      UPDATE lc_work_logs
+      SET status = 'active',
+          closed_at = NULL,
+          closed_transaction_id = NULL
+      WHERE session_id = $1 AND status = 'closed'
+    `, [sessionId]);
+
+    if (closedTxId) {
+      await client.query(`
+        UPDATE lc_work_logs
+        SET status = 'active',
+            closed_at = NULL,
+            closed_transaction_id = NULL
+        WHERE closed_transaction_id = $1
+      `, [closedTxId]);
+    }
+
+    // 6. Pulihkan room_sessions menjadi 'active'
+    await client.query(`
+      UPDATE room_sessions
+      SET status = 'active',
+          end_time = NULL,
+          closed_transaction_id = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = $1
+    `, [sessionId]);
+
+    // 7. Pulihkan rooms menjadi 'occupied' dengan waktu jadwal asli
+    const originalStartTime = lastSession.start_time || new Date();
+    const originalDuration = Number(lastSession.booked_duration_minutes || 60);
+    const originalScheduledEndTime = lastSession.scheduled_end_time || new Date(new Date(originalStartTime).getTime() + originalDuration * 60 * 1000);
+    const isUpfrontPaid = Boolean(lastSession.upfront_transaction_id);
+
+    await client.query(`
+      UPDATE rooms
+      SET status = 'occupied',
+          start_time = $1,
+          booked_duration_minutes = $2,
+          scheduled_end_time = $3,
+          is_upfront_paid = $4,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE room_id = $5
+    `, [originalStartTime, originalDuration, originalScheduledEndTime, isUpfrontPaid, roomId]);
+
+    // 8. Log audit operasional
+    const auditId = `AUDIT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    await client.query(`
+      INSERT INTO operational_audit_events (
+        event_id, event_type, room_id, room_name, cashier_name, description, payload_json
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [
+      auditId,
+      'RESTORE_CLOSED_SESSION',
+      roomId,
+      room.room_name || roomId,
+      restoredBy,
+      `Sesi room ${room.room_name || roomId} dipulihkan. Alasan: ${reason}`,
+      JSON.stringify({
+        session_id: sessionId,
+        restored_start_time: originalStartTime,
+        restored_scheduled_end_time: originalScheduledEndTime,
+        booked_duration_minutes: originalDuration,
+        voided_transaction_id: closedTxId || null
+      })
+    ]);
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Sesi room ${room.room_name || roomId} berhasil dipulihkan. Status kembali TERISI dan countdown waktu melanjutkan waktu riil.`,
+      room: {
+        room_id: roomId,
+        status: 'occupied',
+        start_time: originalStartTime,
+        booked_duration_minutes: originalDuration,
+        scheduled_end_time: originalScheduledEndTime,
+        is_upfront_paid: isUpfrontPaid
+      },
+      session: {
+        session_id: sessionId,
+        status: 'active'
+      }
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK');
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function getTodayRoomTimeLogs(req, res) {
   try {
     const { period, start_date, end_date } = req.query;
@@ -2886,6 +3046,7 @@ module.exports = {
   updateActiveSessionPackage,
   closeSession,
   completeCleaning,
+  restoreClosedSession,
   cancelBooking,
   getTodayRoomTimeLogs,
   getRoomUsageReport,

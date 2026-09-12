@@ -10188,6 +10188,16 @@ function createRoomCard(room) {
     cancelBookingButton.textContent = "Batalkan Booking";
     sessionButton.disabled = isActivatingPreparedSession || getCurrentOperatorRole() === "receptionist";
     actions.append(sessionButton, cancelBookingButton);
+  } else if (room.status === "cleaning") {
+    actions.classList.add("room-actions-cleaning");
+    const restoreSessionButton = document.createElement("button");
+    restoreSessionButton.className = "room-button room-button-restore-session";
+    restoreSessionButton.type = "button";
+    restoreSessionButton.dataset.action = "restore-room-session";
+    restoreSessionButton.dataset.roomId = room.room_id;
+    restoreSessionButton.disabled = isRestoringRoomSession;
+    restoreSessionButton.innerHTML = `<span class="room-btn-icon">↩️</span> <span>${isRestoringRoomSession ? "Memulihkan..." : "Pulihkan Sesi"}</span>`;
+    actions.append(sessionButton, restoreSessionButton);
   } else {
     actions.append(sessionButton);
   }
@@ -30433,6 +30443,85 @@ async function completeCleaning(roomId) {
   }
 }
 
+let isRestoringRoomSession = false;
+
+function requestRestoreRoomSession(roomId) {
+  const room = rooms.find((r) => r.room_id === roomId) || { room_id: roomId };
+  const roomName = room.room_name || `Ruangan ${roomId}`;
+
+  openActionConfirmation({
+    tone: "warning",
+    title: `Pulihkan Sesi - ${roomName}`,
+    message: `Kembalikan sesi ${roomName} yang baru saja diselesaikan? Waktu countdown akan otomatis melanjutkan sisa waktu aslinya, pesanan F&B kembali aktif, dan status room kembali TERISI.`,
+    details: [
+      ["Ruangan", roomName],
+      ["Tindakan", "Batalkan penyelesaian sesi"],
+      ["Status Baru", "Terisi (Occupied)"],
+      ["Waktu", "Melanjutkan sisa waktu riil"],
+    ],
+    field: {
+      label: "Alasan pemulihan sesi",
+      placeholder: "Contoh: Tidak sengaja menekan selesaikan sesi",
+      multiline: false,
+      required: true,
+      minLength: 3,
+      value: "Tidak sengaja menekan selesaikan sesi",
+      errorMessage: "Alasan pemulihan minimal 3 karakter.",
+    },
+    confirmLabel: "Ya, Pulihkan Sesi",
+    cancelLabel: "Kembali",
+    onConfirm: (reason) => {
+      executeRestoreRoomSession(roomId, reason);
+    },
+  });
+}
+
+async function executeRestoreRoomSession(roomId, reason = "") {
+  if (!API_BASE_URL.trim()) {
+    showInlineNotice("API belum dikonfigurasi.", "error");
+    return;
+  }
+
+  if (isRestoringRoomSession) {
+    return;
+  }
+
+  isRestoringRoomSession = true;
+  setActionButtonsDisabled(true);
+  renderRooms();
+
+  try {
+    const data = await postApiAction({
+      action: "restoreClosedSession",
+      room_id: roomId,
+      reason: reason || "Tidak sengaja menekan selesaikan sesi",
+      restored_by: getLoggedInOperatorName(),
+    });
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || data?.message || "Gagal memulihkan sesi ruangan.");
+    }
+
+    showFloatingToast(data.message || "Sesi ruangan berhasil dipulihkan.");
+
+    // Nyalakan kembali TV ruangan di background jika sempat mati
+    sendLocalTvCommand(roomId, "power_on", "restore_session")
+      .catch((tvError) => {
+        console.warn("TV power on failed on session restore:", tvError);
+      });
+
+    await loadRooms();
+    await loadOpenFnbOrders();
+    await loadTodayFnbOrders();
+  } catch (error) {
+    showInlineNotice(error.message || "Gagal memulihkan sesi ruangan.", "error");
+  } finally {
+    isRestoringRoomSession = false;
+    setActionButtonsDisabled(false);
+    renderRooms();
+  }
+}
+
 async function showPaymentSelection(roomId) {
   paymentSelectionRoomId = roomId;
   paymentMethodSelection = "cash";
@@ -33052,6 +33141,11 @@ async function handleRoomAction(event) {
 
   if (action === "cancel-extend-selection") {
     cancelExtendSelection();
+    return;
+  }
+
+  if (action === "restore-room-session") {
+    requestRestoreRoomSession(button.dataset.roomId || roomId || "");
     return;
   }
 

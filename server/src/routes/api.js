@@ -194,6 +194,8 @@ async function handlePostAction(action, req, res, payload) {
       return roomsController.closeSession(req, res, payload);
     case 'completeCleaning':
       return roomsController.completeCleaning(req, res, payload);
+    case 'restoreClosedSession':
+      return roomsController.restoreClosedSession(req, res, payload);
     case 'saveFnbOrder':
       return fnbController.saveFnbOrder(req, res, payload);
     case 'sendComplimentaryGift':
