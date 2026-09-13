@@ -255,7 +255,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
   const period = options.period || 'today';
   const { startDate, endDate } = getOperationalDateRange(period, options.start_date, options.end_date);
 
-  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance, inventoryData] = await Promise.all([
+  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance, inventoryData, salesCommissionsRes] = await Promise.all([
     db.query(`
       SELECT room_id, room_name, status, start_time, booked_duration_minutes,
              scheduled_end_time, rate_per_hour, tv_device_id, updated_at
@@ -283,8 +283,19 @@ async function buildOwnerMirrorSnapshot(options = {}) {
       summary: { total_items: 0, safe_items: 0, low_items: 0, negative_items: 0, categories: [] },
       items: [],
       error: err.message
-    }))
+    })),
+    db.query(`
+      SELECT commission_id, transaction_id, operational_date, basis_type, basis_amount,
+             commission_percent, commission_amount, recipient_name, cashier_name, note, created_at
+      FROM sales_commission_logs
+      WHERE operational_date >= $1 AND operational_date <= $2
+      ORDER BY created_at DESC
+    `, [startDate, endDate]).catch(() => ({ rows: [] }))
   ]);
+
+  const commissionsByTransactionId = new Map(
+    (salesCommissionsRes?.rows || []).map(row => [row.transaction_id, row])
+  );
 
   const rooms = roomsRes.rows.map(room => {
     const roomOpenFnbOrders = openFnbOrders.filter(order => {
@@ -311,67 +322,115 @@ async function buildOwnerMirrorSnapshot(options = {}) {
 
   const transactions = transactionsRes.rows.map(transaction => {
     const paymentBreakdown = getPaymentBreakdown(transaction);
+    const commission = commissionsByTransactionId.get(transaction.transaction_id);
+    const commissionAmount = commission ? money(commission.commission_amount) : 0;
+    const commissionPercent = commission ? Number(commission.commission_percent || 0) : 0;
+    const recipientName = commission ? String(commission.recipient_name || '').trim() : '';
+    const cashierName = commission ? String(commission.cashier_name || '').trim() : '';
+    const note = commission ? String(commission.note || '').trim() : '';
+    const basisType = commission ? String(commission.basis_type || 'grand_total').trim() : '';
+    const basisAmount = commission ? money(commission.basis_amount) : 0;
+
+    const promoDiscount = money(transaction.promo_discount);
+    const manualDiscount = money(transaction.manual_discount) || (money(transaction.manual_discount_room) + money(transaction.manual_discount_fnb));
+    const totalDeductions = commissionAmount + promoDiscount + manualDiscount;
+    const grandTotal = money(transaction.grand_total);
+    const netTotal = Math.max(0, grandTotal - commissionAmount);
+
     return {
-    transaction_id: transaction.transaction_id,
-    room_id: transaction.room_id,
-    room_name: transaction.room_name,
-    start_time: iso(transaction.start_time),
-    start_time_wib: transaction.start_time ? toJakartaIsoString(transaction.start_time) : '',
-    end_time: iso(transaction.end_time),
-    end_time_wib: transaction.end_time ? toJakartaIsoString(transaction.end_time) : '',
-    duration_minutes: Number(transaction.duration_minutes || 0),
-    room_total: money(transaction.room_total),
-    fnb_total: money(transaction.fnb_total),
-    lc_total: money(transaction.lc_total),
-    grand_total: money(transaction.grand_total),
-    fnb_order_ids: transaction.fnb_order_ids || '',
-    payment_method: transaction.payment_method || '',
-    payment_status: transaction.payment_status || '',
-    cash_amount: paymentBreakdown.cash_amount,
-    transfer_amount: paymentBreakdown.transfer_amount,
-    cashier_name: transaction.cashier_name || '',
-    booking_mode: transaction.booking_mode || '',
-    package_id: transaction.package_id || '',
-    package_name: transaction.package_name || '',
-    package_total: money(transaction.package_total),
-    promo_code: transaction.promo_code || '',
-    promo_discount: money(transaction.promo_discount),
-    manual_discount: money(transaction.manual_discount),
-    manual_discount_room: money(transaction.manual_discount_room),
-    manual_discount_fnb: money(transaction.manual_discount_fnb),
-    manual_discount_reason: transaction.manual_discount_reason || '',
-    manual_discount_by: transaction.manual_discount_by || '',
-    manual_discount_at: iso(transaction.manual_discount_at),
-    manual_discount_at_wib: transaction.manual_discount_at ? toJakartaIsoString(transaction.manual_discount_at) : '',
-    corrected_at: iso(transaction.corrected_at),
-    corrected_at_wib: transaction.corrected_at ? toJakartaIsoString(transaction.corrected_at) : '',
-    corrected_by: transaction.corrected_by || '',
-    correction_note: transaction.correction_note || '',
-    billable_room_minutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined ? null : Number(transaction.billable_room_minutes || 0),
-    free_room_minutes: Number(transaction.free_room_minutes || 0),
-    room_discount_amount: money(transaction.room_discount_amount),
-    room_upgrade_total: money(transaction.room_upgrade_total),
-    room_journey: Array.isArray(transaction.room_journey_json)
-      ? transaction.room_journey_json
-      : [],
-    operational_date: transaction.operational_date ? transaction.operational_date.toISOString().split('T')[0] : '',
-    created_at: iso(transaction.created_at)
-  };
+      transaction_id: transaction.transaction_id,
+      room_id: transaction.room_id,
+      room_name: transaction.room_name,
+      start_time: iso(transaction.start_time),
+      start_time_wib: transaction.start_time ? toJakartaIsoString(transaction.start_time) : '',
+      end_time: iso(transaction.end_time),
+      end_time_wib: transaction.end_time ? toJakartaIsoString(transaction.end_time) : '',
+      duration_minutes: Number(transaction.duration_minutes || 0),
+      room_total: money(transaction.room_total),
+      fnb_total: money(transaction.fnb_total),
+      lc_total: money(transaction.lc_total),
+      grand_total: grandTotal,
+      sales_commission: commission ? {
+        commission_id: commission.commission_id,
+        transaction_id: commission.transaction_id,
+        operational_date: commission.operational_date ? (commission.operational_date.toISOString ? commission.operational_date.toISOString().split('T')[0] : String(commission.operational_date)) : '',
+        basis_type: basisType,
+        basis_amount: basisAmount,
+        commission_percent: commissionPercent,
+        commission_amount: commissionAmount,
+        recipient_name: recipientName,
+        cashier_name: cashierName,
+        note: note,
+        created_at: iso(commission.created_at)
+      } : null,
+      sales_commission_amount: commissionAmount,
+      sales_commission_percent: commissionPercent,
+      sales_commission_recipient: recipientName,
+      sales_commission_basis: basisType,
+      promo_discount: promoDiscount,
+      manual_discount: manualDiscount,
+      total_deductions: totalDeductions,
+      net_total: netTotal,
+      fnb_order_ids: transaction.fnb_order_ids || '',
+      payment_method: transaction.payment_method || '',
+      payment_status: transaction.payment_status || '',
+      cash_amount: paymentBreakdown.cash_amount,
+      transfer_amount: paymentBreakdown.transfer_amount,
+      cashier_name: transaction.cashier_name || '',
+      booking_mode: transaction.booking_mode || '',
+      package_id: transaction.package_id || '',
+      package_name: transaction.package_name || '',
+      package_total: money(transaction.package_total),
+      promo_code: transaction.promo_code || '',
+      manual_discount_room: money(transaction.manual_discount_room),
+      manual_discount_fnb: money(transaction.manual_discount_fnb),
+      manual_discount_reason: transaction.manual_discount_reason || '',
+      manual_discount_by: transaction.manual_discount_by || '',
+      manual_discount_at: iso(transaction.manual_discount_at),
+      manual_discount_at_wib: transaction.manual_discount_at ? toJakartaIsoString(transaction.manual_discount_at) : '',
+      corrected_at: iso(transaction.corrected_at),
+      corrected_at_wib: transaction.corrected_at ? toJakartaIsoString(transaction.corrected_at) : '',
+      corrected_by: transaction.corrected_by || '',
+      correction_note: transaction.correction_note || '',
+      billable_room_minutes: transaction.billable_room_minutes === null || transaction.billable_room_minutes === undefined ? null : Number(transaction.billable_room_minutes || 0),
+      free_room_minutes: Number(transaction.free_room_minutes || 0),
+      room_discount_amount: money(transaction.room_discount_amount),
+      room_upgrade_total: money(transaction.room_upgrade_total),
+      room_journey: Array.isArray(transaction.room_journey_json)
+        ? transaction.room_journey_json
+        : [],
+      operational_date: transaction.operational_date ? (transaction.operational_date.toISOString ? transaction.operational_date.toISOString().split('T')[0] : String(transaction.operational_date)) : '',
+      created_at: iso(transaction.created_at)
+    };
   });
 
   const fnbSoldSummary = await buildFnbSoldSummary(transactionsRes.rows);
 
   const summary = transactions.reduce((acc, transaction) => {
     const grandTotal = money(transaction.grand_total);
+    const commAmount = money(transaction.sales_commission_amount);
+    const promoDisc = money(transaction.promo_discount);
+    const manualDisc = money(transaction.manual_discount);
+    const totalDeductions = commAmount + promoDisc + manualDisc;
+
     acc.total_transactions += 1;
     acc.total_revenue_all += grandTotal;
     acc.total_room_revenue += money(transaction.room_total);
     acc.total_fnb_revenue += money(transaction.fnb_total);
     acc.total_lc_revenue += money(transaction.lc_total);
+    acc.total_sales_commission += commAmount;
+    acc.total_promo_discount += promoDisc;
+    acc.total_manual_discount += manualDisc;
+    acc.total_deductions += totalDeductions;
+    acc.net_revenue_all += Math.max(0, grandTotal - commAmount);
+    if (commAmount > 0) acc.transactions_with_commission += 1;
+    if (totalDeductions > 0) acc.transactions_with_deductions += 1;
 
     if (transaction.payment_status === 'paid') {
       acc.paid_transactions += 1;
       acc.paid_revenue += grandTotal;
+      acc.paid_sales_commission += commAmount;
+      acc.net_paid_revenue += Math.max(0, grandTotal - commAmount);
       if (transaction.cash_amount > 0) acc.cash_revenue += money(transaction.cash_amount);
       if (transaction.transfer_amount > 0) acc.transfer_revenue += money(transaction.transfer_amount);
     } else {
@@ -389,9 +448,18 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     cash_revenue: 0,
     transfer_revenue: 0,
     total_revenue_all: 0,
+    net_revenue_all: 0,
     total_room_revenue: 0,
     total_fnb_revenue: 0,
     total_lc_revenue: 0,
+    total_sales_commission: 0,
+    paid_sales_commission: 0,
+    net_paid_revenue: 0,
+    total_promo_discount: 0,
+    total_manual_discount: 0,
+    total_deductions: 0,
+    transactions_with_commission: 0,
+    transactions_with_deductions: 0,
     open_fnb_revenue: openFnbOrders.reduce((total, order) => total + money(order.order_total), 0),
     occupied_rooms: rooms.filter(room => room.status === 'occupied').length,
     available_rooms: rooms.filter(room => room.status === 'available').length,
@@ -406,6 +474,9 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     cash_expected: money(closing.cash_expected),
     cash_actual: money(closing.cash_actual),
     cash_difference: money(closing.cash_difference),
+    sales_commission_total: money(closing.sales_commission_total),
+    net_revenue_after_commission: money(closing.net_revenue_after_commission),
+    operational_expense_total: money(closing.operational_expense_total),
     created_at: iso(closing.created_at),
     updated_at: iso(closing.updated_at)
   }));
@@ -426,6 +497,19 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     rooms,
     open_fnb_orders: openFnbOrders,
     transactions,
+    sales_commissions: (salesCommissionsRes?.rows || []).map(row => ({
+      commission_id: row.commission_id,
+      transaction_id: row.transaction_id,
+      operational_date: row.operational_date ? (row.operational_date.toISOString ? row.operational_date.toISOString().split('T')[0] : String(row.operational_date)) : '',
+      basis_type: row.basis_type || 'grand_total',
+      basis_amount: money(row.basis_amount),
+      commission_percent: Number(row.commission_percent || 0),
+      commission_amount: money(row.commission_amount),
+      recipient_name: row.recipient_name || '',
+      cashier_name: row.cashier_name || '',
+      note: row.note || '',
+      created_at: iso(row.created_at)
+    })),
     cashier_closings: closings,
     inventory_summary: inventoryData?.summary || { total_items: 0, safe_items: 0, low_items: 0, negative_items: 0, categories: [] },
     inventory_items: inventoryData?.items || [],

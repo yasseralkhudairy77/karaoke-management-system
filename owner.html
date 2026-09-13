@@ -150,7 +150,7 @@
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 14px;
       margin: 16px 0;
     }
@@ -164,7 +164,7 @@
     }
 
     .metric-value {
-      font-size: clamp(1.45rem, 3vw, 2.25rem);
+      font-size: clamp(1.4rem, 2.5vw, 2.1rem);
       font-weight: 900;
       margin: 0;
     }
@@ -173,6 +173,63 @@
       color: var(--muted);
       font-size: 0.8rem;
       margin: 8px 0 0;
+    }
+
+    .text-amber { color: var(--amber); }
+    .text-gold { color: var(--gold); }
+    .text-red { color: var(--red); }
+    .text-green { color: var(--green); }
+
+    .deduction-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      border-radius: 6px;
+      padding: 2px 7px;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fcd34d;
+      margin-top: 4px;
+      line-height: 1.3;
+    }
+
+    .deduction-badge.discount {
+      background: rgba(251, 113, 133, 0.15);
+      border-color: rgba(251, 113, 133, 0.35);
+      color: #fda4af;
+    }
+
+    .accounting-summary-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      border-radius: 12px;
+      padding: 10px 16px;
+      margin-bottom: 14px;
+      font-size: 0.88rem;
+    }
+
+    .accounting-summary-bar .item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .accounting-summary-bar .label {
+      color: var(--muted);
+    }
+
+    .accounting-summary-bar .val {
+      font-weight: 800;
+    }
+
+    .accounting-summary-bar .divider {
+      color: rgba(255, 255, 255, 0.2);
     }
 
     .panel {
@@ -474,10 +531,33 @@
 
     function renderMetrics(snapshot) {
       const summary = snapshot.summary || {};
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidSalesComm = Number(summary.paid_sales_commission !== undefined
+        ? summary.paid_sales_commission
+        : transactions.filter(t => t.payment_status === 'paid').reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidRev = Number(summary.paid_revenue || 0);
+      const netPaidRev = Number(summary.net_paid_revenue !== undefined
+        ? summary.net_paid_revenue
+        : Math.max(0, paidRev - paidSalesComm)
+      );
+      const commTrxCount = Number(summary.transactions_with_commission !== undefined
+        ? summary.transactions_with_commission
+        : transactions.filter(t => Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0) > 0).length
+      );
+
+      const commDisplay = totalSalesComm > 0 ? `-${formatCurrency(totalSalesComm)}` : formatCurrency(0);
+
       return `
         <section class="metrics">
-          ${metric("Omzet Lunas", formatCurrency(summary.paid_revenue), `${formatNumber(summary.paid_transactions)} transaksi lunas`)}
-          ${metric("Total Tagihan", formatCurrency(summary.total_revenue_all), `${formatNumber(summary.total_transactions)} transaksi tercatat`)}
+          ${metric("Omzet Lunas (Gross)", formatCurrency(paidRev), `${formatNumber(summary.paid_transactions)} transaksi lunas`)}
+          ${metric("Komisi Sales (5%)", `<span class="${totalSalesComm > 0 ? 'text-amber' : ''}">${commDisplay}</span>`, `${formatNumber(commTrxCount)} transaksi ada komisi`)}
+          ${metric("Omzet Bersih (Net)", `<span class="text-green">${formatCurrency(netPaidRev)}</span>`, "Omzet setelah potongan komisi")}
           ${metric("Omzet F&B", formatCurrency(summary.total_fnb_revenue), `${formatNumber(snapshot.fnb_sold_summary?.total_qty || 0)} item terjual`)}
           ${metric("Omzet LC", formatCurrency(summary.total_lc_revenue), `${formatNumber(snapshot.lc_performance?.active_lc_count || 0)} LC perform`)}
         </section>
@@ -486,17 +566,31 @@
 
     function renderOverview(snapshot) {
       const summary = snapshot.summary || {};
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
       const fnbItems = snapshot.fnb_sold_summary?.items || snapshot.fnb_sold_items || [];
       const lcItems = snapshot.lc_performance?.items || snapshot.lc_performance_items || [];
+
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidRev = Number(summary.paid_revenue || 0);
+      const netPaidRev = Number(summary.net_paid_revenue !== undefined
+        ? summary.net_paid_revenue
+        : Math.max(0, paidRev - totalSalesComm)
+      );
 
       return `
         ${renderMetrics(snapshot)}
         <section class="two-col">
           <div class="panel">
-            <h2>Ringkasan Shift</h2>
+            <h2>Ringkasan Shift & Finansial</h2>
             ${table(
-              [{ label: "Komponen" }, { label: "Nilai", right: true }],
+              [{ label: "Komponen Finansial" }, { label: "Nilai", right: true }],
               [
+                ["Omzet Lunas (Gross)", formatCurrency(paidRev)],
+                ["Potongan Komisi Sales (5%)", `<span class="${totalSalesComm > 0 ? 'text-amber' : ''}">-${formatCurrency(totalSalesComm)}</span>`],
+                ["Omzet Bersih Diterima (Net)", `<strong class="text-green">${formatCurrency(netPaidRev)}</strong>`],
                 ["Cash", formatCurrency(summary.cash_revenue)],
                 ["Transfer/QRIS", formatCurrency(summary.transfer_revenue)],
                 ["Belum Dibayar", formatCurrency(summary.unpaid_revenue)],
@@ -553,10 +647,37 @@
 
     function renderTransactions(snapshot) {
       const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      const summary = snapshot.summary || {};
+
+      const totalGross = Number(summary.total_revenue_all !== undefined
+        ? summary.total_revenue_all
+        : transactions.reduce((sum, t) => sum + Number(t.grand_total || 0), 0)
+      );
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const totalDisc = Number(summary.total_discounts !== undefined
+        ? summary.total_discounts
+        : transactions.reduce((sum, t) => sum + Number(t.promo_discount || 0) + Number(t.manual_discount || 0), 0)
+      );
+      const totalNet = Math.max(0, totalGross - totalSalesComm);
+
       return `
         ${renderMetrics(snapshot)}
         <section class="panel">
           <h2>Transaksi Periode Ini</h2>
+          <div class="accounting-summary-bar">
+            <div class="item"><span class="label">💰 Total Bill:</span> <span class="val">${formatCurrency(totalGross)}</span></div>
+            <span class="divider">·</span>
+            <div class="item"><span class="label">🏷️ Komisi Sales:</span> <span class="val text-amber">-${formatCurrency(totalSalesComm)}</span></div>
+            ${totalDisc > 0 ? `
+            <span class="divider">·</span>
+            <div class="item"><span class="label">✂️ Diskon:</span> <span class="val text-red">-${formatCurrency(totalDisc)}</span></div>
+            ` : ''}
+            <span class="divider">·</span>
+            <div class="item"><span class="label">✨ Net Omzet:</span> <span class="val text-green">${formatCurrency(totalNet)}</span></div>
+          </div>
           ${table(
             [
               { label: "ID / Room" },
@@ -565,27 +686,58 @@
               { label: "Room", right: true },
               { label: "F&B", right: true },
               { label: "LC", right: true },
-              { label: "Total", right: true },
+              { label: "Total Bill", right: true },
+              { label: "Komisi (5%)", right: true },
+              { label: "Net Omzet", right: true },
             ],
-            transactions.map(trx => `
-              <tr>
-                <td>
-                  ${safe(trx.transaction_id || "-")}
-                  <div class="small">${safe(trx.room_name || trx.room_id || "-")} · ${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div>
-                  ${Array.isArray(trx.room_journey) && trx.room_journey.length > 1
-                    ? `<div class="small">Pindah: ${trx.room_journey.map(segment => safe(segment.room_name || segment.room_id || "-")).join(" &rarr; ")}</div>`
-                    : ""}
-                  ${trx.package_name ? `<div class="small">Paket: ${safe(trx.package_name)}</div>` : ""}
-                  ${Number(trx.free_room_minutes || 0) > 0 ? `<div class="small">Free room: ${formatDuration(trx.free_room_minutes)}</div>` : ""}
-                </td>
-                <td>${safe(trx.payment_status || "-")}</td>
-                <td>${safe(trx.payment_method || "-")}</td>
-                <td class="right">${formatCurrency(trx.room_total)}</td>
-                <td class="right">${formatCurrency(trx.fnb_total)}</td>
-                <td class="right">${formatCurrency(trx.lc_total)}</td>
-                <td class="right">${formatCurrency(trx.grand_total)}</td>
-              </tr>
-            `),
+            transactions.map(trx => {
+              const comm = trx.sales_commission || null;
+              const commAmount = Number(trx.sales_commission_amount !== undefined
+                ? trx.sales_commission_amount
+                : (comm?.commission_amount || 0)
+              );
+              const commPercent = comm?.commission_percent || trx.sales_commission_percent || 5;
+              const commRecipient = comm?.recipient_name || trx.sales_commission_recipient || "";
+              const promoDisc = Number(trx.promo_discount || 0);
+              const manualDisc = Number(trx.manual_discount || 0);
+              const grandTotal = Number(trx.grand_total || 0);
+              const netTotal = Number(trx.net_total !== undefined
+                ? trx.net_total
+                : Math.max(0, grandTotal - commAmount)
+              );
+
+              return `
+                <tr>
+                  <td>
+                    ${safe(trx.transaction_id || "-")}
+                    <div class="small">${safe(trx.room_name || trx.room_id || "-")} · ${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div>
+                    ${Array.isArray(trx.room_journey) && trx.room_journey.length > 1
+                      ? `<div class="small">Pindah: ${trx.room_journey.map(segment => safe(segment.room_name || segment.room_id || "-")).join(" &rarr; ")}</div>`
+                      : ""}
+                    ${trx.package_name ? `<div class="small">Paket: ${safe(trx.package_name)}</div>` : ""}
+                    ${Number(trx.free_room_minutes || 0) > 0 ? `<div class="small">Free room: ${formatDuration(trx.free_room_minutes)}</div>` : ""}
+                    ${promoDisc > 0 ? `<div class="deduction-badge discount">🏷️ Promo: -${formatCurrency(promoDisc)}${trx.promo_code ? ` (${safe(trx.promo_code)})` : ''}</div>` : ""}
+                    ${manualDisc > 0 ? `<div class="deduction-badge discount">✂️ Diskon Kasir: -${formatCurrency(manualDisc)}${trx.manual_discount_reason ? ` (${safe(trx.manual_discount_reason)})` : ''}</div>` : ""}
+                    ${commAmount > 0 ? `<div class="deduction-badge">👤 Sales: ${safe(commRecipient || 'Marketing')} (${commPercent}%)</div>` : ""}
+                  </td>
+                  <td>${safe(trx.payment_status || "-")}</td>
+                  <td>${safe(trx.payment_method || "-")}</td>
+                  <td class="right">${formatCurrency(trx.room_total)}</td>
+                  <td class="right">${formatCurrency(trx.fnb_total)}</td>
+                  <td class="right">${formatCurrency(trx.lc_total)}</td>
+                  <td class="right"><strong>${formatCurrency(trx.grand_total)}</strong></td>
+                  <td class="right">
+                    ${commAmount > 0
+                      ? `<strong class="text-amber">-${formatCurrency(commAmount)}</strong><div class="small muted">${commPercent}%${commRecipient ? ` · ${safe(commRecipient)}` : ''}</div>`
+                      : '<span class="muted">-</span>'}
+                  </td>
+                  <td class="right">
+                    <strong class="text-green">${formatCurrency(netTotal)}</strong>
+                    ${commAmount > 0 ? '<div class="small muted">Setelah komisi</div>' : '<div class="small muted">Penuh</div>'}
+                  </td>
+                </tr>
+              `;
+            }),
             "Belum ada transaksi pada periode ini."
           )}
         </section>
@@ -773,20 +925,29 @@
               { label: "Tanggal" },
               { label: "Kasir" },
               { label: "Omzet Lunas", right: true },
+              { label: "Komisi Sales", right: true },
+              { label: "Net Omzet", right: true },
               { label: "Cash Aktual", right: true },
               { label: "Selisih", right: true },
               { label: "Status" },
             ],
-            closings.map(closing => `
-              <tr>
-                <td>${safe(formatDisplayDate(closing.closing_date))}<div class="small">${formatSimpleDateTime(closing.created_at)}</div></td>
-                <td>${safe(closing.cashier_name || closing.created_by || "-")}</td>
-                <td class="right">${formatCurrency(closing.paid_revenue)}</td>
-                <td class="right">${formatCurrency(closing.cash_actual)}</td>
-                <td class="right">${formatCurrency(closing.cash_difference)}</td>
-                <td>${safe(closing.status || "-")}</td>
-              </tr>
-            `),
+            closings.map(closing => {
+              const commTotal = Number(closing.sales_commission_total || 0);
+              const paidRev = Number(closing.paid_revenue || 0);
+              const netRev = Number(closing.net_revenue_after_commission || (paidRev - commTotal));
+              return `
+                <tr>
+                  <td>${safe(formatDisplayDate(closing.closing_date))}<div class="small">${formatSimpleDateTime(closing.created_at)}</div></td>
+                  <td>${safe(closing.cashier_name || closing.created_by || "-")}</td>
+                  <td class="right">${formatCurrency(paidRev)}</td>
+                  <td class="right">${commTotal > 0 ? `<span class="text-amber">-${formatCurrency(commTotal)}</span>` : '<span class="muted">-</span>'}</td>
+                  <td class="right"><strong class="text-green">${formatCurrency(netRev)}</strong></td>
+                  <td class="right">${formatCurrency(closing.cash_actual)}</td>
+                  <td class="right">${formatCurrency(closing.cash_difference)}</td>
+                  <td>${safe(closing.status || "-")}</td>
+                </tr>
+              `;
+            }),
             "Belum ada closing kasir pada periode ini."
           )}
         </section>
