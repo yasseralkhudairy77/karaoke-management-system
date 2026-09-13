@@ -543,11 +543,35 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
   }
 }
 
+async function autoSyncUnpaidPackageOvertime(client) {
+  try {
+    await client.query(`
+      UPDATE transactions t
+      SET room_total = t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000)),
+          grand_total = (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0),
+          billable_room_minutes = t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120),
+          free_room_minutes = COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120),
+          room_discount_amount = (COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120) / 60.0) * COALESCE(t.rate_per_hour, 135000),
+          cash_amount = CASE WHEN t.payment_method = 'cash' THEN (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0) ELSE t.cash_amount END,
+          transfer_amount = CASE WHEN t.payment_method = 'transfer' THEN (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0) ELSE t.transfer_amount END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE t.payment_status = 'unpaid'
+        AND t.booking_mode IN ('package', 'package_correction')
+        AND t.duration_minutes > COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120)
+        AND t.package_total > 0
+        AND t.room_total <= t.package_total
+    `);
+  } catch (err) {
+    // Non-blocking
+  }
+}
+
 async function getTodayTransactions(req, res) {
   try {
     const { period, start_date, end_date } = req.query;
     const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
     await ensureTransactionCorrectionSchema(db);
+    await autoSyncUnpaidPackageOvertime(db);
 
     const result = await db.query(`
       SELECT * FROM transactions
