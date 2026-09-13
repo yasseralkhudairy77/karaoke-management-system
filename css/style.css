@@ -12761,6 +12761,14 @@ select.action-confirmation-input option {
   align-items: start !important;
 }
 
+.transaction-row {
+  overflow: visible !important;
+}
+
+.transaction-row.has-open-menu {
+  z-index: 100 !important;
+}
+
 .transaction-cell {
   display: flex !important;
   flex-direction: column !important;
@@ -12768,7 +12776,18 @@ select.action-confirmation-input option {
   justify-content: flex-start !important;
   gap: 4px !important;
   min-width: 0 !important;
-  overflow: hidden !important;
+}
+
+.transaction-cell:not(.transaction-actions-cell) {
+  overflow: hidden;
+}
+
+.transaction-cell.transaction-actions-cell {
+  overflow: visible !important;
+}
+
+.transaction-menu-dropdown {
+  z-index: 150 !important;
 }
 
 .transaction-cell .transaction-label {
@@ -12783,12 +12802,12 @@ select.action-confirmation-input option {
 
 .transaction-cell .transaction-value {
   margin: 0 !important;
-  color: var(--text) !important;
+  color: var(--text);
   overflow-wrap: break-word !important;
   word-break: break-word !important;
   font-size: 0.92rem !important;
   font-weight: 800 !important;
-  line-height: 1.25 !important;
+  line-height: 1.25;
   max-width: 100% !important;
 }
 
