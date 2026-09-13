@@ -63,7 +63,7 @@ async function runTests() {
     package_included_minutes: 120, // 2 jam gratis bawaan paket
     booked_duration_minutes: 240,  // Total 4 jam (tambah 2 jam)
     rate_per_hour: 135000,
-    start_time: new Date('2026-09-13T01:00:00Z'),
+    start_time: new Date(Date.now() - 240 * 60 * 1000),
     note: 'package_id=PKG-CM-2H | package_name=PAKET CAPTAIN MORGAN APPLE 2 JAM | package_total=650000'
   };
 
@@ -72,7 +72,7 @@ async function runTests() {
     room_name: 'Ruangan 2 - VIP 2',
     rate_per_hour: 135000,
     booked_duration_minutes: 240,
-    start_time: new Date('2026-09-13T01:00:00Z')
+    start_time: new Date(Date.now() - 240 * 60 * 1000)
   };
 
   const endTime = new Date('2026-09-13T05:00:00Z'); // 4 jam kemudian

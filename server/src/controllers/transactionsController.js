@@ -361,6 +361,7 @@ async function ensureTransactionCorrectionSchema(client) {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
     ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_method_check;
     ALTER TABLE transactions ADD CONSTRAINT transactions_payment_method_check
     CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', ''));
@@ -888,9 +889,9 @@ async function markTransactionPaid(req, res, payload) {
           grand_total = $5,
           cash_amount = $6,
           transfer_amount = $7,
-          billable_room_minutes = CASE WHEN $9::boolean THEN duration_minutes - $10 ELSE billable_room_minutes END,
-          free_room_minutes = CASE WHEN $9::boolean THEN $10 ELSE free_room_minutes END,
-          room_discount_amount = CASE WHEN $9::boolean THEN ($10 / 60.0) * COALESCE(rate_per_hour, 135000) ELSE room_discount_amount END,
+          billable_room_minutes = CASE WHEN $9::boolean THEN duration_minutes - $10::int ELSE billable_room_minutes END,
+          free_room_minutes = CASE WHEN $9::boolean THEN $10::int ELSE free_room_minutes END,
+          room_discount_amount = CASE WHEN $9::boolean THEN ($10::numeric / 60.0) * COALESCE(rate_per_hour, 135000) ELSE room_discount_amount END,
           updated_at = CURRENT_TIMESTAMP
       WHERE transaction_id = $8
       RETURNING *
