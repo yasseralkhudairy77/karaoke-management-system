@@ -496,6 +496,93 @@ async function toggleInventoryItemStatus(req, res, payload = {}) {
   }
 }
 
+async function renameInventoryItem(req, res, payload = {}) {
+  let client;
+  try {
+    const data = payload && Object.keys(payload).length > 0 ? payload : (req.body || {});
+    const stockItemId = String(data.stock_item_id || data.itemId || '').trim();
+    const newName = String(data.new_name || data.stock_item_name || data.name || '').trim();
+
+    if (!stockItemId) {
+      return errorResponse(res, 'stock_item_id wajib diisi.');
+    }
+    if (!newName || newName.length < 2) {
+      return errorResponse(res, 'Nama item minimal 2 karakter.');
+    }
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const invRes = await client.query('SELECT stock_item_id, stock_item_name, category, unit, status FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+    if (invRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return errorResponse(res, `Material dengan ID '${stockItemId}' tidak ditemukan.`);
+    }
+
+    const currentItem = invRes.rows[0];
+    const oldName = currentItem.stock_item_name;
+
+    if (oldName === newName) {
+      await client.query('COMMIT');
+      return successResponse(res, {
+        message: 'Nama item tidak berubah.',
+        stock_item_id: stockItemId,
+        old_name: oldName,
+        new_name: newName,
+        updated_menus_count: 0
+      });
+    }
+
+    // 1. Update nama pada tabel inventory
+    await client.query('UPDATE inventory SET stock_item_name = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [newName, stockItemId]);
+
+    // 2. Sinkronkan nama pada tabel menu yang terhubung
+    const menuUpdateRes = await client.query('UPDATE menu SET menu_name = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2 RETURNING menu_id, menu_name', [newName, stockItemId]);
+
+    // 3. Sinkronkan nama pada package_details jika komponen merujuk langsung ke stock_item_id ini
+    await client.query('UPDATE package_details SET component_name = $1 WHERE component_ref_id = $2', [newName, stockItemId]);
+
+    // 4. Catat audit log master data
+    const changedBy = data.changed_by || data.cashier_name || req.user?.username || 'Owner';
+    try {
+      await client.query(`
+        INSERT INTO master_data_audit_logs (
+          log_id, entity_type, entity_id, entity_name, action_type, old_value_json, new_value_json, changed_by, note, result
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `, [
+        `MDA-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        'inventory',
+        stockItemId,
+        newName,
+        'rename_item',
+        JSON.stringify({ old_name: oldName }),
+        JSON.stringify({ new_name: newName, updated_menus_count: menuUpdateRes.rowCount }),
+        changedBy,
+        `Nama material diubah dari '${oldName}' menjadi '${newName}' (sinkron ${menuUpdateRes.rowCount} menu)`,
+        'success'
+      ]);
+    } catch (auditErr) {
+      console.warn('[Audit Log Warning]', auditErr.message);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Nama material berhasil diubah menjadi '${newName}'.`,
+      stock_item_id: stockItemId,
+      old_name: oldName,
+      new_name: newName,
+      updated_menus_count: menuUpdateRes.rowCount,
+      affected_menus: menuUpdateRes.rows
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => { });
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 module.exports = {
   getInventoryItems,
   getInventoryStatus,
@@ -510,4 +597,5 @@ module.exports = {
   adjustInventoryStock,
   receiveGoodsBatch,
   toggleInventoryItemStatus,
+  renameInventoryItem,
 };

@@ -18,6 +18,7 @@
     "reconcile:cash": "node scripts/reconcile-corrected-cash-amounts.js",
     "test": "npm run test:timezone && npm run test:mirror-rollover && npm run test:audit-report && npm run test:lc-report && npm run test:lc-report-print-ui && npm run test:package-unified && npm run test:receipt-package-lc && npm run test:split-bill-summary && npm run test:post-payment-correction && npm run test:inventory-status && npm run test:package-separation && npm run test:inventory-toggle && npm run test:coverage && npm run test:contract",
     "test:manual-trx": "node tests/manual-transaction-stock-and-lc.test.js",
+    "test:rename-inventory": "node tests/rename-inventory-item.test.js",
     "test:inventory-toggle": "node tests/inventory-toggle-status.test.js",
     "test:inventory-toggle-ui": "node tests/inventory-toggle-ui.test.js",
     "test:post-payment-correction": "node tests/post-payment-correction-cash-balance.test.js",

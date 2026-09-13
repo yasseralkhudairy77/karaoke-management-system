@@ -1200,6 +1200,14 @@ function doPost(e) {
       ));
     }
 
+    if (action === "renameInventoryItem") {
+      return jsonResponse(renameInventoryItem_(
+        payload.stock_item_id,
+        payload.new_name || payload.stock_item_name,
+        payload.changed_by || payload.cashier_name
+      ));
+    }
+
     if (action === "initializeStockFromJul31") {
       return jsonResponse(initializeStockFromJul31_(payload));
     }
@@ -5895,6 +5903,89 @@ function toggleInventoryItemStatus_(stockItemId, status, cashierName) {
       message: "Status material berhasil diubah menjadi " + (normalizedStatus === "active" ? "Aktif" : "Non-Aktif") + ".",
       stock_item_id: normalizedStockItemId,
       status: normalizedStatus,
+      updated_menus_count: updatedMenusCount
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function renameInventoryItem_(stockItemId, newName, changedBy) {
+  var normalizedStockItemId = String(stockItemId || "").trim();
+  var normalizedNewName = String(newName || "").trim();
+
+  if (!normalizedStockItemId) {
+    return {
+      ok: false,
+      error: "stock_item_id wajib diisi.",
+    };
+  }
+
+  if (!normalizedNewName || normalizedNewName.length < 2) {
+    return {
+      ok: false,
+      error: "Nama item minimal 2 karakter.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses pembaruan data lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var rowNumber = findInventoryRowByStockItemId_(normalizedStockItemId, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        error: "Item stok tidak ditemukan.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var oldName = "";
+    if (inventoryHeaderMap.stock_item_name) {
+      oldName = String(inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_item_name).getValue() || "");
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_item_name).setValue(normalizedNewName);
+    }
+    if (inventoryHeaderMap.updated_at) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+    }
+
+    var updatedMenusCount = 0;
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet ? SpreadsheetApp.getActiveSpreadsheet() : null;
+      var menuSheet = ss ? (ss.getSheetByName("Menu") || ss.getSheetByName("menu")) : null;
+      if (menuSheet) {
+        var menuHeaderMap = getHeaderMap_(menuSheet);
+        if (menuHeaderMap.stock_item_id && menuHeaderMap.menu_name) {
+          var menuData = menuSheet.getDataRange().getValues();
+          for (var i = 1; i < menuData.length; i++) {
+            var rowStockItemId = String(menuData[i][menuHeaderMap.stock_item_id - 1] || "").trim();
+            if (rowStockItemId === normalizedStockItemId) {
+              menuSheet.getRange(i + 1, menuHeaderMap.menu_name).setValue(normalizedNewName);
+              if (menuHeaderMap.updated_at) {
+                menuSheet.getRange(i + 1, menuHeaderMap.updated_at).setValue(now);
+              }
+              updatedMenusCount++;
+            }
+          }
+        }
+      }
+    } catch (menuErr) {
+      console.warn("Gagal sinkronisasi nama ke tabel Menu: " + menuErr.message);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Nama material berhasil diubah menjadi '" + normalizedNewName + "'.",
+      stock_item_id: normalizedStockItemId,
+      old_name: oldName,
+      new_name: normalizedNewName,
       updated_menus_count: updatedMenusCount
     };
   } finally {

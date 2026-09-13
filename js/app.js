@@ -2192,6 +2192,48 @@ async function handleToggleInventoryItemStatus(stockItemId, targetStatus) {
   return res;
 }
 
+async function handleRenameInventoryItem(stockItemId, newName) {
+  const payload = {
+    action: "renameInventoryItem",
+    stock_item_id: stockItemId,
+    new_name: newName,
+    changed_by: getLoggedInOperatorName() || "Owner",
+  };
+
+  const res = await postApiAction(payload);
+  if (!res || (res.ok !== true && res.success !== true)) {
+    throw new Error(res?.message || res?.error || "Gagal mengubah nama material.");
+  }
+
+  const item = inventoryItems.find((i) => i.stock_item_id === stockItemId);
+  const oldName = item?.stock_item_name || stockItemId;
+  if (item) {
+    item.stock_item_name = newName;
+    item.updated_at = new Date().toISOString();
+  }
+
+  let affectedMenusCount = 0;
+  menuItems.forEach((menu) => {
+    if (menu.stock_item_id === stockItemId) {
+      menu.menu_name = newName;
+      menu.updated_at = new Date().toISOString();
+      affectedMenusCount++;
+    }
+  });
+
+  const syncNotice = affectedMenusCount > 0
+    ? ` (sinkron ke ${affectedMenusCount} menu kasir)`
+    : "";
+  showFloatingToast(`Nama material '${oldName}' berhasil diubah menjadi '${newName}'${syncNotice}.`, "success");
+
+  renderRooms();
+
+  loadInventoryItems().catch(() => {});
+  loadMenuItems().catch(() => {});
+
+  return res;
+}
+
 function openAddInventoryItemModal() {
   addInventoryItemForm = {
     name: "",
@@ -14637,9 +14679,110 @@ function createInventoryErpTableElement(sourceItems = null) {
     const skuTd = document.createElement("td");
     skuTd.innerHTML = `<span class="erp-sku-badge">${item.stock_item_id || "-"}</span>`;
 
+    const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
+
     const nameTd = document.createElement("td");
     nameTd.className = "erp-name-cell";
-    nameTd.textContent = item.stock_item_name || item.stock_item_id || "-";
+
+    if (canManageMaster) {
+      const nameWrapper = document.createElement("div");
+      nameWrapper.className = "erp-name-wrapper";
+
+      const nameText = document.createElement("span");
+      nameText.className = "erp-item-name-text";
+      nameText.textContent = item.stock_item_name || item.stock_item_id || "-";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "erp-btn-rename-trigger";
+      editBtn.type = "button";
+      editBtn.title = `Ubah nama "${item.stock_item_name || item.stock_item_id}"`;
+      editBtn.innerHTML = "✏️";
+
+      const startInlineEdit = () => {
+        nameWrapper.style.display = "none";
+
+        const editBox = document.createElement("div");
+        editBox.className = "erp-inline-rename-box";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "erp-inline-rename-input";
+        input.value = item.stock_item_name || "";
+        input.setAttribute("aria-label", "Nama material baru");
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "erp-inline-rename-btn save";
+        saveBtn.title = "Simpan (Enter)";
+        saveBtn.textContent = "✓";
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "erp-inline-rename-btn cancel";
+        cancelBtn.title = "Batal (Esc)";
+        cancelBtn.textContent = "✕";
+
+        const cancelEdit = () => {
+          editBox.remove();
+          nameWrapper.style.display = "inline-flex";
+        };
+
+        const doSave = async () => {
+          const newName = input.value.trim();
+          if (!newName) {
+            showFloatingToast("Nama item tidak boleh kosong.", "error");
+            input.focus();
+            return;
+          }
+          if (newName === (item.stock_item_name || "").trim()) {
+            cancelEdit();
+            return;
+          }
+
+          input.disabled = true;
+          saveBtn.disabled = true;
+          cancelBtn.disabled = true;
+          saveBtn.textContent = "...";
+
+          try {
+            await handleRenameInventoryItem(item.stock_item_id, newName);
+          } catch (err) {
+            showFloatingToast(`Gagal mengubah nama: ${err.message}`, "error");
+            input.disabled = false;
+            saveBtn.disabled = false;
+            cancelBtn.disabled = false;
+            saveBtn.textContent = "✓";
+            input.focus();
+          }
+        };
+
+        saveBtn.onclick = doSave;
+        cancelBtn.onclick = cancelEdit;
+
+        input.onkeydown = (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            doSave();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancelEdit();
+          }
+        };
+
+        editBox.append(input, saveBtn, cancelBtn);
+        nameTd.appendChild(editBox);
+        input.focus();
+        input.select();
+      };
+
+      editBtn.onclick = startInlineEdit;
+      nameText.ondblclick = startInlineEdit;
+
+      nameWrapper.append(nameText, editBtn);
+      nameTd.appendChild(nameWrapper);
+    } else {
+      nameTd.textContent = item.stock_item_name || item.stock_item_id || "-";
+    }
 
     const catTd = document.createElement("td");
     catTd.className = "erp-cat-cell";

@@ -4163,6 +4163,99 @@ select.action-confirmation-input option {
   color: var(--text-bright);
 }
 
+.erp-name-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.erp-item-name-text {
+  cursor: default;
+}
+
+.erp-btn-rename-trigger {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 3px 6px;
+  border-radius: 6px;
+  opacity: 0.45;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.1s ease;
+  color: var(--gold, #e2b85c);
+  line-height: 1;
+}
+
+.erp-btn-rename-trigger:hover {
+  opacity: 1;
+  background: rgba(226, 184, 92, 0.18);
+  transform: scale(1.1);
+}
+
+.erp-inline-rename-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.erp-inline-rename-input {
+  flex: 1;
+  background: rgba(18, 14, 10, 0.95);
+  border: 1.5px solid var(--gold-strong, #e2b85c);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(226, 184, 92, 0.25);
+  outline: none;
+}
+
+.erp-inline-rename-input:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+.erp-inline-rename-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.erp-inline-rename-btn.save {
+  background: #10b981;
+  color: #fff;
+}
+
+.erp-inline-rename-btn.save:hover:not(:disabled) {
+  background: #059669;
+  transform: scale(1.05);
+}
+
+.erp-inline-rename-btn.cancel {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ddd;
+}
+
+.erp-inline-rename-btn.cancel:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.erp-inline-rename-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .erp-cat-cell {
   color: var(--muted);
   font-size: 0.85rem;
