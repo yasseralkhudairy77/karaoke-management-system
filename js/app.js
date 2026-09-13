@@ -14,7 +14,7 @@ import {
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
-import { buildReceiptData, formatFreeGiftSlip58mm, formatLcShiftReport58mm, formatLcSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=lc-thermal-v2";
+import { buildReceiptData, formatFnbSalesReport58mm, formatFreeGiftSlip58mm, formatLcShiftReport58mm, formatLcSlip58mm, formatOperationalExpenseSlip58mm, formatReceipt58mm, formatSalesCommissionSlip58mm, formatStockHandoverSlip58mm } from "./receipt.js?v=fnb-thermal-report-v1";
 import { printThermalReceipt, printThermalText } from "./printer-adapter.js?v=sales-commission-v1";
 
 const dashboardShell = document.querySelector(".dashboard-shell");
@@ -1009,6 +1009,7 @@ let fnbReportStatus = "billed";
 let fnbReportPage = 1;
 let selectedFnbMenuForLogs = null;
 let fnbReportPrintPreviewVisible = false;
+let fnbReportThermalPreviewVisible = false;
 let roomsLoading = false;
 let menuLoading = false;
 let selectedFbRoomId = "";
@@ -17295,6 +17296,19 @@ function createTodayFnbSalesReportPanelElement() {
     await loadTodayFnbSalesReport(fnbReportPeriod, fnbReportStartDate, fnbReportEndDate, fnbReportCategory, fnbReportStatus);
   };
 
+  const printThermalBtn = document.createElement("button");
+  printThermalBtn.type = "button";
+  printThermalBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printThermalBtn.style.padding = "8px 16px";
+  printThermalBtn.style.alignSelf = "flex-end";
+  printThermalBtn.style.fontWeight = "bold";
+  printThermalBtn.textContent = "🧾 Cetak Struk (58mm)";
+  printThermalBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
+  printThermalBtn.onclick = () => {
+    fnbReportThermalPreviewVisible = true;
+    renderRooms();
+  };
+
   const printBtn = document.createElement("button");
   printBtn.type = "button";
   printBtn.className = "erp-btn erp-btn-secondary";
@@ -17307,7 +17321,7 @@ function createTodayFnbSalesReportPanelElement() {
     showFnbReportPrintPreview();
   };
 
-  toolbar.append(applyBtn, printBtn);
+  toolbar.append(applyBtn, printThermalBtn, printBtn);
 
   const summary = todayFnbSalesSummary || {
     total_fnb_orders: 0,
@@ -17339,6 +17353,10 @@ function createTodayFnbSalesReportPanelElement() {
 
   if (fnbReportPrintPreviewVisible) {
     panel.appendChild(createFnbReportPrintPreviewElement());
+  }
+
+  if (fnbReportThermalPreviewVisible) {
+    panel.appendChild(createFnbReportThermalPreviewOverlay());
   }
 
   return panel;
@@ -17896,20 +17914,170 @@ function createFnbReportPrintPreviewElement() {
     renderRooms();
   };
 
+  const thermalSwitchBtn = document.createElement("button");
+  thermalSwitchBtn.type = "button";
+  thermalSwitchBtn.className = "erp-btn erp-btn-secondary";
+  thermalSwitchBtn.textContent = "🧾 Format Struk (58mm)";
+  thermalSwitchBtn.onclick = () => {
+    fnbReportPrintPreviewVisible = false;
+    fnbReportThermalPreviewVisible = true;
+    renderRooms();
+  };
+
   const printBtn = document.createElement("button");
   printBtn.type = "button";
   printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "🖨️ Cetak Sekarang";
+  printBtn.textContent = "🖨️ Cetak Sekarang (PDF / A4)";
   printBtn.onclick = () => {
     window.print();
   };
 
-  actions.append(closeBtn, printBtn);
+  actions.append(closeBtn, thermalSwitchBtn, printBtn);
 
   print.append(header, summaryGrid, subGridSection, physicalSection, signatureSection, footer, actions);
 
   return print;
+}
+
+function createFnbReportThermalPreviewOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "lc-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.78)";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.zIndex = "9999";
+  overlay.style.padding = "16px";
+
+  const modal = document.createElement("div");
+  modal.className = "lc-modal-card";
+  modal.style.backgroundColor = "var(--surface)";
+  modal.style.borderRadius = "var(--radius-md)";
+  modal.style.border = "1px solid var(--border)";
+  modal.style.maxWidth = "480px";
+  modal.style.width = "100%";
+  modal.style.maxHeight = "90vh";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+  modal.style.padding = "20px";
+  modal.style.boxShadow = "var(--shadow-lg)";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "10px";
+  header.style.borderBottom = "1px solid var(--border)";
+  header.style.paddingBottom = "10px";
+
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "16px";
+  title.textContent = "🧾 Preview Struk Thermal (58mm)";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.textContent = "✕";
+  closeBtn.onclick = () => {
+    fnbReportThermalPreviewVisible = false;
+    renderRooms();
+  };
+
+  header.append(title, closeBtn);
+
+  const desc = document.createElement("p");
+  desc.style.fontSize = "12px";
+  desc.style.color = "var(--muted)";
+  desc.style.margin = "0 0 12px 0";
+  desc.textContent = "Format struk 32 karakter monospaced siap dicetak ke printer kasir thermal 58mm.";
+
+  const reportPayload = {
+    summary: todayFnbSalesSummary,
+    categorySummary: fnbCategorySummary,
+    menuSales: todayFnbMenuSales,
+    physicalConsumption: fnbPhysicalConsumption,
+    period: getFnbReportPeriodLabel(),
+    category: fnbReportCategory,
+    status: fnbReportStatus,
+  };
+  const slipText = formatFnbSalesReport58mm(reportPayload, {
+    cashierName: getLoggedInOperatorName() || "Kasir",
+    periodLabel: getFnbReportPeriodLabel(),
+    category: fnbReportCategory,
+    status: fnbReportStatus,
+  });
+
+  const previewBox = document.createElement("pre");
+  previewBox.className = "thermal-receipt-preview-content";
+  previewBox.style.width = "100%";
+  previewBox.style.maxHeight = "460px";
+  previewBox.style.margin = "0";
+  previewBox.style.overflow = "auto";
+  previewBox.style.padding = "14px";
+  previewBox.style.borderRadius = "8px";
+  previewBox.style.background = "#ffffff";
+  previewBox.style.color = "#000000";
+  previewBox.style.fontFamily = "'Courier New', Courier, monospace";
+  previewBox.style.fontSize = "12px";
+  previewBox.style.lineHeight = "1.35";
+  previewBox.style.whiteSpace = "pre-wrap";
+  previewBox.textContent = slipText;
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.justifyContent = "flex-end";
+  footer.style.gap = "8px";
+  footer.style.marginTop = "14px";
+  footer.style.paddingTop = "10px";
+  footer.style.borderTop = "1px solid var(--border)";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "erp-btn erp-btn-secondary";
+  copyBtn.textContent = "📋 Salin Teks";
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(slipText);
+      showInlineNotice("Teks struk 58mm berhasil disalin ke clipboard.", "success");
+    } catch {
+      showInlineNotice("Gagal menyalin teks ke clipboard.", "error");
+    }
+  };
+
+  const printThermalActionBtn = document.createElement("button");
+  printThermalActionBtn.type = "button";
+  printThermalActionBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  printThermalActionBtn.style.fontWeight = "bold";
+  printThermalActionBtn.textContent = "🖨️ Kirim ke Printer Thermal";
+  printThermalActionBtn.onclick = async () => {
+    try {
+      await printThermalText(slipText);
+      showInlineNotice("Laporan penjualan F&B berhasil dikirim ke printer thermal.", "success");
+    } catch (err) {
+      showInlineNotice(`Gagal cetak thermal: ${err.message || "Printer tidak merespons"}`, "error");
+    }
+  };
+
+  const closeActionBtn = document.createElement("button");
+  closeActionBtn.type = "button";
+  closeActionBtn.className = "erp-btn erp-btn-secondary";
+  closeActionBtn.textContent = "Tutup";
+  closeActionBtn.onclick = () => {
+    fnbReportThermalPreviewVisible = false;
+    renderRooms();
+  };
+
+  footer.append(copyBtn, printThermalActionBtn, closeActionBtn);
+
+  modal.append(header, desc, previewBox, footer);
+  overlay.appendChild(modal);
+
+  return overlay;
 }
 
 function createFnbPhysicalConsumptionSectionElement(items = []) {

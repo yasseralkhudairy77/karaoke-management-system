@@ -732,6 +732,130 @@ export function formatLcShiftReport58mm(reportData, options = {}) {
   return lines.join("\n");
 }
 
+export function formatFnbSalesReport58mm(reportData = {}, options = {}) {
+  const width = getReceiptWidth(options.width || DEFAULT_PAPER.width);
+  const separator = repeatReceiptChar("-", width);
+  const strongSeparator = repeatReceiptChar("=", width);
+  const dashSeparator = "- ".repeat(Math.floor(width / 2)).trimEnd();
+  const lines = [];
+
+  const business = options.business || DEFAULT_BUSINESS;
+  const cashierName = getText(options.cashierName || options.printedBy || "Kasir");
+  const periodLabel = getText(options.periodLabel || reportData?.period || "Hari Ini");
+  const printedAt = options.printedAt || new Date().toISOString();
+  const categoryFilter = getText(options.category || reportData?.category || "all");
+  const statusFilter = getText(options.status || reportData?.status || "billed");
+
+  const summary = reportData?.summary || {};
+  const categories = Array.isArray(reportData?.categorySummary) ? reportData.categorySummary : [];
+  const menuSales = Array.isArray(reportData?.menuSales) ? reportData.menuSales : [];
+  const physicalConsumption = Array.isArray(reportData?.physicalConsumption) ? reportData.physicalConsumption : [];
+
+  lines.push(centerReceiptText((business.name || DEFAULT_BUSINESS.name).toUpperCase(), width));
+  lines.push(centerReceiptText("LAPORAN PENJUALAN F&B", width));
+  lines.push(centerReceiptText("(STRUK REKAP 58MM)", width));
+
+  if (options.isReprint) {
+    lines.push(centerReceiptText("*** CETAK ULANG ***", width));
+  }
+
+  lines.push(strongSeparator);
+  pushReceiptField(lines, "Periode", periodLabel, width);
+  pushReceiptField(lines, "Waktu Cetak", formatReceiptDateTime(printedAt), width);
+  pushReceiptField(lines, "Kasir (PIC)", cashierName, width);
+  if (categoryFilter && categoryFilter !== "all") {
+    pushReceiptField(lines, "Kategori", categoryFilter, width);
+  }
+  if (statusFilter && statusFilter !== "billed") {
+    pushReceiptField(lines, "Status Order", statusFilter === "all" ? "Semua Order" : statusFilter, width);
+  }
+  lines.push(separator);
+
+  // 1. Ringkasan Utama Penjualan
+  const totalOmzet = getNumber(summary.total_fnb_sales || menuSales.reduce((sum, m) => sum + getNumber(m.gross_sales ?? m.subtotal), 0));
+  const totalQty = getNumber(summary.total_items_sold || menuSales.reduce((sum, m) => sum + getNumber(m.quantity_sold ?? m.quantity), 0));
+  const totalOrders = getNumber(summary.total_fnb_orders || 0);
+
+  lines.push(centerReceiptText("RINGKASAN PENJUALAN", width));
+  lines.push(separator);
+  pushReceiptField(lines, "Total Omzet", formatReceiptCurrency(totalOmzet), width);
+  pushReceiptField(lines, "Item Terjual", `${totalQty.toLocaleString("id-ID")} pcs/btl`, width);
+  if (totalOrders > 0) {
+    pushReceiptField(lines, "Total Order", `${totalOrders.toLocaleString("id-ID")} order`, width);
+  }
+  if (summary.top_menu_name && summary.top_menu_name !== "-") {
+    const topQty = getNumber(summary.top_menu_quantity);
+    pushReceiptField(lines, "Menu Top", `${summary.top_menu_name}${topQty > 0 ? ` (${topQty}x)` : ""}`, width);
+  }
+
+  // 2. Rekapitulasi per Kategori
+  if (categories.length > 0) {
+    lines.push(separator);
+    lines.push(centerReceiptText("REKAP PER KATEGORI", width));
+    lines.push(separator);
+    categories.forEach((cat) => {
+      const catName = getText(cat.category || "-");
+      const qty = getNumber(cat.total_quantity || 0);
+      const sales = getNumber(cat.total_sales || 0);
+      lines.push(formatReceiptLine(`${catName} (${qty})`, formatReceiptCurrency(sales), width));
+    });
+  }
+
+  // 3. Rincian Item Terjual
+  if (menuSales.length > 0) {
+    lines.push(separator);
+    lines.push(centerReceiptText("RINCIAN ITEM TERJUAL", width));
+    lines.push(separator);
+
+    menuSales.forEach((item, idx) => {
+      const name = getText(item.menu_name || item.menu_id || "-");
+      const qty = getNumber(item.quantity_sold ?? item.quantity ?? 1);
+      const price = getNumber(item.price ?? 0);
+      const subtotal = getNumber(item.gross_sales ?? item.subtotal ?? (qty * price));
+
+      lines.push(`[${idx + 1}] ${truncateReceiptText(name, width - 4)}`);
+      const priceStr = price > 0 ? `@${price.toLocaleString("id-ID")}` : "";
+      lines.push(formatReceiptLine(`    ${qty}x ${priceStr}`.trimEnd(), formatReceiptCurrency(subtotal), width));
+    });
+  }
+
+  // 4. Rekapitulasi Pengeluaran Fisik Barang (Gudang & Bar) jika ada
+  if (physicalConsumption.length > 0) {
+    lines.push(separator);
+    lines.push(centerReceiptText("PENGELUARAN FISIK GUDANG", width));
+    lines.push(separator);
+    lines.push(formatReceiptLine("Nama Barang", "Keluar / Sisa", width));
+    lines.push(dashSeparator);
+
+    physicalConsumption.forEach((phys) => {
+      const name = getText(phys.stock_item_name || phys.stock_item_id || "-");
+      const out = getNumber(phys.total_consumed || 0);
+      const stock = getNumber(phys.current_stock || 0);
+      const unit = getText(phys.unit || "pcs");
+      lines.push(truncateReceiptText(name, width));
+      lines.push(formatReceiptLine(`  Keluar: ${out} ${unit}`, `Sisa: ${stock}`, width));
+    });
+  }
+
+  // 5. Grand Total & Tanda Tangan
+  lines.push(strongSeparator);
+  lines.push(formatReceiptLine("TOTAL OMZET F&B", formatReceiptCurrency(totalOmzet), width));
+  lines.push(strongSeparator);
+
+  lines.push("");
+  pushReceiptSignature(lines, "Kasir / Bar (PIC)", cashierName, width);
+  lines.push("");
+  pushReceiptSignature(lines, "Supervisor / Owner", "Pemeriksa", width);
+  lines.push(separator);
+  pushReceiptField(lines, "Dicetak", formatReceiptDateTime(printedAt), width);
+  lines.push(separator);
+  wrapReceiptText("Dokumen rekapitulasi penjualan F&B resmi Happy Song Karaoke.", width).forEach((line) => {
+    lines.push(centerReceiptText(line, width));
+  });
+
+  return lines.join("\n");
+}
+
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
