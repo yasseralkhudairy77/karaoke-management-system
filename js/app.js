@@ -19060,11 +19060,34 @@ function createTransactionRowElement(transaction) {
         item.appendChild(badge);
       }
 
-      if (modifierClass === "transaction-has-fnb") {
-        const badge = document.createElement("span");
-        badge.className = withStatusBadge("transaction-fnb-badge", "warning");
-        badge.textContent = "Termasuk F&B";
-        item.appendChild(badge);
+      if (labelText === "Total Akhir") {
+        const badgeStack = document.createElement("div");
+        badgeStack.className = "transaction-badges-stack";
+
+        if (modifierClass === "transaction-has-fnb") {
+          const fnbBadge = document.createElement("span");
+          fnbBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
+          fnbBadge.textContent = "Termasuk F&B";
+          badgeStack.appendChild(fnbBadge);
+        }
+
+        if (getTransactionRoomDiscountAmount(transaction) > 0) {
+          const freeDiscountBadge = document.createElement("span");
+          freeDiscountBadge.className = withStatusBadge("transaction-fnb-badge", "success");
+          freeDiscountBadge.textContent = `Free Room -${formatCurrency(getTransactionRoomDiscountAmount(transaction))}`;
+          badgeStack.appendChild(freeDiscountBadge);
+        }
+
+        if (getTransactionSalesCommissionAmount(transaction) > 0) {
+          const commissionBadge = document.createElement("span");
+          commissionBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
+          commissionBadge.textContent = `Komisi -${formatCurrency(getTransactionSalesCommissionAmount(transaction))}`;
+          badgeStack.appendChild(commissionBadge);
+        }
+
+        if (badgeStack.children.length > 0) {
+          item.appendChild(badgeStack);
+        }
       }
 
       if (labelText === "Durasi" && getTransactionFreeRoomMinutes(transaction) > 0) {
@@ -19072,20 +19095,6 @@ function createTransactionRowElement(transaction) {
         freeBadge.className = withStatusBadge("transaction-fnb-badge", "success");
         freeBadge.textContent = `Free ${formatLcDurationShort(getTransactionFreeRoomMinutes(transaction))}`;
         item.appendChild(freeBadge);
-      }
-
-      if (labelText === "Total Akhir" && getTransactionRoomDiscountAmount(transaction) > 0) {
-        const freeDiscountBadge = document.createElement("span");
-        freeDiscountBadge.className = withStatusBadge("transaction-fnb-badge", "success");
-        freeDiscountBadge.textContent = `Free Room -${formatCurrency(getTransactionRoomDiscountAmount(transaction))}`;
-        item.appendChild(freeDiscountBadge);
-      }
-
-      if (labelText === "Total Akhir" && getTransactionSalesCommissionAmount(transaction) > 0) {
-        const commissionBadge = document.createElement("span");
-        commissionBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
-        commissionBadge.textContent = `Komisi -${formatCurrency(getTransactionSalesCommissionAmount(transaction))}`;
-        item.appendChild(commissionBadge);
       }
 
       if (labelText === "Ruangan" && transactionHasPackage(transaction)) {
