@@ -2534,32 +2534,313 @@ async function createManualOutageTransaction(req, res, payload) {
 
     const fnbItems = Array.isArray(payload.fnb_items) ? payload.fnb_items : [];
     let fnbTotal = 0;
+    const processedFnbItems = [];
     for (const item of fnbItems) {
-      const menuRes = await client.query('SELECT price FROM menu WHERE menu_id = $1 AND status = $2', [item.menu_id, 'active']);
+      const menuRes = await client.query('SELECT * FROM menu WHERE menu_id = $1 AND status = $2', [item.menu_id, 'active']);
       if (menuRes.rowCount === 0) throw new Error(`Menu ${item.menu_id} tidak ditemukan atau tidak aktif.`);
-      fnbTotal += Number(menuRes.rows[0].price || 0) * Math.max(1, Number(item.quantity || 1));
+      const menu = menuRes.rows[0];
+      const qty = Math.max(1, Math.floor(toNumber(item.quantity || 1)));
+      const price = Number(menu.price || 0);
+      const subtotal = price * qty;
+      fnbTotal += subtotal;
+      processedFnbItems.push({
+        menu,
+        quantity: qty,
+        price,
+        subtotal
+      });
     }
 
     const lcAssignments = Array.isArray(payload.lc_assignments) ? payload.lc_assignments : [];
     let lcTotal = 0;
+    const processedLcs = [];
     for (const lc of lcAssignments) {
       if (!lc.lc_id) continue;
-      const lcRes = await client.query('SELECT rate_per_hour FROM lc_master WHERE lc_id = $1 AND status = $2', [lc.lc_id, 'active']);
+      const lcRes = await client.query('SELECT lc_id, lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1 AND status = $2', [lc.lc_id, 'active']);
       if (lcRes.rowCount === 0) continue;
+      const lcRow = lcRes.rows[0];
+      const lcName = lcRow.lc_name || lc.lc_id;
+      const lcRatePerHour = Number(lcRow.rate_per_hour || 0);
       const lcDuration = Number(lc.duration_minutes || durationMinutes || 60);
-      lcTotal += Math.ceil(lcDuration / 60) * Number(lcRes.rows[0].rate_per_hour || 0);
+      const lcRate = Math.ceil(lcDuration / 60) * lcRatePerHour;
+      lcTotal += lcRate;
+      processedLcs.push({
+        lc_id: lcRow.lc_id,
+        lc_name: lcName,
+        duration_minutes: lcDuration,
+        rate_per_hour: lcRatePerHour,
+        rate: lcRate
+      });
     }
 
     const transactionId = `TRX-${Date.now()}`;
     const grandTotal = roomTotal + fnbTotal + lcTotal;
+    let orderId = '';
+    const createdOrders = [];
+
+    // 1. Jika ada F&B items, buat fnb_orders dan fnb_order_items, potong stok inventory, catat stock_movements
+    if (processedFnbItems.length > 0) {
+      orderId = `FNB-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await client.query(`
+        INSERT INTO fnb_orders (
+          order_id, room_id, room_name, order_status, order_total, cashier_name,
+          note, idempotency_key, customer_name, general_bill_id, created_at, updated_at
+        ) VALUES ($1, $2, $3, 'billed', $4, $5, $6, $7, $8, $9, $10, $11)
+      `, [
+        orderId,
+        mode === 'room' ? roomId : 'FNB-GENERAL',
+        roomName,
+        fnbTotal,
+        cashierName,
+        `Nota manual: ${sourceReason}`,
+        `${idempotencyKey}:fnb`,
+        payload.customer_name || null,
+        mode === 'general_fnb' ? `GBILL-${Date.now()}` : null,
+        startTime,
+        endTime
+      ]);
+
+      const orderItemsList = [];
+      for (const pItem of processedFnbItems) {
+        const { menu, quantity, price, subtotal } = pItem;
+        const orderItemId = require('crypto').randomUUID();
+        await client.query(`
+          INSERT INTO fnb_order_items (
+            order_item_id, order_id, menu_id, menu_name, category,
+            price, quantity, subtotal, is_voided, stock_deducted, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, TRUE, $9)
+        `, [
+          orderItemId,
+          orderId,
+          menu.menu_id,
+          menu.menu_name,
+          menu.category || 'F&B',
+          price,
+          quantity,
+          subtotal,
+          startTime
+        ]);
+
+        orderItemsList.push({
+          order_item_id: orderItemId,
+          order_id: orderId,
+          menu_id: menu.menu_id,
+          menu_name: menu.menu_name,
+          category: menu.category,
+          price,
+          quantity,
+          subtotal
+        });
+
+        // Potong stok fisik jika stock_tracking === 'yes'
+        if (menu.stock_tracking === 'yes' && menu.stock_item_id) {
+          const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [menu.stock_item_id]);
+          if (invRes.rowCount > 0) {
+            const inv = invRes.rows[0];
+            const qtyPerUnit = Number(menu.stock_qty_per_unit || 1);
+            const totalStockDeduct = quantity * qtyPerUnit;
+            const stockBefore = Number(inv.stock_qty || 0);
+            const stockAfter = stockBefore - totalStockDeduct;
+
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, menu.stock_item_id]);
+
+            const movementId = `SM-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after,
+                note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [
+              movementId,
+              menu.stock_item_id,
+              inv.stock_item_name || menu.menu_name,
+              'out',
+              'transaction',
+              transactionId,
+              -totalStockDeduct,
+              stockBefore,
+              stockAfter,
+              `Penjualan manual ${transactionId} (${quantity}x ${menu.menu_name})`,
+              cashierName,
+              `${idempotencyKey}:stock:${menu.stock_item_id}`
+            ]);
+          }
+        }
+
+        // Potong stok komponen resep jika menu bertipe bundle / recipe
+        const recipeRes = await client.query('SELECT r.*, i.stock_item_name FROM recipe r JOIN inventory i ON r.item_id = i.stock_item_id WHERE r.menu_id = $1', [menu.menu_id]);
+        for (const r of recipeRes.rows) {
+          const rInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+          if (rInvRes.rowCount > 0) {
+            const rInv = rInvRes.rows[0];
+            const rDeduct = quantity * Number(r.qty_used || 1);
+            const rStockBefore = Number(rInv.stock_qty || 0);
+            const rStockAfter = rStockBefore - rDeduct;
+
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+
+            const rMovementId = `SM-MR-${Date.now()}-${r.item_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after,
+                note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [
+              rMovementId,
+              r.item_id,
+              rInv.stock_item_name,
+              'out',
+              'transaction',
+              transactionId,
+              -rDeduct,
+              rStockBefore,
+              rStockAfter,
+              `Komponen menu manual ${transactionId}: ${quantity}x ${menu.menu_name} (${rInv.stock_item_name})`,
+              cashierName,
+              `${idempotencyKey}:recipe:${r.item_id}`
+            ]);
+          }
+        }
+
+        // Bonus penjualan LC
+        const bonusSalesLc = Number(menu.bonus_sales_lc || 0);
+        if (bonusSalesLc > 0 && processedLcs.length > 0) {
+          const totalBonus = bonusSalesLc * quantity;
+          const baseShare = Math.floor(totalBonus / processedLcs.length);
+          const remainder = totalBonus - (baseShare * processedLcs.length);
+          for (let lcIdx = 0; lcIdx < processedLcs.length; lcIdx++) {
+            const lcTarget = processedLcs[lcIdx];
+            const bonusTotal = baseShare + (lcIdx < remainder ? 1 : 0);
+            if (bonusTotal <= 0) continue;
+            const bonusId = `LSB-M-${Date.now()}-${lcTarget.lc_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO lc_sales_bonus_logs (
+                bonus_log_id, operational_date, transaction_id, order_id, menu_id, menu_name,
+                category, lc_id, lc_name, quantity, bonus_per_item, bonus_total, source_status, created_by
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'earned', $13)
+            `, [
+              bonusId,
+              opDate,
+              transactionId,
+              orderId,
+              menu.menu_id,
+              menu.menu_name,
+              menu.category || 'F&B',
+              lcTarget.lc_id,
+              lcTarget.lc_name,
+              quantity,
+              bonusSalesLc,
+              bonusTotal,
+              cashierName
+            ]);
+          }
+        }
+      }
+
+      createdOrders.push({
+        order_id: orderId,
+        order_total: fnbTotal,
+        items: orderItemsList
+      });
+    }
+
+    // 2. Potong stok paket room jika mode room dan ada package_id
+    if (mode === 'room' && payload.package_id) {
+      const detailsRes = await client.query(`
+        SELECT component_ref_id, component_name, qty, unit, component_type
+        FROM package_details
+        WHERE package_id = $1
+          AND component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `, [payload.package_id]);
+
+      for (const comp of detailsRes.rows) {
+        let stockItemId = comp.component_ref_id;
+        const qtyDeduct = Number(comp.qty || 1);
+        if (!stockItemId || qtyDeduct <= 0) continue;
+
+        if (comp.component_type === 'menu') {
+          const menuPkgRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
+          if (menuPkgRes.rowCount > 0 && menuPkgRes.rows[0].stock_item_id) {
+            stockItemId = menuPkgRes.rows[0].stock_item_id;
+          }
+        }
+
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore - qtyDeduct;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+          const movementId = `SM-MPKG-${Date.now()}-${stockItemId}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [
+            movementId,
+            stockItemId,
+            inv.stock_item_name,
+            'out',
+            'transaction',
+            transactionId,
+            -qtyDeduct,
+            stockBefore,
+            stockAfter,
+            `Komponen paket manual ${transactionPackageName || payload.package_id} (${inv.stock_item_name})`,
+            cashierName,
+            `${idempotencyKey}:pkg:${stockItemId}`
+          ]);
+        }
+      }
+    }
+
+    // 3. Catat log kerja LC ke lc_work_logs
+    for (const lcItem of processedLcs) {
+      const logId = `LCW-M-${Date.now()}-${lcItem.lc_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await client.query(`
+        INSERT INTO lc_work_logs (
+          log_id, session_id, room_id, room_name, lc_id, lc_name,
+          duration_minutes, rate_per_hour, rate, customer_charge_amount,
+          status, cashier_name, closed_transaction_id, created_at, closed_at, note
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `, [
+        logId,
+        null,
+        mode === 'room' ? roomId : 'FNB-GENERAL',
+        roomName,
+        lcItem.lc_id,
+        lcItem.lc_name,
+        lcItem.duration_minutes,
+        lcItem.rate_per_hour,
+        lcItem.rate,
+        lcItem.rate,
+        'closed',
+        cashierName,
+        transactionId,
+        startTime,
+        endTime,
+        `Nota manual: ${sourceReason}`
+      ]);
+    }
+
+    // 4. Simpan transaksi
     await client.query(`
       INSERT INTO transactions (
         transaction_id, room_id, room_name, start_time, end_time, duration_minutes,
         rate_per_hour, room_total, fnb_total, lc_total, grand_total, fnb_order_ids,
         payment_method, payment_status, cashier_name, operational_date, idempotency_key,
         booking_mode, package_id, package_name, package_total
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12, $13, $14, $15, $16, $17, $18, $19, $20)
-    `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, orderId, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
 
     await writeOperationalAudit(client, {
       risk_level: 'high', domain: 'transaction', event_type: 'manual_outage_transaction',
@@ -2603,6 +2884,7 @@ async function createManualOutageTransaction(req, res, payload) {
         fnb_total: fnbTotal,
         lc_total: lcTotal,
         grand_total: grandTotal,
+        fnb_order_ids: orderId,
         payment_method: paymentMethod,
         payment_status: paymentStatus,
         operational_date: opDate,
@@ -2610,7 +2892,15 @@ async function createManualOutageTransaction(req, res, payload) {
         package_id: transactionPackageId,
         package_name: transactionPackageName,
         package_total: transactionPackageTotal
-      }
+      },
+      fnb_orders: createdOrders,
+      lc_details: processedLcs.map(l => ({
+        lc_id: l.lc_id,
+        lc_name: l.lc_name,
+        duration_minutes: l.duration_minutes,
+        rate_per_hour: l.rate_per_hour,
+        rate: l.rate
+      }))
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
