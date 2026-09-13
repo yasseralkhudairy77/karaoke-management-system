@@ -6553,15 +6553,29 @@ function formatPaymentMethodLabel(method) {
 }
 
 function getTransactionFinalTotal(transaction) {
+  const roomTotal = getTransactionRoomTotal(transaction);
+  const fnbTotal = Number(transaction?.fnb_total || 0);
+  const lcTotal = Number(transaction?.lc_total || 0);
+  const promoDiscount = Number(transaction?.promo_discount || 0);
+  const manualDiscountRoom = Number(transaction?.manual_discount_room || 0);
+  const manualDiscountFnb = Number(transaction?.manual_discount_fnb || 0);
+  const computedTotal = Math.max(0, roomTotal + fnbTotal + lcTotal - promoDiscount - manualDiscountRoom - manualDiscountFnb);
+
+  if (transactionHasPackage(transaction)) {
+    const packageTotal = Number(transaction?.package_total || 0);
+    const overtimeCharge = getTransactionPackageOvertimeCharge(transaction);
+    if (overtimeCharge > 0 && Number(transaction?.room_total || 0) <= packageTotal) {
+      return computedTotal;
+    }
+  }
+
   const rawGrandTotal = transaction?.grand_total;
   if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
     const grandTotal = Number(rawGrandTotal);
-    if (Number.isFinite(grandTotal)) return grandTotal;
+    if (Number.isFinite(grandTotal) && grandTotal > 0) return grandTotal;
   }
 
-  return (Number(transaction?.room_total) || 0)
-    + (Number(transaction?.fnb_total) || 0)
-    + (Number(transaction?.lc_total) || 0);
+  return computedTotal;
 }
 
 function getTransactionSalesCommissionAmount(transaction) {
@@ -6624,12 +6638,51 @@ function buildSplitPaymentPayload(transaction, options = {}) {
   return { cash_amount: cashAmount, transfer_amount: transferAmount };
 }
 
-function getTransactionRoomTotal(transaction) {
-  return Number(transaction?.room_total) || 0;
+function transactionHasPackage(transaction) {
+  return Boolean(
+    String(transaction?.package_id || "").trim() ||
+    String(transaction?.booking_mode || "").toLowerCase() === "package" ||
+    Number(transaction?.package_total || 0) > 0 ||
+    String(transaction?.package_name || "").trim().toLowerCase().includes("paket")
+  );
 }
 
-function transactionHasPackage(transaction) {
-  return Boolean(String(transaction?.package_id || "").trim());
+function getTransactionPackageIncludedMinutes(transaction) {
+  if (!transactionHasPackage(transaction)) return 0;
+  const explicit = Number(transaction?.package_included_minutes);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const name = String(transaction?.package_name || "").toLowerCase();
+  if (name.includes("3 jam") || name.includes("3jam") || name.includes("3 h")) return 180;
+  if (name.includes("4 jam") || name.includes("4jam") || name.includes("4 h")) return 240;
+  if (name.includes("1 jam") || name.includes("1jam") || name.includes("1 h")) return 60;
+  return 120; // Default standar paket karaoke Happy Song adalah 2 jam (120 menit)
+}
+
+function getTransactionPackageOvertimeCharge(transaction) {
+  if (!transactionHasPackage(transaction)) return 0;
+  const duration = Number(transaction?.duration_minutes || 0);
+  const included = getTransactionPackageIncludedMinutes(transaction);
+  if (duration <= included) return 0;
+  const extraMinutes = duration - included;
+  const extraHours = Math.ceil(extraMinutes / 60);
+  const ratePerHour = Number(transaction?.rate_per_hour) || 135000;
+  return extraHours * ratePerHour;
+}
+
+function getTransactionRoomTotal(transaction) {
+  const rawRoomTotal = Number(transaction?.room_total || 0);
+  if (!transactionHasPackage(transaction)) {
+    return rawRoomTotal;
+  }
+  const packageTotal = Number(transaction?.package_total || 0) || rawRoomTotal;
+  const overtimeCharge = getTransactionPackageOvertimeCharge(transaction);
+  if (overtimeCharge > 0) {
+    // Jika room_total dari backend belum menambahkan overtime, otomatis sertakan overtimeCharge
+    if (rawRoomTotal <= packageTotal) {
+      return packageTotal + overtimeCharge;
+    }
+  }
+  return rawRoomTotal || packageTotal;
 }
 
 function getTransactionPackageLabel(transaction) {
@@ -6646,15 +6699,35 @@ function getTransactionBillableRoomMinutes(transaction) {
     return Number(explicit) || 0;
   }
 
+  if (transactionHasPackage(transaction)) {
+    const duration = Number(transaction?.duration_minutes || 0);
+    const included = getTransactionPackageIncludedMinutes(transaction);
+    return Math.max(0, duration - included);
+  }
+
   return Number(transaction?.duration_minutes) || 0;
 }
 
 function getTransactionFreeRoomMinutes(transaction) {
-  return Number(transaction?.free_room_minutes) || 0;
+  const explicit = Number(transaction?.free_room_minutes);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  if (transactionHasPackage(transaction)) {
+    const duration = Number(transaction?.duration_minutes || 0);
+    const included = getTransactionPackageIncludedMinutes(transaction);
+    return Math.min(duration, included);
+  }
+  return 0;
 }
 
 function getTransactionRoomDiscountAmount(transaction) {
-  return Number(transaction?.room_discount_amount) || 0;
+  const explicit = Number(transaction?.room_discount_amount);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  if (transactionHasPackage(transaction)) {
+    const freeMins = getTransactionFreeRoomMinutes(transaction);
+    const rate = Number(transaction?.rate_per_hour) || 135000;
+    return Math.round((freeMins / 60) * rate);
+  }
+  return 0;
 }
 
 function getTransactionManualDiscountAmount(transaction) {
@@ -19024,9 +19097,12 @@ function createTransactionRowElement(transaction) {
 
       if (labelText === (transactionHasPackage(transaction) ? "Biaya Paket" : "Biaya Room") && transactionHasPackage(transaction)) {
         const packageTotal = Number(transaction?.package_total || 0);
-        const roomTotal = Number(transaction?.room_total || 0);
-        if (roomTotal > packageTotal && packageTotal > 0) {
-          const extraOvertime = roomTotal - packageTotal;
+        const effectiveRoomTotal = getTransactionRoomTotal(transaction);
+        const extraOvertime = Math.max(
+          effectiveRoomTotal > packageTotal && packageTotal > 0 ? (effectiveRoomTotal - packageTotal) : 0,
+          getTransactionPackageOvertimeCharge(transaction)
+        );
+        if (extraOvertime > 0) {
           const overtimeBadge = document.createElement("span");
           overtimeBadge.className = withStatusBadge("transaction-fnb-badge", "warning");
           overtimeBadge.textContent = `+Room Extra ${formatCurrency(extraOvertime)}`;

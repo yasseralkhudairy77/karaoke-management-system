@@ -546,23 +546,60 @@ async function refreshClosingSnapshotForTransaction(client, transaction) {
 async function autoSyncUnpaidPackageOvertime(client) {
   try {
     await client.query(`
+      WITH target_pkg_tx AS (
+        SELECT 
+          t.transaction_id,
+          COALESCE(NULLIF(t.package_total, 0), CASE WHEN t.room_total > 0 THEN t.room_total ELSE 650000 END) AS effective_pkg_total,
+          COALESCE(NULLIF(t.rate_per_hour, 0), 135000) AS effective_rate,
+          CASE 
+            WHEN t.package_name ILIKE '%3 jam%' OR t.package_name ILIKE '%3jam%' THEN 180
+            WHEN t.package_name ILIKE '%4 jam%' OR t.package_name ILIKE '%4jam%' THEN 240
+            WHEN t.package_name ILIKE '%1 jam%' OR t.package_name ILIKE '%1jam%' THEN 60
+            ELSE 120
+          END AS pkg_included_mins,
+          t.duration_minutes,
+          COALESCE(t.fnb_total, 0) AS fnb_tot,
+          COALESCE(t.lc_total, 0) AS lc_tot,
+          COALESCE(t.promo_discount, 0) AS p_disc,
+          COALESCE(t.manual_discount_room, 0) AS mr_disc,
+          COALESCE(t.manual_discount_fnb, 0) AS mf_disc,
+          t.payment_method
+        FROM transactions t
+        WHERE t.payment_status = 'unpaid'
+          AND (
+            t.booking_mode IN ('package', 'package_correction')
+            OR (t.package_id IS NOT NULL AND t.package_id <> '')
+            OR (t.package_name IS NOT NULL AND (t.package_name ILIKE '%paket%' OR t.package_name ILIKE '%morgan%'))
+            OR (t.package_total IS NOT NULL AND t.package_total > 0)
+          )
+      )
       UPDATE transactions t
-      SET room_total = t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000)),
-          grand_total = (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0),
-          billable_room_minutes = t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120),
-          free_room_minutes = COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120),
-          room_discount_amount = (COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120) / 60.0) * COALESCE(t.rate_per_hour, 135000),
-          cash_amount = CASE WHEN t.payment_method = 'cash' THEN (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0) ELSE t.cash_amount END,
-          transfer_amount = CASE WHEN t.payment_method = 'transfer' THEN (t.package_total + (CEIL((t.duration_minutes - COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120.0)) / 60.0) * COALESCE(t.rate_per_hour, 135000))) + COALESCE(t.fnb_total, 0) + COALESCE(t.lc_total, 0) - COALESCE(t.promo_discount, 0) - COALESCE(t.manual_discount_room, 0) - COALESCE(t.manual_discount_fnb, 0) ELSE t.transfer_amount END,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE t.payment_status = 'unpaid'
-        AND t.booking_mode IN ('package', 'package_correction')
-        AND t.duration_minutes > COALESCE((SELECT duration_minutes FROM package_master WHERE package_id = t.package_id LIMIT 1), 120)
-        AND t.package_total > 0
-        AND t.room_total <= t.package_total
+      SET 
+        package_total = sub.effective_pkg_total,
+        room_total = sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate),
+        grand_total = (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) 
+                      + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc,
+        billable_room_minutes = sub.duration_minutes - sub.pkg_included_mins,
+        free_room_minutes = sub.pkg_included_mins,
+        room_discount_amount = (sub.pkg_included_mins / 60.0) * sub.effective_rate,
+        cash_amount = CASE 
+          WHEN t.payment_method = 'cash' 
+          THEN (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc 
+          ELSE t.cash_amount 
+        END,
+        transfer_amount = CASE 
+          WHEN t.payment_method = 'transfer' 
+          THEN (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc 
+          ELSE t.transfer_amount 
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      FROM target_pkg_tx sub
+      WHERE t.transaction_id = sub.transaction_id
+        AND sub.duration_minutes > sub.pkg_included_mins
+        AND t.room_total <= sub.effective_pkg_total;
     `);
   } catch (err) {
-    // Non-blocking
+    console.error('autoSyncUnpaidPackageOvertime non-blocking error:', err?.message || err);
   }
 }
 
@@ -745,6 +782,28 @@ async function markTransactionPaid(req, res, payload) {
     let promoDiscount = existingDiscount;
     let appliedPromoCode = transaction.promo_code || '';
 
+    const isPackageTrx = Boolean(
+      String(transaction.package_id || '').trim() ||
+      String(transaction.booking_mode || '').toLowerCase() === 'package' ||
+      Number(transaction.package_total || 0) > 0 ||
+      String(transaction.package_name || '').toLowerCase().includes('paket') ||
+      String(transaction.package_name || '').toLowerCase().includes('morgan')
+    );
+    let packageOvertimeExtra = 0;
+    let pkgIncludedMinutes = 120;
+    if (isPackageTrx) {
+      const pkgName = String(transaction.package_name || '').toLowerCase();
+      pkgIncludedMinutes = (pkgName.includes('3 jam') || pkgName.includes('3jam')) ? 180 : 120;
+      const durMins = Number(transaction.duration_minutes || 0);
+      const pkgTotal = Number(transaction.package_total || 0) || (roomTotal > 0 ? roomTotal : 650000);
+      if (durMins > pkgIncludedMinutes && roomTotal <= pkgTotal) {
+        const extraHours = Math.ceil((durMins - pkgIncludedMinutes) / 60.0);
+        const ratePerHour = Number(transaction.rate_per_hour) || 135000;
+        packageOvertimeExtra = extraHours * ratePerHour;
+        roomTotal = pkgTotal + packageOvertimeExtra;
+      }
+    }
+
     if (prCode) {
       const grossRoomTotal = Math.max(0, roomTotal + existingDiscount);
       const promoRes = await client.query('SELECT * FROM promos WHERE UPPER(promo_code) = $1 LIMIT 1', [prCode]);
@@ -818,6 +877,7 @@ async function markTransactionPaid(req, res, payload) {
     const grandTotal = roomTotal + fnbTotal + lcTotal;
     const paymentBreakdown = normalizePaymentBreakdown(payment_method, grandTotal, payload);
 
+    const hasOvertimeAdjustment = packageOvertimeExtra > 0;
     const updatedRes = await client.query(`
       UPDATE transactions
       SET payment_status = 'paid',
@@ -827,7 +887,11 @@ async function markTransactionPaid(req, res, payload) {
           promo_discount = $4,
           grand_total = $5,
           cash_amount = $6,
-          transfer_amount = $7
+          transfer_amount = $7,
+          billable_room_minutes = CASE WHEN $9::boolean THEN duration_minutes - $10 ELSE billable_room_minutes END,
+          free_room_minutes = CASE WHEN $9::boolean THEN $10 ELSE free_room_minutes END,
+          room_discount_amount = CASE WHEN $9::boolean THEN ($10 / 60.0) * COALESCE(rate_per_hour, 135000) ELSE room_discount_amount END,
+          updated_at = CURRENT_TIMESTAMP
       WHERE transaction_id = $8
       RETURNING *
     `, [
@@ -838,7 +902,9 @@ async function markTransactionPaid(req, res, payload) {
       grandTotal,
       paymentBreakdown.cash_amount,
       paymentBreakdown.transfer_amount,
-      transaction_id
+      transaction_id,
+      hasOvertimeAdjustment,
+      pkgIncludedMinutes
     ]);
 
     const updatedTransaction = updatedRes.rows[0];
