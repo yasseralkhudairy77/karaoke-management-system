@@ -1284,6 +1284,10 @@ function doPost(e) {
       return jsonResponse(deleteLcMaster_(payload));
     }
 
+    if (action === "bulkUpdateLcRate") {
+      return jsonResponse(bulkUpdateLcRate_(payload));
+    }
+
     if (action === "assignSessionLcs") {
       return jsonResponse(assignSessionLcs_(payload));
     }
@@ -7603,6 +7607,67 @@ function deleteLcMaster_(payload) {
     success: true,
     message: "LC berhasil dihapus secara permanen.",
   };
+}
+
+function bulkUpdateLcRate_(payload) {
+  var ratePerHour = Number(payload.rate_per_hour || payload.rate_per_room || 0);
+  if (!ratePerHour || ratePerHour <= 0) {
+    return { ok: false, success: false, error: "Tarif per jam harus berupa angka dan lebih besar dari 0." };
+  }
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "lc", "BULK_RATE");
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+
+  try {
+    var sheet = ensureLcMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var now = toJakartaIsoString_(new Date());
+    var applyToAll = Boolean(payload.apply_to_all);
+    var updatedCount = 0;
+
+    var rows = readSheetAsObjects_("LcMaster");
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var status = String(row.status || "").toLowerCase();
+      if (!applyToAll && status !== "active") continue;
+
+      var rowNum = findRowByValue_(sheet, headerMap, "lc_id", row.lc_id);
+      if (rowNum) {
+        if (headerMap["rate_per_hour"]) sheet.getRange(rowNum, headerMap["rate_per_hour"]).setValue(ratePerHour);
+        if (headerMap["updated_at"]) sheet.getRange(rowNum, headerMap["updated_at"]).setValue(now);
+        updatedCount++;
+      }
+    }
+
+    logMasterAudit_({
+      entity_type: "lc",
+      entity_id: "BULK_RATE",
+      entity_name: "Ubah tarif " + updatedCount + " LC ke Rp " + ratePerHour,
+      action_type: "bulk_update_rate",
+      old_value_json: "",
+      new_value_json: JSON.stringify({ rate_per_hour: ratePerHour, updated_count: updatedCount }),
+      changed_by: getMasterChangedBy_(payload),
+      note: payload.reason || "Pembaruan tarif massal LC (Weekday/Weekend)",
+      result: "success",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Berhasil mengubah tarif untuk " + updatedCount + " LC aktif menjadi Rp " + ratePerHour.toLocaleString("id-ID") + " / jam.",
+      updated_count: updatedCount,
+      rate_per_hour: ratePerHour
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function appendLcWorkLog_(log) {

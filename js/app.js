@@ -958,6 +958,8 @@ let editLcForm = null;
 let isSavingLc = false;
 let deleteLcConfirmation = null;
 let isDeletingLc = false;
+let bulkUpdateLcRateModal = null;
+let isBulkUpdatingLcRate = false;
 let selectedLcIdsForRoom = {};
 let selectedLcDurationsForRoom = {};
 let stockAdjustmentForm = {
@@ -26861,6 +26863,9 @@ function createLcPanelElement() {
   if (deleteLcConfirmation) {
     panel.appendChild(createDeleteLcModalOverlay());
   }
+  if (bulkUpdateLcRateModal) {
+    panel.appendChild(createBulkUpdateLcRateModalOverlay());
+  }
   if (adminPinModal) {
     const pinModalEl = createAdminPinModalElement();
     if (pinModalEl && pinModalEl.style) {
@@ -26900,7 +26905,27 @@ function createLcMasterSubTabElement() {
   const toolbar = document.createElement("div");
   toolbar.style.display = "flex";
   toolbar.style.justifyContent = "flex-end";
-  
+  toolbar.style.gap = "8px";
+
+  const bulkBtn = document.createElement("button");
+  bulkBtn.type = "button";
+  bulkBtn.className = "erp-btn erp-btn-secondary";
+  bulkBtn.style.padding = "8px 16px";
+  bulkBtn.style.fontWeight = "bold";
+  bulkBtn.style.display = "inline-flex";
+  bulkBtn.style.alignItems = "center";
+  bulkBtn.style.gap = "6px";
+  bulkBtn.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+  bulkBtn.onclick = () => {
+    const activeLcs = Array.isArray(lcs) ? lcs.filter(l => l.status === "active") : [];
+    const sampleRate = activeLcs.length > 0 ? (Number(activeLcs[0].rate_per_hour || activeLcs[0].rate_per_room) || 130000) : 130000;
+    bulkUpdateLcRateModal = {
+      new_rate: sampleRate,
+      active_count: activeLcs.length
+    };
+    renderRooms();
+  };
+
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
@@ -26911,7 +26936,7 @@ function createLcMasterSubTabElement() {
     addLcForm = { lc_name: "", rate_per_room: 175000, status: "active" };
     renderRooms();
   };
-  toolbar.appendChild(addBtn);
+  toolbar.append(bulkBtn, addBtn);
   container.appendChild(toolbar);
 
   if (isLoadingLcs) {
@@ -28668,6 +28693,128 @@ async function executeDeleteLcMaster(adminPin) {
     return { success: false, message };
   } finally {
     isDeletingLc = false;
+    renderRooms();
+  }
+}
+
+function createBulkUpdateLcRateModalOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1005";
+
+  const formEl = document.createElement("div");
+  formEl.className = "admin-pin-modal erp-card";
+  formEl.style.width = "450px";
+  formEl.style.padding = "24px";
+  formEl.style.display = "flex";
+  formEl.style.flexDirection = "column";
+  formEl.style.gap = "16px";
+
+  const title = document.createElement("h3");
+  title.className = "font-title";
+  title.style.margin = "0";
+  title.style.display = "flex";
+  title.style.alignItems = "center";
+  title.style.gap = "8px";
+  title.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+
+  const desc = document.createElement("p");
+  desc.style.margin = "0";
+  desc.style.fontSize = "13px";
+  desc.style.color = "var(--muted)";
+  desc.style.lineHeight = "1.5";
+  desc.innerHTML = `Tarif ini akan langsung diterapkan ke <strong>${bulkUpdateLcRateModal?.active_count || 0} LC aktif</strong>. Sangat praktis saat pergantian tarif <strong>Weekday</strong> (misal Rp 120.000) ke <strong>Weekend</strong> (misal Rp 130.000 - 135.000).`;
+
+  const rateField = document.createElement("div");
+  rateField.style.display = "flex";
+  rateField.style.flexDirection = "column";
+  rateField.style.gap = "6px";
+  rateField.innerHTML = `
+    <label style="font-size: 13px; font-weight: 600; color: var(--text-normal);">Tarif per Jam Baru (Rp):</label>
+    <input type="number" class="duration-custom-input text-input-bulk-rate" placeholder="130000" value="${bulkUpdateLcRateModal?.new_rate || 130000}" style="font-size: 16px; font-weight: bold; padding: 10px 12px;">
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "8px";
+  actions.style.marginTop = "8px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "erp-btn erp-btn-secondary";
+  cancelBtn.textContent = "Batal";
+  cancelBtn.onclick = () => {
+    bulkUpdateLcRateModal = null;
+    renderRooms();
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  saveBtn.style.fontWeight = "bold";
+  saveBtn.textContent = isBulkUpdatingLcRate ? "Menerapkan..." : "Terapkan ke Semua LC";
+  saveBtn.disabled = isBulkUpdatingLcRate;
+  saveBtn.onclick = () => {
+    const rateInput = Number(formEl.querySelector(".text-input-bulk-rate").value) || 0;
+    if (rateInput <= 0) {
+      showInlineNotice("Tarif per jam harus lebih besar dari 0.", "error");
+      return;
+    }
+
+    bulkUpdateLcRateModal.new_rate = rateInput;
+
+    openAdminPinModal({
+      title: "PIN Otorisasi Ubah Tarif Massal",
+      message: `Masukkan PIN owner/manager untuk mengubah tarif seluruh ${bulkUpdateLcRateModal.active_count} LC menjadi ${formatCurrency(rateInput)}/jam.`,
+      requestedAction: "bulk_update_lc_rate",
+      requiredRole: "manager",
+      onSuccess: async (authData, adminPin) => {
+        await executeBulkUpdateLcRate(rateInput, adminPin);
+      }
+    });
+  };
+
+  actions.append(cancelBtn, saveBtn);
+  formEl.append(title, desc, rateField, actions);
+  overlay.appendChild(formEl);
+  return overlay;
+}
+
+async function executeBulkUpdateLcRate(ratePerHour, adminPin) {
+  if (isBulkUpdatingLcRate) return;
+  isBulkUpdatingLcRate = true;
+  renderRooms();
+
+  try {
+    const response = await postApiAction({
+      action: "bulkUpdateLcRate",
+      rate_per_hour: ratePerHour,
+      admin_pin: adminPin,
+      changed_by: getLoggedInOperatorName()
+    });
+
+    if (!response || response.ok !== true) {
+      throw new Error(response?.message || response?.error || "Gagal memperbarui tarif massal LC.");
+    }
+
+    showInlineNotice(response.message || `Berhasil mengubah tarif seluruh LC menjadi ${formatCurrency(ratePerHour)} / jam.`);
+    bulkUpdateLcRateModal = null;
+    await loadLcs(true);
+  } catch (err) {
+    console.error("executeBulkUpdateLcRate error:", err);
+    showInlineNotice(err.message || "Gagal mengubah tarif massal LC.", "error");
+  } finally {
+    isBulkUpdatingLcRate = false;
     renderRooms();
   }
 }

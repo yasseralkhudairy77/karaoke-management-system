@@ -318,6 +318,8 @@ async function handlePostAction(action, req, res, payload) {
       return masterDataController.updateLcMaster(req, res, payload);
     case 'deleteLcMaster':
       return masterDataController.deleteLcMaster(req, res, payload);
+    case 'bulkUpdateLcRate':
+      return masterDataController.bulkUpdateLcRate(req, res, payload);
     case 'savePackageMaster':
       return masterDataController.savePackageMaster(req, res, payload);
     case 'updatePackageMaster':

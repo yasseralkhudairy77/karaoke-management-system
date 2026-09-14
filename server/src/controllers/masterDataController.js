@@ -254,6 +254,88 @@ async function saveLcMaster(req, res, payload) {
   }
 }
 
+async function checkOwnerOrManagerPin(pin) {
+  if (!pin) throw new Error('PIN Manager/Owner wajib diisi.');
+  const result = await db.query(`
+    SELECT employee_id, employee_name, role, pin, pin_hash
+    FROM employees
+    WHERE role IN ('owner', 'manager') AND is_active = TRUE
+    ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END
+  `);
+  for (const emp of result.rows) {
+    const isValid = await verifyAndUpgradePin(emp.employee_id, pin, emp.pin, emp.pin_hash);
+    if (isValid) {
+      return {
+        employee_id: emp.employee_id,
+        employee_name: emp.employee_name,
+        role: emp.role
+      };
+    }
+  }
+  throw new Error('PIN Manager/Owner tidak valid.');
+}
+
+async function bulkUpdateLcRate(req, res, payload) {
+  let client;
+  try {
+    const ratePerHour = Number(payload.rate_per_hour || payload.rate_per_room || 0);
+    if (!ratePerHour || ratePerHour <= 0) {
+      throw new Error('Tarif per jam harus berupa angka dan lebih besar dari 0.');
+    }
+
+    const pin = String(payload.admin_pin || payload.owner_pin || payload.pin || '').trim();
+    const authorizedEmp = await checkOwnerOrManagerPin(pin);
+    const changedBy = String(payload.changed_by || authorizedEmp.employee_name || 'Manager').trim();
+    const applyToAll = Boolean(payload.apply_to_all);
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const updateQuery = applyToAll
+      ? 'UPDATE lc_master SET rate_per_hour = $1, updated_at = CURRENT_TIMESTAMP RETURNING lc_id, lc_name, rate_per_hour, status'
+      : "UPDATE lc_master SET rate_per_hour = $1, updated_at = CURRENT_TIMESTAMP WHERE status = 'active' RETURNING lc_id, lc_name, rate_per_hour, status";
+
+    const updateRes = await client.query(updateQuery, [ratePerHour]);
+    const updatedCount = updateRes.rowCount;
+
+    await logMasterAudit(
+      'lc',
+      'BULK_RATE',
+      `Ubah tarif ${updatedCount} LC ke Rp ${ratePerHour.toLocaleString('id-ID')}`,
+      'bulk_update_rate',
+      null,
+      { new_rate: ratePerHour, updated_count: updatedCount, apply_to_all: applyToAll },
+      changedBy,
+      payload.reason || 'Pembaruan tarif massal LC (Weekday/Weekend)',
+      'success',
+      client
+    );
+
+    for (const lc of updateRes.rows) {
+      await client.query(`
+        INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+        VALUES ('lc_master', $1, 'UPDATE', $2)
+        ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+        SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0
+      `, [lc.lc_id, JSON.stringify(lc)]);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Berhasil mengubah tarif untuk ${updatedCount} LC aktif menjadi Rp ${ratePerHour.toLocaleString('id-ID')} / jam.`,
+      updated_count: updatedCount,
+      rate_per_hour: ratePerHour,
+      authorized_by: authorizedEmp.employee_name
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
 async function savePackageMaster(req, res, payload) {
   let client;
   try {
@@ -1024,6 +1106,7 @@ module.exports = {
   saveLcMaster,
   updateLcMaster: saveLcMaster,
   deleteLcMaster: (req, res, payload) => softDeleteMaster(req, res, 'lc_master', 'lc_id', 'lc', payload),
+  bulkUpdateLcRate,
   savePackageMaster,
   updatePackageMaster: savePackageMaster,
   deletePackageMaster,
