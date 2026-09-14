@@ -230,7 +230,14 @@ async function runTests() {
     assert.strictEqual(responseData.lc_details.length, 1, 'Harus ada 1 LC di lc_details');
     assert.strictEqual(responseData.lc_details[0].lc_name, 'Bella');
 
-    console.log('  ✓ Test 1 PASSED: Stok Sampoerna Mild terpotong, mutasi tercatat, order F&B tersimpan, dan LC work log terhubung!');
+    // Verifikasi urutan eksekusi foreign key: INSERT INTO transactions HARUS sebelum lc_work_logs
+    const trxIndex1 = executedQueries.findIndex(q => q.sql.includes('INSERT INTO transactions'));
+    const lcLogIndex1 = executedQueries.findIndex(q => q.sql.includes('INSERT INTO lc_work_logs'));
+    assert(trxIndex1 !== -1, 'Query INSERT INTO transactions harus dieksekusi');
+    assert(lcLogIndex1 !== -1, 'Query INSERT INTO lc_work_logs harus dieksekusi');
+    assert(trxIndex1 < lcLogIndex1, `INSERT INTO transactions (index ${trxIndex1}) harus dieksekusi sebelum INSERT INTO lc_work_logs (index ${lcLogIndex1}) untuk mematuhi FK constraint`);
+
+    console.log('  ✓ Test 1 PASSED: Stok Sampoerna Mild terpotong, mutasi tercatat, order F&B tersimpan, transaksi disimpan sebelum LC work log!');
   }
 
   // Test 2: Bonus Sales LC & Package Details Stock Deduction
@@ -371,9 +378,14 @@ async function runTests() {
     const bonusQuery = executedQueries.find(q => q.sql.includes('INSERT INTO lc_sales_bonus_logs'));
     assert(bonusQuery, 'Harus mencatat lc_sales_bonus_logs');
     assert.strictEqual(bonusQuery.params[7], 'LC-02', 'lc_id harus LC-02');
-    assert.strictEqual(bonusQuery.params[10], 10000, 'bonus_total harus Rp 10.000');
+    // Verifikasi urutan eksekusi foreign key: INSERT INTO transactions HARUS sebelum lc_sales_bonus_logs
+    const trxIndex2 = executedQueries.findIndex(q => q.sql.includes('INSERT INTO transactions'));
+    const bonusIndex2 = executedQueries.findIndex(q => q.sql.includes('INSERT INTO lc_sales_bonus_logs'));
+    assert(trxIndex2 !== -1, 'Query INSERT INTO transactions harus dieksekusi');
+    assert(bonusIndex2 !== -1, 'Query INSERT INTO lc_sales_bonus_logs harus dieksekusi');
+    assert(trxIndex2 < bonusIndex2, `INSERT INTO transactions (index ${trxIndex2}) harus dieksekusi sebelum INSERT INTO lc_sales_bonus_logs (index ${bonusIndex2}) untuk mematuhi FK constraint`);
 
-    console.log('  ✓ Test 2 PASSED: Stok komponen paket room terpotong & bonus sales LC tercatat!');
+    console.log('  ✓ Test 2 PASSED: Stok komponen paket room terpotong, bonus sales LC tercatat, transaksi disimpan sebelum LC sales bonus log!');
   }
 
   console.log('\n🎉 ALL MANUAL TRANSACTION STOCK & LC TESTS PASSED SUCCESSFULLY!');

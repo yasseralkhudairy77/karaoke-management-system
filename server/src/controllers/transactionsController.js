@@ -2575,12 +2575,56 @@ async function createManualOutageTransaction(req, res, payload) {
 
     const transactionId = `TRX-${Date.now()}`;
     const grandTotal = roomTotal + fnbTotal + lcTotal;
-    let orderId = '';
+    const orderId = processedFnbItems.length > 0
+      ? `FNB-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`
+      : '';
     const createdOrders = [];
 
-    // 1. Jika ada F&B items, buat fnb_orders dan fnb_order_items, potong stok inventory, catat stock_movements
+    let cashAmount = 0;
+    let transferAmount = 0;
+    if (paymentStatus === 'paid') {
+      if (paymentMethod === 'cash') cashAmount = grandTotal;
+      else if (paymentMethod === 'transfer' || paymentMethod === 'qris') transferAmount = grandTotal;
+    }
+
+    // 1. Simpan data transaksi induk (transactions) terlebih dahulu
+    // Ini mutlak diperlukan agar foreign key constraint pada lc_sales_bonus_logs (transaction_id)
+    // dan lc_work_logs (closed_transaction_id) tidak melanggar referensial integritas PostgreSQL.
+    await client.query(`
+      INSERT INTO transactions (
+        transaction_id, room_id, room_name, start_time, end_time, duration_minutes,
+        rate_per_hour, room_total, fnb_total, lc_total, grand_total, fnb_order_ids,
+        payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total, cash_amount, transfer_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+    `, [
+      transactionId,
+      mode === 'room' ? roomId : 'FNB-GENERAL',
+      roomName,
+      startTime,
+      endTime,
+      durationMinutes,
+      ratePerHour,
+      roomTotal,
+      fnbTotal,
+      lcTotal,
+      grandTotal,
+      orderId,
+      paymentMethod,
+      paymentStatus,
+      cashierName,
+      opDate,
+      idempotencyKey,
+      bookingMode,
+      transactionPackageId || null,
+      transactionPackageName || null,
+      transactionPackageTotal,
+      cashAmount,
+      transferAmount
+    ]);
+
+    // 2. Jika ada F&B items, buat fnb_orders dan fnb_order_items, potong stok inventory, catat stock_movements
     if (processedFnbItems.length > 0) {
-      orderId = `FNB-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
       await client.query(`
         INSERT INTO fnb_orders (
           order_id, room_id, room_name, order_status, order_total, cashier_name,
@@ -2748,7 +2792,7 @@ async function createManualOutageTransaction(req, res, payload) {
       });
     }
 
-    // 2. Potong stok paket room jika mode room dan ada package_id
+    // 3. Potong stok paket room jika mode room dan ada package_id
     if (mode === 'room' && payload.package_id) {
       const detailsRes = await client.query(`
         SELECT component_ref_id, component_name, qty, unit, component_type
@@ -2803,7 +2847,7 @@ async function createManualOutageTransaction(req, res, payload) {
       }
     }
 
-    // 3. Catat log kerja LC ke lc_work_logs
+    // 4. Catat log kerja LC ke lc_work_logs
     for (const lcItem of processedLcs) {
       const logId = `LCW-M-${Date.now()}-${lcItem.lc_id}-${Math.floor(1000 + Math.random() * 9000)}`;
       await client.query(`
@@ -2831,16 +2875,6 @@ async function createManualOutageTransaction(req, res, payload) {
         `Nota manual: ${sourceReason}`
       ]);
     }
-
-    // 4. Simpan transaksi
-    await client.query(`
-      INSERT INTO transactions (
-        transaction_id, room_id, room_name, start_time, end_time, duration_minutes,
-        rate_per_hour, room_total, fnb_total, lc_total, grand_total, fnb_order_ids,
-        payment_method, payment_status, cashier_name, operational_date, idempotency_key,
-        booking_mode, package_id, package_name, package_total
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-    `, [transactionId, mode === 'room' ? roomId : 'FNB-GENERAL', roomName, startTime, endTime, durationMinutes, ratePerHour, roomTotal, fnbTotal, lcTotal, grandTotal, orderId, paymentMethod, paymentStatus, cashierName, opDate, idempotencyKey, bookingMode, transactionPackageId || null, transactionPackageName || null, transactionPackageTotal]);
 
     await writeOperationalAudit(client, {
       risk_level: 'high', domain: 'transaction', event_type: 'manual_outage_transaction',
