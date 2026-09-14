@@ -1235,11 +1235,19 @@ async function cancelBooking(req, res, payload) {
       }
     }
 
-    await client.query(`
-      UPDATE fnb_orders
-      SET order_status = 'cancelled', cancel_reason = $1, cancelled_by = $2, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-      WHERE room_id = $3 AND order_status = 'open'
-    `, [reason, cancelledBy, roomId]);
+    const openOrdersRes = await client.query(`
+      SELECT order_id FROM fnb_orders WHERE room_id = $1 AND order_status = 'open' FOR UPDATE
+    `, [roomId]);
+    const openOrderIds = openOrdersRes.rows.map(o => o.order_id);
+    if (openOrderIds.length > 0) {
+      const { restoreStockForFnbOrders } = require('./fnbController');
+      await restoreStockForFnbOrders(client, openOrderIds, cancelledBy, `Pembatalan booking room ${room.room_name || roomId} | ${reason}`);
+      await client.query(`
+        UPDATE fnb_orders
+        SET order_status = 'cancelled', cancel_reason = $1, cancelled_by = $2, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE order_id = ANY($3)
+      `, [reason, cancelledBy, openOrderIds]);
+    }
 
     await client.query(`
       UPDATE rooms

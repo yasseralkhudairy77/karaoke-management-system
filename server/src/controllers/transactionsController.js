@@ -1974,6 +1974,122 @@ async function deleteTransaction(req, res, payload) {
       RETURNING *
     `, [initiatedBy, reason, transactionId]);
     const updatedTransaction = updatedRes.rows[0];
+
+    // 1. Pulihkan stok item F&B yang terkait dengan transaksi ini
+    const rawOrderIds = String(oldTransaction.fnb_order_ids || '').trim();
+    const orderIds = rawOrderIds
+      ? rawOrderIds.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    let restoredMovements = [];
+    if (orderIds.length > 0) {
+      const { restoreStockForFnbOrders } = require('./fnbController');
+      const restoreResult = await restoreStockForFnbOrders(
+        client,
+        orderIds,
+        initiatedBy,
+        `Pembatalan transaksi ${transactionId} | ${reason}`
+      );
+      restoredMovements = restoreResult.movements || [];
+
+      // Update status order F&B terkait menjadi cancelled
+      await client.query(`
+        UPDATE fnb_orders
+        SET order_status = 'cancelled',
+            cancel_reason = $1,
+            cancelled_by = $2,
+            cancelled_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE order_id = ANY($3) AND order_status != 'cancelled'
+      `, [reason, initiatedBy, orderIds]);
+    }
+
+    // 2. Pulihkan stok komponen paket room jika transaksi adalah transaksi paket
+    if (oldTransaction.package_id) {
+      const pkgDetailsRes = await client.query(`
+        SELECT component_ref_id, component_name, qty, unit, component_type
+        FROM package_details
+        WHERE package_id = $1
+          AND component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `, [oldTransaction.package_id]);
+
+      for (const comp of pkgDetailsRes.rows) {
+        let stockItemId = comp.component_ref_id;
+        const qtyReturn = Number(comp.qty || 1);
+        if (!stockItemId || qtyReturn <= 0) continue;
+
+        if (comp.component_type === 'menu') {
+          const menuPkgRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
+          if (menuPkgRes.rowCount > 0 && menuPkgRes.rows[0].stock_item_id) {
+            stockItemId = menuPkgRes.rows[0].stock_item_id;
+          }
+        }
+
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore + qtyReturn;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+          const movementId = `SM-RESTORE-PKG-${Date.now()}-${stockItemId}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [
+            movementId,
+            stockItemId,
+            inv.stock_item_name,
+            transactionId,
+            qtyReturn,
+            stockBefore,
+            stockAfter,
+            `Pengembalian komponen paket ${oldTransaction.package_name || oldTransaction.package_id} (batal transaksi ${transactionId}) | ${reason}`,
+            initiatedBy,
+            `cancel:pkg:${transactionId}:${stockItemId}`
+          ]);
+
+          restoredMovements.push({
+            stock_item_id: stockItemId,
+            stock_item_name: inv.stock_item_name,
+            qty_restored: qtyReturn,
+            stock_before: stockBefore,
+            stock_after: stockAfter
+          });
+        }
+      }
+    }
+
+    // 3. Batalkan log kerja LC dan bonus penjualan LC agar tidak masuk perhitungan payroll
+    await client.query(`
+      UPDATE lc_work_logs
+      SET status = 'cancelled', note = COALESCE(note, '') || ' [Dibatalkan transaksi ' || $1 || ': ' || $2 || ']'
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1) AND status != 'cancelled'
+    `, [transactionId, reason]);
+
+    await client.query(`
+      UPDATE lc_sales_bonus_logs
+      SET source_status = 'voided', voided_at = CURRENT_TIMESTAMP, void_reason = $1
+      WHERE transaction_id = $2 AND source_status != 'voided'
+    `, [reason, transactionId]);
+
+    // 4. Batalkan komisi sales jika ada pada transaksi ini
+    await client.query(`DELETE FROM sales_commission_logs WHERE transaction_id = $1`, [transactionId]);
+
+    // 5. Bebaskan promo/voucher jika digunakan pada transaksi ini
+    if (oldTransaction.promo_code) {
+      await client.query(`
+        UPDATE promos
+        SET used_in_transaction_id = NULL, used_at = NULL
+        WHERE used_in_transaction_id = $1
+      `, [transactionId]);
+    }
+
     const correctionId = `TCOR-CANCEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     await client.query(`
       INSERT INTO transaction_correction_logs (
@@ -1989,14 +2105,28 @@ async function deleteTransaction(req, res, payload) {
       target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
       room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
       amount_before: toNumber(oldTransaction.grand_total), amount_after: 0,
-      old_value: oldTransaction, new_value: updatedTransaction
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: {
+        restored_stock_movement_count: restoredMovements.length,
+        cancelled_order_ids: orderIds
+      }
     });
     await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0
+    `, [transactionId, JSON.stringify({ transaction_id: transactionId, payment_status: 'cancelled', reason })]);
+
     await client.query('COMMIT');
     return successResponse(res, {
-      message: 'Transaksi berhasil dibatalkan dan dicatat di audit.',
+      message: 'Transaksi berhasil dibatalkan, stok F&B telah dikembalikan, dan log kerja/bonus telah dibatalkan.',
       transaction_id: transactionId,
-      transaction: serializeTransaction(updatedTransaction)
+      transaction: serializeTransaction(updatedTransaction),
+      restored_movements: restoredMovements,
+      cancelled_order_ids: orderIds
     });
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
