@@ -3777,8 +3777,8 @@ function showFloatingToast(message, type = "info") {
 
 function openActionConfirmation(options = {}) {
   const initialFields = Array.isArray(options.fields)
-    ? options.fields
-    : (options.field ? [options.field] : []);
+    ? options.fields.map((f, idx) => ({ name: f.name || (idx === 0 ? "default" : `field_${idx}`), ...f }))
+    : (options.field ? [{ name: options.field.name || "default", ...options.field }] : []);
   const initialFieldValues = { ...(options.fieldValues || {}) };
   initialFields.forEach((f, idx) => {
     const key = f.name || (idx === 0 ? "default" : `field_${idx}`);
@@ -3824,16 +3824,15 @@ function closeActionConfirmation() {
 
 function updateActionConfirmationField(value, key = null) {
   if (actionConfirmationModal) {
+    actionConfirmationModal.fieldValues = actionConfirmationModal.fieldValues || {};
     if (!key || key === "default") {
       actionConfirmationModal.fieldValue = value;
-      actionConfirmationModal.fieldValues = actionConfirmationModal.fieldValues || {};
       actionConfirmationModal.fieldValues["default"] = value;
       const firstField = actionConfirmationModal.fields?.[0];
       if (firstField?.name) {
         actionConfirmationModal.fieldValues[firstField.name] = value;
       }
     } else {
-      actionConfirmationModal.fieldValues = actionConfirmationModal.fieldValues || {};
       actionConfirmationModal.fieldValues[key] = value;
       actionConfirmationModal.fieldValue = value;
     }
@@ -3855,9 +3854,10 @@ async function confirmActionConfirmation() {
   const fieldValues = modal.fieldValues || {};
 
   if (Array.isArray(modal.fields) && modal.fields.length > 0) {
-    for (const f of modal.fields) {
-      const key = f.name || "";
-      const val = String(fieldValues[key] ?? f.value ?? "").trim();
+    for (let idx = 0; idx < modal.fields.length; idx++) {
+      const f = modal.fields[idx];
+      const key = f.name || (idx === 0 ? "default" : `field_${idx}`);
+      const val = String(fieldValues[key] ?? (idx === 0 ? fieldValue : "") ?? f.value ?? "").trim();
       if (f.required && val.length < Number(f.minLength || 1)) {
         showFloatingToast(
           f.errorMessage || `${f.label || "Kolom"} wajib diisi.`,
@@ -3878,7 +3878,8 @@ async function confirmActionConfirmation() {
   renderRooms();
 
   try {
-    await modal.onConfirm?.(fieldValue, fieldValues);
+    const primaryValue = String(fieldValues["default"] ?? fieldValue ?? "").trim();
+    await modal.onConfirm?.(primaryValue, fieldValues);
   } catch (error) {
     showFloatingToast(error.message || "Tindakan tidak dapat diproses.", "error");
   } finally {
