@@ -150,29 +150,55 @@
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+      gap: 12px;
       margin: 16px 0;
     }
 
-    .metric { padding: 16px; }
+    .metric {
+      padding: 14px 16px;
+      min-width: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: border-color 0.2s ease, transform 0.15s ease;
+    }
+
+    .metric:hover {
+      border-color: rgba(242, 196, 91, 0.45);
+    }
 
     .metric-label {
       color: var(--muted);
-      font-size: 0.82rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
       margin: 0 0 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .metric-value {
-      font-size: clamp(1.4rem, 2.5vw, 2.1rem);
-      font-weight: 900;
+      font-size: clamp(1.1rem, 1.35vw, 1.55rem);
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
       margin: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
     }
 
     .metric-note {
       color: var(--muted);
-      font-size: 0.8rem;
+      font-size: 0.76rem;
+      line-height: 1.35;
       margin: 8px 0 0;
+      word-break: break-word;
     }
 
     .text-amber { color: var(--amber); }
@@ -357,19 +383,39 @@
     .error { color: var(--red); }
     .muted { color: var(--muted); }
 
+    @media (max-width: 1080px) {
+      .metrics {
+        grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+        gap: 10px;
+      }
+      .metric {
+        padding: 12px 14px;
+      }
+      .metric-value {
+        font-size: clamp(1.05rem, 1.3vw, 1.4rem);
+      }
+    }
+
     @media (max-width: 920px) {
       .header, .toolbar { flex-direction: column; align-items: stretch; }
       .brand-heading { align-items: flex-start; }
       .status-card { text-align: left; }
-      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metrics { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
       .two-col { grid-template-columns: 1fr; }
       .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 560px) {
       .brand-logo { width: 70px; height: 70px; border-radius: 18px; }
-      .metrics, .rooms { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .metric { padding: 12px 10px; }
+      .metric-value { font-size: 1.05rem; }
+      .rooms { grid-template-columns: 1fr; }
       table { font-size: 0.82rem; }
+    }
+
+    @media (max-width: 380px) {
+      .metrics { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -510,11 +556,12 @@
     }
 
     function metric(label, value, note = "") {
+      const rawValue = String(value).replace(/<[^>]*>/g, "").trim();
       return `
         <article class="metric">
-          <p class="metric-label">${safe(label)}</p>
-          <p class="metric-value">${value}</p>
-          ${note ? `<p class="metric-note">${safe(note)}</p>` : ""}
+          <p class="metric-label" title="${safe(label)}">${safe(label)}</p>
+          <p class="metric-value" title="${safe(rawValue)}">${value}</p>
+          ${note ? `<p class="metric-note" title="${safe(note)}">${safe(note)}</p>` : ""}
         </article>
       `;
     }
