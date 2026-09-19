@@ -218,6 +218,13 @@ async function saveCashierClosing(req, res, payload) {
     `, [closingId, JSON.stringify({ closing_id: closingId, closing_date: todayOpDate, total_revenue: totalRevenue })]);
 
     await client.query('COMMIT');
+
+    // Trigger snapshot push ke cloud seketika saat tutup kasir agar data 7 hari dan 1 bulan tersimpan sebelum PC kasir dimatikan
+    try {
+      const { pushOwnerMirrorSnapshot } = require('../services/ownerMirrorPushWorker');
+      pushOwnerMirrorSnapshot().catch(err => console.error('Auto mirror push on closing error:', err.message));
+    } catch (_) {}
+
     return successResponse(res, {
       message: `Tutup kasir tanggal ${todayOpDate} berhasil disimpan.`,
       closing_id: closingId,

@@ -635,7 +635,7 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     ? getOperationalDateRange(period || 'today', options.start_date, options.end_date)
     : null;
 
-  const result = hasPeriodFilter
+  let result = hasPeriodFilter
     ? await db.query(`
       SELECT *
       FROM owner_mirror_snapshots
@@ -655,12 +655,49 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
       LIMIT 1
     `, [sourceId]);
 
+  let isFallback = false;
+
+  // Fallback 1: Jika tidak ada snapshot untuk tanggal eksak hari ini (misal PC kasir mati/belum buka hari ini):
+  // Ambil snapshot terbaru yang tersimpan untuk periode tersebut (misal snapshot last7days / thismonth / yesterday terakhir)
+  if (result.rowCount === 0 && hasPeriodFilter && period && period !== 'custom') {
+    const periodFallback = await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND period = $2
+      ORDER BY received_at DESC, snapshot_id DESC
+      LIMIT 1
+    `, [sourceId, period]);
+
+    if (periodFallback.rowCount > 0) {
+      result = periodFallback;
+      isFallback = true;
+    }
+  }
+
+  // Fallback 2: Jika untuk periode tersebut belum ada, ambil snapshot terbaru apapun yang ada untuk sourceId ini
+  if (result.rowCount === 0 && hasPeriodFilter && (period === 'today' || period === 'activeshift')) {
+    const latestFallback = await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+      ORDER BY received_at DESC, snapshot_id DESC
+      LIMIT 1
+    `, [sourceId]);
+
+    if (latestFallback.rowCount > 0) {
+      result = latestFallback;
+      isFallback = true;
+    }
+  }
+
   if (result.rowCount === 0) {
     return {
       mirror_version: 'owner-mirror-cloud-empty-v1',
       mode: 'cloud_latest_snapshot',
       source_id: sourceId,
       has_snapshot: false,
+      is_fallback: false,
       period: period || 'latest',
       operational_date_start: range?.startDate || '',
       operational_date_end: range?.endDate || '',
@@ -681,6 +718,7 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     mode: 'cloud_latest_snapshot',
     source_id: row.source_id,
     has_snapshot: true,
+    is_fallback: isFallback,
     period: period || storedPeriod || 'latest',
     snapshot_period: storedPeriod,
     period_relabelled: Boolean(period && storedPeriod && period !== storedPeriod),

@@ -1024,6 +1024,8 @@
     function updateSnapshotHeader(snapshot) {
       if (!snapshot?.has_snapshot && snapshot?.mode === "cloud_latest_snapshot") {
         setStatus("Belum ada snapshot", "cleaning");
+      } else if (snapshot?.is_fallback) {
+        setStatus("PC Kasir Offline · Data Terakhir", "cleaning");
       } else {
         setStatus("Cloud Mirror Aktif", "available");
       }
@@ -1031,8 +1033,9 @@
       document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
         ? `Update cloud: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
         : `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
+      const noteSuffix = snapshot?.is_fallback ? " · Data Closing Terakhir" : "";
       document.getElementById("periodInfo").textContent =
-        `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}`;
+        `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}${noteSuffix}`;
     }
 
     async function loadSnapshot() {

@@ -53,7 +53,43 @@ async function runOwnerMirrorRolloverTests() {
     db.query = async () => ({ rowCount: 0, rows: [] });
     const missing = await getLatestOwnerMirrorSnapshot('happy-song-local', { period: 'today' });
     assert.strictEqual(missing.has_snapshot, false);
-    console.log('  PASS unmatched operational date remains empty');
+    console.log('  PASS unmatched operational date remains empty when DB has no rows');
+
+    // Test smart fallback: Saat PC offline dan tidak ada tanggal eksak untuk last7days, fallback ke snapshot last7days terakhir
+    db.query = async (sql, params) => {
+      const text = String(sql);
+      if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
+        return { rowCount: 0, rows: [] }; // exact date range not found (PC offline)
+      }
+      if (/WHERE source_id = \$1\s+AND period = \$2/i.test(text)) {
+        return {
+          rowCount: 1,
+          rows: [{
+            snapshot_id: 888,
+            source_id: 'happy-song-local',
+            period: 'last7days',
+            operational_date_start: '2026-09-12',
+            operational_date_end: '2026-09-18',
+            received_at: new Date('2026-09-19T04:52:00+07:00'),
+            payload_json: {
+              period: 'last7days',
+              operational_date_start: '2026-09-12',
+              operational_date_end: '2026-09-18',
+              summary: { total_revenue_all: 85000000 }
+            }
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+
+    const fallbackSnapshot = await getLatestOwnerMirrorSnapshot('happy-song-local', { period: 'last7days' });
+    assert.strictEqual(fallbackSnapshot.has_snapshot, true);
+    assert.strictEqual(fallbackSnapshot.is_fallback, true);
+    assert.strictEqual(fallbackSnapshot.period, 'last7days');
+    assert.strictEqual(fallbackSnapshot.operational_date_end, '2026-09-18');
+    assert.strictEqual(fallbackSnapshot.summary.total_revenue_all, 85000000);
+    console.log('  PASS smart fallback successfully serves last available 7-day snapshot when PC is offline');
 
     const executedSql = [];
     const snapshotPayload = {
