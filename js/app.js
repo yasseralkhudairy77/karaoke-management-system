@@ -29450,26 +29450,41 @@ function createReportsSubNavElement() {
 
   ensureActiveReportSubTabAllowed();
   const allowedReportTabs = new Set(ROLE_REPORT_SUB_TABS[getCurrentOperatorRole()] || []);
+  const visibleTabs = REPORT_SUB_TABS.filter((tab) => allowedReportTabs.has(tab.key));
 
-  REPORT_SUB_TABS.filter((tab) => allowedReportTabs.has(tab.key)).forEach((tab) => {
+  wrapper.dataset.tabCount = String(visibleTabs.length);
+
+  visibleTabs.forEach((tab) => {
+    const isActive = activeReportSubTab === tab.key;
     const button = document.createElement("button");
-    button.className = activeReportSubTab === tab.key
+    button.className = isActive
       ? "reports-subnav-button active"
       : "reports-subnav-button";
     button.type = "button";
     button.dataset.action = "switch-report-subtab";
     button.dataset.reportTab = tab.key;
-    button.setAttribute("aria-pressed", activeReportSubTab === tab.key ? "true" : "false");
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+
+    const header = document.createElement("div");
+    header.className = "reports-subnav-header";
 
     const label = document.createElement("span");
     label.className = "reports-subnav-label";
     label.textContent = tab.label;
+    header.appendChild(label);
+
+    if (isActive) {
+      const badge = document.createElement("span");
+      badge.className = "reports-subnav-active-badge";
+      badge.textContent = "Aktif";
+      header.appendChild(badge);
+    }
 
     const description = document.createElement("span");
     description.className = "reports-subnav-description";
     description.textContent = tab.description;
 
-    button.append(label, description);
+    button.append(header, description);
     wrapper.appendChild(button);
   });
 
