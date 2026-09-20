@@ -18,7 +18,12 @@ const styleCssContent = fs.readFileSync(styleCssPath, "utf8");
 const codeGsContent = fs.readFileSync(codeGsPath, "utf8");
 const indexHtmlContent = fs.readFileSync(indexHtmlPath, "utf8");
 
-const { calculateDeltaPercent, getComparisonRange } = require("../src/controllers/analyticsController");
+const {
+  calculateDeltaPercent,
+  getComparisonRange,
+  generateDateList,
+  formatDateLabel,
+} = require("../src/controllers/analyticsController");
 
 // Test 1: Unit tests on calculateDeltaPercent
 console.log("Test 1: Testing calculateDeltaPercent math logic...");
@@ -48,6 +53,18 @@ const range3 = getComparisonRange("2026-09-20", "2026-09-20", "same_day_last_wee
 assert.strictEqual(range3.compareStartDate, "2026-09-13");
 assert.strictEqual(range3.compareEndDate, "2026-09-13");
 console.log("  ✓ PASS: getComparisonRange accurately shifts dates for previous period and same day last week");
+
+// Test 2b: Unit tests on generateDateList and formatDateLabel
+console.log("Test 2b: Testing generateDateList and formatDateLabel helpers...");
+const dates7 = generateDateList("2026-09-14", "2026-09-20");
+assert.strictEqual(dates7.length, 7, "generateDateList must produce 7 dates for a 7-day span");
+assert.strictEqual(dates7[0], "2026-09-14");
+assert.strictEqual(dates7[6], "2026-09-20");
+
+const label1 = formatDateLabel("2026-09-20");
+assert.ok(label1.includes("20 Sep"), "formatDateLabel must format day and month in Indonesian");
+assert.ok(label1.includes("Min"), "formatDateLabel must include Sunday (Min)");
+console.log("  ✓ PASS: generateDateList and formatDateLabel work reliably");
 
 // Test 3: Verify backend route registration
 console.log("Test 3: Verifying API routes registration...");
@@ -109,6 +126,18 @@ assert.ok(
   appJsContent.includes("function createAnalyticsPeakHoursChartElement"),
   "app.js must implement createAnalyticsPeakHoursChartElement"
 );
+assert.ok(
+  appJsContent.includes("analyticsChartMode"),
+  "app.js must define analyticsChartMode state"
+);
+assert.ok(
+  appJsContent.includes("analytics-mode-btn"),
+  "app.js must create mode switch buttons"
+);
+assert.ok(
+  appJsContent.includes("positionTooltipSmart"),
+  "app.js must implement smart flipping tooltip logic to prevent cutoffs"
+);
 console.log("  ✓ PASS: Frontend tabs, role permissions, and panel renderers are configured");
 
 // Test 7: Verify CSS styling in css/style.css
@@ -133,15 +162,23 @@ assert.ok(
   styleCssContent.includes(".analytics-delta-badge"),
   "style.css must define .analytics-delta-badge"
 );
-console.log("  ✓ PASS: Rich analytics CSS styles are present in css/style.css");
+assert.ok(
+  styleCssContent.includes(".analytics-mode-switcher"),
+  "style.css must define .analytics-mode-switcher"
+);
+assert.ok(
+  styleCssContent.includes(".analytics-mode-btn"),
+  "style.css must define .analytics-mode-btn"
+);
+console.log("  ✓ PASS: Rich analytics CSS styles including mode switcher are present in css/style.css");
 
 // Test 8: Verify cache buster in index.html
 console.log("Test 8: Verifying cache buster version in index.html...");
 assert.ok(
-  indexHtmlContent.includes("analytics-v1"),
-  "index.html must reference ?v=analytics-v1"
+  indexHtmlContent.includes("analytics-v2"),
+  "index.html must reference ?v=analytics-v2"
 );
-console.log("  ✓ PASS: index.html has updated cache buster version");
+console.log("  ✓ PASS: index.html has updated cache buster version (analytics-v2)");
 
 // Test 9: Verify real shift cutoff calculation and removal of mock 13.420.000
 console.log("Test 9: Verifying real shift cutoff calculation and removal of fake 13.420.000...");
@@ -268,6 +305,32 @@ const originalQuery = db.query;
         };
       }
 
+      if (sql.includes("operational_date::text AS date_str")) {
+        return {
+          rowCount: 3,
+          rows: [
+            { date_str: "2026-09-18", session_count: 5, daily_revenue: 2800000, daily_room_hours: 10.5 },
+            { date_str: "2026-09-19", session_count: 8, daily_revenue: 4100000, daily_room_hours: 14.0 },
+            { date_str: "2026-09-20", session_count: 12, daily_revenue: 5600000, daily_room_hours: 18.0 },
+          ]
+        };
+      }
+
+      if (sql.includes("EXTRACT(ISODOW FROM operational_date)")) {
+        return {
+          rowCount: 7,
+          rows: [
+            { day_num: 1, days_count: 4, total_sessions: 16, total_revenue: 6400000, total_room_hours: 32.0 },
+            { day_num: 2, days_count: 4, total_sessions: 12, total_revenue: 4800000, total_room_hours: 24.0 },
+            { day_num: 3, days_count: 4, total_sessions: 18, total_revenue: 7200000, total_room_hours: 36.0 },
+            { day_num: 4, days_count: 4, total_sessions: 20, total_revenue: 8000000, total_room_hours: 40.0 },
+            { day_num: 5, days_count: 4, total_sessions: 30, total_revenue: 14000000, total_room_hours: 60.0 },
+            { day_num: 6, days_count: 4, total_sessions: 42, total_revenue: 21000000, total_room_hours: 84.0 },
+            { day_num: 7, days_count: 4, total_sessions: 35, total_revenue: 16500000, total_room_hours: 70.0 },
+          ]
+        };
+      }
+
       if (sql.includes("total_grand_revenue")) {
         return {
           rowCount: 2,
@@ -309,6 +372,8 @@ const originalQuery = db.query;
     assert.strictEqual(yData.kpi.totalRevenue.current, 4520000);
     assert.strictEqual(yData.kpi.fnbGrossMargin.grossSales, 1520000);
     assert.strictEqual(yData.hourlyTraffic.length, 24);
+    assert.strictEqual(yData.dailyTrend.length, 1);
+    assert.strictEqual(yData.dayOfWeekPattern.days.length, 7);
     assert.strictEqual(yData.roomLeaderboard.length, 2);
     assert.strictEqual(yData.fnbLeaderboard.length, 1);
 
@@ -326,10 +391,17 @@ const originalQuery = db.query;
     const l7Data = last7daysJsonResult.data || last7daysJsonResult;
     assert.strictEqual(l7Data.filters.period, "last7days");
     assert.strictEqual(l7Data.filters.durationDays, 7);
+    assert.strictEqual(l7Data.dailyTrend.length, 7, "last7days must return dailyTrend sequence of 7 items");
+    assert.strictEqual(l7Data.dayOfWeekPattern.days.length, 7, "dayOfWeekPattern must have 7 days");
+    assert.strictEqual(l7Data.dayOfWeekPattern.peakDay, "Sabtu", "Peak day should be Sabtu based on mock totals");
+    assert.strictEqual(l7Data.dayOfWeekPattern.slowestDay, "Selasa", "Slowest day should be Selasa based on mock totals");
 
-    console.log("  ✓ PASS: getOperationalAnalytics successfully aggregates 'yesterday' and 'last7days' without SQL errors");
+    console.log("  ✓ PASS: getOperationalAnalytics successfully aggregates 'yesterday' and 'last7days' with daily trend & DOW pattern");
 
     console.log("\n🎉 All 11 Analytics & Business Intelligence Module Tests Passed Successfully!\n");
+  } catch (e) {
+    console.error("Test 11 Failed with error:", e);
+    process.exit(1);
   } finally {
     db.query = originalQuery;
   }

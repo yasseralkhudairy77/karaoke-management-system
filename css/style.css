@@ -13320,6 +13320,40 @@ select.action-confirmation-input option {
   color: var(--muted);
 }
 
+.analytics-mode-switcher {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(242, 196, 91, 0.25);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 4px;
+}
+
+.analytics-mode-btn {
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.analytics-mode-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.analytics-mode-btn.active {
+  background: linear-gradient(135deg, rgba(242, 196, 91, 0.28), rgba(242, 196, 91, 0.12));
+  color: var(--gold-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(242, 196, 91, 0.45);
+}
+
 .analytics-legend-item {
   display: flex;
   align-items: center;
@@ -13347,12 +13381,14 @@ select.action-confirmation-input option {
   position: relative;
   width: 100%;
   overflow-x: auto;
+  overflow-y: visible;
+  padding-top: 10px;
 }
 
 .analytics-curve-svg {
   display: block;
   width: 100%;
-  min-width: 720px;
+  min-width: 760px;
   height: auto;
 }
 
@@ -13377,18 +13413,17 @@ select.action-confirmation-input option {
   position: absolute;
   pointer-events: none;
   display: none;
-  z-index: 100;
-  padding: 10px 14px;
+  z-index: 1000;
+  padding: 11px 15px;
   border: 1px solid var(--gold-smoke);
-  border-radius: 10px;
-  background: rgba(14, 11, 8, 0.94);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  border-radius: 11px;
+  background: rgba(14, 11, 8, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75), 0 0 12px rgba(242, 196, 91, 0.15);
   font-size: 0.82rem;
   color: var(--text);
   white-space: nowrap;
-  backdrop-filter: blur(4px);
-  transform: translate(-50%, -115%);
-  transition: opacity 0.15s ease;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.12s ease;
 }
 
 /* Revenue Composition & Payment Split Grid */

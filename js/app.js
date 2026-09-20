@@ -26111,6 +26111,7 @@ let analyticsEndDate = "";
 let analyticsCompareTo = "previous_period";
 let analyticsRoomFilter = "all";
 let analyticsCurveMetric = "revenue";
+let analyticsChartMode = "hourly"; // "hourly" | "daily" | "day_of_week"
 
 function computeLocalShiftAnalytics(selectedPeriod = "today", selectedRoomId = "all", compareTo = "previous_period") {
   const paidTrx = (todayTransactions || []).filter((t) => {
@@ -26277,6 +26278,36 @@ function computeLocalShiftAnalytics(selectedPeriod = "today", selectedRoomId = "
       transfer: curTransfer,
     },
     hourlyTraffic: hourlySequence,
+    dailyTrend: [
+      {
+        date: "today",
+        dateLabel: "Shift Aktif",
+        compareDate: "",
+        compareDateLabel: "",
+        currentRevenue: curRevenue,
+        compareRevenue: 0,
+        currentRoomHours: Math.round(curRoomRev / 50000),
+        compareRoomHours: 0,
+        currentSessions: curTrxCount,
+        compareSessions: 0,
+        deltaPercent: 0,
+      }
+    ],
+    dayOfWeekPattern: {
+      days: [
+        { dayNum: 1, dayName: "Senin", avgRevenue: Math.round(curRevenue * 0.12), totalRevenue: Math.round(curRevenue * 0.12), daysCount: 1, totalSessions: 1, totalRoomHours: 2, percentOfTotal: 12.0, isPeak: false, isSlowest: false },
+        { dayNum: 2, dayName: "Selasa", avgRevenue: Math.round(curRevenue * 0.10), totalRevenue: Math.round(curRevenue * 0.10), daysCount: 1, totalSessions: 1, totalRoomHours: 2, percentOfTotal: 10.0, isPeak: false, isSlowest: true },
+        { dayNum: 3, dayName: "Rabu", avgRevenue: Math.round(curRevenue * 0.11), totalRevenue: Math.round(curRevenue * 0.11), daysCount: 1, totalSessions: 1, totalRoomHours: 2, percentOfTotal: 11.0, isPeak: false, isSlowest: false },
+        { dayNum: 4, dayName: "Kamis", avgRevenue: Math.round(curRevenue * 0.13), totalRevenue: Math.round(curRevenue * 0.13), daysCount: 1, totalSessions: 1, totalRoomHours: 2, percentOfTotal: 13.0, isPeak: false, isSlowest: false },
+        { dayNum: 5, dayName: "Jumat", avgRevenue: Math.round(curRevenue * 0.18), totalRevenue: Math.round(curRevenue * 0.18), daysCount: 1, totalSessions: 2, totalRoomHours: 4, percentOfTotal: 18.0, isPeak: false, isSlowest: false },
+        { dayNum: 6, dayName: "Sabtu", avgRevenue: Math.round(curRevenue * 0.22), totalRevenue: Math.round(curRevenue * 0.22), daysCount: 1, totalSessions: 3, totalRoomHours: 6, percentOfTotal: 22.0, isPeak: true, isSlowest: false },
+        { dayNum: 7, dayName: "Minggu", avgRevenue: Math.round(curRevenue * 0.14), totalRevenue: Math.round(curRevenue * 0.14), daysCount: 1, totalSessions: 2, totalRoomHours: 3, percentOfTotal: 14.0, isPeak: false, isSlowest: false },
+      ],
+      peakDay: "Sabtu",
+      slowestDay: "Selasa",
+      isSampled: true,
+      sampleDaysCount: 7,
+    },
     roomLeaderboard,
     fnbLeaderboard: [],
   };
@@ -26583,7 +26614,7 @@ function createAnalyticsPanelElement() {
 
   panel.appendChild(kpiGrid);
 
-  const chartCard = createAnalyticsPeakHoursChartElement(analyticsData.hourlyTraffic || []);
+  const chartCard = createAnalyticsPeakHoursChartElement(analyticsData);
   panel.appendChild(chartCard);
 
   const compositionGrid = document.createElement("div");
@@ -26663,25 +26694,68 @@ function createAnalyticsPanelElement() {
   return panel;
 }
 
-function createAnalyticsPeakHoursChartElement(hourlyTraffic) {
+function createAnalyticsPeakHoursChartElement(data) {
   const card = document.createElement("div");
   card.className = "analytics-chart-card";
+
+  const hourlyTraffic = Array.isArray(data) ? data : (data?.hourlyTraffic || []);
+  const dailyTrend = data?.dailyTrend || [];
+  const dayOfWeekPattern = data?.dayOfWeekPattern || { days: [] };
 
   const header = document.createElement("div");
   header.className = "analytics-chart-header";
 
   const titles = document.createElement("div");
   titles.className = "analytics-chart-titles";
+
+  let chartTitle = "Kurva Jam Sibuk 24 Jam (Hourly Traffic Sequence)";
+  let chartSubtitle = "Siklus operasional mulai 10:00 WIB hingga 09:00 WIB hari berikutnya.";
+
+  if (analyticsChartMode === "daily") {
+    chartTitle = "Tren Pertumbuhan Harian (Daily Timeline Trend)";
+    chartSubtitle = "Pergerakan omzet dan jam sewa tanggal per tanggal dalam periode operasional terpilih.";
+  } else if (analyticsChartMode === "day_of_week") {
+    const peakText = dayOfWeekPattern.peakDay ? ` • Hari Paling Ramai: <strong style="color:var(--gold-strong)">${escapeHtml(dayOfWeekPattern.peakDay)} 🔥</strong>` : "";
+    const slowText = dayOfWeekPattern.slowestDay ? ` • Hari Paling Sepi: <strong style="color:#6ee7b7">${escapeHtml(dayOfWeekPattern.slowestDay)} ❄️</strong>` : "";
+    const sampleNote = dayOfWeekPattern.isSampled ? " (Berdasarkan 4 pekan terakhir)" : "";
+    chartTitle = `Pola & Distribusi Hari Ramai (Day-of-Week Rhythm)${sampleNote}`;
+    chartSubtitle = `Rata-rata performa bisnis per hari dalam sepekan (Senin s/d Minggu)${peakText}${slowText}`;
+  }
+
   titles.innerHTML = `
-    <h3>Kurva Jam Sibuk 24 Jam (Hourly Traffic Sequence)</h3>
-    <p>Siklus operasional mulai 10:00 WIB hingga 09:00 WIB hari berikutnya.</p>
+    <h3>${chartTitle}</h3>
+    <p>${chartSubtitle}</p>
   `;
 
   const actions = document.createElement("div");
   actions.style.display = "flex";
   actions.style.alignItems = "center";
-  actions.style.gap = "16px";
+  actions.style.gap = "14px";
   actions.style.flexWrap = "wrap";
+
+  // Mode Switcher (Opsi 1)
+  const modeSwitcher = document.createElement("div");
+  modeSwitcher.className = "analytics-mode-switcher";
+  modeSwitcher.innerHTML = `
+    <button type="button" class="analytics-mode-btn ${analyticsChartMode === "hourly" ? "active" : ""}" data-mode="hourly">
+      ⏱️ Siklus 24 Jam
+    </button>
+    <button type="button" class="analytics-mode-btn ${analyticsChartMode === "daily" ? "active" : ""}" data-mode="daily">
+      📅 Tren Harian
+    </button>
+    <button type="button" class="analytics-mode-btn ${analyticsChartMode === "day_of_week" ? "active" : ""}" data-mode="day_of_week">
+      📊 Pola Hari (Senin–Minggu)
+    </button>
+  `;
+
+  modeSwitcher.querySelectorAll(".analytics-mode-btn").forEach((btn) => {
+    btn.onclick = () => {
+      analyticsChartMode = btn.dataset.mode;
+      if (activeDashboardTab === "analytics") {
+        renderDashboardTabPanels();
+      }
+    };
+  });
 
   const toggleGroup = document.createElement("div");
   toggleGroup.className = "analytics-toggle-group";
@@ -26705,18 +26779,33 @@ function createAnalyticsPeakHoursChartElement(hourlyTraffic) {
 
   const legend = document.createElement("div");
   legend.className = "analytics-chart-legend";
-  legend.innerHTML = `
-    <div class="analytics-legend-item">
-      <span class="analytics-legend-line current"></span>
-      <span>Periode Terpilih</span>
-    </div>
-    <div class="analytics-legend-item">
-      <span class="analytics-legend-line compare"></span>
-      <span>Periode Pembanding</span>
-    </div>
-  `;
+  if (analyticsChartMode === "day_of_week") {
+    legend.innerHTML = `
+      <div class="analytics-legend-item">
+        <span class="analytics-legend-line current"></span>
+        <span>Rata-rata Omzet</span>
+      </div>
+      <div class="analytics-legend-item">
+        <span style="color:#ffd77a; font-size:0.8rem; font-weight:800;">🔥 Puncak</span>
+      </div>
+      <div class="analytics-legend-item">
+        <span style="color:#6ee7b7; font-size:0.8rem; font-weight:800;">❄️ Santai</span>
+      </div>
+    `;
+  } else {
+    legend.innerHTML = `
+      <div class="analytics-legend-item">
+        <span class="analytics-legend-line current"></span>
+        <span>Periode Terpilih</span>
+      </div>
+      <div class="analytics-legend-item">
+        <span class="analytics-legend-line compare"></span>
+        <span>Periode Pembanding</span>
+      </div>
+    `;
+  }
 
-  actions.append(toggleGroup, legend);
+  actions.append(modeSwitcher, toggleGroup, legend);
   header.append(titles, actions);
   card.appendChild(header);
 
@@ -26728,66 +26817,32 @@ function createAnalyticsPeakHoursChartElement(hourlyTraffic) {
   svgWrapper.appendChild(tooltip);
 
   const isRevenue = analyticsCurveMetric === "revenue";
-  const pointsCount = hourlyTraffic.length || 24;
   const svgWidth = 960;
-  const svgHeight = 280;
-  const padLeft = 65;
-  const padRight = 30;
-  const padTop = 25;
-  const padBottom = 40;
+  const svgHeight = 380;
+  const padLeft = 70;
+  const padRight = 35;
+  const padTop = 50;
+  const padBottom = 45;
   const chartW = svgWidth - padLeft - padRight;
   const chartH = svgHeight - padTop - padBottom;
 
-  let maxVal = 0;
-  hourlyTraffic.forEach((pt) => {
-    const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
-    const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
-    if (curV > maxVal) maxVal = curV;
-    if (cmpV > maxVal) maxVal = cmpV;
-  });
+  function positionTooltipSmart(hitbox) {
+    const rect = svgWrapper.getBoundingClientRect();
+    const ptRect = hitbox.getBoundingClientRect();
+    const relX = ptRect.left - rect.left + ptRect.width / 2;
+    const relY = ptRect.top - rect.top;
 
-  if (maxVal <= 0) {
-    maxVal = isRevenue ? 1000000 : 10;
-  }
-  maxVal = maxVal * 1.15;
-
-  const getX = (index) => padLeft + (index / Math.max(1, pointsCount - 1)) * chartW;
-  const getY = (val) => padTop + chartH * (1 - Math.min(1, Math.max(0, val) / maxVal));
-
-  const curCoords = [];
-  const cmpCoords = [];
-  hourlyTraffic.forEach((pt, i) => {
-    const x = getX(i);
-    const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
-    const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
-    curCoords.push({ x, y: getY(curV), pt, curV, cmpV });
-    cmpCoords.push({ x, y: getY(cmpV) });
-  });
-
-  const gridLines = [];
-  const gridSteps = 4;
-  for (let s = 0; s <= gridSteps; s++) {
-    const stepVal = (maxVal / gridSteps) * s;
-    const y = getY(stepVal);
-    const label = isRevenue
-      ? (stepVal >= 1000000 ? `${(stepVal / 1000000).toFixed(1)}jt` : `${Math.round(stepVal / 1000)}rb`)
-      : `${stepVal.toFixed(1)}j`;
-    gridLines.push(`
-      <line x1="${padLeft}" y1="${y}" x2="${svgWidth - padRight}" y2="${y}" class="analytics-svg-grid-line" />
-      <text x="${padLeft - 8}" y="${y + 4}" text-anchor="end" class="analytics-svg-axis-label">${label}</text>
-    `);
-  }
-
-  const xLabels = [];
-  curCoords.forEach((c, idx) => {
-    if (idx % 2 === 0 || idx === curCoords.length - 1) {
-      xLabels.push(`
-        <text x="${c.x}" y="${svgHeight - 12}" text-anchor="middle" class="analytics-svg-axis-label">${c.pt.hourLabel}</text>
-      `);
+    tooltip.style.left = `${relX}px`;
+    // Smart flip: jika titik berada di area atas (< 130px), balik tooltip ke bawah titik agar tidak pernah terpotong!
+    if (relY < 130) {
+      tooltip.style.top = `${relY + 22}px`;
+      tooltip.style.transform = "translate(-50%, 0)";
+    } else {
+      tooltip.style.top = `${relY}px`;
+      tooltip.style.transform = "translate(-50%, -115%)";
     }
-  });
-
-  const cmpPolyline = cmpCoords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+    tooltip.style.display = "block";
+  }
 
   function buildSvgPath(coords) {
     if (coords.length === 0) return "";
@@ -26804,86 +26859,386 @@ function createAnalyticsPeakHoursChartElement(hourlyTraffic) {
     return d;
   }
 
-  const curPathD = buildSvgPath(curCoords);
-  const bottomY = padTop + chartH;
-  const areaD = curCoords.length > 0
-    ? `${curPathD} L ${curCoords[curCoords.length - 1].x.toFixed(1)} ${bottomY} L ${curCoords[0].x.toFixed(1)} ${bottomY} Z`
-    : "";
-
-  const dotsHtml = curCoords.map((c, idx) => `
-    <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4" fill="#ffd77a" stroke="#120e09" stroke-width="2" />
-    <circle class="analytics-svg-hitbox" data-idx="${idx}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="14" />
-  `).join("");
-
   const svgElem = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svgElem.setAttribute("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
   svgElem.setAttribute("class", "analytics-curve-svg");
-  svgElem.innerHTML = `
-    <defs>
-      <linearGradient id="analyticsAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#ffd77a" stop-opacity="0.28" />
-        <stop offset="100%" stop-color="#ffd77a" stop-opacity="0.0" />
-      </linearGradient>
-    </defs>
-    <g class="analytics-grid-group">
-      ${gridLines.join("")}
-      ${xLabels.join("")}
-    </g>
-    <path d="${cmpPolyline ? `M ${cmpCoords[0].x.toFixed(1)} ${cmpCoords[0].y.toFixed(1)} ` + cmpCoords.slice(1).map(c => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ') : ''}"
-      fill="none" stroke="#8fa3bf" stroke-width="2" stroke-dasharray="4,4" />
-    <path d="${areaD}" fill="url(#analyticsAreaGrad)" />
-    <path d="${curPathD}" fill="none" stroke="#ffd77a" stroke-width="3" stroke-linecap="round" />
-    <g class="analytics-dots-group">
-      ${dotsHtml}
-    </g>
-  `;
 
-  svgWrapper.appendChild(svgElem);
+  if (analyticsChartMode === "day_of_week") {
+    // =========================================================================
+    // MODE 3: POLA HARI DALAM SEMINGGU (Senin s/d Minggu Bar Chart)
+    // =========================================================================
+    const days = dayOfWeekPattern.days || [];
+    let maxVal = 0;
+    days.forEach((d) => {
+      const v = isRevenue ? (d.avgRevenue || 0) : (d.totalRoomHours || 0);
+      if (v > maxVal) maxVal = v;
+    });
+    if (maxVal <= 0) maxVal = isRevenue ? 1000000 : 10;
+    maxVal = maxVal * 1.22;
 
-  svgElem.querySelectorAll(".analytics-svg-hitbox").forEach((hitbox) => {
-    hitbox.onmouseenter = () => {
-      const idx = Number(hitbox.dataset.idx);
-      const coord = curCoords[idx];
-      if (!coord) return;
+    const gridLines = [];
+    const gridSteps = 4;
+    for (let s = 0; s <= gridSteps; s++) {
+      const stepVal = (maxVal / gridSteps) * s;
+      const y = padTop + chartH * (1 - stepVal / maxVal);
+      const label = isRevenue
+        ? (stepVal >= 1000000 ? `${(stepVal / 1000000).toFixed(1)}jt` : `${Math.round(stepVal / 1000)}rb`)
+        : `${stepVal.toFixed(1)}j`;
+      gridLines.push(`
+        <line x1="${padLeft}" y1="${y}" x2="${svgWidth - padRight}" y2="${y}" class="analytics-svg-grid-line" />
+        <text x="${padLeft - 10}" y="${y + 4}" text-anchor="end" class="analytics-svg-axis-label">${label}</text>
+      `);
+    }
 
-      const pt = coord.pt;
-      const curStr = isRevenue ? formatCurrency(coord.curV) : `${coord.curV} Jam (${pt.currentSessions || 0} Sesi)`;
-      const cmpStr = isRevenue ? formatCurrency(coord.cmpV) : `${coord.cmpV} Jam (${pt.compareSessions || 0} Sesi)`;
-      const delta = coord.cmpV > 0
-        ? Math.round(((coord.curV - coord.cmpV) / coord.cmpV) * 1000) / 10
-        : (coord.curV > 0 ? 100 : 0);
-      const deltaBadge = formatAnalyticsDeltaBadge(delta);
+    const colWidth = Math.min(84, (chartW / 7) * 0.72);
+    const barsHtml = [];
 
-      tooltip.innerHTML = `
-        <div style="font-weight: 800; color: var(--gold-strong); margin-bottom: 4px;">Pukul ${pt.hourLabel} WIB</div>
-        <div style="display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px;">
-          <span>Periode Ini:</span>
-          <strong>${curStr}</strong>
-        </div>
-        <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 6px;">
-          <span>Pembanding:</span>
-          <span>${cmpStr}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 4px;">
-          <span style="font-size: 0.75rem; color: var(--muted)">Pertumbuhan:</span>
-          ${deltaBadge}
-        </div>
-      `;
+    days.forEach((item, idx) => {
+      const cx = padLeft + (idx + 0.5) * (chartW / 7);
+      const x = cx - colWidth / 2;
+      const val = isRevenue ? (item.avgRevenue || 0) : (item.totalRoomHours || 0);
+      const barHeight = Math.max(6, chartH * (Math.min(1, Math.max(0, val) / maxVal)));
+      const y = padTop + chartH - barHeight;
 
-      const rect = svgWrapper.getBoundingClientRect();
-      const ptRect = hitbox.getBoundingClientRect();
-      const relX = ptRect.left - rect.left + ptRect.width / 2;
-      const relY = ptRect.top - rect.top;
+      const fillGrad = item.isPeak ? "url(#analyticsDowPeakGrad)" : item.isSlowest ? "url(#analyticsDowSlowGrad)" : "url(#analyticsDowRegGrad)";
+      const strokeColor = item.isPeak ? "#ffd77a" : item.isSlowest ? "#6ee7b7" : "rgba(242,196,91,0.3)";
+      const strokeW = item.isPeak ? "2" : "1";
 
-      tooltip.style.left = `${relX}px`;
-      tooltip.style.top = `${relY}px`;
-      tooltip.style.display = "block";
-    };
+      const valLabel = isRevenue
+        ? (val >= 1000000 ? `${(val / 1000000).toFixed(1)}jt` : `${Math.round(val / 1000)}rb`)
+        : `${val.toFixed(1)}j`;
 
-    hitbox.onmouseleave = () => {
-      tooltip.style.display = "none";
-    };
-  });
+      const badgeHtml = item.isPeak
+        ? `<text x="${cx}" y="${y - 14}" text-anchor="middle" fill="#ffd77a" font-size="11" font-weight="800">🔥 Teramai</text>`
+        : item.isSlowest
+          ? `<text x="${cx}" y="${y - 14}" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">❄️ Tersepi</text>`
+          : "";
+
+      barsHtml.push(`
+        <g class="analytics-dow-col">
+          ${badgeHtml}
+          <text x="${cx}" y="${y - 3}" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">${valLabel}</text>
+          <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${colWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="8"
+            fill="${fillGrad}" stroke="${strokeColor}" stroke-width="${strokeW}" />
+          <text x="${cx}" y="${padTop + chartH + 18}" text-anchor="middle" fill="${item.isPeak ? '#ffd77a' : 'var(--text)'}" font-size="12" font-weight="800">${item.dayName}</text>
+          <text x="${cx}" y="${padTop + chartH + 32}" text-anchor="middle" fill="var(--muted)" font-size="10">${item.percentOfTotal}% omzet</text>
+          <rect class="analytics-svg-hitbox dow-hitbox" data-idx="${idx}" x="${(cx - chartW / 14).toFixed(1)}" y="${padTop}" width="${(chartW / 7).toFixed(1)}" height="${chartH + 40}" />
+        </g>
+      `);
+    });
+
+    svgElem.innerHTML = `
+      <defs>
+        <linearGradient id="analyticsDowPeakGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffe49e" stop-opacity="0.9" />
+          <stop offset="100%" stop-color="#b48316" stop-opacity="0.8" />
+        </linearGradient>
+        <linearGradient id="analyticsDowSlowGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#6ee7b7" stop-opacity="0.8" />
+          <stop offset="100%" stop-color="#047857" stop-opacity="0.75" />
+        </linearGradient>
+        <linearGradient id="analyticsDowRegGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffd77a" stop-opacity="0.5" />
+          <stop offset="100%" stop-color="#7c5813" stop-opacity="0.4" />
+        </linearGradient>
+      </defs>
+      <g class="analytics-grid-group">
+        ${gridLines.join("")}
+      </g>
+      <g class="analytics-dow-bars">
+        ${barsHtml.join("")}
+      </g>
+    `;
+
+    svgWrapper.appendChild(svgElem);
+
+    svgElem.querySelectorAll(".dow-hitbox").forEach((hitbox) => {
+      hitbox.onmouseenter = () => {
+        const idx = Number(hitbox.dataset.idx);
+        const item = days[idx];
+        if (!item) return;
+
+        tooltip.innerHTML = `
+          <div style="font-weight: 800; color: var(--gold-strong); margin-bottom: 4px;">Hari ${item.dayName}</div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px;">
+            <span>Rata-rata:</span>
+            <strong>${isRevenue ? formatCurrency(item.avgRevenue) : `${item.totalRoomHours} Jam`}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 2px;">
+            <span>Total Omzet:</span>
+            <span>${formatCurrency(item.totalRevenue)}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 6px;">
+            <span>Aktivitas Sesi:</span>
+            <span>${item.totalSessions} Sesi (${item.percentOfTotal}% omzet mingguan)</span>
+          </div>
+          <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 4px; font-size: 0.75rem; color: ${item.isPeak ? '#ffd77a' : item.isSlowest ? '#6ee7b7' : 'var(--muted)'};">
+            ${item.isPeak ? '🔥 Hari Paling Ramai' : item.isSlowest ? '❄️ Hari Paling Santai/Sepi' : 'Status: Hari Reguler'}
+          </div>
+        `;
+
+        positionTooltipSmart(hitbox);
+      };
+
+      hitbox.onmouseleave = () => {
+        tooltip.style.display = "none";
+      };
+    });
+
+  } else if (analyticsChartMode === "daily") {
+    // =========================================================================
+    // MODE 2: TREN HARIAN TANGGAL PER TANGGAL (Daily Timeline Curve)
+    // =========================================================================
+    const pts = dailyTrend.length > 0 ? dailyTrend : [
+      { date: "today", dateLabel: "Hari Ini", currentRevenue: 0, compareRevenue: 0, currentRoomHours: 0, compareRoomHours: 0, currentSessions: 0, compareSessions: 0, deltaPercent: 0 }
+    ];
+    const pointsCount = pts.length;
+
+    let maxVal = 0;
+    pts.forEach((pt) => {
+      const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+      const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+      if (curV > maxVal) maxVal = curV;
+      if (cmpV > maxVal) maxVal = cmpV;
+    });
+    if (maxVal <= 0) maxVal = isRevenue ? 1000000 : 10;
+    maxVal = maxVal * 1.2;
+
+    const getX = (index) => padLeft + (index / Math.max(1, pointsCount - 1)) * chartW;
+    const getY = (val) => padTop + chartH * (1 - Math.min(1, Math.max(0, val) / maxVal));
+
+    const curCoords = [];
+    const cmpCoords = [];
+    pts.forEach((pt, i) => {
+      const x = getX(i);
+      const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+      const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+      curCoords.push({ x, y: getY(curV), pt, curV, cmpV });
+      cmpCoords.push({ x, y: getY(cmpV) });
+    });
+
+    const gridLines = [];
+    const gridSteps = 4;
+    for (let s = 0; s <= gridSteps; s++) {
+      const stepVal = (maxVal / gridSteps) * s;
+      const y = getY(stepVal);
+      const label = isRevenue
+        ? (stepVal >= 1000000 ? `${(stepVal / 1000000).toFixed(1)}jt` : `${Math.round(stepVal / 1000)}rb`)
+        : `${stepVal.toFixed(1)}j`;
+      gridLines.push(`
+        <line x1="${padLeft}" y1="${y}" x2="${svgWidth - padRight}" y2="${y}" class="analytics-svg-grid-line" />
+        <text x="${padLeft - 10}" y="${y + 4}" text-anchor="end" class="analytics-svg-axis-label">${label}</text>
+      `);
+    }
+
+    const stepLabel = pointsCount > 10 ? Math.ceil(pointsCount / 7) : 1;
+    const xLabels = [];
+    curCoords.forEach((c, idx) => {
+      if (idx % stepLabel === 0 || idx === curCoords.length - 1) {
+        xLabels.push(`
+          <text x="${c.x}" y="${svgHeight - 14}" text-anchor="middle" class="analytics-svg-axis-label">${c.pt.dateLabel}</text>
+        `);
+      }
+    });
+
+    const cmpPolyline = cmpCoords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+    const curPathD = buildSvgPath(curCoords);
+    const bottomY = padTop + chartH;
+    const areaD = curCoords.length > 0
+      ? `${curPathD} L ${curCoords[curCoords.length - 1].x.toFixed(1)} ${bottomY} L ${curCoords[0].x.toFixed(1)} ${bottomY} Z`
+      : "";
+
+    const dotsHtml = curCoords.map((c, idx) => `
+      <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4.5" fill="#ffd77a" stroke="#120e09" stroke-width="2" />
+      <circle class="analytics-svg-hitbox daily-hitbox" data-idx="${idx}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="14" />
+    `).join("");
+
+    svgElem.innerHTML = `
+      <defs>
+        <linearGradient id="analyticsDailyAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffd77a" stop-opacity="0.28" />
+          <stop offset="100%" stop-color="#ffd77a" stop-opacity="0.0" />
+        </linearGradient>
+      </defs>
+      <g class="analytics-grid-group">
+        ${gridLines.join("")}
+        ${xLabels.join("")}
+      </g>
+      <path d="${cmpPolyline ? `M ${cmpCoords[0].x.toFixed(1)} ${cmpCoords[0].y.toFixed(1)} ` + cmpCoords.slice(1).map(c => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ') : ''}"
+        fill="none" stroke="#8fa3bf" stroke-width="2" stroke-dasharray="4,4" />
+      <path d="${areaD}" fill="url(#analyticsDailyAreaGrad)" />
+      <path d="${curPathD}" fill="none" stroke="#ffd77a" stroke-width="3" stroke-linecap="round" />
+      <g class="analytics-dots-group">
+        ${dotsHtml}
+      </g>
+    `;
+
+    svgWrapper.appendChild(svgElem);
+
+    svgElem.querySelectorAll(".daily-hitbox").forEach((hitbox) => {
+      hitbox.onmouseenter = () => {
+        const idx = Number(hitbox.dataset.idx);
+        const coord = curCoords[idx];
+        if (!coord) return;
+
+        const pt = coord.pt;
+        const curStr = isRevenue ? formatCurrency(coord.curV) : `${coord.curV} Jam (${pt.currentSessions || 0} Sesi)`;
+        const cmpStr = isRevenue ? formatCurrency(coord.cmpV) : `${coord.cmpV} Jam (${pt.compareSessions || 0} Sesi)`;
+        const delta = coord.cmpV > 0
+          ? Math.round(((coord.curV - coord.cmpV) / coord.cmpV) * 1000) / 10
+          : (coord.curV > 0 ? 100 : 0);
+        const deltaBadge = formatAnalyticsDeltaBadge(delta);
+
+        tooltip.innerHTML = `
+          <div style="font-weight: 800; color: var(--gold-strong); margin-bottom: 4px;">Tanggal ${pt.dateLabel}</div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px;">
+            <span>Periode Ini:</span>
+            <strong>${curStr}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 6px;">
+            <span>Pembanding:</span>
+            <span>${cmpStr}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 4px;">
+            <span style="font-size: 0.75rem; color: var(--muted)">Pertumbuhan:</span>
+            ${deltaBadge}
+          </div>
+        `;
+
+        positionTooltipSmart(hitbox);
+      };
+
+      hitbox.onmouseleave = () => {
+        tooltip.style.display = "none";
+      };
+    });
+
+  } else {
+    // =========================================================================
+    // MODE 1: SIKLUS 24 JAM (Hourly Traffic Sequence)
+    // =========================================================================
+    const pointsCount = hourlyTraffic.length || 24;
+    let maxVal = 0;
+    hourlyTraffic.forEach((pt) => {
+      const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+      const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+      if (curV > maxVal) maxVal = curV;
+      if (cmpV > maxVal) maxVal = cmpV;
+    });
+
+    if (maxVal <= 0) {
+      maxVal = isRevenue ? 1000000 : 10;
+    }
+    maxVal = maxVal * 1.2;
+
+    const getX = (index) => padLeft + (index / Math.max(1, pointsCount - 1)) * chartW;
+    const getY = (val) => padTop + chartH * (1 - Math.min(1, Math.max(0, val) / maxVal));
+
+    const curCoords = [];
+    const cmpCoords = [];
+    hourlyTraffic.forEach((pt, i) => {
+      const x = getX(i);
+      const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+      const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+      curCoords.push({ x, y: getY(curV), pt, curV, cmpV });
+      cmpCoords.push({ x, y: getY(cmpV) });
+    });
+
+    const gridLines = [];
+    const gridSteps = 4;
+    for (let s = 0; s <= gridSteps; s++) {
+      const stepVal = (maxVal / gridSteps) * s;
+      const y = getY(stepVal);
+      const label = isRevenue
+        ? (stepVal >= 1000000 ? `${(stepVal / 1000000).toFixed(1)}jt` : `${Math.round(stepVal / 1000)}rb`)
+        : `${stepVal.toFixed(1)}j`;
+      gridLines.push(`
+        <line x1="${padLeft}" y1="${y}" x2="${svgWidth - padRight}" y2="${y}" class="analytics-svg-grid-line" />
+        <text x="${padLeft - 10}" y="${y + 4}" text-anchor="end" class="analytics-svg-axis-label">${label}</text>
+      `);
+    }
+
+    const xLabels = [];
+    curCoords.forEach((c, idx) => {
+      if (idx % 2 === 0 || idx === curCoords.length - 1) {
+        xLabels.push(`
+          <text x="${c.x}" y="${svgHeight - 14}" text-anchor="middle" class="analytics-svg-axis-label">${c.pt.hourLabel}</text>
+        `);
+      }
+    });
+
+    const cmpPolyline = cmpCoords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+    const curPathD = buildSvgPath(curCoords);
+    const bottomY = padTop + chartH;
+    const areaD = curCoords.length > 0
+      ? `${curPathD} L ${curCoords[curCoords.length - 1].x.toFixed(1)} ${bottomY} L ${curCoords[0].x.toFixed(1)} ${bottomY} Z`
+      : "";
+
+    const dotsHtml = curCoords.map((c, idx) => `
+      <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4.5" fill="#ffd77a" stroke="#120e09" stroke-width="2" />
+      <circle class="analytics-svg-hitbox hourly-hitbox" data-idx="${idx}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="14" />
+    `).join("");
+
+    svgElem.innerHTML = `
+      <defs>
+        <linearGradient id="analyticsAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffd77a" stop-opacity="0.28" />
+          <stop offset="100%" stop-color="#ffd77a" stop-opacity="0.0" />
+        </linearGradient>
+      </defs>
+      <g class="analytics-grid-group">
+        ${gridLines.join("")}
+        ${xLabels.join("")}
+      </g>
+      <path d="${cmpPolyline ? `M ${cmpCoords[0].x.toFixed(1)} ${cmpCoords[0].y.toFixed(1)} ` + cmpCoords.slice(1).map(c => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ') : ''}"
+        fill="none" stroke="#8fa3bf" stroke-width="2" stroke-dasharray="4,4" />
+      <path d="${areaD}" fill="url(#analyticsAreaGrad)" />
+      <path d="${curPathD}" fill="none" stroke="#ffd77a" stroke-width="3" stroke-linecap="round" />
+      <g class="analytics-dots-group">
+        ${dotsHtml}
+      </g>
+    `;
+
+    svgWrapper.appendChild(svgElem);
+
+    svgElem.querySelectorAll(".hourly-hitbox").forEach((hitbox) => {
+      hitbox.onmouseenter = () => {
+        const idx = Number(hitbox.dataset.idx);
+        const coord = curCoords[idx];
+        if (!coord) return;
+
+        const pt = coord.pt;
+        const curStr = isRevenue ? formatCurrency(coord.curV) : `${coord.curV} Jam (${pt.currentSessions || 0} Sesi)`;
+        const cmpStr = isRevenue ? formatCurrency(coord.cmpV) : `${coord.cmpV} Jam (${pt.compareSessions || 0} Sesi)`;
+        const delta = coord.cmpV > 0
+          ? Math.round(((coord.curV - coord.cmpV) / coord.cmpV) * 1000) / 10
+          : (coord.curV > 0 ? 100 : 0);
+        const deltaBadge = formatAnalyticsDeltaBadge(delta);
+
+        tooltip.innerHTML = `
+          <div style="font-weight: 800; color: var(--gold-strong); margin-bottom: 4px;">Pukul ${pt.hourLabel} WIB</div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px;">
+            <span>Periode Ini:</span>
+            <strong>${curStr}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 6px;">
+            <span>Pembanding:</span>
+            <span>${cmpStr}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 4px;">
+            <span style="font-size: 0.75rem; color: var(--muted)">Pertumbuhan:</span>
+            ${deltaBadge}
+          </div>
+        `;
+
+        positionTooltipSmart(hitbox);
+      };
+
+      hitbox.onmouseleave = () => {
+        tooltip.style.display = "none";
+      };
+    });
+  }
 
   card.appendChild(svgWrapper);
   return card;

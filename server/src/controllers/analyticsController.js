@@ -16,6 +16,30 @@ function calculateDeltaPercent(current, compare) {
   return Math.round(((cur - cmp) / cmp) * 1000) / 10;
 }
 
+function generateDateList(startStr, endStr) {
+  const dates = [];
+  const [sY, sM, sD] = startStr.split('-').map(Number);
+  const [eY, eM, eD] = endStr.split('-').map(Number);
+  let cur = new Date(Date.UTC(sY, sM - 1, sD));
+  const end = new Date(Date.UTC(eY, eM - 1, eD));
+  while (cur <= end) {
+    const y = cur.getUTCFullYear();
+    const m = String(cur.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(cur.getUTCDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function formatDateLabel(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+  const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  return `${d} ${monthNames[m - 1]} (${dayNames[dt.getUTCDay()]})`;
+}
+
 /**
  * Calculates shift-adjusted start and end comparison dates
  */
@@ -189,7 +213,143 @@ async function getOperationalAnalytics(req, res) {
       });
     }
 
-    // 6. Room Leaderboard & Utilization
+    // 6. Daily Timeline Trend (Date by Date)
+    const dailyCurSql = `
+      SELECT
+        operational_date::text AS date_str,
+        COUNT(*) AS session_count,
+        COALESCE(SUM(grand_total), 0) AS daily_revenue,
+        COALESCE(SUM(duration_minutes), 0) / 60.0 AS daily_room_hours
+      FROM transactions
+      WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status = 'paid'
+        ${roomFilter !== 'all' ? 'AND room_id = $3' : ''}
+      GROUP BY operational_date
+      ORDER BY operational_date ASC
+    `;
+    const dailyCurRes = await db.query(dailyCurSql, currentTrxParams);
+    const dailyCurMap = new Map(dailyCurRes.rows.map(r => [String(r.date_str).slice(0, 10), r]));
+
+    const dailyCmpSql = `
+      SELECT
+        operational_date::text AS date_str,
+        COUNT(*) AS session_count,
+        COALESCE(SUM(grand_total), 0) AS daily_revenue,
+        COALESCE(SUM(duration_minutes), 0) / 60.0 AS daily_room_hours
+      FROM transactions
+      WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status = 'paid'
+        ${roomFilter !== 'all' ? 'AND room_id = $3' : ''}
+      GROUP BY operational_date
+      ORDER BY operational_date ASC
+    `;
+    const dailyCmpRes = await db.query(dailyCmpSql, compareTrxParams);
+    const dailyCmpMap = new Map(dailyCmpRes.rows.map(r => [String(r.date_str).slice(0, 10), r]));
+
+    const curDates = generateDateList(startDate, endDate);
+    const cmpDates = generateDateList(compareStartDate, compareEndDate);
+
+    const dailySequence = curDates.map((dStr, idx) => {
+      const curRow = dailyCurMap.get(dStr) || {};
+      const cmpDateStr = cmpDates[idx] || '';
+      const cmpRow = cmpDateStr ? (dailyCmpMap.get(cmpDateStr) || {}) : {};
+
+      const curRev = toNumber(curRow.daily_revenue, 0);
+      const cmpRev = toNumber(cmpRow.daily_revenue, 0);
+
+      return {
+        date: dStr,
+        dateLabel: formatDateLabel(dStr),
+        compareDate: cmpDateStr,
+        compareDateLabel: cmpDateStr ? formatDateLabel(cmpDateStr) : '',
+        currentRevenue: curRev,
+        compareRevenue: cmpRev,
+        currentRoomHours: Math.round(toNumber(curRow.daily_room_hours, 0) * 10) / 10,
+        compareRoomHours: Math.round(toNumber(cmpRow.daily_room_hours, 0) * 10) / 10,
+        currentSessions: toNumber(curRow.session_count, 0),
+        compareSessions: toNumber(cmpRow.session_count, 0),
+        deltaPercent: calculateDeltaPercent(curRev, cmpRev),
+      };
+    });
+
+    // 7. Day of Week Pattern (Senin s/d Minggu)
+    let dowStart = startDate;
+    let dowEnd = endDate;
+    let isDowSampled = false;
+    if (durationDays < 7) {
+      const [eY, eM, eD] = endDate.split('-').map(Number);
+      const eMs = Date.UTC(eY, eM - 1, eD);
+      const sDate = new Date(eMs - (27 * 24 * 60 * 60 * 1000));
+      dowStart = `${sDate.getUTCFullYear()}-${String(sDate.getUTCMonth() + 1).padStart(2, '0')}-${String(sDate.getUTCDate()).padStart(2, '0')}`;
+      dowEnd = endDate;
+      isDowSampled = true;
+    }
+
+    const dowSql = `
+      SELECT
+        EXTRACT(ISODOW FROM operational_date)::int AS day_num,
+        COUNT(DISTINCT operational_date) AS days_count,
+        COUNT(*) AS total_sessions,
+        COALESCE(SUM(grand_total), 0) AS total_revenue,
+        COALESCE(SUM(duration_minutes), 0) / 60.0 AS total_room_hours
+      FROM transactions
+      WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status = 'paid'
+        ${roomFilter !== 'all' ? 'AND room_id = $3' : ''}
+      GROUP BY day_num
+      ORDER BY day_num ASC
+    `;
+    const dowParams = roomFilter !== 'all' ? [dowStart, dowEnd, roomFilter] : [dowStart, dowEnd];
+    const dowRes = await db.query(dowSql, dowParams);
+    const dowMap = new Map(dowRes.rows.map(r => [toNumber(r.day_num, 0), r]));
+
+    const dayNamesId = ["", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
+    const dowList = [];
+    let maxAvg = -1;
+    let minAvg = Infinity;
+    let peakDayNum = 6;
+    let slowestDayNum = 2;
+    let totalWeeklyRev = 0;
+
+    for (let d = 1; d <= 7; d++) {
+      const row = dowMap.get(d) || {};
+      const rev = toNumber(row.total_revenue, 0);
+      const dCount = Math.max(1, toNumber(row.days_count, 1));
+      const avgRev = Math.round(rev / dCount);
+      const sessions = toNumber(row.total_sessions, 0);
+      const hours = Math.round(toNumber(row.total_room_hours, 0) * 10) / 10;
+      totalWeeklyRev += rev;
+
+      if (avgRev > maxAvg && rev > 0) {
+        maxAvg = avgRev;
+        peakDayNum = d;
+      }
+      if (avgRev < minAvg && rev > 0) {
+        minAvg = avgRev;
+        slowestDayNum = d;
+      }
+
+      dowList.push({
+        dayNum: d,
+        dayName: dayNamesId[d],
+        totalRevenue: rev,
+        avgRevenue: avgRev,
+        daysCount: dCount,
+        totalSessions: sessions,
+        totalRoomHours: hours,
+        percentOfTotal: 0,
+        isPeak: false,
+        isSlowest: false,
+      });
+    }
+
+    dowList.forEach(item => {
+      item.percentOfTotal = totalWeeklyRev > 0 ? Math.round((item.totalRevenue / totalWeeklyRev) * 1000) / 10 : 0;
+      item.isPeak = item.dayNum === peakDayNum;
+      item.isSlowest = item.dayNum === slowestDayNum && maxAvg > minAvg;
+    });
+
+    // 8. Room Leaderboard & Utilization
     const roomLeaderboardSql = `
       SELECT
         t.room_id,
@@ -362,6 +522,14 @@ async function getOperationalAnalytics(req, res) {
         transfer: toNumber(cur.total_transfer, 0),
       },
       hourlyTraffic: hourlySequence,
+      dailyTrend: dailySequence,
+      dayOfWeekPattern: {
+        days: dowList,
+        peakDay: dayNamesId[peakDayNum],
+        slowestDay: dayNamesId[slowestDayNum],
+        isSampled: isDowSampled,
+        sampleDaysCount: isDowSampled ? 28 : durationDays,
+      },
       roomLeaderboard,
       fnbLeaderboard,
     });
@@ -375,4 +543,6 @@ module.exports = {
   getOperationalAnalytics,
   getComparisonRange,
   calculateDeltaPercent,
+  generateDateList,
+  formatDateLabel,
 };
