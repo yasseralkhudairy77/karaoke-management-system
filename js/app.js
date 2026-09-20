@@ -548,42 +548,49 @@ const ROOM_STATUS_CONFIG = {
     className: "available",
     tone: "success",
     buttonLabel: "Buat Booking",
+    buttonIcon: "📖",
   },
   occupied: {
     label: "Terisi",
     className: "occupied",
     tone: "danger",
     buttonLabel: "Selesaikan Sesi",
+    buttonIcon: "🏁",
   },
   maintenance: {
     label: "Perbaikan",
     className: "maintenance",
     tone: "warning",
     buttonLabel: "Tidak Tersedia",
+    buttonIcon: "⛔",
   },
   booked: {
     label: "Menunggu Mulai",
     className: "booked",
     tone: "info",
     buttonLabel: "Mulai Sesi",
+    buttonIcon: "▶️",
   },
   paid_waiting_start: {
     label: "Menunggu Mulai",
     className: "paid-waiting-start",
     tone: "info",
     buttonLabel: "Mulai Countdown",
+    buttonIcon: "▶️",
   },
   cleaning: {
     label: "Cleaning",
     className: "cleaning",
     tone: "warning",
     buttonLabel: "Selesai Bersihkan",
+    buttonIcon: "✨",
   },
   waiting_payment: {
     label: "Menunggu Bayar",
     className: "waiting-payment",
     tone: "warning",
     buttonLabel: "Detail Sesi",
+    buttonIcon: "▶️",
   },
 };
 const VALID_ROOM_STATUS_KEYS = new Set(Object.keys(ROOM_STATUS_CONFIG));
@@ -6531,6 +6538,10 @@ function getSessionButtonLabel(status) {
   return ROOM_STATUS_CONFIG[status]?.buttonLabel || "Cek Status";
 }
 
+function getSessionButtonIcon(status) {
+  return ROOM_STATUS_CONFIG[status]?.buttonIcon || "📖";
+}
+
 function getPaymentStatusLabel(status) {
   if (status === "unpaid") {
     return "Belum Dibayar";
@@ -10144,10 +10155,12 @@ function createRoomCard(room) {
 
   const statusLabel = getStatusLabel(room.status);
   let sessionButtonLabel = getSessionButtonLabel(room.status);
+  let sessionButtonIcon = getSessionButtonIcon(room.status);
   if (["booked", "waiting_payment"].includes(room.status)) {
     sessionButtonLabel = getCurrentOperatorRole() === "receptionist"
       ? "Menunggu Kasir"
       : "Mulai Sesi";
+    sessionButtonIcon = "▶️";
   }
 
   const topLine = document.createElement("div");
@@ -10236,7 +10249,7 @@ function createRoomCard(room) {
   sessionButton.className = "room-button room-button-checkout";
   sessionButton.type = "button";
   sessionButton.dataset.action = "toggle-session";
-  sessionButton.innerHTML = `<span class="room-btn-icon">🏁</span> <span>${sessionButtonLabel}</span>`;
+  sessionButton.innerHTML = `<span class="room-btn-icon">${sessionButtonIcon}</span> <span>${sessionButtonLabel}</span>`;
   sessionButton.disabled = isPreparingRoomSession || isActivatingPreparedSession;
 
   if (room.status === "occupied") {
@@ -10286,7 +10299,8 @@ function createRoomCard(room) {
     adjustTimeButton.type = "button";
     adjustTimeButton.dataset.action = "show-adjust-time";
     adjustTimeButton.dataset.roomId = room.room_id;
-    adjustTimeButton.innerHTML = `<span class="room-btn-icon">⏳</span> <span>Koreksi Jam & Durasi</span>`;
+    adjustTimeButton.title = "Koreksi Jam & Durasi Sesi";
+    adjustTimeButton.innerHTML = `<span class="room-btn-icon">⏳</span> <span>Koreksi Jam</span>`;
     adjustTimeButton.disabled = getCurrentOperatorRole() === "receptionist";
 
     const freeGiftButton = document.createElement("button");
