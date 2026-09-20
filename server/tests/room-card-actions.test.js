@@ -71,13 +71,13 @@ console.log("  ✓ PASS: CSS provides compact padding for Koreksi Jam button");
 // Test 5: Verify cache buster in index.html
 console.log("Test 5: Verifying cache buster version in index.html...");
 assert.ok(
-  indexHtmlContent.includes("analytics-v3"),
-  "index.html must reference ?v=analytics-v3"
+  indexHtmlContent.includes("analytics-v4"),
+  "index.html must reference ?v=analytics-v4"
 );
-console.log("  ✓ PASS: index.html has updated cache buster version (analytics-v3)");
+console.log("  ✓ PASS: index.html has updated cache buster version (analytics-v4)");
 
-// Test 6: Antislop check (no em dash in room card button labels)
-console.log("Test 6: Checking antislop copy rule (no em dash in button labels)...");
+// Test 6: Antislop check (no em dash in room card button labels or billing widget)
+console.log("Test 6: Checking antislop copy rule (no em dash in button labels and live billing)...");
 assert.strictEqual(
   appJsContent.includes("Buat Booking —"),
   false,
@@ -88,6 +88,47 @@ assert.strictEqual(
   false,
   "No em dash in Koreksi Jam"
 );
+assert.strictEqual(
+  appJsContent.includes("Estimasi Tagihan —"),
+  false,
+  "No em dash in Estimasi Tagihan"
+);
 console.log("  ✓ PASS: Antislop copy hygiene verified");
 
-console.log("\n🎉 All 6 Room Card Action Tests Passed Successfully!\n");
+// Test 7: Verify Live Estimated Billing calculation & element in js/app.js
+console.log("Test 7: Verifying Live Estimated Billing functions in js/app.js...");
+assert.ok(
+  appJsContent.includes("function calculateRoomLiveEstimatedBilling(room)"),
+  "js/app.js must define calculateRoomLiveEstimatedBilling"
+);
+assert.ok(
+  appJsContent.includes("function createRoomLiveEstimatedBillingElement(room)"),
+  "js/app.js must define createRoomLiveEstimatedBillingElement"
+);
+assert.ok(
+  appJsContent.includes("meta.appendChild(createRoomLiveEstimatedBillingElement(room));"),
+  "createRoomCard must append live estimated billing element for occupied rooms"
+);
+console.log("  ✓ PASS: Live Estimated Billing calculation and UI element functions are defined and integrated");
+
+// Test 8: Verify compact F&B list & Live Billing CSS styling in css/style.css
+console.log("Test 8: Verifying compact F&B scroll and Live Billing styles in css/style.css...");
+assert.ok(
+  styleCssContent.includes(".room-live-billing-panel"),
+  "style.css must style .room-live-billing-panel"
+);
+assert.ok(
+  styleCssContent.includes(".live-billing-total-row"),
+  "style.css must style .live-billing-total-row"
+);
+assert.ok(
+  styleCssContent.includes(".live-billing-badge"),
+  "style.css must style .live-billing-badge"
+);
+assert.ok(
+  styleCssContent.includes("max-height: 84px !important;"),
+  "style.css must limit .fnb-breakdown-list max-height to 84px for compact scrolling"
+);
+console.log("  ✓ PASS: CSS provides luxury styling for Live Billing and compact scrolling for F&B items");
+
+console.log("\n🎉 All 8 Room Card Action & Live Estimated Billing Tests Passed Successfully!\n");

@@ -11785,13 +11785,22 @@ select.action-confirmation-input option {
   display: flex !important;
   flex-direction: column !important;
   gap: 3px !important;
-  max-height: none !important;
-  overflow: visible !important;
-  padding-right: 0 !important;
+  max-height: 84px !important;
+  overflow-y: auto !important;
+  padding-right: 4px !important;
   width: 100% !important;
   max-width: 100% !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
+}
+
+.fnb-breakdown-list::-webkit-scrollbar {
+  width: 4px !important;
+}
+
+.fnb-breakdown-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25) !important;
+  border-radius: 4px !important;
 }
 
 .fnb-breakdown-item {
@@ -11920,6 +11929,152 @@ select.action-confirmation-input option {
   text-align: right !important;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
+}
+
+/* Live Estimated Billing Panel on Room Card */
+.room-live-billing-panel {
+  margin-top: 8px !important;
+  margin-bottom: 3px !important;
+  padding: 8px 10px !important;
+  background: linear-gradient(145deg, rgba(30, 24, 16, 0.92) 0%, rgba(18, 14, 10, 0.96) 100%) !important;
+  border: 1px solid rgba(242, 196, 91, 0.45) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(242, 196, 91, 0.2) !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.live-billing-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 6px !important;
+  margin-bottom: 6px !important;
+  padding-bottom: 4px !important;
+  border-bottom: 1px solid rgba(242, 196, 91, 0.22) !important;
+}
+
+.live-billing-title {
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.03em !important;
+  color: var(--gold-strong, #fbbf24) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.live-billing-badge {
+  font-size: 0.68rem !important;
+  font-weight: 700 !important;
+  padding: 1px 6px !important;
+  border-radius: 6px !important;
+  white-space: nowrap !important;
+}
+
+.live-billing-badge.is-upfront {
+  background: rgba(16, 185, 129, 0.18) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(52, 211, 153, 0.35) !important;
+}
+
+.live-billing-badge.is-open-bill {
+  background: rgba(168, 85, 247, 0.18) !important;
+  color: #c084fc !important;
+  border: 1px solid rgba(192, 132, 252, 0.35) !important;
+}
+
+.live-billing-breakdown {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+}
+
+.live-billing-row {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 4px !important;
+  font-size: 0.74rem !important;
+  line-height: 1.35 !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.live-billing-item-label {
+  flex-shrink: 0 !important;
+  font-weight: 600 !important;
+  color: rgba(255, 255, 255, 0.82) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 65% !important;
+}
+
+.live-billing-dots {
+  flex: 1 1 auto !important;
+  min-width: 4px !important;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.25) !important;
+  height: 1px !important;
+  margin: 0 1px 3px 1px !important;
+}
+
+.live-billing-item-val {
+  flex-shrink: 0 !important;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+  font-weight: 700 !important;
+  color: #fef08a !important;
+  text-align: right !important;
+  white-space: nowrap !important;
+}
+
+.live-billing-total-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-top: 6px !important;
+  padding-top: 5px !important;
+  border-top: 1px solid rgba(242, 196, 91, 0.35) !important;
+  font-size: 0.82rem !important;
+  font-weight: 900 !important;
+}
+
+.live-billing-total-label {
+  color: var(--gold-strong, #fbbf24) !important;
+  letter-spacing: 0.02em !important;
+}
+
+.live-billing-total-val {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+  font-size: 0.88rem !important;
+  font-weight: 900 !important;
+  color: #fbbf24 !important;
+  text-shadow: 0 0 10px rgba(251, 191, 36, 0.35) !important;
+}
+
+.live-billing-unpaid-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-top: 4px !important;
+  padding-top: 3px !important;
+  border-top: 1px dashed rgba(52, 211, 153, 0.35) !important;
+  font-size: 0.76rem !important;
+  font-weight: 800 !important;
+}
+
+.live-billing-unpaid-label {
+  color: #a7f3d0 !important;
+}
+
+.live-billing-unpaid-val {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+  font-weight: 900 !important;
+  color: #34d399 !important;
+}
+
+.live-billing-unpaid-val.text-settled {
+  color: #34d399 !important;
+  font-weight: 800 !important;
 }
 
 /* Rate badge in card */

@@ -10143,6 +10143,190 @@ function createRoomOpenFnbBreakdownElement(openOrders, room) {
   return container;
 }
 
+function calculateRoomLiveEstimatedBilling(room) {
+  const durationMinutes = Number(room.booked_duration_minutes || 60);
+  const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
+  const ratePerHour = Number(room.rate_per_hour || 0);
+
+  let roomSubtotal = 0;
+  let roomLabel = `Room (${durationHours} jam)`;
+
+  if (room.booking_mode === "package" || room.package_id) {
+    const pkg = packages.find((p) => p.package_id === room.package_id);
+    const pkgPrice = Number(room.package_total || pkg?.selling_price || 0);
+    const pkgIncludedMinutes = Number(pkg?.duration_minutes || room.package_duration_minutes || durationMinutes);
+    const overtimeMinutes = Math.max(0, durationMinutes - pkgIncludedMinutes);
+    const overtimeHours = Math.ceil(overtimeMinutes / 60);
+    const overtimeRate = Number(room.rate_per_hour || pkg?.overtime_rate || 0);
+    const overtimeCharge = overtimeHours * overtimeRate;
+
+    roomSubtotal = pkgPrice + overtimeCharge;
+    const pkgName = pkg ? pkg.package_name : (room.package_name || room.package_id);
+    roomLabel = overtimeCharge > 0 
+      ? `Paket ${pkgName} (+OT ${overtimeHours}j)`
+      : `Paket ${pkgName}`;
+  } else {
+    roomSubtotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+    roomLabel = `Room ${durationHours} jam (${formatCurrency(ratePerHour)}/j)`;
+  }
+
+  // F&B Subtotal
+  const openOrders = getOpenFnbOrdersForRoom(room);
+  let fnbItemCount = 0;
+  openOrders.forEach((o) => {
+    (o.items || []).filter((i) => !i.is_voided).forEach((i) => {
+      fnbItemCount += Number(i.quantity) || 0;
+    });
+  });
+  const fnbSubtotal = openOrders.reduce((sum, o) => sum + Number(o.order_total || 0), 0);
+
+  // LC Subtotal
+  const currentLcIdsRaw = String(room.lc_ids || "").trim();
+  const rawActiveLcIds = selectedLcIdsForRoom[room.room_id] || (currentLcIdsRaw ? currentLcIdsRaw.split(",").map((i) => i.trim()).filter(Boolean) : []);
+  const validLcIds = rawActiveLcIds.filter((id) => id && id !== "PENDING");
+
+  let lcSubtotal = 0;
+  if (validLcIds.length > 0) {
+    if (typeof ensureLcSelectionStateForRoom === "function") {
+      ensureLcSelectionStateForRoom(room);
+    }
+    const activeLcList = Array.isArray(lcs) ? lcs.filter((l) => l.status === "active") : [];
+    const activeLcRates = activeLcList.map((l) => Number(l.rate_per_room || l.rate_per_hour) || 0).filter((r) => r > 0);
+    const avgLcRate = activeLcRates.length > 0 ? activeLcRates.reduce((a, b) => a + b, 0) / activeLcRates.length : 175000;
+
+    let parsedRoomAssignments = [];
+    try {
+      if (typeof room.lc_assignments === "string" && room.lc_assignments.trim()) {
+        parsedRoomAssignments = JSON.parse(room.lc_assignments);
+      } else if (Array.isArray(room.lc_assignments)) {
+        parsedRoomAssignments = room.lc_assignments;
+      }
+    } catch (e) {}
+
+    const rawLcDetails = validLcIds.map((id) => {
+      const lcDuration = getLcDurationForRoom(room, id) || durationMinutes;
+      const foundLc = Array.isArray(lcs) ? lcs.find((l) => l.lc_id === id) : null;
+      const foundAssignment = parsedRoomAssignments.find((a) => a.lc_id === id);
+      const lcName = foundLc?.lc_name || foundAssignment?.lc_name || id;
+      const lcRate = Number(foundLc?.rate_per_room || foundAssignment?.rate_per_hour || foundLc?.rate_per_hour || avgLcRate);
+      return {
+        id,
+        name: lcName,
+        durationMinutes: lcDuration,
+        ratePerHour: lcRate,
+      };
+    });
+
+    const calculatedLcs = calculateLcCustomerChargeForRoom(room, rawLcDetails);
+    lcSubtotal = calculatedLcs.reduce((sum, item) => sum + Number(item.customerCharge || 0), 0);
+  }
+
+  const grandTotal = roomSubtotal + fnbSubtotal + lcSubtotal;
+  const isUpfrontPaid = Boolean(room.is_upfront_paid);
+  const remainingUnpaid = isUpfrontPaid ? fnbSubtotal : grandTotal;
+  const paidUpfrontAmount = isUpfrontPaid ? (grandTotal - remainingUnpaid) : 0;
+
+  return {
+    durationMinutes,
+    durationHours,
+    ratePerHour,
+    roomSubtotal,
+    roomLabel,
+    fnbSubtotal,
+    fnbItemCount,
+    lcSubtotal,
+    lcCount: validLcIds.length,
+    grandTotal,
+    isUpfrontPaid,
+    paidUpfrontAmount,
+    remainingUnpaid,
+  };
+}
+
+function createRoomLiveEstimatedBillingElement(room) {
+  const data = calculateRoomLiveEstimatedBilling(room);
+  const container = document.createElement("div");
+  container.className = "room-live-billing-panel";
+
+  const header = document.createElement("div");
+  header.className = "live-billing-header";
+  header.innerHTML = `
+    <span class="live-billing-title">💰 Estimasi Tagihan</span>
+    <span class="live-billing-badge ${data.isUpfrontPaid ? "is-upfront" : "is-open-bill"}">
+      ${data.isUpfrontPaid ? "🟢 Lunas di Muka" : "🟣 Open Bill"}
+    </span>
+  `;
+  container.appendChild(header);
+
+  const breakdown = document.createElement("div");
+  breakdown.className = "live-billing-breakdown";
+
+  // Row 1: Room / Paket
+  const roomRow = document.createElement("div");
+  roomRow.className = "live-billing-row";
+  roomRow.innerHTML = `
+    <span class="live-billing-item-label">${escapeHtml(data.roomLabel)}</span>
+    <span class="live-billing-dots"></span>
+    <span class="live-billing-item-val">${formatCurrency(data.roomSubtotal)}</span>
+  `;
+  breakdown.appendChild(roomRow);
+
+  // Row 2: LC (jika ada)
+  if (data.lcCount > 0 || data.lcSubtotal > 0) {
+    const lcRow = document.createElement("div");
+    lcRow.className = "live-billing-row";
+    lcRow.innerHTML = `
+      <span class="live-billing-item-label">🎙️ LC (${data.lcCount} orang)</span>
+      <span class="live-billing-dots"></span>
+      <span class="live-billing-item-val">${formatCurrency(data.lcSubtotal)}</span>
+    `;
+    breakdown.appendChild(lcRow);
+  }
+
+  // Row 3: F&B (jika ada)
+  if (data.fnbItemCount > 0 || data.fnbSubtotal > 0) {
+    const fnbRow = document.createElement("div");
+    fnbRow.className = "live-billing-row";
+    fnbRow.innerHTML = `
+      <span class="live-billing-item-label">🍽️ F&B (${data.fnbItemCount} item)</span>
+      <span class="live-billing-dots"></span>
+      <span class="live-billing-item-val">${formatCurrency(data.fnbSubtotal)}</span>
+    `;
+    breakdown.appendChild(fnbRow);
+  }
+
+  container.appendChild(breakdown);
+
+  // Total Row
+  const totalRow = document.createElement("div");
+  totalRow.className = "live-billing-total-row";
+  totalRow.innerHTML = `
+    <span class="live-billing-total-label">Total Sesi:</span>
+    <span class="live-billing-total-val">${formatCurrency(data.grandTotal)}</span>
+  `;
+  container.appendChild(totalRow);
+
+  // If Upfront Paid and there are extra unpaid F&B orders
+  if (data.isUpfrontPaid) {
+    const unpaidRow = document.createElement("div");
+    unpaidRow.className = "live-billing-unpaid-row";
+    if (data.remainingUnpaid > 0) {
+      unpaidRow.innerHTML = `
+        <span class="live-billing-unpaid-label">Sisa Tagihan (F&B):</span>
+        <span class="live-billing-unpaid-val">${formatCurrency(data.remainingUnpaid)}</span>
+      `;
+    } else {
+      unpaidRow.innerHTML = `
+        <span class="live-billing-unpaid-label">Status Tagihan:</span>
+        <span class="live-billing-unpaid-val text-settled">Lunas di Muka (Rp 0)</span>
+      `;
+    }
+    container.appendChild(unpaidRow);
+  }
+
+  return container;
+}
+
 
 function createRoomCard(room) {
   const card = document.createElement("article");
@@ -10220,6 +10404,7 @@ function createRoomCard(room) {
     if (openOrders.length > 0) {
       meta.appendChild(createRoomOpenFnbBreakdownElement(openOrders, room));
     }
+    meta.appendChild(createRoomLiveEstimatedBillingElement(room));
   } else if (["booked", "waiting_payment", "paid_waiting_start"].includes(room.status)) {
     meta.appendChild(createRoomWaitingPaymentInfoElement(room));
   } else if (room.status === "cleaning") {
@@ -10236,11 +10421,12 @@ function createRoomCard(room) {
     meta.append(durationLabel, timer);
   }
 
-  const rate = document.createElement("p");
-  rate.className = "rate";
-  rate.textContent = getRoomPriceLabel(room);
-
-  meta.appendChild(rate);
+  if (room.status !== "occupied") {
+    const rate = document.createElement("p");
+    rate.className = "rate";
+    rate.textContent = getRoomPriceLabel(room);
+    meta.appendChild(rate);
+  }
 
   const actions = document.createElement("div");
   actions.className = "room-actions";

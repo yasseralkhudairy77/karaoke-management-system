@@ -175,10 +175,10 @@ console.log("  ✓ PASS: Rich analytics CSS styles including mode switcher are p
 // Test 8: Verify cache buster in index.html
 console.log("Test 8: Verifying cache buster version in index.html...");
 assert.ok(
-  indexHtmlContent.includes("analytics-v3"),
-  "index.html must reference updated cache buster (?v=analytics-v3)"
+  indexHtmlContent.includes("analytics-v4"),
+  "index.html must reference updated cache buster (?v=analytics-v4)"
 );
-console.log("  ✓ PASS: index.html has updated cache buster version (analytics-v3)");
+console.log("  ✓ PASS: index.html has updated cache buster version (analytics-v4)");
 
 // Test 9: Verify real shift cutoff calculation and removal of mock 13.420.000
 console.log("Test 9: Verifying real shift cutoff calculation and removal of fake 13.420.000...");
