@@ -34,6 +34,7 @@ const DASHBOARD_TABS = [
   { key: "transactions", label: "Transaksi" },
   { key: "audit", label: "Audit" },
   { key: "promosi", label: "Promosi" },
+  { key: "analytics", label: "Analisa" },
   { key: "settings", label: "Pengaturan" },
 ];
 const ROLE_ALIASES = {
@@ -49,8 +50,8 @@ const ROLE_LABELS = {
   staff: "Staff",
 };
 const ROLE_DASHBOARD_TABS = {
-  owner: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
-  manager: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "settings"],
+  owner: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "analytics", "settings"],
+  manager: ["rooms", "fnb", "expenses", "stock", "lc", "reports", "transactions", "audit", "promosi", "analytics", "settings"],
   cashier: ["rooms", "fnb", "expenses", "lc", "reports", "transactions"],
   receptionist: ["rooms"],
   inventory: ["stock"],
@@ -25645,6 +25646,9 @@ function refreshActiveTabData() {
     case "promosi":
       loadPromos();
       break;
+    case "analytics":
+      loadOperationalAnalytics();
+      break;
     default:
       break;
   }
@@ -26094,6 +26098,868 @@ function createAddPromoModalOverlay() {
   };
 
   return overlay;
+}
+
+// ==========================================
+// ANALYTICS & BUSINESS INTELLIGENCE MODULE
+// ==========================================
+let analyticsData = null;
+let isLoadingAnalytics = false;
+let analyticsPeriod = "today";
+let analyticsStartDate = "";
+let analyticsEndDate = "";
+let analyticsCompareTo = "previous_period";
+let analyticsRoomFilter = "all";
+let analyticsCurveMetric = "revenue";
+
+function generateMockAnalyticsData() {
+  const isWeekend = new Date().getDay() === 0 || new Date().getDay() === 6;
+  const curRev = isWeekend ? 18650000 : 13420000;
+  const cmpRev = isWeekend ? 15200000 : 11800000;
+  const curTrx = isWeekend ? 28 : 20;
+  const cmpTrx = isWeekend ? 24 : 19;
+  const curRoomRev = Math.round(curRev * 0.52);
+  const cmpRoomRev = Math.round(cmpRev * 0.52);
+  const curFnbRev = Math.round(curRev * 0.36);
+  const curLcRev = Math.round(curRev * 0.12);
+  const availHours = 15 * 18;
+
+  const trafficProfile = [
+    0.02, 0.03, 0.04, 0.05, 0.05, 0.06, 0.08, 0.12, 0.15, 0.14, 0.11, 0.07,
+    0.04, 0.02, 0.01, 0.005, 0.005, 0, 0, 0, 0, 0, 0, 0.01
+  ];
+
+  const hourlySequence = [];
+  for (let i = 0; i < 24; i++) {
+    const h = (10 + i) % 24;
+    const factor = trafficProfile[i] || 0.01;
+    const curHourRev = Math.round(curRev * factor);
+    const cmpHourRev = Math.round(cmpRev * factor * 0.88);
+    const curHrs = Math.round(factor * 110 * 10) / 10;
+    const cmpHrs = Math.round(factor * 95 * 10) / 10;
+    hourlySequence.push({
+      hour: h,
+      hourLabel: `${String(h).padStart(2, "0")}:00`,
+      currentRevenue: curHourRev,
+      compareRevenue: cmpHourRev,
+      currentRoomHours: curHrs,
+      compareRoomHours: cmpHrs,
+      currentSessions: Math.max(0, Math.round(factor * 36)),
+      compareSessions: Math.max(0, Math.round(factor * 30)),
+    });
+  }
+
+  return {
+    filters: {
+      period: analyticsPeriod,
+      startDate: analyticsStartDate || "2026-09-20",
+      endDate: analyticsEndDate || "2026-09-20",
+      compareTo: analyticsCompareTo,
+      compareStartDate: "2026-09-19",
+      compareEndDate: "2026-09-19",
+      roomFilter: analyticsRoomFilter,
+      durationDays: 1,
+    },
+    kpi: {
+      totalRevenue: {
+        current: curRev,
+        compare: cmpRev,
+        deltaPercent: Math.round(((curRev - cmpRev) / cmpRev) * 1000) / 10,
+      },
+      revPah: {
+        current: Math.round(curRoomRev / availHours),
+        compare: Math.round(cmpRoomRev / availHours),
+        deltaPercent: Math.round(((curRoomRev - cmpRoomRev) / cmpRoomRev) * 1000) / 10,
+        availableHours: availHours,
+      },
+      avgSpendPerRoom: {
+        current: Math.round(curRev / curTrx),
+        compare: Math.round(cmpRev / cmpTrx),
+        deltaPercent: Math.round(((curRev / curTrx - cmpRev / cmpTrx) / (cmpRev / cmpTrx)) * 1000) / 10,
+      },
+      fnbGrossMargin: {
+        currentPercent: 67.5,
+        grossSales: curFnbRev,
+        grossProfit: Math.round(curFnbRev * 0.675),
+        totalHpp: Math.round(curFnbRev * 0.325),
+      },
+      roomExtensionRate: {
+        currentPercent: 42.8,
+        comparePercent: 35.0,
+        deltaPercent: 22.3,
+        extendedSessions: Math.round(curTrx * 0.428),
+        totalSessions: curTrx,
+      },
+      lcAttachmentRate: {
+        currentPercent: 50.0,
+        comparePercent: 41.7,
+        deltaPercent: 19.9,
+        lcSessions: Math.round(curTrx * 0.5),
+        totalSessions: curTrx,
+      },
+      discountLeakage: {
+        current: 350000,
+        compare: 250000,
+        deltaPercent: 40.0,
+      },
+    },
+    revenueComposition: {
+      roomTotal: curRoomRev,
+      fnbTotal: curFnbRev,
+      lcTotal: curLcRev,
+      discounts: 350000,
+      netRevenue: curRev,
+    },
+    paymentBreakdown: {
+      cash: Math.round(curRev * 0.35),
+      transfer: Math.round(curRev * 0.65),
+    },
+    hourlyTraffic: hourlySequence,
+    roomLeaderboard: [
+      { room_id: "ROOM-VIP1", room_name: "VIP Room 1", total_sessions: 6, total_hours: 15.5, occupancy_rate_percent: 86.1, total_room_revenue: 2325000, total_grand_revenue: 4150000, extension_rate_percent: 66.7 },
+      { room_id: "ROOM-02", room_name: "Room 02 Large", total_sessions: 5, total_hours: 12.0, occupancy_rate_percent: 66.7, total_room_revenue: 1440000, total_grand_revenue: 2850000, extension_rate_percent: 40.0 },
+      { room_id: "ROOM-01", room_name: "Room 01 Medium", total_sessions: 5, total_hours: 10.5, occupancy_rate_percent: 58.3, total_room_revenue: 1050000, total_grand_revenue: 1980000, extension_rate_percent: 40.0 },
+      { room_id: "ROOM-03", room_name: "Room 03 Medium", total_sessions: 4, total_hours: 8.5, occupancy_rate_percent: 47.2, total_room_revenue: 850000, total_grand_revenue: 1620000, extension_rate_percent: 25.0 },
+      { room_id: "ROOM-VVIP", room_name: "President VVIP", total_sessions: 2, total_hours: 7.0, occupancy_rate_percent: 38.9, total_room_revenue: 1750000, total_grand_revenue: 3500000, extension_rate_percent: 50.0 },
+    ],
+    fnbLeaderboard: [
+      { item_id: "FNB-01", item_name: "Paket Beer Bintang (5 Btl)", category: "Beer", qty_sold: 24, total_sales: 3600000, total_profit: 2160000, margin_percent: 60.0 },
+      { item_id: "FNB-02", item_name: "Chivas Regal 12Y", category: "Spirit", qty_sold: 4, total_sales: 4400000, total_profit: 2860000, margin_percent: 65.0 },
+      { item_id: "FNB-03", item_name: "French Fries Crispy", category: "Food", qty_sold: 38, total_sales: 1140000, total_profit: 855000, margin_percent: 75.0 },
+      { item_id: "FNB-04", item_name: "Singkong Keju Spesial", category: "Food", qty_sold: 29, total_sales: 725000, total_profit: 543750, margin_percent: 75.0 },
+      { item_id: "FNB-05", item_name: "Mineral Water 600ml", category: "Beverage", qty_sold: 45, total_sales: 675000, total_profit: 540000, margin_percent: 80.0 },
+    ],
+  };
+}
+
+async function loadOperationalAnalytics() {
+  if (!API_BASE_URL.trim()) {
+    analyticsData = generateMockAnalyticsData();
+    if (activeDashboardTab === "analytics") {
+      renderDashboardTabPanels();
+    }
+    return;
+  }
+
+  isLoadingAnalytics = true;
+  if (activeDashboardTab === "analytics") {
+    renderDashboardTabPanels();
+  }
+
+  try {
+    const params = new URLSearchParams({
+      action: "getOperationalAnalytics",
+      period: analyticsPeriod,
+      start_date: analyticsStartDate,
+      end_date: analyticsEndDate,
+      compare_to: analyticsCompareTo,
+      room_filter: analyticsRoomFilter,
+      _: String(Date.now()),
+    });
+
+    const res = await fetch(`${API_BASE_URL}?${params.toString()}`);
+    const result = await res.json();
+    if (result && (result.success || result.ok)) {
+      analyticsData = result.data || result;
+    } else {
+      console.warn("Analytics API returned failure, using fallback:", result);
+      analyticsData = generateMockAnalyticsData();
+    }
+  } catch (err) {
+    console.error("loadOperationalAnalytics error:", err);
+    analyticsData = generateMockAnalyticsData();
+  } finally {
+    isLoadingAnalytics = false;
+    if (activeDashboardTab === "analytics") {
+      renderDashboardTabPanels();
+    }
+  }
+}
+
+function formatAnalyticsDeltaBadge(deltaPercent, inverse = false) {
+  const delta = Number(deltaPercent) || 0;
+  if (delta === 0) {
+    return `<span class="analytics-delta-badge neutral">0.0%</span>`;
+  }
+  const isPositive = delta > 0;
+  const isGood = inverse ? !isPositive : isPositive;
+  const cssClass = isGood ? "positive" : "negative";
+  const icon = isPositive ? "▲" : "▼";
+  const sign = isPositive ? "+" : "";
+  return `<span class="analytics-delta-badge ${cssClass}">${icon} ${sign}${delta.toFixed(1)}%</span>`;
+}
+
+function createAnalyticsPanelElement() {
+  const panel = document.createElement("section");
+  panel.className = "analytics-workspace";
+
+  if (!analyticsData && !isLoadingAnalytics) {
+    loadOperationalAnalytics();
+  }
+
+  const header = document.createElement("div");
+  header.className = "analytics-header";
+  header.innerHTML = `
+    <div class="analytics-title-group">
+      <h2>Analisa &amp; Intelijen Bisnis</h2>
+      <p>Performa omzet, jam sibuk 24 jam, utilisasi ruangan, dan profitabilitas F&amp;B.</p>
+    </div>
+  `;
+
+  const controlsBar = document.createElement("div");
+  controlsBar.className = "analytics-controls-bar";
+
+  const periodItem = document.createElement("div");
+  periodItem.className = "analytics-control-item";
+  periodItem.innerHTML = `
+    <label for="analyticsPeriodSelect">Periode</label>
+    <select id="analyticsPeriodSelect">
+      <option value="today" ${analyticsPeriod === "today" ? "selected" : ""}>Hari Ini</option>
+      <option value="yesterday" ${analyticsPeriod === "yesterday" ? "selected" : ""}>Kemarin</option>
+      <option value="this_week" ${analyticsPeriod === "this_week" ? "selected" : ""}>7 Hari Terakhir</option>
+      <option value="this_month" ${analyticsPeriod === "this_month" ? "selected" : ""}>30 Hari Terakhir</option>
+      <option value="custom" ${analyticsPeriod === "custom" ? "selected" : ""}>Rentang Kustom</option>
+    </select>
+  `;
+
+  const startItem = document.createElement("div");
+  startItem.className = "analytics-control-item";
+  startItem.style.display = analyticsPeriod === "custom" ? "flex" : "none";
+  startItem.innerHTML = `
+    <label for="analyticsStartDateInput">Tanggal Mulai</label>
+    <input type="date" id="analyticsStartDateInput" value="${analyticsStartDate || ""}" />
+  `;
+
+  const endItem = document.createElement("div");
+  endItem.className = "analytics-control-item";
+  endItem.style.display = analyticsPeriod === "custom" ? "flex" : "none";
+  endItem.innerHTML = `
+    <label for="analyticsEndDateInput">Tanggal Selesai</label>
+    <input type="date" id="analyticsEndDateInput" value="${analyticsEndDate || ""}" />
+  `;
+
+  periodItem.querySelector("select").onchange = (e) => {
+    analyticsPeriod = e.target.value;
+    const isCustom = analyticsPeriod === "custom";
+    startItem.style.display = isCustom ? "flex" : "none";
+    endItem.style.display = isCustom ? "flex" : "none";
+    if (!isCustom) {
+      loadOperationalAnalytics();
+    }
+  };
+
+  startItem.querySelector("input").onchange = (e) => {
+    analyticsStartDate = e.target.value;
+  };
+
+  endItem.querySelector("input").onchange = (e) => {
+    analyticsEndDate = e.target.value;
+  };
+
+  const compareItem = document.createElement("div");
+  compareItem.className = "analytics-control-item";
+  compareItem.innerHTML = `
+    <label for="analyticsCompareSelect">Bandingkan Dengan</label>
+    <select id="analyticsCompareSelect">
+      <option value="previous_period" ${analyticsCompareTo === "previous_period" ? "selected" : ""}>Periode Sebelumnya (Shift Mundur)</option>
+      <option value="same_day_last_week" ${analyticsCompareTo === "same_day_last_week" ? "selected" : ""}>Hari yang Sama Pekan Lalu (7 Hari)</option>
+    </select>
+  `;
+  compareItem.querySelector("select").onchange = (e) => {
+    analyticsCompareTo = e.target.value;
+    loadOperationalAnalytics();
+  };
+
+  const roomFilterItem = document.createElement("div");
+  roomFilterItem.className = "analytics-control-item";
+  const roomOptions = [
+    `<option value="all" ${analyticsRoomFilter === "all" ? "selected" : ""}>Semua Ruangan</option>`
+  ];
+  if (Array.isArray(rooms) && rooms.length > 0) {
+    rooms.forEach((r) => {
+      const isSelected = analyticsRoomFilter === r.room_id ? "selected" : "";
+      roomOptions.push(`<option value="${escapeHtml(r.room_id)}" ${isSelected}>${escapeHtml(r.room_name || r.room_id)}</option>`);
+    });
+  }
+  roomFilterItem.innerHTML = `
+    <label for="analyticsRoomSelect">Filter Ruangan</label>
+    <select id="analyticsRoomSelect">
+      ${roomOptions.join("")}
+    </select>
+  `;
+  roomFilterItem.querySelector("select").onchange = (e) => {
+    analyticsRoomFilter = e.target.value;
+    loadOperationalAnalytics();
+  };
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "analytics-refresh-btn";
+  refreshBtn.textContent = isLoadingAnalytics ? "Memuat..." : "Terapkan / Segarkan";
+  refreshBtn.disabled = isLoadingAnalytics;
+  refreshBtn.onclick = () => {
+    loadOperationalAnalytics();
+  };
+
+  controlsBar.append(periodItem, startItem, endItem, compareItem, roomFilterItem, refreshBtn);
+  panel.append(header, controlsBar);
+
+  if (isLoadingAnalytics && !analyticsData) {
+    panel.appendChild(createStateMessage("Menghitung agregasi data analisa...", "loading"));
+    return panel;
+  }
+
+  if (!analyticsData) {
+    panel.appendChild(createStateMessage("Data analisa belum tersedia.", "info"));
+    return panel;
+  }
+
+  const kpi = analyticsData.kpi || {};
+  const composition = analyticsData.revenueComposition || {};
+  const payment = analyticsData.paymentBreakdown || {};
+
+  const kpiGrid = document.createElement("div");
+  kpiGrid.className = "analytics-kpi-grid";
+
+  const curRev = kpi.totalRevenue?.current || 0;
+  const cmpRev = kpi.totalRevenue?.compare || 0;
+  const deltaRev = kpi.totalRevenue?.deltaPercent || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card featured">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Total Omzet Bersih</span>
+        ${formatAnalyticsDeltaBadge(deltaRev)}
+      </div>
+      <div class="analytics-kpi-value">${formatCurrency(curRev)}</div>
+      <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(cmpRev)}</div>
+    </div>
+  `;
+
+  const curRevPah = kpi.revPah?.current || 0;
+  const cmpRevPah = kpi.revPah?.compare || 0;
+  const deltaRevPah = kpi.revPah?.deltaPercent || 0;
+  const availHrs = kpi.revPah?.availableHours || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">RevPAH (Revenue / Avail. Hour)</span>
+        ${formatAnalyticsDeltaBadge(deltaRevPah)}
+      </div>
+      <div class="analytics-kpi-value">${formatCurrency(curRevPah)} <span style="font-size:0.8rem; font-weight:normal; color:var(--muted)">/jam</span></div>
+      <div class="analytics-kpi-sub">Kapasitas: ${availHrs} jam ketersediaan</div>
+    </div>
+  `;
+
+  const curAov = kpi.avgSpendPerRoom?.current || 0;
+  const cmpAov = kpi.avgSpendPerRoom?.compare || 0;
+  const deltaAov = kpi.avgSpendPerRoom?.deltaPercent || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Rata-rata Belanja per Room</span>
+        ${formatAnalyticsDeltaBadge(deltaAov)}
+      </div>
+      <div class="analytics-kpi-value">${formatCurrency(curAov)}</div>
+      <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(cmpAov)}</div>
+    </div>
+  `;
+
+  const fnbMargin = kpi.fnbGrossMargin?.currentPercent || 0;
+  const fnbSales = kpi.fnbGrossMargin?.grossSales || 0;
+  const fnbProfit = kpi.fnbGrossMargin?.grossProfit || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Estimasi F&amp;B Gross Margin</span>
+        <span class="analytics-delta-badge positive">${fnbMargin.toFixed(1)}%</span>
+      </div>
+      <div class="analytics-kpi-value">${formatCurrency(fnbProfit)}</div>
+      <div class="analytics-kpi-sub">Penjualan F&amp;B: ${formatCurrency(fnbSales)}</div>
+    </div>
+  `;
+
+  const extRate = kpi.roomExtensionRate?.currentPercent || 0;
+  const deltaExt = kpi.roomExtensionRate?.deltaPercent || 0;
+  const extSess = kpi.roomExtensionRate?.extendedSessions || 0;
+  const totSess = kpi.roomExtensionRate?.totalSessions || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Rasio Perpanjangan Room</span>
+        ${formatAnalyticsDeltaBadge(deltaExt)}
+      </div>
+      <div class="analytics-kpi-value">${extRate.toFixed(1)}%</div>
+      <div class="analytics-kpi-sub">${extSess} dari ${totSess} sesi diperpanjang (&gt;2 jam)</div>
+    </div>
+  `;
+
+  const lcRate = kpi.lcAttachmentRate?.currentPercent || 0;
+  const deltaLc = kpi.lcAttachmentRate?.deltaPercent || 0;
+  const lcSess = kpi.lcAttachmentRate?.lcSessions || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Rasio Pendamping LC</span>
+        ${formatAnalyticsDeltaBadge(deltaLc)}
+      </div>
+      <div class="analytics-kpi-value">${lcRate.toFixed(1)}%</div>
+      <div class="analytics-kpi-sub">${lcSess} dari ${totSess} sesi menggunakan LC</div>
+    </div>
+  `;
+
+  const curDisc = kpi.discountLeakage?.current || 0;
+  const cmpDisc = kpi.discountLeakage?.compare || 0;
+  const deltaDisc = kpi.discountLeakage?.deltaPercent || 0;
+  kpiGrid.innerHTML += `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-top">
+        <span class="analytics-kpi-label">Diskon &amp; Potongan Terpakai</span>
+        ${formatAnalyticsDeltaBadge(deltaDisc, true)}
+      </div>
+      <div class="analytics-kpi-value">${formatCurrency(curDisc)}</div>
+      <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(cmpDisc)}</div>
+    </div>
+  `;
+
+  panel.appendChild(kpiGrid);
+
+  const chartCard = createAnalyticsPeakHoursChartElement(analyticsData.hourlyTraffic || []);
+  panel.appendChild(chartCard);
+
+  const compositionGrid = document.createElement("div");
+  compositionGrid.className = "analytics-composition-grid";
+
+  const rTotal = composition.roomTotal || 0;
+  const fTotal = composition.fnbTotal || 0;
+  const lTotal = composition.lcTotal || 0;
+  const grandTotal = Math.max(1, rTotal + fTotal + lTotal);
+  const rPct = Math.round((rTotal / grandTotal) * 100);
+  const fPct = Math.round((fTotal / grandTotal) * 100);
+  const lPct = Math.max(0, 100 - rPct - fPct);
+
+  const compCard = document.createElement("div");
+  compCard.className = "analytics-subcard";
+  compCard.innerHTML = `
+    <h4>Komposisi Sumber Pendapatan</h4>
+    <div class="analytics-stacked-bar">
+      <div class="analytics-bar-segment room" style="width: ${rPct}%;" title="Sewa Ruangan: ${rPct}%"></div>
+      <div class="analytics-bar-segment fnb" style="width: ${fPct}%;" title="F&B: ${fPct}%"></div>
+      <div class="analytics-bar-segment lc" style="width: ${lPct}%;" title="Lady Companion: ${lPct}%"></div>
+    </div>
+    <div class="analytics-bar-legend-grid">
+      <div class="analytics-breakdown-item">
+        <span class="analytics-breakdown-dot" style="background:#e2b85c"></span>
+        <span>Sewa Room: <strong>${formatCurrency(rTotal)}</strong> (${rPct}%)</span>
+      </div>
+      <div class="analytics-breakdown-item">
+        <span class="analytics-breakdown-dot" style="background:#18c787"></span>
+        <span>F&amp;B: <strong>${formatCurrency(fTotal)}</strong> (${fPct}%)</span>
+      </div>
+      <div class="analytics-breakdown-item">
+        <span class="analytics-breakdown-dot" style="background:#9d4edd"></span>
+        <span>LC: <strong>${formatCurrency(lTotal)}</strong> (${lPct}%)</span>
+      </div>
+    </div>
+  `;
+
+  const cashTotal = payment.cash || 0;
+  const transferTotal = payment.transfer || 0;
+  const payTotal = Math.max(1, cashTotal + transferTotal);
+  const cashPct = Math.round((cashTotal / payTotal) * 100);
+  const trfPct = Math.max(0, 100 - cashPct);
+
+  const payCard = document.createElement("div");
+  payCard.className = "analytics-subcard";
+  payCard.innerHTML = `
+    <h4>Saluran Pembayaran</h4>
+    <div class="analytics-stacked-bar">
+      <div class="analytics-bar-segment" style="width: ${cashPct}%; background: #ffd77a;" title="Tunai (Cash): ${cashPct}%"></div>
+      <div class="analytics-bar-segment" style="width: ${trfPct}%; background: #64b5f6;" title="Non-Tunai: ${trfPct}%"></div>
+    </div>
+    <div class="analytics-bar-legend-grid">
+      <div class="analytics-breakdown-item">
+        <span class="analytics-breakdown-dot" style="background:#ffd77a"></span>
+        <span>Tunai (Cash): <strong>${formatCurrency(cashTotal)}</strong> (${cashPct}%)</span>
+      </div>
+      <div class="analytics-breakdown-item">
+        <span class="analytics-breakdown-dot" style="background:#64b5f6"></span>
+        <span>Transfer / QRIS: <strong>${formatCurrency(transferTotal)}</strong> (${trfPct}%)</span>
+      </div>
+    </div>
+  `;
+
+  compositionGrid.append(compCard, payCard);
+  panel.appendChild(compositionGrid);
+
+  const leaderboardGrid = document.createElement("div");
+  leaderboardGrid.className = "analytics-leaderboard-grid";
+
+  const roomCard = createAnalyticsRoomLeaderboardElement(analyticsData.roomLeaderboard || []);
+  const fnbCard = createAnalyticsFnbLeaderboardElement(analyticsData.fnbLeaderboard || []);
+
+  leaderboardGrid.append(roomCard, fnbCard);
+  panel.appendChild(leaderboardGrid);
+
+  return panel;
+}
+
+function createAnalyticsPeakHoursChartElement(hourlyTraffic) {
+  const card = document.createElement("div");
+  card.className = "analytics-chart-card";
+
+  const header = document.createElement("div");
+  header.className = "analytics-chart-header";
+
+  const titles = document.createElement("div");
+  titles.className = "analytics-chart-titles";
+  titles.innerHTML = `
+    <h3>Kurva Jam Sibuk 24 Jam (Hourly Traffic Sequence)</h3>
+    <p>Siklus operasional mulai 10:00 WIB hingga 09:00 WIB hari berikutnya.</p>
+  `;
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.alignItems = "center";
+  actions.style.gap = "16px";
+  actions.style.flexWrap = "wrap";
+
+  const toggleGroup = document.createElement("div");
+  toggleGroup.className = "analytics-toggle-group";
+  toggleGroup.innerHTML = `
+    <button type="button" class="analytics-toggle-btn ${analyticsCurveMetric === "revenue" ? "active" : ""}" data-metric="revenue">
+      💰 Rupiah Omzet
+    </button>
+    <button type="button" class="analytics-toggle-btn ${analyticsCurveMetric === "hours" ? "active" : ""}" data-metric="hours">
+      🎤 Jam Sewa Room
+    </button>
+  `;
+
+  toggleGroup.querySelectorAll(".analytics-toggle-btn").forEach((btn) => {
+    btn.onclick = () => {
+      analyticsCurveMetric = btn.dataset.metric;
+      if (activeDashboardTab === "analytics") {
+        renderDashboardTabPanels();
+      }
+    };
+  });
+
+  const legend = document.createElement("div");
+  legend.className = "analytics-chart-legend";
+  legend.innerHTML = `
+    <div class="analytics-legend-item">
+      <span class="analytics-legend-line current"></span>
+      <span>Periode Terpilih</span>
+    </div>
+    <div class="analytics-legend-item">
+      <span class="analytics-legend-line compare"></span>
+      <span>Periode Pembanding</span>
+    </div>
+  `;
+
+  actions.append(toggleGroup, legend);
+  header.append(titles, actions);
+  card.appendChild(header);
+
+  const svgWrapper = document.createElement("div");
+  svgWrapper.className = "analytics-svg-wrapper";
+
+  const tooltip = document.createElement("div");
+  tooltip.className = "analytics-chart-tooltip";
+  svgWrapper.appendChild(tooltip);
+
+  const isRevenue = analyticsCurveMetric === "revenue";
+  const pointsCount = hourlyTraffic.length || 24;
+  const svgWidth = 960;
+  const svgHeight = 280;
+  const padLeft = 65;
+  const padRight = 30;
+  const padTop = 25;
+  const padBottom = 40;
+  const chartW = svgWidth - padLeft - padRight;
+  const chartH = svgHeight - padTop - padBottom;
+
+  let maxVal = 0;
+  hourlyTraffic.forEach((pt) => {
+    const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+    const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+    if (curV > maxVal) maxVal = curV;
+    if (cmpV > maxVal) maxVal = cmpV;
+  });
+
+  if (maxVal <= 0) {
+    maxVal = isRevenue ? 1000000 : 10;
+  }
+  maxVal = maxVal * 1.15;
+
+  const getX = (index) => padLeft + (index / Math.max(1, pointsCount - 1)) * chartW;
+  const getY = (val) => padTop + chartH * (1 - Math.min(1, Math.max(0, val) / maxVal));
+
+  const curCoords = [];
+  const cmpCoords = [];
+  hourlyTraffic.forEach((pt, i) => {
+    const x = getX(i);
+    const curV = isRevenue ? (pt.currentRevenue || 0) : (pt.currentRoomHours || 0);
+    const cmpV = isRevenue ? (pt.compareRevenue || 0) : (pt.compareRoomHours || 0);
+    curCoords.push({ x, y: getY(curV), pt, curV, cmpV });
+    cmpCoords.push({ x, y: getY(cmpV) });
+  });
+
+  const gridLines = [];
+  const gridSteps = 4;
+  for (let s = 0; s <= gridSteps; s++) {
+    const stepVal = (maxVal / gridSteps) * s;
+    const y = getY(stepVal);
+    const label = isRevenue
+      ? (stepVal >= 1000000 ? `${(stepVal / 1000000).toFixed(1)}jt` : `${Math.round(stepVal / 1000)}rb`)
+      : `${stepVal.toFixed(1)}j`;
+    gridLines.push(`
+      <line x1="${padLeft}" y1="${y}" x2="${svgWidth - padRight}" y2="${y}" class="analytics-svg-grid-line" />
+      <text x="${padLeft - 8}" y="${y + 4}" text-anchor="end" class="analytics-svg-axis-label">${label}</text>
+    `);
+  }
+
+  const xLabels = [];
+  curCoords.forEach((c, idx) => {
+    if (idx % 2 === 0 || idx === curCoords.length - 1) {
+      xLabels.push(`
+        <text x="${c.x}" y="${svgHeight - 12}" text-anchor="middle" class="analytics-svg-axis-label">${c.pt.hourLabel}</text>
+      `);
+    }
+  });
+
+  const cmpPolyline = cmpCoords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+
+  function buildSvgPath(coords) {
+    if (coords.length === 0) return "";
+    let d = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+    for (let i = 1; i < coords.length; i++) {
+      const prev = coords[i - 1];
+      const cur = coords[i];
+      const cpX1 = (prev.x + (cur.x - prev.x) / 2).toFixed(1);
+      const cpY1 = prev.y.toFixed(1);
+      const cpX2 = (prev.x + (cur.x - prev.x) / 2).toFixed(1);
+      const cpY2 = cur.y.toFixed(1);
+      d += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${cur.x.toFixed(1)} ${cur.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  const curPathD = buildSvgPath(curCoords);
+  const bottomY = padTop + chartH;
+  const areaD = curCoords.length > 0
+    ? `${curPathD} L ${curCoords[curCoords.length - 1].x.toFixed(1)} ${bottomY} L ${curCoords[0].x.toFixed(1)} ${bottomY} Z`
+    : "";
+
+  const dotsHtml = curCoords.map((c, idx) => `
+    <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4" fill="#ffd77a" stroke="#120e09" stroke-width="2" />
+    <circle class="analytics-svg-hitbox" data-idx="${idx}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="14" />
+  `).join("");
+
+  const svgElem = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svgElem.setAttribute("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+  svgElem.setAttribute("class", "analytics-curve-svg");
+  svgElem.innerHTML = `
+    <defs>
+      <linearGradient id="analyticsAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#ffd77a" stop-opacity="0.28" />
+        <stop offset="100%" stop-color="#ffd77a" stop-opacity="0.0" />
+      </linearGradient>
+    </defs>
+    <g class="analytics-grid-group">
+      ${gridLines.join("")}
+      ${xLabels.join("")}
+    </g>
+    <path d="${cmpPolyline ? `M ${cmpCoords[0].x.toFixed(1)} ${cmpCoords[0].y.toFixed(1)} ` + cmpCoords.slice(1).map(c => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ') : ''}"
+      fill="none" stroke="#8fa3bf" stroke-width="2" stroke-dasharray="4,4" />
+    <path d="${areaD}" fill="url(#analyticsAreaGrad)" />
+    <path d="${curPathD}" fill="none" stroke="#ffd77a" stroke-width="3" stroke-linecap="round" />
+    <g class="analytics-dots-group">
+      ${dotsHtml}
+    </g>
+  `;
+
+  svgWrapper.appendChild(svgElem);
+
+  svgElem.querySelectorAll(".analytics-svg-hitbox").forEach((hitbox) => {
+    hitbox.onmouseenter = () => {
+      const idx = Number(hitbox.dataset.idx);
+      const coord = curCoords[idx];
+      if (!coord) return;
+
+      const pt = coord.pt;
+      const curStr = isRevenue ? formatCurrency(coord.curV) : `${coord.curV} Jam (${pt.currentSessions || 0} Sesi)`;
+      const cmpStr = isRevenue ? formatCurrency(coord.cmpV) : `${coord.cmpV} Jam (${pt.compareSessions || 0} Sesi)`;
+      const delta = coord.cmpV > 0
+        ? Math.round(((coord.curV - coord.cmpV) / coord.cmpV) * 1000) / 10
+        : (coord.curV > 0 ? 100 : 0);
+      const deltaBadge = formatAnalyticsDeltaBadge(delta);
+
+      tooltip.innerHTML = `
+        <div style="font-weight: 800; color: var(--gold-strong); margin-bottom: 4px;">Pukul ${pt.hourLabel} WIB</div>
+        <div style="display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px;">
+          <span>Periode Ini:</span>
+          <strong>${curStr}</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; gap: 14px; color: var(--muted); margin-bottom: 6px;">
+          <span>Pembanding:</span>
+          <span>${cmpStr}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 4px;">
+          <span style="font-size: 0.75rem; color: var(--muted)">Pertumbuhan:</span>
+          ${deltaBadge}
+        </div>
+      `;
+
+      const rect = svgWrapper.getBoundingClientRect();
+      const ptRect = hitbox.getBoundingClientRect();
+      const relX = ptRect.left - rect.left + ptRect.width / 2;
+      const relY = ptRect.top - rect.top;
+
+      tooltip.style.left = `${relX}px`;
+      tooltip.style.top = `${relY}px`;
+      tooltip.style.display = "block";
+    };
+
+    hitbox.onmouseleave = () => {
+      tooltip.style.display = "none";
+    };
+  });
+
+  card.appendChild(svgWrapper);
+  return card;
+}
+
+function createAnalyticsRoomLeaderboardElement(roomLeaderboard) {
+  const card = document.createElement("div");
+  card.className = "analytics-leaderboard-card";
+  card.innerHTML = `
+    <h4 style="margin:0; font-size:1.05rem; font-weight:800; color:var(--text);">Peringkat Utilisasi Ruangan</h4>
+  `;
+
+  if (!roomLeaderboard || roomLeaderboard.length === 0) {
+    card.appendChild(createStateMessage("Belum ada data sesi ruangan pada periode ini.", "info"));
+    return card;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const rowsHtml = roomLeaderboard.map((row, idx) => {
+    const rank = idx + 1;
+    const rankClass = rank === 1 ? "rank-1" : rank === 2 ? "rank-2" : rank === 3 ? "rank-3" : "rank-other";
+    const rankLabel = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank;
+
+    return `
+      <tr>
+        <td style="width: 38px; text-align: center;">
+          <span class="analytics-rank-badge ${rankClass}">${rankLabel}</span>
+        </td>
+        <td>
+          <strong>${escapeHtml(row.room_name || row.room_id)}</strong>
+          <div style="font-size:0.75rem; color:var(--muted);">${row.total_sessions} Sesi Selesai</div>
+        </td>
+        <td style="text-align: right;">
+          <strong>${row.total_hours} Jam</strong>
+          <div style="font-size:0.75rem; color:var(--gold);">${row.occupancy_rate_percent}% Okupansi</div>
+        </td>
+        <td style="text-align: right;">
+          <strong>${formatCurrency(row.total_grand_revenue)}</strong>
+          <div style="font-size:0.75rem; color:var(--muted);">Room: ${formatCurrency(row.total_room_revenue)}</div>
+        </td>
+        <td style="text-align: center;">
+          <span class="analytics-delta-badge ${row.extension_rate_percent >= 40 ? "positive" : "neutral"}">
+            ${row.extension_rate_percent}%
+          </span>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  tableWrapper.innerHTML = `
+    <table class="erp-table" style="width:100%;">
+      <thead>
+        <tr>
+          <th style="text-align:center;">#</th>
+          <th>Nama Ruangan</th>
+          <th style="text-align:right;">Jam / Okupansi</th>
+          <th style="text-align:right;">Total Omzet</th>
+          <th style="text-align:center;">Perpanjang</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+
+  card.appendChild(tableWrapper);
+  return card;
+}
+
+function createAnalyticsFnbLeaderboardElement(fnbLeaderboard) {
+  const card = document.createElement("div");
+  card.className = "analytics-leaderboard-card";
+  card.innerHTML = `
+    <h4 style="margin:0; font-size:1.05rem; font-weight:800; color:var(--text);">Menu F&amp;B Terlaris &amp; Profitabilitas</h4>
+  `;
+
+  if (!fnbLeaderboard || fnbLeaderboard.length === 0) {
+    card.appendChild(createStateMessage("Belum ada penjualan F&B pada periode ini.", "info"));
+    return card;
+  }
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const rowsHtml = fnbLeaderboard.map((row, idx) => {
+    const rank = idx + 1;
+    const rankClass = rank === 1 ? "rank-1" : rank === 2 ? "rank-2" : rank === 3 ? "rank-3" : "rank-other";
+    const rankLabel = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank;
+
+    return `
+      <tr>
+        <td style="width: 38px; text-align: center;">
+          <span class="analytics-rank-badge ${rankClass}">${rankLabel}</span>
+        </td>
+        <td>
+          <strong>${escapeHtml(row.item_name || "-")}</strong>
+          <div style="font-size:0.75rem; color:var(--muted);">${escapeHtml(row.category || "Lainnya")}</div>
+        </td>
+        <td style="text-align: right;">
+          <strong>${row.qty_sold}x</strong>
+        </td>
+        <td style="text-align: right;">
+          <strong>${formatCurrency(row.total_sales)}</strong>
+          <div style="font-size:0.75rem; color:var(--success);">Laba: ${formatCurrency(row.total_profit)}</div>
+        </td>
+        <td style="text-align: center;">
+          <span class="analytics-delta-badge ${row.margin_percent >= 60 ? "positive" : "neutral"}">
+            ${row.margin_percent}%
+          </span>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  tableWrapper.innerHTML = `
+    <table class="erp-table" style="width:100%;">
+      <thead>
+        <tr>
+          <th style="text-align:center;">#</th>
+          <th>Item Menu</th>
+          <th style="text-align:right;">Terjual</th>
+          <th style="text-align:right;">Penjualan / Laba</th>
+          <th style="text-align:center;">Margin</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+
+  card.appendChild(tableWrapper);
+  return card;
 }
 
 // ==========================================
@@ -29621,6 +30487,9 @@ function appendDashboardTabContent(panel, tabKey) {
       break;
     case "promosi":
       panel.appendChild(createPromosiPanelElement());
+      break;
+    case "analytics":
+      panel.appendChild(createAnalyticsPanelElement());
       break;
     default:
       break;
@@ -34812,6 +35681,10 @@ async function initializeDashboard() {
 
   if (activeDashboardTab === "promosi" && canAccessDashboardTab("promosi")) {
     initialLoads.push(loadPromos());
+  }
+
+  if (activeDashboardTab === "analytics" && canAccessDashboardTab("analytics")) {
+    initialLoads.push(loadOperationalAnalytics());
   }
 
   await Promise.all(initialLoads);

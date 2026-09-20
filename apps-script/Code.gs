@@ -987,6 +987,10 @@ function doGet(e) {
       return jsonResponse(getExpiredRoomRecoveryList_(e.parameter));
     }
 
+    if (action === "getOperationalAnalytics") {
+      return jsonResponse(getOperationalAnalytics_(e.parameter));
+    }
+
     return jsonResponse({
       ok: false,
       success: false,
@@ -19125,5 +19129,170 @@ function initializeStockFromJul31_(payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function getOperationalAnalytics_(params) {
+  params = params || {};
+  var period = String(params.period || "today").trim();
+  var startDate = String(params.start_date || "").trim();
+  var endDate = String(params.end_date || "").trim();
+  var compareTo = String(params.compare_to || "previous_period").trim();
+  var roomFilter = String(params.room_filter || "all").trim();
+
+  var curResult = getTransactionsByPeriod_(period, startDate, endDate);
+  var curTrx = (curResult && curResult.transactions) ? curResult.transactions : [];
+
+  var rooms = readSheetAsObjects_("Rooms") || [];
+  var totalRoomsCount = Math.max(1, rooms.length || 1);
+  var operationalHoursPerDay = 18;
+  var durationDays = (curResult && curResult.daysCount) ? curResult.daysCount : 1;
+  var availableRoomHours = totalRoomsCount * operationalHoursPerDay * durationDays;
+
+  // Filter by room if specified
+  if (roomFilter && roomFilter !== "all") {
+    curTrx = curTrx.filter(function(t) { return t.room_id === roomFilter; });
+  }
+
+  var curRevenue = 0;
+  var curRoomRev = 0;
+  var curFnbRev = 0;
+  var curLcRev = 0;
+  var curDiscounts = 0;
+  var curCash = 0;
+  var curTransfer = 0;
+  var curExtSessions = 0;
+  var curLcSessions = 0;
+
+  var hourlyMap = {};
+  for (var h = 0; h < 24; h++) {
+    hourlyMap[h] = { hour: h, revenue: 0, hours: 0, sessions: 0 };
+  }
+
+  var roomMap = {};
+
+  curTrx.forEach(function(t) {
+    if (String(t.payment_status || "").toLowerCase() === "paid") {
+      var gTotal = Number(t.grand_total || 0);
+      var rTotal = Number(t.room_total || 0);
+      var fTotal = Number(t.fnb_total || 0);
+      var lTotal = Number(t.lc_total || 0);
+      var disc = Number(t.promo_discount || 0) + Number(t.manual_discount || 0) + Number(t.room_discount_amount || 0);
+      var dur = Number(t.duration_minutes || 0);
+
+      curRevenue += gTotal;
+      curRoomRev += rTotal;
+      curFnbRev += fTotal;
+      curLcRev += lTotal;
+      curDiscounts += disc;
+      curCash += Number(t.cash_amount || 0);
+      curTransfer += Number(t.transfer_amount || 0);
+
+      if (dur > 120) curExtSessions++;
+      if (lTotal > 0) curLcSessions++;
+
+      // Hourly bin
+      var sTime = t.start_time ? new Date(t.start_time) : new Date();
+      var sHour = sTime.getHours();
+      if (hourlyMap[sHour]) {
+        hourlyMap[sHour].revenue += gTotal;
+        hourlyMap[sHour].hours += (dur / 60);
+        hourlyMap[sHour].sessions += 1;
+      }
+
+      // Room bin
+      var rId = t.room_id || "unknown";
+      if (!roomMap[rId]) {
+        roomMap[rId] = {
+          room_id: rId,
+          room_name: t.room_name || rId,
+          total_sessions: 0,
+          total_hours: 0,
+          total_room_revenue: 0,
+          total_grand_revenue: 0,
+          extended_sessions: 0
+        };
+      }
+      roomMap[rId].total_sessions++;
+      roomMap[rId].total_hours += (dur / 60);
+      roomMap[rId].total_room_revenue += rTotal;
+      roomMap[rId].total_grand_revenue += gTotal;
+      if (dur > 120) roomMap[rId].extended_sessions++;
+    }
+  });
+
+  var curTrxCount = curTrx.filter(function(t) { return String(t.payment_status || "").toLowerCase() === "paid"; }).length;
+  var curRevPah = availableRoomHours > 0 ? Math.round(curRoomRev / availableRoomHours) : 0;
+  var curAov = curTrxCount > 0 ? Math.round(curRevenue / curTrxCount) : 0;
+  var curExtRate = curTrxCount > 0 ? Math.round((curExtSessions / curTrxCount) * 1000) / 10 : 0;
+  var curLcRate = curTrxCount > 0 ? Math.round((curLcSessions / curTrxCount) * 1000) / 10 : 0;
+
+  var hourlySequence = [];
+  for (var i = 0; i < 24; i++) {
+    var hourIndex = (10 + i) % 24;
+    var bin = hourlyMap[hourIndex] || { revenue: 0, hours: 0, sessions: 0 };
+    hourlySequence.push({
+      hour: hourIndex,
+      hourLabel: (hourIndex < 10 ? "0" : "") + hourIndex + ":00",
+      currentRevenue: bin.revenue,
+      compareRevenue: 0,
+      currentRoomHours: Math.round(bin.hours * 10) / 10,
+      compareRoomHours: 0,
+      currentSessions: bin.sessions,
+      compareSessions: 0
+    });
+  }
+
+  var roomLeaderboard = Object.keys(roomMap).map(function(k) {
+    var r = roomMap[k];
+    var maxPossible = operationalHoursPerDay * durationDays;
+    return {
+      room_id: r.room_id,
+      room_name: r.room_name,
+      total_sessions: r.total_sessions,
+      total_hours: Math.round(r.total_hours * 10) / 10,
+      occupancy_rate_percent: maxPossible > 0 ? Math.min(100, Math.round((r.total_hours / maxPossible) * 1000) / 10) : 0,
+      total_room_revenue: r.total_room_revenue,
+      total_grand_revenue: r.total_grand_revenue,
+      extension_rate_percent: r.total_sessions > 0 ? Math.round((r.extended_sessions / r.total_sessions) * 1000) / 10 : 0
+    };
+  }).sort(function(a, b) { return b.total_hours - a.total_hours; });
+
+  return {
+    ok: true,
+    success: true,
+    filters: {
+      period: period,
+      startDate: (curResult && curResult.startDate) ? curResult.startDate : "",
+      endDate: (curResult && curResult.endDate) ? curResult.endDate : "",
+      compareTo: compareTo,
+      compareStartDate: "",
+      compareEndDate: "",
+      roomFilter: roomFilter,
+      durationDays: durationDays
+    },
+    kpi: {
+      totalRevenue: { current: curRevenue, compare: 0, deltaPercent: 0 },
+      revPah: { current: curRevPah, compare: 0, deltaPercent: 0, availableHours: availableRoomHours },
+      avgSpendPerRoom: { current: curAov, compare: 0, deltaPercent: 0 },
+      fnbGrossMargin: { currentPercent: 65.0, grossSales: curFnbRev, grossProfit: curFnbRev * 0.65, totalHpp: curFnbRev * 0.35 },
+      roomExtensionRate: { currentPercent: curExtRate, comparePercent: 0, deltaPercent: 0, extendedSessions: curExtSessions, totalSessions: curTrxCount },
+      lcAttachmentRate: { currentPercent: curLcRate, comparePercent: 0, deltaPercent: 0, lcSessions: curLcSessions, totalSessions: curTrxCount },
+      discountLeakage: { current: curDiscounts, compare: 0, deltaPercent: 0 }
+    },
+    revenueComposition: {
+      roomTotal: curRoomRev,
+      fnbTotal: curFnbRev,
+      lcTotal: curLcRev,
+      discounts: curDiscounts,
+      netRevenue: curRevenue
+    },
+    paymentBreakdown: {
+      cash: curCash,
+      transfer: curTransfer
+    },
+    hourlyTraffic: hourlySequence,
+    roomLeaderboard: roomLeaderboard,
+    fnbLeaderboard: []
+  };
 }
 

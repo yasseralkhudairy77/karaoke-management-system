@@ -13,6 +13,7 @@ const mirrorController = require('../controllers/mirrorController');
 const auditController = require('../controllers/auditController');
 const expensesController = require('../controllers/expensesController');
 const backupController = require('../controllers/backupController');
+const analyticsController = require('../controllers/analyticsController');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // Helper to handle Apps Script GET actions
@@ -111,6 +112,8 @@ async function handleGetAction(action, req, res) {
       return backupController.getDatabaseStatus(req, res);
     case 'exportDatabaseBackup':
       return backupController.exportDatabase(req, res);
+    case 'getOperationalAnalytics':
+      return analyticsController.getOperationalAnalytics(req, res);
     default:
       return errorResponse(res, `Aksi GET tidak dikenal: ${action}`, 'UNKNOWN_ACTION');
   }
@@ -162,6 +165,7 @@ async function handlePostAction(action, req, res, payload) {
     case 'validatePromoCode':
     case 'getApiCapabilities':
     case 'getOwnerMirrorSnapshot':
+    case 'getOperationalAnalytics':
       req.query = { ...payload, ...req.query, action };
       return handleGetAction(action, req, res);
     case 'prepareRoomSession':
