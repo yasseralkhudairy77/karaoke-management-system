@@ -67,7 +67,11 @@ async function getOperationalAnalytics(req, res) {
     const { compareStartDate, compareEndDate, durationDays } = getComparisonRange(startDate, endDate, compareTo);
 
     // 1. Total rooms for RevPAH calculation
-    const roomsRes = await db.query(`SELECT room_id, room_name, capacity, rate_per_hour FROM rooms WHERE status <> 'disabled'`);
+    const roomsRes = await db.query(`
+      SELECT room_id, room_name, rate_per_hour 
+      FROM rooms 
+      WHERE room_id <> 'FNB-GENERAL'
+    `);
     const totalRoomsCount = Math.max(1, roomsRes.rowCount || 1);
     const operationalHoursPerDay = 18; // 10:00 to 04:00 standard operational window
     const availableRoomHours = totalRoomsCount * operationalHoursPerDay * durationDays;
@@ -81,7 +85,7 @@ async function getOperationalAnalytics(req, res) {
         COALESCE(SUM(fnb_total), 0) AS fnb_revenue,
         COALESCE(SUM(lc_total), 0) AS lc_revenue,
         COALESCE(SUM(duration_minutes), 0) AS total_room_minutes,
-        COALESCE(SUM(promo_discount + manual_discount + room_discount_amount), 0) AS total_discounts,
+        COALESCE(SUM(COALESCE(promo_discount, 0) + COALESCE(manual_discount, 0) + COALESCE(room_discount_amount, 0)), 0) AS total_discounts,
         COALESCE(SUM(cash_amount), 0) AS total_cash,
         COALESCE(SUM(transfer_amount), 0) AS total_transfer,
         COUNT(CASE WHEN duration_minutes > 120 THEN 1 END) AS extended_sessions_count,
@@ -104,7 +108,7 @@ async function getOperationalAnalytics(req, res) {
         COALESCE(SUM(fnb_total), 0) AS fnb_revenue,
         COALESCE(SUM(lc_total), 0) AS lc_revenue,
         COALESCE(SUM(duration_minutes), 0) AS total_room_minutes,
-        COALESCE(SUM(promo_discount + manual_discount + room_discount_amount), 0) AS total_discounts,
+        COALESCE(SUM(COALESCE(promo_discount, 0) + COALESCE(manual_discount, 0) + COALESCE(room_discount_amount, 0)), 0) AS total_discounts,
         COUNT(CASE WHEN duration_minutes > 120 THEN 1 END) AS extended_sessions_count,
         COUNT(CASE WHEN lc_total > 0 THEN 1 END) AS lc_sessions_count
       FROM transactions
@@ -119,12 +123,13 @@ async function getOperationalAnalytics(req, res) {
     // 4. F&B Margin & HPP calculation for Current Period
     const fnbMarginSql = `
       SELECT
-        COALESCE(SUM(oi.qty * oi.price), 0) AS fnb_gross_sales,
-        COALESCE(SUM(oi.qty * COALESCE(m.hpp, 0)), 0) AS fnb_total_hpp
+        COALESCE(SUM(oi.quantity * oi.price), 0) AS fnb_gross_sales,
+        COALESCE(SUM(oi.quantity * COALESCE(m.hpp, 0)), 0) AS fnb_total_hpp
       FROM fnb_order_items oi
       JOIN fnb_orders fo ON oi.order_id = fo.order_id
-      LEFT JOIN menu m ON oi.item_id = m.menu_id
+      LEFT JOIN menu m ON oi.menu_id = m.menu_id
       WHERE fo.order_status = 'billed'
+        AND (oi.is_voided IS FALSE OR oi.is_voided IS NULL)
         AND fo.created_at >= ($1::date + TIME '10:00:00') AT TIME ZONE 'Asia/Jakarta'
         AND fo.created_at < (($2::date + 1) + TIME '10:00:00') AT TIME ZONE 'Asia/Jakarta'
     `;
@@ -137,7 +142,7 @@ async function getOperationalAnalytics(req, res) {
     // 5. Hourly Peak Load Curve (24 Hours: 10:00 to 09:00 next day)
     const hourlyCurSql = `
       SELECT
-        EXTRACT(HOUR FROM (start_time AT TIME ZONE 'Asia/Jakarta'))::int AS hour_wib,
+        EXTRACT(HOUR FROM (COALESCE(start_time, created_at) AT TIME ZONE 'Asia/Jakarta'))::int AS hour_wib,
         COUNT(*) AS session_count,
         COALESCE(SUM(grand_total), 0) AS hourly_revenue,
         COALESCE(SUM(duration_minutes), 0) / 60.0 AS hourly_room_hours
@@ -152,7 +157,7 @@ async function getOperationalAnalytics(req, res) {
 
     const hourlyCmpSql = `
       SELECT
-        EXTRACT(HOUR FROM (start_time AT TIME ZONE 'Asia/Jakarta'))::int AS hour_wib,
+        EXTRACT(HOUR FROM (COALESCE(start_time, created_at) AT TIME ZONE 'Asia/Jakarta'))::int AS hour_wib,
         COUNT(*) AS session_count,
         COALESCE(SUM(grand_total), 0) AS hourly_revenue,
         COALESCE(SUM(duration_minutes), 0) / 60.0 AS hourly_room_hours
@@ -225,19 +230,20 @@ async function getOperationalAnalytics(req, res) {
     // 7. Top F&B Best Sellers
     const fnbLeaderboardSql = `
       SELECT
-        oi.item_id,
-        oi.item_name,
-        COALESCE(m.category, 'Lainnya') AS category,
-        SUM(oi.qty) AS qty_sold,
-        SUM(oi.qty * oi.price) AS total_sales,
-        SUM(oi.qty * COALESCE(m.hpp, 0)) AS total_hpp
+        oi.menu_id AS item_id,
+        oi.menu_name AS item_name,
+        COALESCE(m.category, oi.category, 'Lainnya') AS category,
+        SUM(oi.quantity) AS qty_sold,
+        SUM(oi.quantity * oi.price) AS total_sales,
+        SUM(oi.quantity * COALESCE(m.hpp, 0)) AS total_hpp
       FROM fnb_order_items oi
       JOIN fnb_orders fo ON oi.order_id = fo.order_id
-      LEFT JOIN menu m ON oi.item_id = m.menu_id
+      LEFT JOIN menu m ON oi.menu_id = m.menu_id
       WHERE fo.order_status = 'billed'
+        AND (oi.is_voided IS FALSE OR oi.is_voided IS NULL)
         AND fo.created_at >= ($1::date + TIME '10:00:00') AT TIME ZONE 'Asia/Jakarta'
         AND fo.created_at < (($2::date + 1) + TIME '10:00:00') AT TIME ZONE 'Asia/Jakarta'
-      GROUP BY oi.item_id, oi.item_name, m.category
+      GROUP BY oi.menu_id, oi.menu_name, m.category, oi.category
       ORDER BY total_sales DESC
       LIMIT 10
     `;

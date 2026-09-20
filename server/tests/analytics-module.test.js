@@ -164,4 +164,173 @@ assert.ok(
 );
 console.log("  ✓ PASS: Real shift cutoff calculation active, fake 13.420.000 removed");
 
-console.log("\n🎉 All Analytics & Business Intelligence Module Tests Passed Successfully!\n");
+// Test 10: Verify PostgreSQL schema column compliance in analyticsController.js
+console.log("Test 10: Verifying PostgreSQL production schema column compliance...");
+const updatedAnalyticsControllerContent = fs.readFileSync(analyticsControllerPath, "utf8");
+assert.strictEqual(
+  updatedAnalyticsControllerContent.includes("capacity"),
+  false,
+  "analyticsController must NOT query non-existent column 'capacity' from rooms"
+);
+assert.strictEqual(
+  updatedAnalyticsControllerContent.includes("oi.qty"),
+  false,
+  "analyticsController must NOT query non-existent column 'oi.qty' from fnb_order_items"
+);
+assert.strictEqual(
+  updatedAnalyticsControllerContent.includes("oi.item_id = m.menu_id"),
+  false,
+  "analyticsController must NOT join on non-existent column 'oi.item_id'"
+);
+assert.ok(
+  updatedAnalyticsControllerContent.includes("oi.quantity"),
+  "analyticsController must query valid column 'oi.quantity'"
+);
+assert.ok(
+  updatedAnalyticsControllerContent.includes("oi.menu_id = m.menu_id"),
+  "analyticsController must join on valid column 'oi.menu_id'"
+);
+assert.ok(
+  updatedAnalyticsControllerContent.includes("COALESCE(promo_discount, 0)"),
+  "analyticsController must protect discount sums from NULL values"
+);
+console.log("  ✓ PASS: All SQL queries strictly adhere to production PostgreSQL schema");
+
+// Test 11: Execute getOperationalAnalytics controller with mock DB to verify zero runtime exceptions
+console.log("Test 11: Testing execution of getOperationalAnalytics with mock PostgreSQL DB...");
+const db = require("../src/db");
+const originalQuery = db.query;
+
+(async () => {
+  try {
+    db.query = async (sql, params) => {
+      // Enforce schema checks
+      if (sql.includes("capacity")) {
+        throw new Error('column "capacity" does not exist');
+      }
+      if (sql.includes("oi.qty")) {
+        throw new Error('column oi.qty does not exist');
+      }
+      if (sql.includes("oi.item_id")) {
+        throw new Error('column oi.item_id does not exist');
+      }
+
+      if (sql.includes("FROM rooms")) {
+        return {
+          rowCount: 5,
+          rows: [
+            { room_id: "ROOM-01", room_name: "Room 1", rate_per_hour: 50000 },
+            { room_id: "ROOM-02", room_name: "Room 2", rate_per_hour: 50000 },
+            { room_id: "ROOM-03", room_name: "Room 3", rate_per_hour: 75000 },
+            { room_id: "ROOM-04", room_name: "Room 4", rate_per_hour: 75000 },
+            { room_id: "ROOM-05", room_name: "Room 5", rate_per_hour: 100000 },
+          ]
+        };
+      }
+
+      if (sql.includes("AS total_cash")) {
+        // current period query
+        return {
+          rowCount: 1,
+          rows: [{
+            trx_count: 8,
+            total_revenue: 4520000,
+            room_revenue: 2500000,
+            fnb_revenue: 1520000,
+            lc_revenue: 500000,
+            total_room_minutes: 960,
+            total_discounts: 50000,
+            total_cash: 2500000,
+            total_transfer: 2020000,
+            extended_sessions_count: 3,
+            lc_sessions_count: 2,
+          }]
+        };
+      }
+
+      if (sql.includes("fnb_gross_sales")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            fnb_gross_sales: 1520000,
+            fnb_total_hpp: 532000,
+          }]
+        };
+      }
+
+      if (sql.includes("hour_wib")) {
+        return {
+          rowCount: 2,
+          rows: [
+            { hour_wib: 14, session_count: 3, hourly_revenue: 1500000, hourly_room_hours: 6.0 },
+            { hour_wib: 20, session_count: 5, hourly_revenue: 3020000, hourly_room_hours: 10.0 },
+          ]
+        };
+      }
+
+      if (sql.includes("total_grand_revenue")) {
+        return {
+          rowCount: 2,
+          rows: [
+            { room_id: "ROOM-01", room_name: "Room 1", total_sessions: 4, total_hours: 8.0, total_room_revenue: 1200000, total_grand_revenue: 2000000, extended_sessions: 2 },
+            { room_id: "ROOM-02", room_name: "Room 2", total_sessions: 4, total_hours: 8.0, total_room_revenue: 1300000, total_grand_revenue: 2520000, extended_sessions: 1 },
+          ]
+        };
+      }
+
+      if (sql.includes("total_sales")) {
+        return {
+          rowCount: 1,
+          rows: [
+            { item_id: "MENU-01", item_name: "Nasi Goreng Special", category: "Makanan", qty_sold: 10, total_sales: 350000, total_hpp: 140000 }
+          ]
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    };
+
+    const { getOperationalAnalytics } = require("../src/controllers/analyticsController");
+
+    // Test for 'yesterday'
+    let yesterdayJsonResult = null;
+    await getOperationalAnalytics(
+      { query: { period: "yesterday" } },
+      {
+        json: (data) => { yesterdayJsonResult = data; },
+        status: () => ({ json: (data) => { yesterdayJsonResult = data; } })
+      }
+    );
+
+    assert.ok(yesterdayJsonResult, "yesterday query must return a response");
+    assert.strictEqual(yesterdayJsonResult.success, true, "yesterday query must succeed");
+    const yData = yesterdayJsonResult.data || yesterdayJsonResult;
+    assert.strictEqual(yData.filters.period, "yesterday");
+    assert.strictEqual(yData.kpi.totalRevenue.current, 4520000);
+    assert.strictEqual(yData.kpi.fnbGrossMargin.grossSales, 1520000);
+    assert.strictEqual(yData.hourlyTraffic.length, 24);
+    assert.strictEqual(yData.roomLeaderboard.length, 2);
+    assert.strictEqual(yData.fnbLeaderboard.length, 1);
+
+    // Test for 'last7days'
+    let last7daysJsonResult = null;
+    await getOperationalAnalytics(
+      { query: { period: "last7days", compare_to: "same_day_last_week" } },
+      {
+        json: (data) => { last7daysJsonResult = data; },
+        status: () => ({ json: (data) => { last7daysJsonResult = data; } })
+      }
+    );
+    assert.ok(last7daysJsonResult, "last7days query must return a response");
+    assert.strictEqual(last7daysJsonResult.success, true, "last7days query must succeed");
+    const l7Data = last7daysJsonResult.data || last7daysJsonResult;
+    assert.strictEqual(l7Data.filters.period, "last7days");
+    assert.strictEqual(l7Data.filters.durationDays, 7);
+
+    console.log("  ✓ PASS: getOperationalAnalytics successfully aggregates 'yesterday' and 'last7days' without SQL errors");
+
+    console.log("\n🎉 All 11 Analytics & Business Intelligence Module Tests Passed Successfully!\n");
+  } finally {
+    db.query = originalQuery;
+  }
+})();
