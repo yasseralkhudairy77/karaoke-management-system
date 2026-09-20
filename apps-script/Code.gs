@@ -7401,10 +7401,14 @@ function ensurePromoMasterSheet_() {
 
 function getLcMasterList_() {
   ensureLcMasterSheet_();
+  var lcs = readSheetAsObjects_("LcMaster") || [];
+  lcs.sort(function (a, b) {
+    return String(a.lc_name || "").localeCompare(String(b.lc_name || ""), "id", { sensitivity: "base" });
+  });
   return {
     ok: true,
     success: true,
-    lcs: readSheetAsObjects_("LcMaster"),
+    lcs: lcs,
   };
 }
 

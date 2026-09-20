@@ -54,7 +54,7 @@ function getLcReportDateRange(query = {}) {
 
 async function getLcMasterList(req, res) {
   try {
-    const result = await db.query('SELECT * FROM lc_master ORDER BY lc_name ASC');
+    const result = await db.query('SELECT * FROM lc_master ORDER BY LOWER(TRIM(lc_name)) ASC');
     const lcs = result.rows.map(row => ({
       lc_id: row.lc_id,
       lc_name: row.lc_name,
@@ -207,7 +207,7 @@ async function getLcWorkReports(req, res) {
     await ensureUpfrontPaymentSchema();
     const { startDate, endDate } = getLcReportDateRange(req.query);
     const [lcsRes, logsRes, bonusRes] = await Promise.all([
-      db.query('SELECT * FROM lc_master ORDER BY lc_name ASC'),
+      db.query('SELECT * FROM lc_master ORDER BY LOWER(TRIM(lc_name)) ASC'),
       db.query(`
         SELECT
           lwl.log_id, lwl.session_id, lwl.room_id, lwl.room_name, lwl.lc_id, lwl.lc_name,
@@ -395,7 +395,7 @@ async function getLcFinanceSummary(req, res) {
       FROM lc_work_logs
       WHERE status <> 'cancelled'
       GROUP BY lc_id, lc_name
-      ORDER BY lc_name ASC
+      ORDER BY LOWER(TRIM(lc_name)) ASC
     `);
     const advanceRes = await db.query(`
       SELECT lc_id, COALESCE(SUM(amount), 0) AS advance_total

@@ -26147,7 +26147,9 @@ async function loadLcs(force = false) {
     if (!data || data.success !== true || !Array.isArray(data.lcs)) {
       throw lastError || new Error("Daftar LC gagal dimuat.");
     }
-    lcs = data.lcs;
+    lcs = (data.lcs || []).slice().sort((a, b) =>
+      String(a.lc_name || "").localeCompare(String(b.lc_name || ""), "id", { sensitivity: "base" })
+    );
   } catch (error) {
     console.error("Error loading LCs:", error);
     lcLoadError = error.message || "Daftar LC gagal dimuat.";
@@ -29985,6 +29987,12 @@ async function saveMoveRoom(sourceRoomId) {
 
 let pendingLcSelections = {};
 let pendingLcDurations = {};
+let lcSelectionSearchQuery = "";
+
+function formatPersonName(name) {
+  if (!name) return "";
+  return String(name).trim().replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
 
 async function showLcSelection(roomId) {
   lcSelectionRoomId = roomId;
@@ -29993,6 +30001,7 @@ async function showLcSelection(roomId) {
   moveRoomSourceId = "";
   pendingLcSelections = {};
   pendingLcDurations = {};
+  lcSelectionSearchQuery = "";
   const room = rooms.find(r => r.room_id === roomId);
   if (room) {
     const assignmentsById = new Map(parseLcAssignmentsFromRoom(room).map((assignment) => [assignment.lc_id, assignment.duration_minutes]));
@@ -30016,6 +30025,7 @@ function cancelLcSelection() {
   lcSelectionRoomId = "";
   pendingLcSelections = {};
   pendingLcDurations = {};
+  lcSelectionSearchQuery = "";
   renderRooms();
 }
 
@@ -30027,83 +30037,36 @@ function createSelectLcModalOverlay(room) {
   title.className = "lc-selection-title";
   title.textContent = `Pilih LC untuk ${room.room_name}`;
 
-  const lcIdsRaw = String(room.lc_ids || "").trim();
-  const allIds = lcIdsRaw.split(",").map(id => id.trim()).filter(Boolean);
-  const bookedCount = allIds.length;
   const selectedCount = Object.keys(pendingLcSelections).filter(k => pendingLcSelections[k]).length;
 
   const counter = document.createElement("p");
   counter.className = "lc-selection-counter";
   counter.textContent = `Terpilih: ${selectedCount} orang`;
 
-  const availableLcs = lcs.filter((lc) => {
-    const status = String(lc.status || "").trim().toLowerCase();
-    const availability = String(lc.availability || "available").trim().toLowerCase();
-    return status === "active" && (availability === "available" || pendingLcSelections[lc.lc_id]);
-  });
+  const availableLcs = lcs
+    .filter((lc) => {
+      const status = String(lc.status || "").trim().toLowerCase();
+      const availability = String(lc.availability || "available").trim().toLowerCase();
+      return status === "active" && (availability === "available" || pendingLcSelections[lc.lc_id]);
+    })
+    .sort((a, b) =>
+      String(a.lc_name || "").localeCompare(String(b.lc_name || ""), "id", { sensitivity: "base" })
+    );
+
+  const searchContainer = document.createElement("div");
+  searchContainer.className = "lc-selection-search-container";
+
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.className = "lc-selection-search-input";
+  searchInput.placeholder = "🔍 Cari nama LC (A-Z)...";
+  searchInput.value = lcSelectionSearchQuery;
+  searchInput.autocomplete = "off";
+  searchInput.spellcheck = false;
+  searchContainer.appendChild(searchInput);
 
   const listContainer = document.createElement("div");
   listContainer.className = "lc-selection-list";
-
-  if (availableLcs.length === 0) {
-    const noLcMsg = document.createElement("p");
-    noLcMsg.className = "lc-selection-empty";
-    noLcMsg.textContent = lcLoadError
-      ? "Daftar LC gagal dimuat. Tekan Muat Ulang."
-      : "Tidak ada LC yang tersedia saat ini.";
-    listContainer.appendChild(noLcMsg);
-
-    if (lcLoadError) {
-      const reloadButton = document.createElement("button");
-      reloadButton.className = "room-button room-button-secondary";
-      reloadButton.type = "button";
-      reloadButton.dataset.action = "reload-lc-selection";
-      reloadButton.textContent = isLoadingLcs ? "Memuat..." : "Muat Ulang";
-      reloadButton.disabled = isLoadingLcs;
-      listContainer.appendChild(reloadButton);
-    }
-  } else {
-    availableLcs.forEach(lc => {
-      const itemLabel = document.createElement("label");
-      itemLabel.className = "lc-selection-item";
-
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.value = lc.lc_id;
-      cb.checked = !!pendingLcSelections[lc.lc_id];
-      cb.dataset.action = "toggle-lc-checkbox";
-      cb.onchange = () => {
-        if (cb.checked) {
-          pendingLcSelections[lc.lc_id] = true;
-          pendingLcDurations[lc.lc_id] = pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room);
-        } else {
-          delete pendingLcSelections[lc.lc_id];
-          delete pendingLcDurations[lc.lc_id];
-        }
-        renderRooms();
-      };
-
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = lc.lc_name;
-
-      const rateSpan = document.createElement("span");
-      rateSpan.className = "lc-selection-rate";
-      rateSpan.textContent = currencyFormatter.format(Number(lc.rate_per_room) || 175000);
-
-      itemLabel.append(cb, nameSpan, rateSpan);
-
-      if (cb.checked) {
-        const durationInput = createLcDurationSelectElement(
-          room,
-          lc.lc_id,
-          pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room)
-        );
-        itemLabel.appendChild(durationInput);
-      }
-
-      listContainer.appendChild(itemLabel);
-    });
-  }
 
   const actions = document.createElement("div");
   actions.className = "lc-selection-actions";
@@ -30124,7 +30087,122 @@ function createSelectLcModalOverlay(room) {
   cancelBtn.disabled = isSavingSessionLcs;
 
   actions.append(saveBtn, cancelBtn);
-  panel.append(title, counter, listContainer, actions);
+
+  if (availableLcs.length === 0) {
+    const noLcMsg = document.createElement("p");
+    noLcMsg.className = "lc-selection-empty";
+    noLcMsg.textContent = lcLoadError
+      ? "Daftar LC gagal dimuat. Tekan Muat Ulang."
+      : "Tidak ada LC yang tersedia saat ini.";
+    listContainer.appendChild(noLcMsg);
+
+    if (lcLoadError) {
+      const reloadButton = document.createElement("button");
+      reloadButton.className = "room-button room-button-secondary";
+      reloadButton.type = "button";
+      reloadButton.dataset.action = "reload-lc-selection";
+      reloadButton.textContent = isLoadingLcs ? "Memuat..." : "Muat Ulang";
+      reloadButton.disabled = isLoadingLcs;
+      listContainer.appendChild(reloadButton);
+    }
+    panel.append(title, counter, listContainer, actions);
+  } else {
+    availableLcs.forEach((lc) => {
+      const itemLabel = document.createElement("label");
+      itemLabel.className = "lc-selection-item";
+      itemLabel.dataset.lcName = String(lc.lc_name || "");
+      itemLabel.dataset.lcId = String(lc.lc_id || "");
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = lc.lc_id;
+      cb.checked = !!pendingLcSelections[lc.lc_id];
+      cb.dataset.action = "toggle-lc-checkbox";
+      cb.onchange = () => {
+        if (cb.checked) {
+          pendingLcSelections[lc.lc_id] = true;
+          pendingLcDurations[lc.lc_id] = pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room);
+          if (!itemLabel.querySelector(".lc-selection-duration-input")) {
+            const durationInput = createLcDurationSelectElement(
+              room,
+              lc.lc_id,
+              pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room)
+            );
+            itemLabel.appendChild(durationInput);
+          }
+        } else {
+          delete pendingLcSelections[lc.lc_id];
+          delete pendingLcDurations[lc.lc_id];
+          const existingDuration = itemLabel.querySelector(".lc-selection-duration-input");
+          if (existingDuration) {
+            existingDuration.remove();
+          }
+        }
+        const currentSelectedCount = Object.keys(pendingLcSelections).filter((k) => pendingLcSelections[k]).length;
+        counter.textContent = `Terpilih: ${currentSelectedCount} orang`;
+        saveBtn.disabled = isSavingSessionLcs || currentSelectedCount === 0;
+      };
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "lc-selection-name";
+      nameSpan.textContent = formatPersonName(lc.lc_name);
+
+      const rateSpan = document.createElement("span");
+      rateSpan.className = "lc-selection-rate";
+      rateSpan.textContent = currencyFormatter.format(Number(lc.rate_per_room) || 175000);
+
+      itemLabel.append(cb, nameSpan, rateSpan);
+
+      if (cb.checked) {
+        const durationInput = createLcDurationSelectElement(
+          room,
+          lc.lc_id,
+          pendingLcDurations[lc.lc_id] || getDefaultLcDurationMinutes(room)
+        );
+        itemLabel.appendChild(durationInput);
+      }
+
+      if (lcSelectionSearchQuery) {
+        const query = lcSelectionSearchQuery.trim().toLowerCase();
+        const isMatch = !query || String(lc.lc_name || "").toLowerCase().includes(query) || String(lc.lc_id || "").toLowerCase().includes(query);
+        if (!isMatch) {
+          itemLabel.style.display = "none";
+        }
+      }
+
+      listContainer.appendChild(itemLabel);
+    });
+
+    searchInput.addEventListener("input", (event) => {
+      lcSelectionSearchQuery = event.target.value;
+      const query = lcSelectionSearchQuery.trim().toLowerCase();
+      const items = listContainer.querySelectorAll(".lc-selection-item");
+      let matchCount = 0;
+
+      items.forEach((item) => {
+        const name = (item.dataset.lcName || "").toLowerCase();
+        const id = (item.dataset.lcId || "").toLowerCase();
+        const isMatch = !query || name.includes(query) || id.includes(query);
+        item.style.display = isMatch ? "flex" : "none";
+        if (isMatch) matchCount++;
+      });
+
+      let searchEmpty = listContainer.querySelector(".lc-selection-search-empty");
+      if (matchCount === 0 && query) {
+        if (!searchEmpty) {
+          searchEmpty = document.createElement("p");
+          searchEmpty.className = "lc-selection-empty lc-selection-search-empty";
+          listContainer.appendChild(searchEmpty);
+        }
+        searchEmpty.textContent = `Tidak ada LC bernama "${query}".`;
+        searchEmpty.style.display = "block";
+      } else if (searchEmpty) {
+        searchEmpty.style.display = "none";
+      }
+    });
+
+    panel.append(title, counter, searchContainer, listContainer, actions);
+  }
 
   return panel;
 }
@@ -30189,6 +30267,7 @@ async function executeSaveSessionLcSelection(roomId, selectedIds) {
       lcSelectionRoomId = "";
       pendingLcSelections = {};
       pendingLcDurations = {};
+      lcSelectionSearchQuery = "";
       await loadRooms();
     } else {
       showInlineNotice(result?.error || result?.message || "Gagal menyimpan pilihan LC.", "error");

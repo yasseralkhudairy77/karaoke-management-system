@@ -9324,6 +9324,47 @@ select.action-confirmation-input option {
   color: var(--muted);
 }
 
+.lc-selection-search-container {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lc-selection-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid rgba(168, 130, 255, 0.4);
+  border-radius: 6px;
+  background: rgba(18, 12, 28, 0.85);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.lc-selection-search-input:focus {
+  border-color: #a882ff;
+  box-shadow: 0 0 0 2px rgba(168, 130, 255, 0.3);
+}
+
+.lc-selection-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lc-selection-name {
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+
+.lc-selection-search-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+}
+
 .lc-selection-list {
   display: grid;
   gap: 6px;
