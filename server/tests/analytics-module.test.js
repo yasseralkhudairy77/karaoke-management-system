@@ -143,4 +143,25 @@ assert.ok(
 );
 console.log("  ✓ PASS: index.html has updated cache buster version");
 
+// Test 9: Verify real shift cutoff calculation and removal of mock 13.420.000
+console.log("Test 9: Verifying real shift cutoff calculation and removal of fake 13.420.000...");
+assert.strictEqual(
+  appJsContent.includes("13420000"),
+  false,
+  "app.js must NOT contain hardcoded mock 13420000"
+);
+assert.ok(
+  appJsContent.includes("function computeLocalShiftAnalytics"),
+  "app.js must define computeLocalShiftAnalytics from real shift transactions"
+);
+assert.ok(
+  appJsContent.includes("Shift Aktif (Cutoff 10:00 WIB)"),
+  "app.js must display Shift Aktif (Cutoff 10:00 WIB) in period select"
+);
+assert.ok(
+  appJsContent.includes("Tanggal operasional mengikuti cutoff jam 10:00 WIB"),
+  "app.js must include cutoff operational notice in header"
+);
+console.log("  ✓ PASS: Real shift cutoff calculation active, fake 13.420.000 removed");
+
 console.log("\n🎉 All Analytics & Business Intelligence Module Tests Passed Successfully!\n");

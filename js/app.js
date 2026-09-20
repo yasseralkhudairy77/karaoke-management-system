@@ -26112,129 +26112,185 @@ let analyticsCompareTo = "previous_period";
 let analyticsRoomFilter = "all";
 let analyticsCurveMetric = "revenue";
 
-function generateMockAnalyticsData() {
-  const isWeekend = new Date().getDay() === 0 || new Date().getDay() === 6;
-  const curRev = isWeekend ? 18650000 : 13420000;
-  const cmpRev = isWeekend ? 15200000 : 11800000;
-  const curTrx = isWeekend ? 28 : 20;
-  const cmpTrx = isWeekend ? 24 : 19;
-  const curRoomRev = Math.round(curRev * 0.52);
-  const cmpRoomRev = Math.round(cmpRev * 0.52);
-  const curFnbRev = Math.round(curRev * 0.36);
-  const curLcRev = Math.round(curRev * 0.12);
-  const availHours = 15 * 18;
+function computeLocalShiftAnalytics(selectedPeriod = "today", selectedRoomId = "all", compareTo = "previous_period") {
+  const paidTrx = (todayTransactions || []).filter((t) => {
+    const isPaid = String(t.payment_status || "").toLowerCase() === "paid";
+    const matchRoom = selectedRoomId === "all" || t.room_id === selectedRoomId;
+    return isPaid && matchRoom;
+  });
 
-  const trafficProfile = [
-    0.02, 0.03, 0.04, 0.05, 0.05, 0.06, 0.08, 0.12, 0.15, 0.14, 0.11, 0.07,
-    0.04, 0.02, 0.01, 0.005, 0.005, 0, 0, 0, 0, 0, 0, 0.01
-  ];
+  const curTrxCount = paidTrx.length;
+  let curRevenue = 0;
+  let curRoomRev = 0;
+  let curFnbRev = 0;
+  let curLcRev = 0;
+  let curCash = 0;
+  let curTransfer = 0;
+  let curDiscounts = 0;
+  let curExtSessions = 0;
+  let curLcSessions = 0;
+
+  const roomMap = new Map();
+  const hourlyBins = new Map();
+
+  for (let i = 0; i < 24; i++) {
+    const h = (10 + i) % 24;
+    hourlyBins.set(h, { revenue: 0, hours: 0, sessions: 0 });
+  }
+
+  paidTrx.forEach((t) => {
+    const gTotal = Number(t.grand_total) || 0;
+    const rTotal = Number(t.room_total) || 0;
+    const fTotal = Number(t.fnb_total) || 0;
+    const lTotal = Number(t.lc_total) || 0;
+    const cash = Number(t.cash_amount) || (t.payment_method === "cash" ? gTotal : 0);
+    const trf = Number(t.transfer_amount) || (t.payment_method === "transfer" || t.payment_method === "qris" ? gTotal : 0);
+    const durMins = Number(t.duration_minutes) || 0;
+    const disc = (Number(t.promo_discount) || 0) + (Number(t.manual_discount) || 0) + (Number(t.room_discount_amount) || 0);
+
+    curRevenue += gTotal;
+    curRoomRev += rTotal;
+    curFnbRev += fTotal;
+    curLcRev += lTotal;
+    curCash += cash;
+    curTransfer += trf;
+    curDiscounts += disc;
+
+    if (durMins > 120) curExtSessions++;
+    if (lTotal > 0) curLcSessions++;
+
+    const timeVal = t.start_time || t.created_at;
+    let hour = 10;
+    if (timeVal) {
+      const dt = new Date(timeVal);
+      if (!isNaN(dt.getTime())) {
+        hour = dt.getHours();
+      }
+    }
+    if (hourlyBins.has(hour)) {
+      const bin = hourlyBins.get(hour);
+      bin.revenue += gTotal;
+      bin.hours += (durMins / 60);
+      bin.sessions += 1;
+    }
+
+    const rId = t.room_id || t.room_name || "ROOM";
+    if (!roomMap.has(rId)) {
+      roomMap.set(rId, {
+        room_id: rId,
+        room_name: t.room_name || rId,
+        total_sessions: 0,
+        total_hours: 0,
+        total_room_revenue: 0,
+        total_grand_revenue: 0,
+        extended_sessions: 0,
+      });
+    }
+    const rRow = roomMap.get(rId);
+    rRow.total_sessions++;
+    rRow.total_hours += (durMins / 60);
+    rRow.total_room_revenue += rTotal;
+    rRow.total_grand_revenue += gTotal;
+    if (durMins > 120) rRow.extended_sessions++;
+  });
+
+  if (todayTransactionSummary && selectedRoomId === "all") {
+    if (Number(todayTransactionSummary.paidRevenue) > 0) {
+      curRevenue = Number(todayTransactionSummary.paidRevenue);
+    }
+    if (Number(todayTransactionSummary.cashRevenue) > 0 || Number(todayTransactionSummary.transferRevenue) > 0) {
+      curCash = Number(todayTransactionSummary.cashRevenue || 0);
+      curTransfer = Number(todayTransactionSummary.transferRevenue || 0);
+    }
+  }
+
+  const totalRoomsCount = Array.isArray(rooms) && rooms.length > 0 ? rooms.length : 15;
+  const operationalHoursPerDay = 18;
+  const availableRoomHours = totalRoomsCount * operationalHoursPerDay;
+
+  const curRevPah = availableRoomHours > 0 ? Math.round(curRoomRev / availableRoomHours) : 0;
+  const curAov = curTrxCount > 0 ? Math.round(curRevenue / curTrxCount) : 0;
+  const curExtRate = curTrxCount > 0 ? Math.round((curExtSessions / curTrxCount) * 1000) / 10 : 0;
+  const curLcRate = curTrxCount > 0 ? Math.round((curLcSessions / curTrxCount) * 1000) / 10 : 0;
 
   const hourlySequence = [];
   for (let i = 0; i < 24; i++) {
     const h = (10 + i) % 24;
-    const factor = trafficProfile[i] || 0.01;
-    const curHourRev = Math.round(curRev * factor);
-    const cmpHourRev = Math.round(cmpRev * factor * 0.88);
-    const curHrs = Math.round(factor * 110 * 10) / 10;
-    const cmpHrs = Math.round(factor * 95 * 10) / 10;
+    const bin = hourlyBins.get(h) || { revenue: 0, hours: 0, sessions: 0 };
     hourlySequence.push({
       hour: h,
       hourLabel: `${String(h).padStart(2, "0")}:00`,
-      currentRevenue: curHourRev,
-      compareRevenue: cmpHourRev,
-      currentRoomHours: curHrs,
-      compareRoomHours: cmpHrs,
-      currentSessions: Math.max(0, Math.round(factor * 36)),
-      compareSessions: Math.max(0, Math.round(factor * 30)),
+      currentRevenue: bin.revenue,
+      compareRevenue: 0,
+      currentRoomHours: Math.round(bin.hours * 10) / 10,
+      compareRoomHours: 0,
+      currentSessions: bin.sessions,
+      compareSessions: 0,
     });
   }
 
+  const roomLeaderboard = Array.from(roomMap.values()).map(r => ({
+    room_id: r.room_id,
+    room_name: r.room_name,
+    total_sessions: r.total_sessions,
+    total_hours: Math.round(r.total_hours * 10) / 10,
+    occupancy_rate_percent: operationalHoursPerDay > 0 ? Math.min(100, Math.round((r.total_hours / operationalHoursPerDay) * 1000) / 10) : 0,
+    total_room_revenue: r.total_room_revenue,
+    total_grand_revenue: r.total_grand_revenue,
+    extension_rate_percent: r.total_sessions > 0 ? Math.round((r.extended_sessions / r.total_sessions) * 1000) / 10 : 0,
+  })).sort((a, b) => b.total_hours - a.total_hours);
+
   return {
     filters: {
-      period: analyticsPeriod,
-      startDate: analyticsStartDate || "2026-09-20",
-      endDate: analyticsEndDate || "2026-09-20",
-      compareTo: analyticsCompareTo,
-      compareStartDate: "2026-09-19",
-      compareEndDate: "2026-09-19",
-      roomFilter: analyticsRoomFilter,
+      period: selectedPeriod,
+      startDate: "",
+      endDate: "",
+      compareTo,
+      compareStartDate: "",
+      compareEndDate: "",
+      roomFilter: selectedRoomId,
       durationDays: 1,
     },
     kpi: {
-      totalRevenue: {
-        current: curRev,
-        compare: cmpRev,
-        deltaPercent: Math.round(((curRev - cmpRev) / cmpRev) * 1000) / 10,
-      },
-      revPah: {
-        current: Math.round(curRoomRev / availHours),
-        compare: Math.round(cmpRoomRev / availHours),
-        deltaPercent: Math.round(((curRoomRev - cmpRoomRev) / cmpRoomRev) * 1000) / 10,
-        availableHours: availHours,
-      },
-      avgSpendPerRoom: {
-        current: Math.round(curRev / curTrx),
-        compare: Math.round(cmpRev / cmpTrx),
-        deltaPercent: Math.round(((curRev / curTrx - cmpRev / cmpTrx) / (cmpRev / cmpTrx)) * 1000) / 10,
-      },
+      totalRevenue: { current: curRevenue, compare: 0, deltaPercent: 0 },
+      revPah: { current: curRevPah, compare: 0, deltaPercent: 0, availableHours: availableRoomHours },
+      avgSpendPerRoom: { current: curAov, compare: 0, deltaPercent: 0 },
       fnbGrossMargin: {
-        currentPercent: 67.5,
+        currentPercent: curFnbRev > 0 ? 65.0 : 0,
         grossSales: curFnbRev,
-        grossProfit: Math.round(curFnbRev * 0.675),
-        totalHpp: Math.round(curFnbRev * 0.325),
+        grossProfit: Math.round(curFnbRev * 0.65),
+        totalHpp: Math.round(curFnbRev * 0.35),
       },
-      roomExtensionRate: {
-        currentPercent: 42.8,
-        comparePercent: 35.0,
-        deltaPercent: 22.3,
-        extendedSessions: Math.round(curTrx * 0.428),
-        totalSessions: curTrx,
-      },
-      lcAttachmentRate: {
-        currentPercent: 50.0,
-        comparePercent: 41.7,
-        deltaPercent: 19.9,
-        lcSessions: Math.round(curTrx * 0.5),
-        totalSessions: curTrx,
-      },
-      discountLeakage: {
-        current: 350000,
-        compare: 250000,
-        deltaPercent: 40.0,
-      },
+      roomExtensionRate: { currentPercent: curExtRate, comparePercent: 0, deltaPercent: 0, extendedSessions: curExtSessions, totalSessions: curTrxCount },
+      lcAttachmentRate: { currentPercent: curLcRate, comparePercent: 0, deltaPercent: 0, lcSessions: curLcSessions, totalSessions: curTrxCount },
+      discountLeakage: { current: curDiscounts, compare: 0, deltaPercent: 0 },
     },
     revenueComposition: {
       roomTotal: curRoomRev,
       fnbTotal: curFnbRev,
       lcTotal: curLcRev,
-      discounts: 350000,
-      netRevenue: curRev,
+      discounts: curDiscounts,
+      netRevenue: curRevenue,
     },
     paymentBreakdown: {
-      cash: Math.round(curRev * 0.35),
-      transfer: Math.round(curRev * 0.65),
+      cash: curCash,
+      transfer: curTransfer,
     },
     hourlyTraffic: hourlySequence,
-    roomLeaderboard: [
-      { room_id: "ROOM-VIP1", room_name: "VIP Room 1", total_sessions: 6, total_hours: 15.5, occupancy_rate_percent: 86.1, total_room_revenue: 2325000, total_grand_revenue: 4150000, extension_rate_percent: 66.7 },
-      { room_id: "ROOM-02", room_name: "Room 02 Large", total_sessions: 5, total_hours: 12.0, occupancy_rate_percent: 66.7, total_room_revenue: 1440000, total_grand_revenue: 2850000, extension_rate_percent: 40.0 },
-      { room_id: "ROOM-01", room_name: "Room 01 Medium", total_sessions: 5, total_hours: 10.5, occupancy_rate_percent: 58.3, total_room_revenue: 1050000, total_grand_revenue: 1980000, extension_rate_percent: 40.0 },
-      { room_id: "ROOM-03", room_name: "Room 03 Medium", total_sessions: 4, total_hours: 8.5, occupancy_rate_percent: 47.2, total_room_revenue: 850000, total_grand_revenue: 1620000, extension_rate_percent: 25.0 },
-      { room_id: "ROOM-VVIP", room_name: "President VVIP", total_sessions: 2, total_hours: 7.0, occupancy_rate_percent: 38.9, total_room_revenue: 1750000, total_grand_revenue: 3500000, extension_rate_percent: 50.0 },
-    ],
-    fnbLeaderboard: [
-      { item_id: "FNB-01", item_name: "Paket Beer Bintang (5 Btl)", category: "Beer", qty_sold: 24, total_sales: 3600000, total_profit: 2160000, margin_percent: 60.0 },
-      { item_id: "FNB-02", item_name: "Chivas Regal 12Y", category: "Spirit", qty_sold: 4, total_sales: 4400000, total_profit: 2860000, margin_percent: 65.0 },
-      { item_id: "FNB-03", item_name: "French Fries Crispy", category: "Food", qty_sold: 38, total_sales: 1140000, total_profit: 855000, margin_percent: 75.0 },
-      { item_id: "FNB-04", item_name: "Singkong Keju Spesial", category: "Food", qty_sold: 29, total_sales: 725000, total_profit: 543750, margin_percent: 75.0 },
-      { item_id: "FNB-05", item_name: "Mineral Water 600ml", category: "Beverage", qty_sold: 45, total_sales: 675000, total_profit: 540000, margin_percent: 80.0 },
-    ],
+    roomLeaderboard,
+    fnbLeaderboard: [],
   };
 }
 
 async function loadOperationalAnalytics() {
+  if (todayTransactions.length === 0 && canFetchTransactionPeriodData && typeof loadTodayTransactions === "function") {
+    try {
+      await loadTodayTransactions();
+    } catch (_) {}
+  }
+
   if (!API_BASE_URL.trim()) {
-    analyticsData = generateMockAnalyticsData();
+    analyticsData = computeLocalShiftAnalytics(analyticsPeriod, analyticsRoomFilter, analyticsCompareTo);
     if (activeDashboardTab === "analytics") {
       renderDashboardTabPanels();
     }
@@ -26262,12 +26318,12 @@ async function loadOperationalAnalytics() {
     if (result && (result.success || result.ok)) {
       analyticsData = result.data || result;
     } else {
-      console.warn("Analytics API returned failure, using fallback:", result);
-      analyticsData = generateMockAnalyticsData();
+      console.warn("Analytics API returned failure, calculating from real shift transactions:", result);
+      analyticsData = computeLocalShiftAnalytics(analyticsPeriod, analyticsRoomFilter, analyticsCompareTo);
     }
   } catch (err) {
-    console.error("loadOperationalAnalytics error:", err);
-    analyticsData = generateMockAnalyticsData();
+    console.warn("loadOperationalAnalytics network error, calculating from real shift transactions:", err);
+    analyticsData = computeLocalShiftAnalytics(analyticsPeriod, analyticsRoomFilter, analyticsCompareTo);
   } finally {
     isLoadingAnalytics = false;
     if (activeDashboardTab === "analytics") {
@@ -26303,6 +26359,10 @@ function createAnalyticsPanelElement() {
     <div class="analytics-title-group">
       <h2>Analisa &amp; Intelijen Bisnis</h2>
       <p>Performa omzet, jam sibuk 24 jam, utilisasi ruangan, dan profitabilitas F&amp;B.</p>
+      <div style="font-size: 0.8rem; color: var(--gold); margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+        <span>🕒</span>
+        <span>Tanggal operasional mengikuti cutoff jam 10:00 WIB. Transaksi sebelum pukul 10:00 WIB masuk ke shift hari sebelumnya.</span>
+      </div>
     </div>
   `;
 
@@ -26312,13 +26372,13 @@ function createAnalyticsPanelElement() {
   const periodItem = document.createElement("div");
   periodItem.className = "analytics-control-item";
   periodItem.innerHTML = `
-    <label for="analyticsPeriodSelect">Periode</label>
+    <label for="analyticsPeriodSelect">Periode Operasional</label>
     <select id="analyticsPeriodSelect">
-      <option value="today" ${analyticsPeriod === "today" ? "selected" : ""}>Hari Ini</option>
-      <option value="yesterday" ${analyticsPeriod === "yesterday" ? "selected" : ""}>Kemarin</option>
-      <option value="this_week" ${analyticsPeriod === "this_week" ? "selected" : ""}>7 Hari Terakhir</option>
-      <option value="this_month" ${analyticsPeriod === "this_month" ? "selected" : ""}>30 Hari Terakhir</option>
-      <option value="custom" ${analyticsPeriod === "custom" ? "selected" : ""}>Rentang Kustom</option>
+      <option value="today" ${analyticsPeriod === "today" ? "selected" : ""}>Shift Aktif (Cutoff 10:00 WIB)</option>
+      <option value="yesterday" ${analyticsPeriod === "yesterday" ? "selected" : ""}>Shift Kemarin</option>
+      <option value="last7days" ${analyticsPeriod === "last7days" ? "selected" : ""}>7 Shift Terakhir</option>
+      <option value="thismonth" ${analyticsPeriod === "thismonth" ? "selected" : ""}>Bulan Ini</option>
+      <option value="custom" ${analyticsPeriod === "custom" ? "selected" : ""}>Rentang Tanggal Kustom</option>
     </select>
   `;
 

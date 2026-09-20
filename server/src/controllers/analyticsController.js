@@ -55,7 +55,9 @@ function getComparisonRange(startDate, endDate, compareTo = 'previous_period') {
  */
 async function getOperationalAnalytics(req, res) {
   try {
-    const period = String(req.query.period || 'today').trim();
+    let period = String(req.query.period || 'today').trim();
+    if (period === 'this_week') period = 'last7days';
+    if (period === 'this_month') period = 'thismonth';
     const customStart = String(req.query.start_date || '').trim();
     const customEnd = String(req.query.end_date || '').trim();
     const compareTo = String(req.query.compare_to || 'previous_period').trim();
