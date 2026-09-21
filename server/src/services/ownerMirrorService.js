@@ -1112,11 +1112,14 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
 
   // Dukungan cerdas Custom Date Range:
   // Jika snapshot tanggal eksak belum ada, cari kumpulan snapshot harian dalam rentang tersebut dan gabungkan (merge)
+  // PENTING: Hanya ambil snapshot harian murni (operational_date_start = operational_date_end)
+  // agar TIDAK terjadi tumpang-tindih (double counting) dengan snapshot kumulatif seperti last7days / thismonth.
   if (result.rowCount === 0 && period === 'custom') {
     const multiSnapshots = await db.query(`
       SELECT *
       FROM owner_mirror_snapshots
       WHERE source_id = $1
+        AND operational_date_start = operational_date_end
         AND operational_date_start >= $2::date
         AND operational_date_end <= $3::date
       ORDER BY operational_date_start ASC, received_at DESC

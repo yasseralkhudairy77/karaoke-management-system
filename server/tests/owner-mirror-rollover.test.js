@@ -208,7 +208,7 @@ async function runOwnerMirrorRolloverTests() {
       if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
         return { rowCount: 0, rows: [] }; // No exact multi-day snapshot
       }
-      if (/WHERE source_id = \$1\s+AND operational_date_start >= \$2::date/i.test(text)) {
+      if (/WHERE source_id = \$1\s+AND operational_date_start = operational_date_end/i.test(text)) {
         // Returns 2 daily snapshots in that range
         return {
           rowCount: 2,
