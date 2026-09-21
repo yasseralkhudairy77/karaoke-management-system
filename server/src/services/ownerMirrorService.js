@@ -1,7 +1,25 @@
 const db = require('../db');
-const { getOperationalDateRange, toJakartaIsoString } = require('../utils/operationalDate');
+const { getOperationalDateRange, toJakartaIsoString, getJakartaComponents } = require('../utils/operationalDate');
 const { getSyncStatus } = require('./railwaySyncWorker');
 const { computeOperationalAnalytics } = require('../controllers/analyticsController');
+
+function getJakartaHour(dateInput) {
+  if (!dateInput) return null;
+  if (typeof dateInput === 'string') {
+    const matchWib = dateInput.match(/T(\d{2}):\d{2}/);
+    if (matchWib && dateInput.includes('+07:00')) {
+      return parseInt(matchWib[1], 10);
+    }
+  }
+  try {
+    const comp = getJakartaComponents(dateInput);
+    return comp.hours;
+  } catch (err) {
+    const dt = new Date(dateInput);
+    if (Number.isNaN(dt.getTime())) return null;
+    return (dt.getUTCHours() + 7) % 24;
+  }
+}
 
 function iso(value) {
   return value ? new Date(value).toISOString() : '';
@@ -673,9 +691,7 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
     const inHour = paidTrx.filter(t => {
       const dtStr = t.start_time_wib || t.start_time || '';
       if (!dtStr) return false;
-      const dt = new Date(dtStr);
-      if (Number.isNaN(dt.getTime())) return false;
-      const hrs = dt.getHours();
+      const hrs = getJakartaHour(dtStr);
       return hrs === h;
     });
     hourlySequence.push({
@@ -706,9 +722,9 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
   for (const t of paidTrx) {
     const dStr = t.operational_date || '';
     if (dStr) {
-      const dt = new Date(`${dStr}T00:00:00+07:00`);
-      if (!Number.isNaN(dt.getTime())) {
-        const dow = dt.getDay();
+      const [y, m, d] = dStr.split('-').map(Number);
+      if (y && m && d) {
+        const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
         dowList[dow].total_sessions += 1;
         dowList[dow].total_revenue += money(t.grand_total);
         dowList[dow].total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;

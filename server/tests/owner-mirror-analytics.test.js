@@ -1,6 +1,6 @@
 const assert = require('assert');
 const db = require('../src/db');
-const { buildOwnerMirrorSnapshot } = require('../src/services/ownerMirrorService');
+const { buildOwnerMirrorSnapshot, deriveAnalyticsFromSnapshotPayload } = require('../src/services/ownerMirrorService');
 
 (async () => {
   console.log('🧪 Testing Owner Mirror Snapshot Analytics Integration...');
@@ -175,6 +175,54 @@ const { buildOwnerMirrorSnapshot } = require('../src/services/ownerMirrorService
     assert.ok(Array.isArray(analytics.fnbLeaderboard), 'fnbLeaderboard must be an array');
 
     console.log('  ✓ PASS: Snapshot successfully encapsulates rich analytics data for Railway Owner Monitor');
+
+    // Test deriveAnalyticsFromSnapshotPayload timezone handling
+    const samplePayload = {
+      operational_date_start: '2026-09-20',
+      operational_date_end: '2026-09-20',
+      transactions: [
+        {
+          transaction_id: 'TRX-1',
+          start_time: '2026-09-20T14:55:09.861Z',
+          start_time_wib: '2026-09-20T21:55:09+07:00',
+          operational_date: '2026-09-20',
+          payment_status: 'paid',
+          grand_total: 3775000,
+          room_total: 2500000,
+          fnb_total: 1275000,
+          duration_minutes: 180
+        },
+        {
+          transaction_id: 'TRX-2',
+          start_time: '2026-09-20T17:11:24.372Z',
+          start_time_wib: '2026-09-21T00:11:24+07:00',
+          operational_date: '2026-09-20',
+          payment_status: 'paid',
+          grand_total: 1610000,
+          room_total: 1000000,
+          fnb_total: 610000,
+          duration_minutes: 120
+        }
+      ]
+    };
+
+    const derived = deriveAnalyticsFromSnapshotPayload(samplePayload, 'yesterday');
+    const hour14 = derived.hourlyTraffic.find(h => h.hour_wib === 14);
+    const hour21 = derived.hourlyTraffic.find(h => h.hour_wib === 21);
+    const hour00 = derived.hourlyTraffic.find(h => h.hour_wib === 0);
+
+    assert.strictEqual(hour14.hourly_revenue, 0, 'Hour 14 WIB must have 0 revenue (Karaoke has no 14:00 session)');
+    assert.strictEqual(hour14.session_count, 0, 'Hour 14 WIB must have 0 sessions');
+    assert.strictEqual(hour21.hourly_revenue, 3775000, 'Hour 21 WIB must have 3,775,000 revenue');
+    assert.strictEqual(hour21.session_count, 1, 'Hour 21 WIB must have 1 session');
+    assert.strictEqual(hour00.hourly_revenue, 1610000, 'Hour 00 WIB (midnight) must have 1,610,000 revenue');
+    assert.strictEqual(hour00.session_count, 1, 'Hour 00 WIB must have 1 session');
+
+    // Day of week check: 2026-09-20 was Sunday (index 0)
+    assert.strictEqual(derived.dayOfWeekPattern.days[0].total_sessions, 2, 'Sunday (Minggu) must capture the 2 sessions');
+    assert.strictEqual(derived.dayOfWeekPattern.days[0].day_name, 'Minggu');
+
+    console.log('  ✓ PASS: deriveAnalyticsFromSnapshotPayload accurately maps UTC times to Asia/Jakarta (WIB) hours without offset bugs');
     console.log('🎉 All Owner Mirror Analytics Integration Tests Passed!\n');
   } catch (err) {
     console.error('❌ Test failed with error:', err);

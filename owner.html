@@ -1028,6 +1028,20 @@
       return `<span class="delta-badge ${cls}">${icon} ${sign}${delta.toFixed(1)}%</span>`;
     }
 
+    function getJakartaHour(dateInput) {
+      if (!dateInput) return null;
+      if (typeof dateInput === 'string') {
+        const matchWib = dateInput.match(/T(\d{2}):\d{2}/);
+        if (matchWib && dateInput.includes('+07:00')) {
+          return parseInt(matchWib[1], 10);
+        }
+      }
+      const dt = new Date(dateInput);
+      if (Number.isNaN(dt.getTime())) return null;
+      const jakartaDate = new Date(dt.getTime() + (7 * 60 * 60 * 1000));
+      return jakartaDate.getUTCHours();
+    }
+
     function deriveAnalyticsFromSnapshot(snapshot) {
       const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
       const paidTrx = transactions.filter(t => t.payment_status === 'paid');
@@ -1054,16 +1068,15 @@
       const fnbGrossProfit = Math.max(0, fnbRevenue - fnbHpp);
       const fnbMarginPercent = fnbRevenue > 0 ? Math.round((fnbGrossProfit / fnbRevenue) * 1000) / 10 : 0;
 
-      // 24 Jam
+      // 24 Jam WIB
       const hourlySequence = [];
       for (let i = 0; i < 24; i++) {
         const h = (10 + i) % 24;
         const inHour = paidTrx.filter(t => {
           const dtStr = t.start_time_wib || t.start_time || '';
           if (!dtStr) return false;
-          const dt = new Date(dtStr);
-          if (Number.isNaN(dt.getTime())) return false;
-          return dt.getHours() === h;
+          const hrs = getJakartaHour(dtStr);
+          return hrs === h;
         });
         hourlySequence.push({
           hour_wib: h,
@@ -1093,9 +1106,9 @@
       for (const t of paidTrx) {
         const dStr = t.operational_date || '';
         if (dStr) {
-          const dt = new Date(`${dStr}T00:00:00+07:00`);
-          if (!Number.isNaN(dt.getTime())) {
-            const dow = dt.getDay();
+          const [y, m, d] = dStr.split('-').map(Number);
+          if (y && m && d) {
+            const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
             dowList[dow].total_sessions += 1;
             dowList[dow].total_revenue += Number(t.grand_total || 0);
             dowList[dow].total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
