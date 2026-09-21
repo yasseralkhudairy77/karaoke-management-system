@@ -378,10 +378,360 @@
       letter-spacing: 0.06em;
     }
 
-    .right { text-align: right; }
-    .empty { color: var(--muted); padding: 18px 0; }
-    .error { color: var(--red); }
-    .muted { color: var(--muted); }
+    /* Analytics Styles */
+    .analytics-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      border-radius: 14px;
+      padding: 12px 16px;
+    }
+
+    .analytics-toolbar-title h2 {
+      margin: 0;
+      font-size: 1.15rem;
+      color: var(--gold);
+    }
+
+    .analytics-toolbar-title p {
+      margin: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .analytics-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .analytics-select {
+      background: rgba(0, 0, 0, 0.4);
+      color: var(--text);
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .analytics-select:focus {
+      border-color: var(--gold);
+    }
+
+    .analytics-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .analytics-kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s ease, border-color 0.2s ease;
+      min-width: 0;
+    }
+
+    .analytics-kpi-card:hover {
+      border-color: rgba(242, 196, 91, 0.45);
+      transform: translateY(-2px);
+    }
+
+    .analytics-kpi-card.featured {
+      border-color: rgba(242, 196, 91, 0.55);
+      background: linear-gradient(145deg, rgba(45, 33, 20, 0.95), rgba(28, 21, 14, 0.95));
+      box-shadow: 0 8px 24px rgba(242, 196, 91, 0.12);
+    }
+
+    .analytics-kpi-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .analytics-kpi-label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      line-height: 1.25;
+    }
+
+    .analytics-kpi-value {
+      font-size: clamp(1.2rem, 1.4vw, 1.65rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 4px 0 6px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .analytics-kpi-sub {
+      font-size: 0.74rem;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+
+    .delta-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .delta-badge.positive {
+      background: rgba(52, 211, 153, 0.16);
+      border: 1px solid rgba(52, 211, 153, 0.38);
+      color: #34d399;
+    }
+
+    .delta-badge.negative {
+      background: rgba(251, 113, 133, 0.16);
+      border: 1px solid rgba(251, 113, 133, 0.38);
+      color: #fb7185;
+    }
+
+    .delta-badge.neutral {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: var(--muted);
+    }
+
+    .analytics-chart-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      margin: 16px 0;
+    }
+
+    .analytics-chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .analytics-chart-titles h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: var(--text);
+    }
+
+    .analytics-chart-titles p {
+      margin: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .analytics-chart-modes {
+      display: inline-flex;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .analytics-chart-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .analytics-chart-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .analytics-chart-btn.active {
+      background: var(--gold);
+      color: #1a1208;
+      box-shadow: 0 2px 8px rgba(242, 196, 91, 0.35);
+    }
+
+    .analytics-chart-scroll-wrapper {
+      overflow-x: auto;
+      padding-bottom: 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .analytics-bar-chart {
+      display: flex;
+      align-items: flex-end;
+      height: 200px;
+      gap: 8px;
+      padding-top: 30px;
+      min-width: 680px;
+    }
+
+    .analytics-bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+    }
+
+    .analytics-bar-track {
+      width: 100%;
+      max-width: 32px;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 6px;
+      position: relative;
+    }
+
+    .analytics-bar-fill {
+      width: 100%;
+      background: linear-gradient(180deg, var(--gold), rgba(242, 196, 91, 0.4));
+      border-radius: 6px 6px 2px 2px;
+      transition: height 0.4s ease;
+      min-height: 2px;
+    }
+
+    .analytics-bar-fill.peak {
+      background: linear-gradient(180deg, #f59e0b, #ef4444);
+      box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+    }
+
+    .analytics-bar-fill.slowest {
+      background: linear-gradient(180deg, #34d399, #059669);
+    }
+
+    .analytics-bar-value-tip {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: var(--gold);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .analytics-bar-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .analytics-stacked-bar {
+      height: 18px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+      margin: 12px 0;
+    }
+
+    .analytics-stacked-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .analytics-stacked-segment.room { background: var(--gold); }
+    .analytics-stacked-segment.fnb { background: var(--green); }
+    .analytics-stacked-segment.lc { background: var(--purple); }
+    .analytics-stacked-segment.cash { background: #fcd34d; }
+    .analytics-stacked-segment.transfer { background: #60a5fa; }
+
+    .analytics-legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .analytics-legend-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.84rem;
+    }
+
+    .analytics-legend-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .analytics-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+    }
+
+    .analytics-leaderboard-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .analytics-leaderboard-row:last-child {
+      border-bottom: none;
+    }
+
+    .analytics-leaderboard-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.86rem;
+    }
+
+    .analytics-progress-track {
+      width: 100%;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .analytics-progress-fill {
+      height: 100%;
+      background: var(--gold);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
 
     @media (max-width: 1080px) {
       .metrics {
@@ -459,6 +809,7 @@
     ];
     const TABS = [
       { key: "overview", label: "Overview" },
+      { key: "analytics", label: "Analisa" },
       { key: "rooms", label: "Room" },
       { key: "transactions", label: "Transaksi" },
       { key: "inventory", label: "Stok" },
@@ -473,6 +824,9 @@
     let inventoryCategoryFilter = "all";
     let inventoryStatusFilter = "all";
     let inventorySearchKeyword = "";
+    let analyticsChartMode = "hourly";
+    let analyticsCompareTo = "previous_period";
+    let customAnalyticsData = null;
 
     const formatCurrency = (value) => new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -658,6 +1012,311 @@
               ],
               "Belum ada aktivitas F&B/LC di periode ini."
             )}
+          </div>
+        </section>
+      `;
+    }
+
+    function formatAnalyticsDelta(deltaPercent, inverse = false) {
+      const delta = Number(deltaPercent) || 0;
+      if (delta === 0) return `<span class="delta-badge neutral">0.0%</span>`;
+      const isPositive = delta > 0;
+      const isGood = inverse ? !isPositive : isPositive;
+      const cls = isGood ? "positive" : "negative";
+      const icon = isPositive ? "▲" : "▼";
+      const sign = isPositive ? "+" : "";
+      return `<span class="delta-badge ${cls}">${icon} ${sign}${delta.toFixed(1)}%</span>`;
+    }
+
+    function renderAnalytics(snapshot) {
+      const data = customAnalyticsData || snapshot.analytics;
+      if (!data || !data.kpi) {
+        return `
+          <section class="panel">
+            <h2>Analisa &amp; Intelijen Bisnis</h2>
+            <div class="empty">
+              Data agregasi analisa belum tersedia di snapshot mirror untuk periode ini.<br>
+              Data akan dihitung dan disinkronkan otomatis dari kasir lokal secara berkala.
+            </div>
+          </section>
+        `;
+      }
+
+      const kpi = data.kpi || {};
+      const composition = data.revenueComposition || {};
+      const payment = data.paymentBreakdown || {};
+      const hourly = Array.isArray(data.hourlyTraffic) ? data.hourlyTraffic : [];
+      const daily = Array.isArray(data.dailyTrend) ? data.dailyTrend : [];
+      const dow = data.dayOfWeekPattern || { days: [] };
+      const roomLd = Array.isArray(data.roomLeaderboard) ? data.roomLeaderboard : [];
+      const fnbLd = Array.isArray(data.fnbLeaderboard) ? data.fnbLeaderboard : [];
+
+      const rTotal = Number(composition.roomTotal || 0);
+      const fTotal = Number(composition.fnbTotal || 0);
+      const lTotal = Number(composition.lcTotal || 0);
+      const netTotal = Math.max(1, rTotal + fTotal + lTotal);
+      const rPct = Math.round((rTotal / netTotal) * 100);
+      const fPct = Math.round((fTotal / netTotal) * 100);
+      const lPct = Math.max(0, 100 - rPct - fPct);
+
+      const cashTotal = Number(payment.cash || 0);
+      const trfTotal = Number(payment.transfer || 0);
+      const payTotal = Math.max(1, cashTotal + trfTotal);
+      const cashPct = Math.round((cashTotal / payTotal) * 100);
+      const trfPct = Math.max(0, 100 - cashPct);
+
+      let chartTitle = "Kurva Jam Sibuk 24 Jam (Hourly Traffic Sequence)";
+      let chartSubtitle = "Distribusi okupansi & omzet 24 jam operasional mulai pukul 10:00 WIB hingga 09:00 WIB.";
+      let chartBarsHtml = "";
+
+      if (analyticsChartMode === "daily") {
+        chartTitle = "Tren Pertumbuhan Harian (Daily Timeline Trend)";
+        chartSubtitle = "Pergerakan omzet dan durasi sewa room hari-ke-hari sepanjang periode terpilih.";
+        const maxDaily = Math.max(1, ...daily.map(d => Number(d.daily_revenue) || 0));
+        chartBarsHtml = daily.map(d => {
+          const rev = Number(d.daily_revenue) || 0;
+          const pct = Math.max(4, Math.round((rev / maxDaily) * 100));
+          const dateLabel = formatDisplayDate(d.operational_date);
+          return `
+            <div class="analytics-bar-col">
+              <div class="analytics-bar-track">
+                <div class="analytics-bar-fill" style="height: ${pct}%;">
+                  <span class="analytics-bar-value-tip">${formatCurrency(rev)}</span>
+                </div>
+              </div>
+              <div class="analytics-bar-label">${safe(dateLabel)}</div>
+            </div>
+          `;
+        }).join("");
+      } else if (analyticsChartMode === "day_of_week") {
+        const peakText = dow.peakDay ? ` · Hari Tersibuk: <strong style="color:var(--gold)">${safe(dow.peakDay)} 🔥</strong>` : "";
+        const slowText = dow.slowestDay ? ` · Hari Tersepi: <strong style="color:var(--green)">${safe(dow.slowestDay)} ❄️</strong>` : "";
+        chartTitle = "Pola & Distribusi Hari Ramai (Day-of-Week Rhythm)";
+        chartSubtitle = `Rata-rata performa bisnis per hari dalam sepekan (Senin s/d Minggu)${peakText}${slowText}`;
+        const days = Array.isArray(dow.days) ? dow.days : [];
+        const maxDow = Math.max(1, ...days.map(d => Number(d.total_revenue) || 0));
+        chartBarsHtml = days.map(d => {
+          const rev = Number(d.total_revenue) || 0;
+          const pct = Math.max(4, Math.round((rev / maxDow) * 100));
+          const isPeak = d.day_name === dow.peakDay;
+          const isSlowest = d.day_name === dow.slowestDay;
+          const barCls = isPeak ? "peak" : (isSlowest ? "slowest" : "");
+          return `
+            <div class="analytics-bar-col">
+              <div class="analytics-bar-track">
+                <div class="analytics-bar-fill ${barCls}" style="height: ${pct}%;">
+                  <span class="analytics-bar-value-tip">${formatCurrency(rev)}</span>
+                </div>
+              </div>
+              <div class="analytics-bar-label">${safe(d.day_name)}</div>
+            </div>
+          `;
+        }).join("");
+      } else {
+        const maxHourly = Math.max(1, ...hourly.map(h => Number(h.hourly_revenue) || 0));
+        chartBarsHtml = hourly.map(h => {
+          const rev = Number(h.hourly_revenue) || 0;
+          const pct = Math.max(4, Math.round((rev / maxHourly) * 100));
+          const hourText = `${String(h.hour_wib).padStart(2, '0')}:00`;
+          return `
+            <div class="analytics-bar-col">
+              <div class="analytics-bar-track">
+                <div class="analytics-bar-fill" style="height: ${pct}%;">
+                  <span class="analytics-bar-value-tip">${rev > 0 ? formatCurrency(rev) : 'Rp0'}</span>
+                </div>
+              </div>
+              <div class="analytics-bar-label">${hourText}</div>
+            </div>
+          `;
+        }).join("");
+      }
+
+      const topRoomMaxRev = Math.max(1, ...roomLd.map(r => Number(r.total_revenue) || 0));
+      const topFnbMaxRev = Math.max(1, ...fnbLd.map(f => Number(f.total_revenue) || 0));
+
+      return `
+        <div class="analytics-toolbar">
+          <div class="analytics-toolbar-title">
+            <h2>Analisa &amp; Intelijen Bisnis</h2>
+            <p>Cutoff operasional jam 10:00 WIB · Metrik performa, jam sibuk, utilisasi &amp; profitabilitas.</p>
+          </div>
+          <div class="analytics-toolbar-actions">
+            <label for="analyticsCompareSelect" style="font-size:0.8rem; color:var(--muted); font-weight:600;">Pembanding:</label>
+            <select id="analyticsCompareSelect" class="analytics-select">
+              <option value="previous_period" ${analyticsCompareTo === "previous_period" ? "selected" : ""}>Shift Mundur (Periode Sebelumnya)</option>
+              <option value="same_day_last_week" ${analyticsCompareTo === "same_day_last_week" ? "selected" : ""}>Hari yang Sama Pekan Lalu (-7 Hari)</option>
+            </select>
+          </div>
+        </div>
+
+        <section class="analytics-kpi-grid">
+          <article class="analytics-kpi-card featured">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Total Omzet Bersih</span>
+              ${formatAnalyticsDelta(kpi.totalRevenue?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.totalRevenue?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.totalRevenue?.compare || 0)} · ${formatNumber(kpi.totalRevenue?.trxCount || 0)} transaksi lunas</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">RevPAH (Revenue / Avail. Hour)</span>
+              ${formatAnalyticsDelta(kpi.revPah?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.revPah?.current || 0)} <span style="font-size:0.75rem; color:var(--muted); font-weight:normal">/jam</span></div>
+            <div class="analytics-kpi-sub">Kapasitas: ${formatNumber(kpi.revPah?.availableHours || 0)} jam ketersediaan room</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rata-rata Belanja / Room</span>
+              ${formatAnalyticsDelta(kpi.avgSpendPerRoom?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.avgSpendPerRoom?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.avgSpendPerRoom?.compare || 0)} per sesi karaoke</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Estimasi F&amp;B Gross Margin</span>
+              <span class="delta-badge positive">${(Number(kpi.fnbGrossMargin?.currentPercent) || 0).toFixed(1)}%</span>
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.fnbGrossMargin?.grossProfit || 0)}</div>
+            <div class="analytics-kpi-sub">Total Penjualan: ${formatCurrency(kpi.fnbGrossMargin?.grossSales || 0)}</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rasio Perpanjangan Room</span>
+              ${formatAnalyticsDelta(kpi.roomExtensionRate?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${(Number(kpi.roomExtensionRate?.currentPercent) || 0).toFixed(1)}%</div>
+            <div class="analytics-kpi-sub">${formatNumber(kpi.roomExtensionRate?.extendedSessions || 0)} dari ${formatNumber(kpi.roomExtensionRate?.totalSessions || 0)} sesi diperpanjang (&gt;2 jam)</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rasio Tamu Sewa LC</span>
+              ${formatAnalyticsDelta(kpi.lcAttachmentRate?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${(Number(kpi.lcAttachmentRate?.currentPercent) || 0).toFixed(1)}%</div>
+            <div class="analytics-kpi-sub">${formatNumber(kpi.lcAttachmentRate?.lcSessions || 0)} dari ${formatNumber(kpi.lcAttachmentRate?.totalSessions || 0)} sesi menyewa LC</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Diskon &amp; Potongan</span>
+              ${formatAnalyticsDelta(kpi.discountLeakage?.deltaPercent, true)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.discountLeakage?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.discountLeakage?.compare || 0)}</div>
+          </article>
+        </section>
+
+        <section class="analytics-chart-panel">
+          <div class="analytics-chart-header">
+            <div class="analytics-chart-titles">
+              <h3>${safe(chartTitle)}</h3>
+              <p>${chartSubtitle}</p>
+            </div>
+            <div class="analytics-chart-modes">
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "hourly" ? "active" : ""}" data-analytics-chart="hourly">Jam Sibuk</button>
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "daily" ? "active" : ""}" data-analytics-chart="daily">Tren Harian</button>
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "day_of_week" ? "active" : ""}" data-analytics-chart="day_of_week">Hari Ramai</button>
+            </div>
+          </div>
+          <div class="analytics-chart-scroll-wrapper">
+            <div class="analytics-bar-chart">
+              ${chartBarsHtml || '<div class="empty">Belum ada data visualisasi untuk mode ini.</div>'}
+            </div>
+          </div>
+        </section>
+
+        <section class="two-col">
+          <div class="panel">
+            <h2>Komposisi Sumber Pendapatan</h2>
+            <div class="analytics-stacked-bar">
+              <div class="analytics-stacked-segment room" style="width: ${rPct}%;" title="Sewa Ruangan: ${rPct}%"></div>
+              <div class="analytics-stacked-segment fnb" style="width: ${fPct}%;" title="F&B: ${fPct}%"></div>
+              <div class="analytics-stacked-segment lc" style="width: ${lPct}%;" title="Lady Companion: ${lPct}%"></div>
+            </div>
+            <div class="analytics-legend-list">
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--gold);"></span>Sewa Room</span>
+                <span><strong>${formatCurrency(rTotal)}</strong> (${rPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--green);"></span>F&amp;B</span>
+                <span><strong>${formatCurrency(fTotal)}</strong> (${fPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--purple);"></span>Lady Companion (LC)</span>
+                <span><strong>${formatCurrency(lTotal)}</strong> (${lPct}%)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Saluran Pembayaran</h2>
+            <div class="analytics-stacked-bar">
+              <div class="analytics-stacked-segment cash" style="width: ${cashPct}%;" title="Tunai: ${cashPct}%"></div>
+              <div class="analytics-stacked-segment transfer" style="width: ${trfPct}%;" title="Non-Tunai: ${trfPct}%"></div>
+            </div>
+            <div class="analytics-legend-list">
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:#fcd34d;"></span>Tunai (Cash)</span>
+                <span><strong>${formatCurrency(cashTotal)}</strong> (${cashPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:#60a5fa;"></span>Transfer / QRIS</span>
+                <span><strong>${formatCurrency(trfTotal)}</strong> (${trfPct}%)</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="two-col" style="margin-top: 16px;">
+          <div class="panel">
+            <h2>Peringkat Room Terpopuler</h2>
+            <div>
+              ${roomLd.length ? roomLd.slice(0, 5).map(room => {
+                const rev = Number(room.total_revenue) || 0;
+                const pct = Math.max(5, Math.round((rev / topRoomMaxRev) * 100));
+                return `
+                  <div class="analytics-leaderboard-row">
+                    <div class="analytics-leaderboard-top">
+                      <span><strong>${safe(room.room_name || room.room_id)}</strong> <span class="muted">(${formatNumber(room.session_count)} sesi)</span></span>
+                      <span>${formatCurrency(rev)}</span>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill" style="width: ${pct}%;"></div>
+                    </div>
+                  </div>
+                `;
+              }).join("") : '<div class="empty">Belum ada aktivitas room di periode ini.</div>'}
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Peringkat F&amp;B Terlaris</h2>
+            <div>
+              ${fnbLd.length ? fnbLd.slice(0, 5).map(item => {
+                const rev = Number(item.total_revenue) || 0;
+                const pct = Math.max(5, Math.round((rev / topFnbMaxRev) * 100));
+                return `
+                  <div class="analytics-leaderboard-row">
+                    <div class="analytics-leaderboard-top">
+                      <span><strong>${safe(item.menu_name)}</strong> <span class="muted">(${formatNumber(item.total_quantity)} porsi)</span></span>
+                      <span>${formatCurrency(rev)}</span>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill" style="width: ${pct}%; background: var(--green);"></div>
+                    </div>
+                  </div>
+                `;
+              }).join("") : '<div class="empty">Belum ada penjualan F&B di periode ini.</div>'}
+            </div>
           </div>
         </section>
       `;
@@ -1011,6 +1670,7 @@
 
       const renderers = {
         overview: renderOverview,
+        analytics: renderAnalytics,
         rooms: renderRooms,
         transactions: renderTransactions,
         inventory: renderInventory,
@@ -1052,6 +1712,7 @@
         if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
 
         currentSnapshot = data;
+        customAnalyticsData = null;
         updateSnapshotHeader(data);
         renderPeriodButtons();
         renderTabs();
@@ -1074,25 +1735,54 @@
       }
     });
 
-    document.getElementById("content").addEventListener("change", (event) => {
+    document.getElementById("content").addEventListener("click", (event) => {
+      const chartBtn = event.target.closest("[data-analytics-chart]");
+      if (chartBtn) {
+        analyticsChartMode = chartBtn.dataset.analyticsChart;
+        renderContent();
+      }
+    });
+
+    document.getElementById("content").addEventListener("change", async (event) => {
       if (event.target && event.target.id === "inventoryCategoryFilter") {
         inventoryCategoryFilter = event.target.value;
         renderContent();
       } else if (event.target && event.target.id === "inventoryStatusFilter") {
         inventoryStatusFilter = event.target.value;
         renderContent();
+      } else if (event.target && event.target.id === "analyticsCompareSelect") {
+        analyticsCompareTo = event.target.value;
+        try {
+          setStatus("Memperbarui analisa...", "cleaning");
+          const res = await fetch(`/exec?action=getOperationalAnalytics&period=${encodeURIComponent(activePeriod)}&compare_to=${encodeURIComponent(analyticsCompareTo)}&_=${Date.now()}`);
+          const json = await res.json();
+          if (json && (json.ok || json.success)) {
+            customAnalyticsData = json.data || json;
+            setStatus("Cloud Mirror Aktif", "available");
+          }
+        } catch (err) {
+          console.warn("Gagal fetch live operational analytics:", err);
+          setStatus("Mode Snapshot", "available");
+        }
+        renderContent();
       }
     });
 
-    document.getElementById("refreshButton").addEventListener("click", loadSnapshot);
+    document.getElementById("refreshButton").addEventListener("click", () => {
+      customAnalyticsData = null;
+      loadSnapshot();
+    });
+
     document.getElementById("periodButtons").addEventListener("click", (event) => {
       const button = event.target.closest("[data-period]");
       if (!button) return;
       activePeriod = button.dataset.period;
+      customAnalyticsData = null;
       setUrlState();
       renderPeriodButtons();
       loadSnapshot();
     });
+
     document.getElementById("monitorTabs").addEventListener("click", (event) => {
       const button = event.target.closest("[data-tab]");
       if (!button) return;

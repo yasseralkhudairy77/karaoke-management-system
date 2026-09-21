@@ -1,6 +1,7 @@
 const db = require('../db');
 const { getOperationalDateRange, toJakartaIsoString } = require('../utils/operationalDate');
 const { getSyncStatus } = require('./railwaySyncWorker');
+const { computeOperationalAnalytics } = require('../controllers/analyticsController');
 
 function iso(value) {
   return value ? new Date(value).toISOString() : '';
@@ -255,7 +256,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
   const period = options.period || 'today';
   const { startDate, endDate } = getOperationalDateRange(period, options.start_date, options.end_date);
 
-  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance, inventoryData, salesCommissionsRes] = await Promise.all([
+  const [roomsRes, transactionsRes, closingsRes, outboxStatus, openFnbOrders, lcPerformance, inventoryData, salesCommissionsRes, analyticsData] = await Promise.all([
     db.query(`
       SELECT room_id, room_name, status, start_time, booked_duration_minutes,
              scheduled_end_time, rate_per_hour, tv_device_id, updated_at
@@ -290,7 +291,17 @@ async function buildOwnerMirrorSnapshot(options = {}) {
       FROM sales_commission_logs
       WHERE operational_date >= $1 AND operational_date <= $2
       ORDER BY created_at DESC
-    `, [startDate, endDate]).catch(() => ({ rows: [] }))
+    `, [startDate, endDate]).catch(() => ({ rows: [] })),
+    computeOperationalAnalytics({
+      period,
+      customStart: options.start_date,
+      customEnd: options.end_date,
+      compareTo: options.compare_to || 'previous_period',
+      roomFilter: 'all'
+    }).catch(err => {
+      console.warn('Mirror analytics computation fallback error:', err.message);
+      return null;
+    })
   ]);
 
   const commissionsByTransactionId = new Map(
@@ -513,6 +524,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     cashier_closings: closings,
     inventory_summary: inventoryData?.summary || { total_items: 0, safe_items: 0, low_items: 0, negative_items: 0, categories: [] },
     inventory_items: inventoryData?.items || [],
+    analytics: analyticsData,
     sync_status: outboxStatus
   };
 }

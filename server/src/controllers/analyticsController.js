@@ -75,20 +75,19 @@ function getComparisonRange(startDate, endDate, compareTo = 'previous_period') {
 }
 
 /**
- * Main Analytics Aggregation Controller
+ * Core Operational Analytics Computation Engine
  */
-async function getOperationalAnalytics(req, res) {
-  try {
-    let period = String(req.query.period || 'today').trim();
-    if (period === 'this_week') period = 'last7days';
-    if (period === 'this_month') period = 'thismonth';
-    const customStart = String(req.query.start_date || '').trim();
-    const customEnd = String(req.query.end_date || '').trim();
-    const compareTo = String(req.query.compare_to || 'previous_period').trim();
-    const roomFilter = String(req.query.room_filter || 'all').trim();
+async function computeOperationalAnalytics(options = {}) {
+  let period = String(options.period || 'today').trim();
+  if (period === 'this_week') period = 'last7days';
+  if (period === 'this_month') period = 'thismonth';
+  const customStart = String(options.customStart || options.start_date || '').trim();
+  const customEnd = String(options.customEnd || options.end_date || '').trim();
+  const compareTo = String(options.compareTo || options.compare_to || 'previous_period').trim();
+  const roomFilter = String(options.roomFilter || options.room_filter || 'all').trim();
 
-    const { startDate, endDate } = getOperationalDateRange(period, customStart, customEnd);
-    const { compareStartDate, compareEndDate, durationDays } = getComparisonRange(startDate, endDate, compareTo);
+  const { startDate, endDate } = getOperationalDateRange(period, customStart, customEnd);
+  const { compareStartDate, compareEndDate, durationDays } = getComparisonRange(startDate, endDate, compareTo);
 
     // 1. Total rooms for RevPAH calculation
     const roomsRes = await db.query(`
@@ -456,7 +455,7 @@ async function getOperationalAnalytics(req, res) {
     const curDiscounts = toNumber(cur.total_discounts, 0);
     const cmpDiscounts = toNumber(cmp.total_discounts, 0);
 
-    return successResponse(res, {
+    return {
       filters: {
         period,
         startDate,
@@ -464,14 +463,19 @@ async function getOperationalAnalytics(req, res) {
         compareTo,
         compareStartDate,
         compareEndDate,
-        roomFilter,
         durationDays,
+        roomFilter,
+        totalRoomsCount,
+        availableRoomHours,
+        operationalHoursPerDay,
       },
       kpi: {
         totalRevenue: {
           current: curRevenue,
           compare: cmpRevenue,
           deltaPercent: calculateDeltaPercent(curRevenue, cmpRevenue),
+          trxCount: curTrxCount,
+          compareTrxCount: cmpTrxCount,
         },
         revPah: {
           current: curRevPah,
@@ -484,9 +488,19 @@ async function getOperationalAnalytics(req, res) {
           compare: cmpAov,
           deltaPercent: calculateDeltaPercent(curAov, cmpAov),
         },
+        roomOccupancyRate: {
+          currentPercent: availableRoomHours > 0 ? Math.round(((toNumber(cur.total_room_minutes, 0) / 60) / availableRoomHours) * 1000) / 10 : 0,
+          comparePercent: availableRoomHours > 0 ? Math.round(((toNumber(cmp.total_room_minutes, 0) / 60) / availableRoomHours) * 1000) / 10 : 0,
+          deltaPercent: calculateDeltaPercent(
+            availableRoomHours > 0 ? ((toNumber(cur.total_room_minutes, 0) / 60) / availableRoomHours) * 100 : 0,
+            availableRoomHours > 0 ? ((toNumber(cmp.total_room_minutes, 0) / 60) / availableRoomHours) * 100 : 0
+          ),
+          currentRoomHours: Math.round((toNumber(cur.total_room_minutes, 0) / 60) * 10) / 10,
+          availableHours: availableRoomHours,
+        },
         fnbGrossMargin: {
-          currentPercent: fnbMarginPercent,
           grossSales: fnbGrossSales,
+          currentPercent: fnbMarginPercent,
           grossProfit: fnbGrossProfit,
           totalHpp: fnbTotalHpp,
         },
@@ -532,7 +546,22 @@ async function getOperationalAnalytics(req, res) {
       },
       roomLeaderboard,
       fnbLeaderboard,
+    };
+}
+
+/**
+ * Express Controller Wrapper for getOperationalAnalytics
+ */
+async function getOperationalAnalytics(req, res) {
+  try {
+    const data = await computeOperationalAnalytics({
+      period: req.query.period,
+      customStart: req.query.start_date,
+      customEnd: req.query.end_date,
+      compareTo: req.query.compare_to,
+      roomFilter: req.query.room_filter,
     });
+    return successResponse(res, data);
   } catch (err) {
     console.error('getOperationalAnalytics error:', err);
     return errorResponse(res, err.message);
@@ -540,6 +569,7 @@ async function getOperationalAnalytics(req, res) {
 }
 
 module.exports = {
+  computeOperationalAnalytics,
   getOperationalAnalytics,
   getComparisonRange,
   calculateDeltaPercent,
