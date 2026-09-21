@@ -166,7 +166,106 @@ async function runOwnerMirrorRolloverTests() {
     assert.ok(executedSql.some(sql => /UPDATE owner_mirror_snapshots/i.test(sql)));
     assert.ok(executedSql.some(sql => /DELETE FROM owner_mirror_snapshots target/i.test(sql)));
     assert.ok(executedSql.some(sql => /received_at < CURRENT_TIMESTAMP/i.test(sql)));
-    console.log('  PASS saving same-period mirror snapshot updates existing row and prunes duplicates');
+    // Test custom date: Exact match single day
+    db.query = async (sql, params) => {
+      const text = String(sql);
+      if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
+        return {
+          rowCount: 1,
+          rows: [{
+            snapshot_id: 555,
+            source_id: 'happy-song-local',
+            period: 'custom',
+            operational_date_start: params[2],
+            operational_date_end: params[3],
+            received_at: new Date('2026-09-19T23:00:00+07:00'),
+            payload_json: {
+              period: 'custom',
+              operational_date_start: params[2],
+              operational_date_end: params[3],
+              summary: { paid_revenue: 12500000, total_transactions: 8 },
+              transactions: [{ transaction_id: 'TRX-1', grand_total: 12500000, payment_status: 'paid' }]
+            }
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+
+    const customExact = await getLatestOwnerMirrorSnapshot('happy-song-local', {
+      period: 'custom',
+      start_date: '2026-09-19',
+      end_date: '2026-09-19'
+    });
+    assert.strictEqual(customExact.has_snapshot, true);
+    assert.strictEqual(customExact.period, 'custom');
+    assert.strictEqual(customExact.summary.paid_revenue, 12500000);
+    console.log('  PASS custom date exact match single day returns valid snapshot');
+
+    // Test custom date: Multi-day range merge when exact single snapshot does not exist
+    db.query = async (sql, params) => {
+      const text = String(sql);
+      if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
+        return { rowCount: 0, rows: [] }; // No exact multi-day snapshot
+      }
+      if (/WHERE source_id = \$1\s+AND operational_date_start >= \$2::date/i.test(text)) {
+        // Returns 2 daily snapshots in that range
+        return {
+          rowCount: 2,
+          rows: [
+            {
+              snapshot_id: 101,
+              source_id: 'happy-song-local',
+              period: 'today',
+              operational_date_start: '2026-09-18',
+              operational_date_end: '2026-09-18',
+              received_at: new Date('2026-09-19T05:00:00+07:00'),
+              payload_json: {
+                operational_date_start: '2026-09-18',
+                operational_date_end: '2026-09-18',
+                summary: { paid_revenue: 5000000, total_transactions: 3 },
+                transactions: [{ transaction_id: 'T-1', grand_total: 5000000, payment_status: 'paid', room_total: 3000000, fnb_total: 2000000 }],
+                fnb_sold_items: [{ menu_id: 'M-1', menu_name: 'Ice Tea', quantity: 4, revenue: 80000 }],
+                lc_performance: { items: [{ lc_id: 'LC-1', lc_name: 'Mawar', session_count: 1, total_duration_minutes: 120, total_fee: 300000 }] }
+              }
+            },
+            {
+              snapshot_id: 102,
+              source_id: 'happy-song-local',
+              period: 'today',
+              operational_date_start: '2026-09-19',
+              operational_date_end: '2026-09-19',
+              received_at: new Date('2026-09-20T05:00:00+07:00'),
+              payload_json: {
+                operational_date_start: '2026-09-19',
+                operational_date_end: '2026-09-19',
+                summary: { paid_revenue: 7000000, total_transactions: 4 },
+                transactions: [{ transaction_id: 'T-2', grand_total: 7000000, payment_status: 'paid', room_total: 4000000, fnb_total: 3000000 }],
+                fnb_sold_items: [{ menu_id: 'M-1', menu_name: 'Ice Tea', quantity: 6, revenue: 120000 }],
+                lc_performance: { items: [{ lc_id: 'LC-1', lc_name: 'Mawar', session_count: 2, total_duration_minutes: 240, total_fee: 600000 }] }
+              }
+            }
+          ]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+
+    const customMerged = await getLatestOwnerMirrorSnapshot('happy-song-local', {
+      period: 'custom',
+      start_date: '2026-09-18',
+      end_date: '2026-09-19'
+    });
+    assert.strictEqual(customMerged.has_snapshot, true);
+    assert.strictEqual(customMerged.period, 'custom');
+    assert.strictEqual(customMerged.summary.paid_revenue, 12000000);
+    assert.strictEqual(customMerged.summary.total_transactions, 2);
+    assert.strictEqual(customMerged.fnb_sold_summary.items[0].quantity, 10);
+    assert.strictEqual(customMerged.fnb_sold_summary.items[0].revenue, 200000);
+    assert.strictEqual(customMerged.lc_performance.items[0].session_count, 3);
+    assert.strictEqual(customMerged.lc_performance.items[0].total_duration_minutes, 360);
+    assert.strictEqual(customMerged.lc_performance.items[0].total_fee, 900000);
+    console.log('  PASS multi-day custom range seamlessly aggregates daily snapshots when PC is offline');
 
     console.log('Owner Mirror Cutoff Rollover Tests passed.');
   } finally {

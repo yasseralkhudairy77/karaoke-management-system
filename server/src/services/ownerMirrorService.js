@@ -839,6 +839,226 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
   };
 }
 
+function mergeOwnerMirrorPayloads(payloads, range) {
+  const allTrx = [];
+  const trxSeen = new Set();
+  const allClosings = [];
+  const closingSeen = new Set();
+  const fnbItemsMap = new Map();
+  const lcItemsMap = new Map();
+
+  let totalRev = 0;
+  let paidRev = 0;
+  let unpaidRev = 0;
+  let cashRev = 0;
+  let transferRev = 0;
+  let roomRev = 0;
+  let fnbRev = 0;
+  let lcRev = 0;
+  let salesComm = 0;
+  let paidSalesComm = 0;
+  let paidTrxCount = 0;
+  let unpaidTrxCount = 0;
+
+  for (const p of payloads) {
+    const trxs = Array.isArray(p.transactions) ? p.transactions : [];
+    for (const t of trxs) {
+      if (!trxSeen.has(t.transaction_id)) {
+        trxSeen.add(t.transaction_id);
+        allTrx.push(t);
+
+        const gt = money(t.grand_total);
+        const comm = money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0);
+        totalRev += gt;
+        roomRev += money(t.room_total);
+        fnbRev += money(t.fnb_total);
+        lcRev += money(t.lc_total);
+        salesComm += comm;
+
+        if (t.payment_status === 'paid') {
+          paidTrxCount++;
+          paidRev += gt;
+          paidSalesComm += comm;
+          cashRev += money(t.cash_amount);
+          transferRev += money(t.transfer_amount);
+        } else {
+          unpaidTrxCount++;
+          unpaidRev += gt;
+        }
+      }
+    }
+
+    const closings = Array.isArray(p.cashier_closings) ? p.cashier_closings : [];
+    for (const c of closings) {
+      const cKey = c.closing_id || `${c.closing_date}_${c.cashier_name}`;
+      if (!closingSeen.has(cKey)) {
+        closingSeen.add(cKey);
+        allClosings.push(c);
+      }
+    }
+
+    const fnbItems = Array.isArray(p.fnb_sold_items) ? p.fnb_sold_items : (p.fnb_sold_summary?.items || []);
+    for (const it of fnbItems) {
+      const key = it.menu_id || it.menu_name;
+      if (!fnbItemsMap.has(key)) {
+        fnbItemsMap.set(key, { ...it, quantity: Number(it.quantity || 0), revenue: money(it.revenue) });
+      } else {
+        const existing = fnbItemsMap.get(key);
+        existing.quantity += Number(it.quantity || 0);
+        existing.revenue += money(it.revenue);
+      }
+    }
+
+    const lcItems = Array.isArray(p.lc_performance?.items) ? p.lc_performance.items : (p.lc_performance_items || []);
+    for (const it of lcItems) {
+      const key = it.lc_id || it.lc_name;
+      if (!lcItemsMap.has(key)) {
+        lcItemsMap.set(key, {
+          ...it,
+          session_count: Number(it.session_count || 0),
+          total_duration_minutes: Number(it.total_duration_minutes || 0),
+          total_fee: money(it.total_fee)
+        });
+      } else {
+        const existing = lcItemsMap.get(key);
+        existing.session_count += Number(it.session_count || 0);
+        existing.total_duration_minutes += Number(it.total_duration_minutes || 0);
+        existing.total_fee += money(it.total_fee);
+      }
+    }
+  }
+
+  const fnbMergedItems = Array.from(fnbItemsMap.values()).sort((a, b) => b.revenue - a.revenue);
+  const lcMergedItems = Array.from(lcItemsMap.values()).sort((a, b) => b.total_fee - a.total_fee);
+  const base = payloads[0] || {};
+
+  const merged = {
+    ...base,
+    period: 'custom',
+    operational_date_start: range.startDate,
+    operational_date_end: range.endDate,
+    transactions: allTrx,
+    cashier_closings: allClosings,
+    summary: {
+      ...(base.summary || {}),
+      total_transactions: allTrx.length,
+      paid_transactions: paidTrxCount,
+      unpaid_transactions: unpaidTrxCount,
+      total_revenue_all: totalRev,
+      paid_revenue: paidRev,
+      unpaid_revenue: unpaidRev,
+      cash_revenue: cashRev,
+      transfer_revenue: transferRev,
+      total_room_revenue: roomRev,
+      total_fnb_revenue: fnbRev,
+      total_lc_revenue: lcRev,
+      total_sales_commission: salesComm,
+      paid_sales_commission: paidSalesComm,
+      net_paid_revenue: Math.max(0, paidRev - paidSalesComm),
+      transactions_with_commission: allTrx.filter(t => money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0) > 0).length
+    },
+    fnb_sold_summary: {
+      total_qty: fnbMergedItems.reduce((s, it) => s + it.quantity, 0),
+      total_revenue: fnbMergedItems.reduce((s, it) => s + it.revenue, 0),
+      unique_items: fnbMergedItems.length,
+      order_count: allTrx.filter(t => money(t.fnb_total) > 0).length,
+      items: fnbMergedItems
+    },
+    fnb_sold_items: fnbMergedItems,
+    lc_performance: {
+      active_lc_count: lcMergedItems.length,
+      total_sessions: lcMergedItems.reduce((s, it) => s + it.session_count, 0),
+      total_duration_minutes: lcMergedItems.reduce((s, it) => s + it.total_duration_minutes, 0),
+      total_fee: lcMergedItems.reduce((s, it) => s + it.total_fee, 0),
+      items: lcMergedItems
+    }
+  };
+
+  merged.analytics = deriveAnalyticsFromSnapshotPayload(merged, 'custom');
+  return merged;
+}
+
+function filterOwnerMirrorPayloadByDateRange(payload, range) {
+  const allTrx = (Array.isArray(payload.transactions) ? payload.transactions : []).filter(t => {
+    const opDate = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '');
+    return opDate >= range.startDate && opDate <= range.endDate;
+  });
+
+  const allClosings = (Array.isArray(payload.cashier_closings) ? payload.cashier_closings : []).filter(c => {
+    const cDate = c.closing_date ? (c.closing_date.toISOString ? c.closing_date.toISOString().split('T')[0] : String(c.closing_date).split('T')[0]) : '';
+    return cDate >= range.startDate && cDate <= range.endDate;
+  });
+
+  let totalRev = 0;
+  let paidRev = 0;
+  let unpaidRev = 0;
+  let cashRev = 0;
+  let transferRev = 0;
+  let roomRev = 0;
+  let fnbRev = 0;
+  let lcRev = 0;
+  let salesComm = 0;
+  let paidSalesComm = 0;
+  let paidTrxCount = 0;
+  let unpaidTrxCount = 0;
+
+  for (const t of allTrx) {
+    const gt = money(t.grand_total);
+    const comm = money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0);
+    totalRev += gt;
+    roomRev += money(t.room_total);
+    fnbRev += money(t.fnb_total);
+    lcRev += money(t.lc_total);
+    salesComm += comm;
+
+    if (t.payment_status === 'paid') {
+      paidTrxCount++;
+      paidRev += gt;
+      paidSalesComm += comm;
+      cashRev += money(t.cash_amount);
+      transferRev += money(t.transfer_amount);
+    } else {
+      unpaidTrxCount++;
+      unpaidRev += gt;
+    }
+  }
+
+  const fnbSold = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
+  const lcItems = Array.isArray(payload.lc_performance?.items) ? payload.lc_performance.items : (payload.lc_performance_items || []);
+
+  const filtered = {
+    ...payload,
+    period: 'custom',
+    operational_date_start: range.startDate,
+    operational_date_end: range.endDate,
+    transactions: allTrx,
+    cashier_closings: allClosings,
+    summary: {
+      ...(payload.summary || {}),
+      total_transactions: allTrx.length,
+      paid_transactions: paidTrxCount,
+      unpaid_transactions: unpaidTrxCount,
+      total_revenue_all: totalRev,
+      paid_revenue: paidRev,
+      unpaid_revenue: unpaidRev,
+      cash_revenue: cashRev,
+      transfer_revenue: transferRev,
+      total_room_revenue: roomRev,
+      total_fnb_revenue: fnbRev,
+      total_lc_revenue: lcRev,
+      total_sales_commission: salesComm,
+      paid_sales_commission: paidSalesComm,
+      net_paid_revenue: Math.max(0, paidRev - paidSalesComm),
+      transactions_with_commission: allTrx.filter(t => money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0) > 0).length
+    },
+    fnb_sold_summary: payload.fnb_sold_summary || { items: fnbSold },
+    lc_performance: payload.lc_performance || { items: lcItems }
+  };
+
+  filtered.analytics = deriveAnalyticsFromSnapshotPayload(filtered, 'custom');
+  return filtered;
+}
+
 async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', options = {}) {
   const period = options.period || '';
   const hasPeriodFilter = Boolean(period || options.start_date || options.end_date);
@@ -890,6 +1110,77 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     }
   }
 
+  // Dukungan cerdas Custom Date Range:
+  // Jika snapshot tanggal eksak belum ada, cari kumpulan snapshot harian dalam rentang tersebut dan gabungkan (merge)
+  if (result.rowCount === 0 && period === 'custom') {
+    const multiSnapshots = await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND operational_date_start >= $2::date
+        AND operational_date_end <= $3::date
+      ORDER BY operational_date_start ASC, received_at DESC
+    `, [sourceId, range.startDate, range.endDate]);
+
+    if (multiSnapshots.rowCount > 0) {
+      const dateMap = new Map();
+      for (const row of multiSnapshots.rows) {
+        const dKey = row.operational_date_start ? String(row.operational_date_start).split('T')[0] : String(row.snapshot_id);
+        if (!dateMap.has(dKey)) {
+          dateMap.set(dKey, row);
+        }
+      }
+
+      const rowsToMerge = Array.from(dateMap.values());
+      if (rowsToMerge.length === 1) {
+        result = { rowCount: 1, rows: rowsToMerge };
+      } else {
+        const mergedPayload = mergeOwnerMirrorPayloads(rowsToMerge.map(r => r.payload_json || {}), range);
+        return {
+          ...mergedPayload,
+          mode: 'cloud_latest_snapshot',
+          source_id: sourceId,
+          has_snapshot: true,
+          is_fallback: false,
+          period: 'custom',
+          snapshot_period: 'merged_custom',
+          cloud_snapshot_id: rowsToMerge[0].snapshot_id,
+          cloud_received_at: iso(rowsToMerge[0].received_at),
+          cloud_received_at_wib: toJakartaIsoString(rowsToMerge[0].received_at)
+        };
+      }
+    }
+
+    // Fallback kedua: Jika ada snapshot kumulatif (misal last7days / thismonth) yang melingkupi rentang ini
+    const enclosingSnapshots = await db.query(`
+      SELECT *
+      FROM owner_mirror_snapshots
+      WHERE source_id = $1
+        AND operational_date_start <= $2::date
+        AND operational_date_end >= $3::date
+      ORDER BY received_at DESC
+      LIMIT 1
+    `, [sourceId, range.startDate, range.endDate]);
+
+    if (enclosingSnapshots.rowCount > 0) {
+      const row = enclosingSnapshots.rows[0];
+      const payload = row.payload_json || {};
+      const filteredPayload = filterOwnerMirrorPayloadByDateRange(payload, range);
+      return {
+        ...filteredPayload,
+        mode: 'cloud_latest_snapshot',
+        source_id: sourceId,
+        has_snapshot: true,
+        is_fallback: true,
+        period: 'custom',
+        snapshot_period: row.period || 'custom',
+        cloud_snapshot_id: row.snapshot_id,
+        cloud_received_at: iso(row.received_at),
+        cloud_received_at_wib: toJakartaIsoString(row.received_at)
+      };
+    }
+  }
+
   if (result.rowCount === 0) {
     return {
       mirror_version: 'owner-mirror-cloud-empty-v1',
@@ -927,7 +1218,9 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
       lc_performance: { active_lc_count: 0, total_sessions: 0, total_duration_minutes: 0, total_fee: 0, items: [] },
       message: (period === 'today' || period === 'activeshift')
         ? 'Belum ada transaksi di hari operasional ini (Cut-off jam 10:00 WIB).'
-        : 'Belum ada snapshot dari PC kasir untuk periode ini.'
+        : (period === 'custom'
+            ? `Belum ada snapshot dari PC kasir untuk rentang ${range?.startDate || ''} s/d ${range?.endDate || ''}.`
+            : 'Belum ada snapshot dari PC kasir untuk periode ini.')
     };
   }
 
@@ -959,5 +1252,7 @@ module.exports = {
   buildOwnerMirrorSnapshot,
   saveOwnerMirrorSnapshot,
   getLatestOwnerMirrorSnapshot,
-  deriveAnalyticsFromSnapshotPayload
+  deriveAnalyticsFromSnapshotPayload,
+  mergeOwnerMirrorPayloads,
+  filterOwnerMirrorPayloadByDateRange
 };

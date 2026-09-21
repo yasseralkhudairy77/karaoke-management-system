@@ -136,6 +136,111 @@
     button:hover { background: rgba(242, 196, 91, 0.22); }
     button.active { background: var(--gold); color: #1f1408; border-color: var(--gold); }
 
+    .custom-date-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(30, 22, 14, 0.96);
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      border-radius: 16px;
+      padding: 12px 16px;
+      margin-top: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      animation: fadeInDateBar 0.2s ease;
+    }
+
+    @keyframes fadeInDateBar {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .custom-date-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .custom-date-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .date-input {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(242, 196, 91, 0.3);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      color-scheme: dark;
+    }
+
+    .date-input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 10px rgba(242, 196, 91, 0.25);
+    }
+
+    .custom-date-apply-btn {
+      background: var(--gold);
+      color: #1f1408;
+      border: 1px solid var(--gold);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-weight: 800;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: transform 0.15s ease, filter 0.15s ease;
+    }
+
+    .custom-date-apply-btn:hover {
+      filter: brightness(1.1);
+      transform: translateY(-1px);
+    }
+
+    .custom-date-quick-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      padding-top: 4px;
+      border-top: 1px solid rgba(242, 196, 91, 0.12);
+    }
+
+    .quick-chips-label {
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-right: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .chip-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .chip-btn:hover {
+      background: rgba(242, 196, 91, 0.18);
+      color: var(--gold);
+      border-color: var(--gold);
+    }
+
     .tabs {
       overflow-x: auto;
       padding-bottom: 6px;
@@ -873,6 +978,26 @@
       <div>
         <div class="periods" id="periodButtons"></div>
         <div class="small" id="periodInfo">Periode: -</div>
+        <div class="custom-date-bar" id="customDateBar" style="display: none;">
+          <div class="custom-date-fields">
+            <div class="custom-date-group">
+              <label for="customStartDate">Mulai:</label>
+              <input type="date" id="customStartDate" class="date-input">
+            </div>
+            <div class="custom-date-group">
+              <label for="customEndDate">Sampai:</label>
+              <input type="date" id="customEndDate" class="date-input">
+            </div>
+            <button type="button" class="custom-date-apply-btn" id="customDateApplyBtn">Terapkan</button>
+          </div>
+          <div class="custom-date-quick-chips">
+            <span class="quick-chips-label">Pintasan:</span>
+            <button type="button" class="chip-btn" data-preset="today">Hari Ini</button>
+            <button type="button" class="chip-btn" data-preset="yesterday">Kemarin</button>
+            <button type="button" class="chip-btn" data-preset="last7days">7 Hari</button>
+            <button type="button" class="chip-btn" data-preset="thismonth">Bulan Ini</button>
+          </div>
+        </div>
       </div>
       <button type="button" id="refreshButton">Refresh Sekarang</button>
     </div>
@@ -890,6 +1015,7 @@
       { key: "yesterday", label: "Kemarin" },
       { key: "last7days", label: "7 Hari" },
       { key: "thismonth", label: "Bulan Ini" },
+      { key: "custom", label: "Pilih Tanggal" },
     ];
     const TABS = [
       { key: "overview", label: "Overview" },
@@ -902,7 +1028,25 @@
       { key: "closing", label: "Closing" },
     ];
 
+    function getTodayOperationalDateStr() {
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const wib = new Date(utc + (7 * 3600000));
+      if (wib.getHours() < 10) {
+        wib.setDate(wib.getDate() - 1);
+      }
+      const y = wib.getFullYear();
+      const m = String(wib.getMonth() + 1).padStart(2, "0");
+      const d = String(wib.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
     let activePeriod = new URLSearchParams(window.location.search).get("period") || "today";
+    let customStartDate = new URLSearchParams(window.location.search).get("start_date") || "";
+    let customEndDate = new URLSearchParams(window.location.search).get("end_date") || "";
+    if (!customStartDate) customStartDate = getTodayOperationalDateStr();
+    if (!customEndDate) customEndDate = getTodayOperationalDateStr();
+
     let activeTab = new URLSearchParams(window.location.search).get("tab") || "overview";
     let currentSnapshot = null;
     let inventoryCategoryFilter = "all";
@@ -983,6 +1127,13 @@
       const params = new URLSearchParams(window.location.search);
       params.set("period", activePeriod);
       params.set("tab", activeTab);
+      if (activePeriod === "custom") {
+        if (customStartDate) params.set("start_date", customStartDate);
+        if (customEndDate) params.set("end_date", customEndDate);
+      } else {
+        params.delete("start_date");
+        params.delete("end_date");
+      }
       window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
     }
 
@@ -992,6 +1143,19 @@
           ${period.label}
         </button>
       `).join("");
+
+      const customBar = document.getElementById("customDateBar");
+      if (customBar) {
+        if (activePeriod === "custom") {
+          customBar.style.display = "flex";
+          const startInput = document.getElementById("customStartDate");
+          const endInput = document.getElementById("customEndDate");
+          if (startInput) startInput.value = customStartDate;
+          if (endInput) endInput.value = customEndDate;
+        } else {
+          customBar.style.display = "none";
+        }
+      }
     }
 
     function renderTabs() {
@@ -1973,14 +2137,29 @@
             ? `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`
             : (snapshot.message || "Belum ada transaksi"));
       const noteSuffix = snapshot?.is_fallback ? " · Data Closing Terakhir" : "";
+      const dateDisplay = (snapshot.operational_date_start && snapshot.operational_date_end)
+        ? (snapshot.operational_date_start === snapshot.operational_date_end
+            ? `${formatDisplayDate(snapshot.operational_date_start)}`
+            : `${formatDisplayDate(snapshot.operational_date_start)} s/d ${formatDisplayDate(snapshot.operational_date_end)}`)
+        : "-";
       document.getElementById("periodInfo").textContent = snapshot.operational_date_start
-        ? `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}${noteSuffix}`
+        ? `Periode: ${dateDisplay} · Source: ${snapshot.source_id || "local"}${noteSuffix}`
         : "Periode: -";
     }
 
     async function loadSnapshot() {
       try {
-        const response = await fetch(`${API_URL}&period=${encodeURIComponent(activePeriod)}&_=${Date.now()}`, { cache: "no-store" });
+        let url = `${API_URL}&period=${encodeURIComponent(activePeriod)}`;
+        if (activePeriod === "custom") {
+          const sDate = document.getElementById("customStartDate")?.value || customStartDate;
+          const eDate = document.getElementById("customEndDate")?.value || customEndDate;
+          if (sDate && eDate) {
+            url += `&start_date=${encodeURIComponent(sDate)}&end_date=${encodeURIComponent(eDate)}`;
+          }
+        }
+        url += `&_=${Date.now()}`;
+
+        const response = await fetch(url, { cache: "no-store" });
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
 
@@ -2027,7 +2206,16 @@
         analyticsCompareTo = event.target.value;
         try {
           setStatus("Memperbarui analisa...", "cleaning");
-          const res = await fetch(`/exec?action=getOperationalAnalytics&period=${encodeURIComponent(activePeriod)}&compare_to=${encodeURIComponent(analyticsCompareTo)}&_=${Date.now()}`);
+          let analyticsUrl = `/exec?action=getOperationalAnalytics&period=${encodeURIComponent(activePeriod)}&compare_to=${encodeURIComponent(analyticsCompareTo)}`;
+          if (activePeriod === "custom") {
+            const sDate = document.getElementById("customStartDate")?.value || customStartDate;
+            const eDate = document.getElementById("customEndDate")?.value || customEndDate;
+            if (sDate && eDate) {
+              analyticsUrl += `&start_date=${encodeURIComponent(sDate)}&end_date=${encodeURIComponent(eDate)}`;
+            }
+          }
+          analyticsUrl += `&_=${Date.now()}`;
+          const res = await fetch(analyticsUrl);
           const json = await res.json();
           if (json && (json.ok || json.success)) {
             customAnalyticsData = json.data || json;
@@ -2054,6 +2242,64 @@
       setUrlState();
       renderPeriodButtons();
       loadSnapshot();
+    });
+
+    document.getElementById("customDateApplyBtn")?.addEventListener("click", () => {
+      const sInput = document.getElementById("customStartDate");
+      const eInput = document.getElementById("customEndDate");
+      if (!sInput || !eInput) return;
+      if (!sInput.value || !eInput.value) {
+        alert("Silakan tentukan tanggal mulai dan tanggal selesai.");
+        return;
+      }
+      if (sInput.value > eInput.value) {
+        alert("Tanggal mulai tidak boleh lebih besar dari tanggal selesai.");
+        return;
+      }
+      customStartDate = sInput.value;
+      customEndDate = eInput.value;
+      activePeriod = "custom";
+      customAnalyticsData = null;
+      setUrlState();
+      renderPeriodButtons();
+      loadSnapshot();
+    });
+
+    document.querySelectorAll(".custom-date-quick-chips .chip-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const preset = btn.dataset.preset;
+        const todayStr = getTodayOperationalDateStr();
+        const [y, m, d] = todayStr.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+
+        if (preset === "today") {
+          customStartDate = todayStr;
+          customEndDate = todayStr;
+        } else if (preset === "yesterday") {
+          dt.setUTCDate(dt.getUTCDate() - 1);
+          const yStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+          customStartDate = yStr;
+          customEndDate = yStr;
+        } else if (preset === "last7days") {
+          dt.setUTCDate(dt.getUTCDate() - 6);
+          customStartDate = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+          customEndDate = todayStr;
+        } else if (preset === "thismonth") {
+          customStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
+          customEndDate = todayStr;
+        }
+
+        const sInput = document.getElementById("customStartDate");
+        const eInput = document.getElementById("customEndDate");
+        if (sInput) sInput.value = customStartDate;
+        if (eInput) eInput.value = customEndDate;
+
+        activePeriod = "custom";
+        customAnalyticsData = null;
+        setUrlState();
+        renderPeriodButtons();
+        loadSnapshot();
+      });
     });
 
     document.getElementById("monitorTabs").addEventListener("click", (event) => {
