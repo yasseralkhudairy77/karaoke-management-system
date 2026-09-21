@@ -589,10 +589,11 @@
     .analytics-bar-chart {
       display: flex;
       align-items: flex-end;
-      height: 200px;
-      gap: 8px;
-      padding-top: 30px;
-      min-width: 680px;
+      height: 215px;
+      gap: 6px;
+      padding-top: 36px;
+      min-width: 780px;
+      position: relative;
     }
 
     .analytics-bar-col {
@@ -603,6 +604,7 @@
       height: 100%;
       justify-content: flex-end;
       position: relative;
+      cursor: pointer;
     }
 
     .analytics-bar-track {
@@ -611,17 +613,29 @@
       height: 100%;
       display: flex;
       align-items: flex-end;
-      background: rgba(255, 255, 255, 0.03);
+      background: rgba(255, 255, 255, 0.02);
       border-radius: 6px;
       position: relative;
+      transition: background 0.2s ease;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-track,
+    .analytics-bar-track.has-data {
+      background: rgba(255, 255, 255, 0.05);
     }
 
     .analytics-bar-fill {
       width: 100%;
-      background: linear-gradient(180deg, var(--gold), rgba(242, 196, 91, 0.4));
+      background: linear-gradient(180deg, var(--gold), rgba(242, 196, 91, 0.45));
       border-radius: 6px 6px 2px 2px;
-      transition: height 0.4s ease;
+      transition: height 0.4s ease, filter 0.2s ease, box-shadow 0.2s ease;
       min-height: 2px;
+      position: relative;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-fill {
+      filter: brightness(1.25);
+      box-shadow: 0 0 12px rgba(242, 196, 91, 0.5);
     }
 
     .analytics-bar-fill.peak {
@@ -638,19 +652,89 @@
       top: -24px;
       left: 50%;
       transform: translateX(-50%);
-      font-size: 0.68rem;
+      font-size: 0.65rem;
       font-weight: 700;
       color: var(--gold);
       white-space: nowrap;
       pointer-events: none;
+      background: rgba(20, 15, 10, 0.88);
+      border: 1px solid rgba(242, 196, 91, 0.3);
+      border-radius: 4px;
+      padding: 1px 4px;
+      line-height: 1.2;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      letter-spacing: -0.2px;
     }
 
     .analytics-bar-label {
-      font-size: 0.72rem;
+      font-size: 0.70rem;
       color: var(--muted);
       margin-top: 8px;
       text-align: center;
       white-space: nowrap;
+      transition: color 0.2s ease;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-label {
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    /* Floating Interactive Tooltip Popover */
+    .analytics-floating-popover {
+      position: fixed;
+      z-index: 99999;
+      pointer-events: none;
+      background: rgba(22, 17, 12, 0.96);
+      border: 1px solid rgba(242, 196, 91, 0.45);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85), 0 0 14px rgba(242, 196, 91, 0.25);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #f3f4f6;
+      min-width: 175px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translate(-50%, -100%) scale(0.95);
+      transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .analytics-floating-popover.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translate(-50%, -100%) scale(1);
+    }
+
+    .analytics-floating-popover-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--gold);
+      margin-bottom: 6px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      letter-spacing: 0.3px;
+    }
+
+    .analytics-floating-popover-rev {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+
+    .analytics-floating-popover-meta {
+      font-size: 0.73rem;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .analytics-floating-popover-meta span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .analytics-stacked-bar {
@@ -833,6 +917,15 @@
       currency: "IDR",
       maximumFractionDigits: 0,
     }).format(Number(value) || 0);
+
+    const formatCompactCurrency = (value) => {
+      const num = Number(value) || 0;
+      if (num <= 0) return "";
+      if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace(/\.0$/, "") + "M";
+      if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, "") + "jt";
+      if (num >= 1000) return Math.round(num / 1000) + "rb";
+      return String(num);
+    };
 
     const formatNumber = (value) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
 
@@ -1234,17 +1327,23 @@
 
       if (analyticsChartMode === "daily") {
         chartTitle = "Tren Pertumbuhan Harian (Daily Timeline Trend)";
-        chartSubtitle = "Pergerakan omzet dan durasi sewa room hari-ke-hari sepanjang periode terpilih.";
+        chartSubtitle = "Pergerakan omzet dan durasi sewa room hari-ke-hari sepanjang periode terpilih. Arahkan mouse/sentuh batang untuk rincian.";
         const maxDaily = Math.max(1, ...daily.map(d => Number(d.daily_revenue) || 0));
         chartBarsHtml = daily.map(d => {
           const rev = Number(d.daily_revenue) || 0;
-          const pct = Math.max(4, Math.round((rev / maxDaily) * 100));
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDaily) * 100));
           const dateLabel = formatDisplayDate(d.operational_date);
+          const compact = formatCompactCurrency(rev);
+          const isPeak = rev === maxDaily && rev > 0;
           return `
-            <div class="analytics-bar-col">
-              <div class="analytics-bar-track">
-                <div class="analytics-bar-fill" style="height: ${pct}%;">
-                  <span class="analytics-bar-value-tip">${formatCurrency(rev)}</span>
+            <div class="analytics-bar-col"
+                 data-tooltip-title="📅 ${safe(dateLabel)}"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(d.trx_count || 0)} Transaksi Lunas"
+                 data-tooltip-hours="${(Number(d.daily_room_hours) || 0).toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
+                <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
                 </div>
               </div>
               <div class="analytics-bar-label">${safe(dateLabel)}</div>
@@ -1260,15 +1359,20 @@
         const maxDow = Math.max(1, ...days.map(d => Number(d.total_revenue) || 0));
         chartBarsHtml = days.map(d => {
           const rev = Number(d.total_revenue) || 0;
-          const pct = Math.max(4, Math.round((rev / maxDow) * 100));
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDow) * 100));
           const isPeak = d.day_name === dow.peakDay;
           const isSlowest = d.day_name === dow.slowestDay;
           const barCls = isPeak ? "peak" : (isSlowest ? "slowest" : "");
+          const compact = formatCompactCurrency(rev);
           return `
-            <div class="analytics-bar-col">
-              <div class="analytics-bar-track">
+            <div class="analytics-bar-col"
+                 data-tooltip-title="📆 Hari ${safe(d.day_name)}"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(d.total_sessions || 0)} Total Sesi Karaoke"
+                 data-tooltip-hours="${(Number(d.total_room_hours) || 0).toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
                 <div class="analytics-bar-fill ${barCls}" style="height: ${pct}%;">
-                  <span class="analytics-bar-value-tip">${formatCurrency(rev)}</span>
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
                 </div>
               </div>
               <div class="analytics-bar-label">${safe(d.day_name)}</div>
@@ -1279,13 +1383,19 @@
         const maxHourly = Math.max(1, ...hourly.map(h => Number(h.hourly_revenue) || 0));
         chartBarsHtml = hourly.map(h => {
           const rev = Number(h.hourly_revenue) || 0;
-          const pct = Math.max(4, Math.round((rev / maxHourly) * 100));
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxHourly) * 100));
           const hourText = `${String(h.hour_wib).padStart(2, '0')}:00`;
+          const isPeak = rev === maxHourly && rev > 0;
+          const compact = formatCompactCurrency(rev);
           return `
-            <div class="analytics-bar-col">
-              <div class="analytics-bar-track">
-                <div class="analytics-bar-fill" style="height: ${pct}%;">
-                  <span class="analytics-bar-value-tip">${rev > 0 ? formatCurrency(rev) : 'Rp0'}</span>
+            <div class="analytics-bar-col"
+                 data-tooltip-title="⏰ Pukul ${hourText} WIB"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(h.session_count || 0)} Sesi Karaoke"
+                 data-tooltip-hours="${(Number(h.hourly_room_hours) || 0).toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
+                <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
                 </div>
               </div>
               <div class="analytics-bar-label">${hourText}</div>
@@ -1954,6 +2064,97 @@
       renderTabs();
       renderContent();
     });
+
+    // Interactive Tooltip Popover for Analytics Charts
+    let analyticsTooltipEl = null;
+
+    function getOrCreateAnalyticsTooltip() {
+      if (!analyticsTooltipEl) {
+        analyticsTooltipEl = document.createElement("div");
+        analyticsTooltipEl.id = "analyticsFloatingTooltip";
+        analyticsTooltipEl.className = "analytics-floating-popover";
+        document.body.appendChild(analyticsTooltipEl);
+      }
+      return analyticsTooltipEl;
+    }
+
+    function showAnalyticsTooltip(col) {
+      const tooltip = getOrCreateAnalyticsTooltip();
+      const title = col.dataset.tooltipTitle;
+      if (!title) return;
+
+      const rev = col.dataset.tooltipRev || "Rp 0";
+      const sessions = col.dataset.tooltipSessions || "";
+      const hours = col.dataset.tooltipHours || "";
+
+      tooltip.innerHTML = `
+        <div class="analytics-floating-popover-title">${safe(title)}</div>
+        <div class="analytics-floating-popover-rev">${safe(rev)}</div>
+        <div class="analytics-floating-popover-meta">
+          ${sessions ? `<span>🎤 ${safe(sessions)}</span>` : ""}
+          ${hours ? `<span>⏱️ ${safe(hours)}</span>` : ""}
+        </div>
+      `;
+
+      tooltip.classList.add("visible");
+      positionAnalyticsTooltip(col);
+    }
+
+    function positionAnalyticsTooltip(col) {
+      if (!analyticsTooltipEl || !analyticsTooltipEl.classList.contains("visible")) return;
+
+      const rect = col.getBoundingClientRect();
+      const tooltipRect = analyticsTooltipEl.getBoundingClientRect();
+
+      let x = rect.left + (rect.width / 2);
+      let y = rect.top - 12;
+
+      if (y - tooltipRect.height < 10) {
+        y = rect.bottom + tooltipRect.height + 14;
+      }
+
+      const margin = 14;
+      const halfW = tooltipRect.width / 2;
+      if (x - halfW < margin) {
+        x = margin + halfW;
+      } else if (x + halfW > window.innerWidth - margin) {
+        x = window.innerWidth - margin - halfW;
+      }
+
+      analyticsTooltipEl.style.left = `${Math.round(x)}px`;
+      analyticsTooltipEl.style.top = `${Math.round(y)}px`;
+    }
+
+    function hideAnalyticsTooltip() {
+      if (analyticsTooltipEl) {
+        analyticsTooltipEl.classList.remove("visible");
+      }
+    }
+
+    document.addEventListener("mouseover", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col && col.dataset.tooltipTitle) {
+        showAnalyticsTooltip(col);
+      }
+    });
+
+    document.addEventListener("mouseout", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col) {
+        hideAnalyticsTooltip();
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col && col.dataset.tooltipTitle) {
+        showAnalyticsTooltip(col);
+      } else {
+        hideAnalyticsTooltip();
+      }
+    });
+
+    window.addEventListener("scroll", hideAnalyticsTooltip, { passive: true });
 
     renderPeriodButtons();
     renderTabs();
