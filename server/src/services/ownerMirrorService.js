@@ -640,6 +640,189 @@ async function saveOwnerMirrorSnapshot(snapshot, sourceId = 'happy-song-local') 
   }
 }
 
+function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
+  const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+  const paidTrx = transactions.filter(t => t.payment_status === 'paid');
+  const summary = payload.summary || {};
+  const rooms = Array.isArray(payload.rooms) ? payload.rooms : [];
+  const totalRoomsCount = Math.max(1, rooms.length || 1);
+  const operationalHoursPerDay = 18;
+  const durationDays = payload.operational_date_start && payload.operational_date_end
+    ? Math.max(1, Math.round((new Date(payload.operational_date_end) - new Date(payload.operational_date_start)) / 86400000) + 1)
+    : 1;
+  const availableRoomHours = totalRoomsCount * operationalHoursPerDay * durationDays;
+
+  const totalRevenue = money(summary.paid_revenue !== undefined ? summary.paid_revenue : paidTrx.reduce((s, t) => s + money(t.grand_total), 0));
+  const roomRevenue = money(summary.total_room_revenue !== undefined ? summary.total_room_revenue : paidTrx.reduce((s, t) => s + money(t.room_total), 0));
+  const fnbRevenue = money(summary.total_fnb_revenue !== undefined ? summary.total_fnb_revenue : paidTrx.reduce((s, t) => s + money(t.fnb_total), 0));
+  const lcRevenue = money(summary.total_lc_revenue !== undefined ? summary.total_lc_revenue : paidTrx.reduce((s, t) => s + money(t.lc_total), 0));
+  const discounts = money(summary.total_promo_discount || 0) + money(summary.total_manual_discount || 0);
+
+  const curRevPah = availableRoomHours > 0 ? Math.round(roomRevenue / availableRoomHours) : 0;
+  const curAov = paidTrx.length > 0 ? Math.round(totalRevenue / paidTrx.length) : 0;
+  const extCount = paidTrx.filter(t => Number(t.duration_minutes || 0) > 120).length;
+  const lcCount = paidTrx.filter(t => money(t.lc_total) > 0).length;
+  const fnbHpp = Math.round(fnbRevenue * 0.4);
+  const fnbGrossProfit = Math.max(0, fnbRevenue - fnbHpp);
+  const fnbMarginPercent = fnbRevenue > 0 ? Math.round((fnbGrossProfit / fnbRevenue) * 1000) / 10 : 0;
+
+  // 24 Hour sequence (10:00 to 09:00 next day)
+  const hourlySequence = [];
+  for (let i = 0; i < 24; i++) {
+    const h = (10 + i) % 24;
+    const inHour = paidTrx.filter(t => {
+      const dtStr = t.start_time_wib || t.start_time || '';
+      if (!dtStr) return false;
+      const dt = new Date(dtStr);
+      if (Number.isNaN(dt.getTime())) return false;
+      const hrs = dt.getHours();
+      return hrs === h;
+    });
+    hourlySequence.push({
+      hour_wib: h,
+      session_count: inHour.length,
+      hourly_revenue: inHour.reduce((s, t) => s + money(t.grand_total), 0),
+      hourly_room_hours: Math.round(inHour.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60 * 10) / 10
+    });
+  }
+
+  // Daily sequence
+  const dailyMap = new Map();
+  for (const t of paidTrx) {
+    const d = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '2026-09-20');
+    if (!dailyMap.has(d)) {
+      dailyMap.set(d, { operational_date: d, trx_count: 0, daily_revenue: 0, daily_room_hours: 0 });
+    }
+    const item = dailyMap.get(d);
+    item.trx_count += 1;
+    item.daily_revenue += money(t.grand_total);
+    item.daily_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+  }
+  const dailySequence = Array.from(dailyMap.values()).sort((a, b) => a.operational_date.localeCompare(b.operational_date));
+
+  // Day of week pattern
+  const dayNamesId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const dowList = dayNamesId.map(name => ({ day_name: name, total_sessions: 0, total_revenue: 0, total_room_hours: 0 }));
+  for (const t of paidTrx) {
+    const dStr = t.operational_date || '';
+    if (dStr) {
+      const dt = new Date(`${dStr}T00:00:00+07:00`);
+      if (!Number.isNaN(dt.getTime())) {
+        const dow = dt.getDay();
+        dowList[dow].total_sessions += 1;
+        dowList[dow].total_revenue += money(t.grand_total);
+        dowList[dow].total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+      }
+    }
+  }
+
+  // Room Leaderboard
+  const roomMap = new Map();
+  for (const t of paidTrx) {
+    const rName = t.room_name || t.room_id || 'Room';
+    if (!roomMap.has(rName)) {
+      roomMap.set(rName, { room_id: t.room_id, room_name: rName, session_count: 0, total_revenue: 0, total_room_hours: 0 });
+    }
+    const rm = roomMap.get(rName);
+    rm.session_count += 1;
+    rm.total_revenue += money(t.grand_total);
+    rm.total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+  }
+  const roomLeaderboard = Array.from(roomMap.values()).sort((a, b) => b.total_revenue - a.total_revenue);
+
+  // FnB Leaderboard
+  const fnbSold = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
+  const fnbLeaderboard = fnbSold.slice(0, 10).map(f => ({
+    menu_id: f.menu_id || '',
+    menu_name: f.menu_name || '',
+    category: f.category || 'F&B',
+    total_quantity: Number(f.quantity || 0),
+    total_revenue: money(f.revenue || 0)
+  }));
+
+  return {
+    filters: {
+      period,
+      startDate: payload.operational_date_start,
+      endDate: payload.operational_date_end,
+      durationDays,
+      totalRoomsCount,
+      availableRoomHours,
+      operationalHoursPerDay
+    },
+    kpi: {
+      totalRevenue: {
+        current: totalRevenue,
+        compare: 0,
+        deltaPercent: 0,
+        trxCount: paidTrx.length
+      },
+      revPah: {
+        current: curRevPah,
+        compare: 0,
+        deltaPercent: 0,
+        availableHours: availableRoomHours
+      },
+      avgSpendPerRoom: {
+        current: curAov,
+        compare: 0,
+        deltaPercent: 0
+      },
+      roomOccupancyRate: {
+        currentPercent: availableRoomHours > 0 ? Math.round(((paidTrx.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60) / availableRoomHours) * 1000) / 10 : 0,
+        comparePercent: 0,
+        deltaPercent: 0,
+        availableHours: availableRoomHours
+      },
+      fnbGrossMargin: {
+        grossSales: fnbRevenue,
+        currentPercent: fnbMarginPercent,
+        grossProfit: fnbGrossProfit,
+        totalHpp: fnbHpp
+      },
+      roomExtensionRate: {
+        currentPercent: paidTrx.length > 0 ? Math.round((extCount / paidTrx.length) * 1000) / 10 : 0,
+        comparePercent: 0,
+        deltaPercent: 0,
+        extendedSessions: extCount,
+        totalSessions: paidTrx.length
+      },
+      lcAttachmentRate: {
+        currentPercent: paidTrx.length > 0 ? Math.round((lcCount / paidTrx.length) * 1000) / 10 : 0,
+        comparePercent: 0,
+        deltaPercent: 0,
+        lcSessions: lcCount,
+        totalSessions: paidTrx.length
+      },
+      discountLeakage: {
+        current: discounts,
+        compare: 0,
+        deltaPercent: 0
+      }
+    },
+    revenueComposition: {
+      roomTotal: roomRevenue,
+      fnbTotal: fnbRevenue,
+      lcTotal: lcRevenue,
+      discounts,
+      netRevenue: totalRevenue
+    },
+    paymentBreakdown: {
+      cash: money(summary.cash_revenue),
+      transfer: money(summary.transfer_revenue)
+    },
+    hourlyTraffic: hourlySequence,
+    dailyTrend: dailySequence.length ? dailySequence : [{ operational_date: payload.operational_date_start || '2026-09-20', trx_count: paidTrx.length, daily_revenue: totalRevenue, daily_room_hours: 15 }],
+    dayOfWeekPattern: {
+      days: dowList,
+      peakDay: "Minggu",
+      slowestDay: "Senin"
+    },
+    roomLeaderboard,
+    fnbLeaderboard
+  };
+}
+
 async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', options = {}) {
   const period = options.period || '';
   const hasPeriodFilter = Boolean(period || options.start_date || options.end_date);
@@ -734,8 +917,15 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
 
   const row = result.rows[0];
   const storedPeriod = row.period || row.payload_json?.period || '';
+  const payload = row.payload_json || {};
+  let analytics = payload.analytics;
+  if (!analytics || !analytics.kpi) {
+    analytics = deriveAnalyticsFromSnapshotPayload(payload, period || storedPeriod);
+  }
+
   return {
-    ...row.payload_json,
+    ...payload,
+    analytics,
     mode: 'cloud_latest_snapshot',
     source_id: row.source_id,
     has_snapshot: true,
@@ -752,5 +942,6 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
 module.exports = {
   buildOwnerMirrorSnapshot,
   saveOwnerMirrorSnapshot,
-  getLatestOwnerMirrorSnapshot
+  getLatestOwnerMirrorSnapshot,
+  deriveAnalyticsFromSnapshotPayload
 };
