@@ -670,7 +670,7 @@
         <section class="panel">
           <h2>Status Ruangan</h2>
           <div class="rooms">
-            ${rooms.map(room => {
+            ${rooms.length ? rooms.map(room => {
               const tone = room.status === "occupied" ? "occupied" : room.status === "cleaning" ? "cleaning" : "available";
               const orders = Array.isArray(room.open_fnb_orders) ? room.open_fnb_orders : [];
               return `
@@ -686,7 +686,7 @@
                   </div>
                 </article>
               `;
-            }).join("")}
+            }).join("") : '<div class="empty">Belum ada data status room dari kasir untuk periode ini.</div>'}
           </div>
         </section>
       `;
@@ -1023,7 +1023,11 @@
 
     function updateSnapshotHeader(snapshot) {
       if (!snapshot?.has_snapshot && snapshot?.mode === "cloud_latest_snapshot") {
-        setStatus("Belum ada snapshot", "cleaning");
+        if (activePeriod === "today" || activePeriod === "activeshift") {
+          setStatus("Shift Baru Belum Buka · Belum Ada Transaksi", "cleaning");
+        } else {
+          setStatus("Belum ada snapshot", "cleaning");
+        }
       } else if (snapshot?.is_fallback) {
         setStatus("PC Kasir Offline · Data Terakhir", "cleaning");
       } else {
@@ -1032,10 +1036,13 @@
 
       document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
         ? `Update cloud: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
-        : `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`;
+        : (snapshot.generated_at_wib
+            ? `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`
+            : (snapshot.message || "Belum ada transaksi"));
       const noteSuffix = snapshot?.is_fallback ? " · Data Closing Terakhir" : "";
-      document.getElementById("periodInfo").textContent =
-        `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}${noteSuffix}`;
+      document.getElementById("periodInfo").textContent = snapshot.operational_date_start
+        ? `${formatDisplayDate(snapshot.operational_date_start)} - ${formatDisplayDate(snapshot.operational_date_end)} · Source: ${snapshot.source_id || "local"}${noteSuffix}`
+        : "Periode: -";
     }
 
     async function loadSnapshot() {

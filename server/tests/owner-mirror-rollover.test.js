@@ -53,7 +53,47 @@ async function runOwnerMirrorRolloverTests() {
     db.query = async () => ({ rowCount: 0, rows: [] });
     const missing = await getLatestOwnerMirrorSnapshot('happy-song-local', { period: 'today' });
     assert.strictEqual(missing.has_snapshot, false);
+    assert.strictEqual(missing.summary.paid_revenue, 0);
+    assert.strictEqual(missing.summary.total_transactions, 0);
     console.log('  PASS unmatched operational date remains empty when DB has no rows');
+
+    // Test: Jika DB memiliki snapshot kemarin yang masih berlabel period 'today',
+    // setelah cutoff jam 10:00 WIB query 'today' TIDAK BOLEH fallback ke snapshot kemarin tersebut!
+    db.query = async (sql, params) => {
+      const text = String(sql);
+      // Query 1 untuk tanggal eksak hari ini tidak menemukan baris (karena PC kasir mati/belum buka shift baru)
+      if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
+        return { rowCount: 0, rows: [] };
+      }
+      // Jika ada query fallback lama, misalnya cari WHERE period = $2 ('today')
+      if (/WHERE source_id = \$1\s+AND period = \$2/i.test(text)) {
+        return {
+          rowCount: 1,
+          rows: [{
+            snapshot_id: 101,
+            source_id: 'happy-song-local',
+            period: 'today',
+            operational_date_start: '2026-09-20',
+            operational_date_end: '2026-09-20',
+            received_at: new Date('2026-09-21T05:17:00+07:00'),
+            payload_json: {
+              period: 'today',
+              operational_date_start: '2026-09-20',
+              operational_date_end: '2026-09-20',
+              summary: { paid_revenue: 10060000, total_transactions: 7 }
+            }
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+
+    const todaySnapshotAfterCutoff = await getLatestOwnerMirrorSnapshot('happy-song-local', { period: 'today' });
+    assert.strictEqual(todaySnapshotAfterCutoff.has_snapshot, false, 'Today should NOT fallback to yesterday snapshot after cutoff');
+    assert.strictEqual(todaySnapshotAfterCutoff.is_fallback, false);
+    assert.strictEqual(todaySnapshotAfterCutoff.summary.paid_revenue, 0);
+    assert.strictEqual(todaySnapshotAfterCutoff.summary.total_transactions, 0);
+    console.log('  PASS today snapshot strictly resets to 0 after cutoff without falling back to yesterday');
 
     // Test smart fallback: Saat PC offline dan tidak ada tanggal eksak untuk last7days, fallback ke snapshot last7days terakhir
     db.query = async (sql, params) => {

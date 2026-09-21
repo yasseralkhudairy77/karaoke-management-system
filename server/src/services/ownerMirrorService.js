@@ -657,9 +657,13 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
 
   let isFallback = false;
 
-  // Fallback 1: Jika tidak ada snapshot untuk tanggal eksak hari ini (misal PC kasir mati/belum buka hari ini):
-  // Ambil snapshot terbaru yang tersimpan untuk periode tersebut (misal snapshot last7days / thismonth / yesterday terakhir)
-  if (result.rowCount === 0 && hasPeriodFilter && period && period !== 'custom') {
+  // Fallback hanya berlaku untuk periode akumulasi/rentang (seperti 'last7days', 'thismonth')
+  // saat PC kasir offline sehingga data tanggal operasional hari ini belum terkirim.
+  // Untuk 'today' atau 'activeshift', TIDAK BOLEH fallback ke snapshot hari kemarin/sebelumnya
+  // agar aturan cut-off 10:00 WIB ditaati (hari operasional baru otomatis reset / kosong sampai kasir buka).
+  const allowCumulativeFallback = hasPeriodFilter && (period === 'last7days' || period === 'thismonth');
+
+  if (result.rowCount === 0 && allowCumulativeFallback) {
     const periodFallback = await db.query(`
       SELECT *
       FROM owner_mirror_snapshots
@@ -675,22 +679,6 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     }
   }
 
-  // Fallback 2: Jika untuk periode tersebut belum ada, ambil snapshot terbaru apapun yang ada untuk sourceId ini
-  if (result.rowCount === 0 && hasPeriodFilter && (period === 'today' || period === 'activeshift')) {
-    const latestFallback = await db.query(`
-      SELECT *
-      FROM owner_mirror_snapshots
-      WHERE source_id = $1
-      ORDER BY received_at DESC, snapshot_id DESC
-      LIMIT 1
-    `, [sourceId]);
-
-    if (latestFallback.rowCount > 0) {
-      result = latestFallback;
-      isFallback = true;
-    }
-  }
-
   if (result.rowCount === 0) {
     return {
       mirror_version: 'owner-mirror-cloud-empty-v1',
@@ -701,13 +689,34 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
       period: period || 'latest',
       operational_date_start: range?.startDate || '',
       operational_date_end: range?.endDate || '',
-      summary: {},
+      summary: {
+        total_revenue_all: 0,
+        paid_revenue: 0,
+        unpaid_revenue: 0,
+        paid_transactions: 0,
+        unpaid_transactions: 0,
+        total_transactions: 0,
+        cash_revenue: 0,
+        transfer_revenue: 0,
+        total_fnb_revenue: 0,
+        total_lc_revenue: 0,
+        occupied_rooms: 0,
+        cleaning_rooms: 0,
+        available_rooms: 0,
+        open_fnb_revenue: 0,
+        total_sales_commission: 0,
+        paid_sales_commission: 0,
+        net_paid_revenue: 0,
+        transactions_with_commission: 0
+      },
       rooms: [],
       transactions: [],
       cashier_closings: [],
       fnb_sold_summary: { total_qty: 0, total_revenue: 0, unique_items: 0, order_count: 0, items: [] },
       lc_performance: { active_lc_count: 0, total_sessions: 0, total_duration_minutes: 0, total_fee: 0, items: [] },
-      message: 'Belum ada snapshot dari PC kasir.'
+      message: (period === 'today' || period === 'activeshift')
+        ? 'Belum ada transaksi di hari operasional ini (Cut-off jam 10:00 WIB).'
+        : 'Belum ada snapshot dari PC kasir untuk periode ini.'
     };
   }
 
