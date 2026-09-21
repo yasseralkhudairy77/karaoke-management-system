@@ -94,16 +94,16 @@ body {
 
 body::before {
   position: fixed;
-  inset: -5vh -8vw;
+  inset: 0;
   z-index: 0;
   pointer-events: none;
   content: "";
   background-image: url("../assets/brand/happy-song-logo-bg.jpg");
-  background-position: right 12% top 42%;
+  background-position: center 52%;
   background-repeat: no-repeat;
-  background-size: min(980px, 82vw) auto;
-  opacity: 0.11;
-  filter: blur(1.5px) saturate(0.9);
+  background-size: min(720px, 60vw) auto;
+  opacity: 0.10;
+  filter: blur(1px) saturate(0.95);
 }
 
 body::after {
@@ -113,8 +113,8 @@ body::after {
   pointer-events: none;
   content: "";
   background:
-    linear-gradient(90deg, rgba(11, 8, 5, 0.72), rgba(11, 8, 5, 0.34), rgba(11, 8, 5, 0.78)),
-    radial-gradient(circle at 50% 20%, rgba(255, 215, 122, 0.06), transparent 42%);
+    linear-gradient(90deg, rgba(11, 8, 5, 0.72), rgba(11, 8, 5, 0.38), rgba(11, 8, 5, 0.72)),
+    radial-gradient(circle at 50% 52%, rgba(255, 215, 122, 0.06), transparent 50%);
 }
 
 /* UI-3: reusable badge, button, form, and panel primitives */

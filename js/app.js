@@ -15143,7 +15143,13 @@ function createStockAdjustmentPanelElement() {
   emptyItemOption.textContent = "Pilih item stok";
   itemSelect.appendChild(emptyItemOption);
 
-  inventoryItems.forEach((item) => {
+  const sortedAdjustmentItems = [...(inventoryItems || [])].sort((a, b) => {
+    const nameA = String(a.stock_item_name || a.stock_item_id || "");
+    const nameB = String(b.stock_item_name || b.stock_item_id || "");
+    return nameA.localeCompare(nameB, "id", { sensitivity: "base", numeric: true });
+  });
+
+  sortedAdjustmentItems.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.stock_item_id;
     option.textContent = `${item.stock_item_name || item.stock_item_id} (${Number(item.stock_qty) || 0} ${item.unit || ""})`.trim();
@@ -15573,7 +15579,13 @@ function createInboundGoodsPanelElement() {
     emptyOpt.textContent = "-- Pilih Barang dari Gudang --";
     select.appendChild(emptyOpt);
 
-    (inventoryItems || []).forEach(inv => {
+    const sortedInventory = [...(inventoryItems || [])].sort((a, b) => {
+      const nameA = String(a.stock_item_name || a.stock_item_id || "");
+      const nameB = String(b.stock_item_name || b.stock_item_id || "");
+      return nameA.localeCompare(nameB, "id", { sensitivity: "base", numeric: true });
+    });
+
+    sortedInventory.forEach(inv => {
       const opt = document.createElement("option");
       opt.value = inv.stock_item_id;
       opt.textContent = `${inv.stock_item_name || inv.stock_item_id}`;
