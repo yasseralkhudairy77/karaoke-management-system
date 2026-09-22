@@ -1606,7 +1606,15 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
   }
 
   let physicalConsumption = payload.fnb_physical_consumption;
-  if (!Array.isArray(physicalConsumption) || physicalConsumption.length === 0) {
+  const fnbSoldList = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
+  const hasBundleSold = fnbSoldList.some(item => {
+    const name = (item.menu_name || '').toLowerCase();
+    const id = (item.menu_id || '').toLowerCase();
+    return name.includes('paket') || name.includes('bundle') || name.includes('holic') || name.includes('abidin') || Boolean(BASELINE_BUNDLE_BOMS[name]) || Boolean(BASELINE_BUNDLE_BOMS[id]);
+  });
+  const hasPackageConsumption = Array.isArray(physicalConsumption) && physicalConsumption.some(i => Number(i.package_qty || 0) > 0);
+
+  if (!Array.isArray(physicalConsumption) || physicalConsumption.length === 0 || (hasBundleSold && !hasPackageConsumption)) {
     physicalConsumption = deriveFnbPhysicalConsumptionFromSnapshotPayload(payload);
   }
 
