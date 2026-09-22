@@ -2010,22 +2010,114 @@
             total_consumed: 0
           });
         }
-        for (const it of items) {
-          let matched = invMap.get(it.menu_id) || invMap.get(it.stock_item_id);
-          if (!matched && it.menu_name) {
+
+        const baselineBoms = {
+          "beer holic draft": [
+            { stock_item_id: "MENU-019", stock_item_name: "Draft beer", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic bintang": [
+            { stock_item_id: "MENU-017", stock_item_name: "Bintang", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic balihai": [
+            { stock_item_id: "MENU-018", stock_item_name: "Balihai", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic angker": [
+            { stock_item_id: "MENU-016", stock_item_name: "Angker", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic singaraja": [
+            { stock_item_id: "MENU-020", stock_item_name: "Singaraja", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "abidin-draft beer": [
+            { stock_item_id: "MENU-035", stock_item_name: "Anggur Merah", qty_used: 1, unit: "botol" },
+            { stock_item_id: "MENU-019", stock_item_name: "Draft beer", qty_used: 1, unit: "botol" }
+          ],
+          "pink lady sprite": [
+            { stock_item_id: "MENU-041", stock_item_name: "Pink Lady", qty_used: 1, unit: "botol" },
+            { stock_item_id: "MENU-099", stock_item_name: "Sprite", qty_used: 1, unit: "botol" }
+          ]
+        };
+
+        const bundleRecipesMap = new Map();
+        for (const [bKey, comps] of Object.entries(baselineBoms)) {
+          bundleRecipesMap.set(bKey.toLowerCase().trim(), comps);
+        }
+
+        const dynamicRecipes = Array.isArray(snapshot.bundle_recipes) ? snapshot.bundle_recipes : [];
+        for (const r of dynamicRecipes) {
+          const kName = (r.menu_name || r.package_name || "").toLowerCase().trim();
+          const kId = (r.menu_id || r.package_id || "").toLowerCase().trim();
+          const compObj = {
+            stock_item_id: r.item_id || r.stock_item_id || r.component_ref_id || "",
+            stock_item_name: r.stock_item_name || r.component_name || "",
+            qty_used: Number(r.qty_used || r.qty || 1),
+            unit: r.unit || "pcs"
+          };
+          if (kName) {
+            if (!bundleRecipesMap.has(kName)) bundleRecipesMap.set(kName, []);
+            bundleRecipesMap.get(kName).push(compObj);
+          }
+          if (kId) {
+            if (!bundleRecipesMap.has(kId)) bundleRecipesMap.set(kId, []);
+            bundleRecipesMap.get(kId).push(compObj);
+          }
+        }
+
+        function findEntry(refId, refName) {
+          if (refId && invMap.has(refId)) return invMap.get(refId);
+          if (refName) {
+            const target = refName.toLowerCase().trim();
             for (const val of invMap.values()) {
-              if (val.stock_item_name && val.stock_item_name.toLowerCase() === it.menu_name.toLowerCase()) {
-                matched = val;
-                break;
+              if (val.stock_item_name && val.stock_item_name.toLowerCase().trim() === target) {
+                return val;
               }
             }
           }
-          if (matched) {
-            const q = Number(it.quantity || 0);
-            matched.ala_carte_qty += q;
-            matched.total_consumed += q;
+          return null;
+        }
+
+        for (const it of items) {
+          const q = Number(it.quantity || it.quantity_sold || 0);
+          if (q <= 0) continue;
+
+          const itName = (it.menu_name || "").toLowerCase().trim();
+          const itId = (it.menu_id || "").toLowerCase().trim();
+
+          const bundleComps = bundleRecipesMap.get(itName) || bundleRecipesMap.get(itId);
+          if (bundleComps && bundleComps.length > 0) {
+            for (const comp of bundleComps) {
+              let entry = findEntry(comp.stock_item_id, comp.stock_item_name);
+              const needed = q * Number(comp.qty_used || 1);
+              if (entry) {
+                entry.package_qty += needed;
+                entry.total_consumed += needed;
+              } else if (comp.stock_item_id || comp.stock_item_name) {
+                const newEntry = {
+                  stock_item_id: comp.stock_item_id || "",
+                  stock_item_name: comp.stock_item_name || "",
+                  category: "Paket F&B",
+                  unit: comp.unit || "pcs",
+                  current_stock: 0,
+                  ala_carte_qty: 0,
+                  package_qty: needed,
+                  total_consumed: needed
+                };
+                invMap.set(newEntry.stock_item_id || newEntry.stock_item_name, newEntry);
+              }
+            }
+          } else {
+            let entry = findEntry(it.menu_id || it.stock_item_id, it.menu_name);
+            if (entry) {
+              entry.ala_carte_qty += q;
+              entry.total_consumed += q;
+            }
           }
         }
+
         physicalAll = Array.from(invMap.values())
           .filter(i => i.total_consumed > 0)
           .sort((a, b) => (b.total_consumed - a.total_consumed) || a.stock_item_name.localeCompare(b.stock_item_name));

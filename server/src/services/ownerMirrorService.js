@@ -3,6 +3,73 @@ const { getOperationalDateRange, toJakartaIsoString, getJakartaComponents } = re
 const { getSyncStatus } = require('./railwaySyncWorker');
 const { computeOperationalAnalytics } = require('../controllers/analyticsController');
 
+const BASELINE_BUNDLE_BOMS = {
+  'beer holic draft': [
+    { stock_item_id: 'MENU-019', stock_item_name: 'Draft beer', qty_used: 3, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+  ],
+  'beer holic bintang': [
+    { stock_item_id: 'MENU-017', stock_item_name: 'Bintang', qty_used: 3, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+  ],
+  'beer holic balihai': [
+    { stock_item_id: 'MENU-018', stock_item_name: 'Balihai', qty_used: 3, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+  ],
+  'beer holic angker': [
+    { stock_item_id: 'MENU-016', stock_item_name: 'Angker', qty_used: 3, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+  ],
+  'beer holic singaraja': [
+    { stock_item_id: 'MENU-020', stock_item_name: 'Singaraja', qty_used: 3, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+  ],
+  'abidin-draft beer': [
+    { stock_item_id: 'MENU-035', stock_item_name: 'Anggur Merah', qty_used: 1, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-019', stock_item_name: 'Draft beer', qty_used: 1, unit: 'botol', component_mode: 'included' }
+  ],
+  'pink lady sprite': [
+    { stock_item_id: 'MENU-041', stock_item_name: 'Pink Lady', qty_used: 1, unit: 'botol', component_mode: 'included' },
+    { stock_item_id: 'MENU-099', stock_item_name: 'Sprite', qty_used: 1, unit: 'botol', component_mode: 'included' }
+  ]
+};
+
+async function getActiveBundleRecipes() {
+  try {
+    const [recipeRes, pkgRes] = await Promise.all([
+      db.query(`
+        SELECT r.menu_id, m.menu_name, r.item_id, i.stock_item_name, r.qty_used, r.unit, r.component_mode
+        FROM recipe r
+        LEFT JOIN menu m ON m.menu_id = r.menu_id
+        LEFT JOIN inventory i ON i.stock_item_id = r.item_id
+        WHERE m.menu_type = 'fnb_bundle' OR m.menu_type IS NULL
+      `).catch(() => ({ rows: [] })),
+      db.query(`
+        SELECT pd.package_id, p.package_name, pd.component_ref_id AS item_id, pd.component_name AS stock_item_name, pd.qty AS qty_used, pd.unit, 'included' AS component_mode
+        FROM package_details pd
+        LEFT JOIN packages p ON p.package_id = pd.package_id
+        WHERE pd.component_ref_id IS NOT NULL AND pd.component_ref_id <> ''
+      `).catch(() => ({ rows: [] }))
+    ]);
+
+    return [
+      ...(recipeRes.rows || []),
+      ...(pkgRes.rows || [])
+    ].map(row => ({
+      menu_id: row.menu_id || row.package_id || '',
+      menu_name: row.menu_name || row.package_name || '',
+      item_id: row.item_id || '',
+      stock_item_name: row.stock_item_name || '',
+      qty_used: Number(row.qty_used || 1),
+      unit: row.unit || 'pcs',
+      component_mode: row.component_mode || 'included'
+    }));
+  } catch (err) {
+    console.warn('Gagal membaca active bundle recipes:', err.message);
+    return [];
+  }
+}
+
 function getJakartaHour(dateInput) {
   if (!dateInput) return null;
   if (typeof dateInput === 'string') {
@@ -233,6 +300,36 @@ async function buildFnbPhysicalConsumption(transactions) {
           const consumed = Number(comp.total_qty || 0);
           entry.package_qty += consumed;
           entry.total_consumed += consumed;
+        }
+      }
+
+      // Fallback dinamis jika ada order fnb_bundle yang belum tersimpan di foic
+      const bundleOrderItems = (orderItemsRes.rows || []).filter(r => (
+        r.menu_type_snapshot === 'fnb_bundle' || menuMap.get(r.menu_id)?.menu_type === 'fnb_bundle'
+      ));
+      if (bundleOrderItems.length > 0 && (!bundleComponentsRes.rows || bundleComponentsRes.rows.length === 0)) {
+        const bundleMenuIds = Array.from(new Set(bundleOrderItems.map(r => r.menu_id)));
+        const recipeRes = await db.query(`
+          SELECT menu_id, item_id, qty_used FROM recipe WHERE menu_id = ANY($1::text[])
+        `, [bundleMenuIds]).catch(() => ({ rows: [] }));
+
+        const recipeMap = new Map();
+        for (const r of (recipeRes.rows || [])) {
+          if (!recipeMap.has(r.menu_id)) recipeMap.set(r.menu_id, []);
+          recipeMap.get(r.menu_id).push(r);
+        }
+
+        for (const bItem of bundleOrderItems) {
+          const comps = recipeMap.get(bItem.menu_id) || [];
+          const bQty = Number(bItem.quantity || 1);
+          for (const c of comps) {
+            if (consumptionMap.has(c.item_id)) {
+              const entry = consumptionMap.get(c.item_id);
+              const consumed = bQty * Number(c.qty_used || 1);
+              entry.package_qty += consumed;
+              entry.total_consumed += consumed;
+            }
+          }
         }
       }
     }
@@ -545,6 +642,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
 
   const fnbSoldSummary = await buildFnbSoldSummary(transactionsRes.rows);
   const fnbPhysicalConsumption = await buildFnbPhysicalConsumption(transactionsRes.rows);
+  const bundleRecipes = await getActiveBundleRecipes();
 
   const summary = transactions.reduce((acc, transaction) => {
     const grandTotal = money(transaction.grand_total);
@@ -633,6 +731,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     fnb_sold_summary: fnbSoldSummary,
     fnb_sold_items: fnbSoldSummary.items,
     fnb_physical_consumption: fnbPhysicalConsumption,
+    bundle_recipes: bundleRecipes,
     lc_performance: lcPerformance,
     lc_performance_items: lcPerformance.items,
     rooms,
@@ -972,20 +1071,82 @@ function deriveFnbPhysicalConsumptionFromSnapshotPayload(payload) {
     });
   }
 
-  for (const sold of fnbSold) {
-    let entry = consumptionMap.get(sold.menu_id) || consumptionMap.get(sold.stock_item_id);
-    if (!entry && sold.menu_name) {
+  // Bangun kamus resep bundle dinamis (gabungan BASELINE_BUNDLE_BOMS dan payload.bundle_recipes jika ada)
+  const bundleRecipesMap = new Map();
+  for (const [bundleKey, comps] of Object.entries(BASELINE_BUNDLE_BOMS)) {
+    bundleRecipesMap.set(bundleKey.toLowerCase().trim(), comps);
+  }
+
+  const payloadRecipes = Array.isArray(payload.bundle_recipes) ? payload.bundle_recipes : [];
+  for (const r of payloadRecipes) {
+    const keyName = (r.menu_name || r.package_name || '').toLowerCase().trim();
+    const keyId = (r.menu_id || r.package_id || '').toLowerCase().trim();
+    const compObj = {
+      stock_item_id: r.item_id || r.stock_item_id || r.component_ref_id || '',
+      stock_item_name: r.stock_item_name || r.component_name || '',
+      qty_used: Number(r.qty_used || r.qty || 1),
+      unit: r.unit || 'pcs',
+      component_mode: r.component_mode || 'included'
+    };
+    if (keyName) {
+      if (!bundleRecipesMap.has(keyName)) bundleRecipesMap.set(keyName, []);
+      bundleRecipesMap.get(keyName).push(compObj);
+    }
+    if (keyId) {
+      if (!bundleRecipesMap.has(keyId)) bundleRecipesMap.set(keyId, []);
+      bundleRecipesMap.get(keyId).push(compObj);
+    }
+  }
+
+  function findInvEntry(refId, refName) {
+    if (refId && consumptionMap.has(refId)) return consumptionMap.get(refId);
+    if (refName) {
+      const target = refName.toLowerCase().trim();
       for (const val of consumptionMap.values()) {
-        if (val.stock_item_name && val.stock_item_name.toLowerCase() === sold.menu_name.toLowerCase()) {
-          entry = val;
-          break;
+        if (val.stock_item_name && val.stock_item_name.toLowerCase().trim() === target) {
+          return val;
         }
       }
     }
-    if (entry) {
-      const q = Number(sold.quantity || 0);
-      entry.ala_carte_qty += q;
-      entry.total_consumed += q;
+    return null;
+  }
+
+  for (const sold of fnbSold) {
+    const q = Number(sold.quantity || sold.quantity_sold || 0);
+    if (q <= 0) continue;
+
+    const soldName = (sold.menu_name || '').toLowerCase().trim();
+    const soldId = (sold.menu_id || '').toLowerCase().trim();
+
+    // Cek apakah menu ini adalah paket/bundle
+    const bundleComps = bundleRecipesMap.get(soldName) || bundleRecipesMap.get(soldId);
+    if (bundleComps && bundleComps.length > 0) {
+      for (const comp of bundleComps) {
+        let entry = findInvEntry(comp.stock_item_id, comp.stock_item_name);
+        const needed = q * Number(comp.qty_used || 1);
+        if (entry) {
+          entry.package_qty += needed;
+          entry.total_consumed += needed;
+        } else if (comp.stock_item_id || comp.stock_item_name) {
+          const newEntry = {
+            stock_item_id: comp.stock_item_id || '',
+            stock_item_name: comp.stock_item_name || '',
+            category: 'Paket F&B',
+            unit: comp.unit || 'pcs',
+            current_stock: 0,
+            ala_carte_qty: 0,
+            package_qty: needed,
+            total_consumed: needed
+          };
+          consumptionMap.set(newEntry.stock_item_id || newEntry.stock_item_name, newEntry);
+        }
+      }
+    } else {
+      let entry = findInvEntry(sold.menu_id || sold.stock_item_id, sold.menu_name);
+      if (entry) {
+        entry.ala_carte_qty += q;
+        entry.total_consumed += q;
+      }
     }
   }
 
@@ -1015,6 +1176,9 @@ function mergeOwnerMirrorPayloads(payloads, range) {
   let paidSalesComm = 0;
   let paidTrxCount = 0;
   let unpaidTrxCount = 0;
+
+  const allBundleRecipes = [];
+  const bundleRecipesSeen = new Set();
 
   for (const p of payloads) {
     const trxs = Array.isArray(p.transactions) ? p.transactions : [];
@@ -1083,7 +1247,10 @@ function mergeOwnerMirrorPayloads(payloads, range) {
       }
     }
 
-    const physicalItems = Array.isArray(p.fnb_physical_consumption) ? p.fnb_physical_consumption : [];
+    let physicalItems = Array.isArray(p.fnb_physical_consumption) && p.fnb_physical_consumption.length > 0
+      ? p.fnb_physical_consumption
+      : deriveFnbPhysicalConsumptionFromSnapshotPayload(p);
+
     for (const it of physicalItems) {
       const key = it.stock_item_id || it.stock_item_name;
       if (!physicalItemsMap.has(key)) {
@@ -1105,6 +1272,15 @@ function mergeOwnerMirrorPayloads(payloads, range) {
         if (it.current_stock !== undefined && it.current_stock !== null) {
           existing.current_stock = Number(it.current_stock || 0);
         }
+      }
+    }
+
+    const pRecipes = Array.isArray(p.bundle_recipes) ? p.bundle_recipes : [];
+    for (const br of pRecipes) {
+      const k = `${br.menu_id || br.menu_name}:${br.item_id || br.stock_item_name}`;
+      if (!bundleRecipesSeen.has(k)) {
+        bundleRecipesSeen.add(k);
+        allBundleRecipes.push(br);
       }
     }
   }
@@ -1149,6 +1325,7 @@ function mergeOwnerMirrorPayloads(payloads, range) {
     },
     fnb_sold_items: fnbMergedItems,
     fnb_physical_consumption: physicalMergedItems,
+    bundle_recipes: allBundleRecipes,
     lc_performance: {
       active_lc_count: lcMergedItems.length,
       total_sessions: lcMergedItems.reduce((s, it) => s + it.session_count, 0),
@@ -1163,15 +1340,8 @@ function mergeOwnerMirrorPayloads(payloads, range) {
 }
 
 function filterOwnerMirrorPayloadByDateRange(payload, range) {
-  const allTrx = (Array.isArray(payload.transactions) ? payload.transactions : []).filter(t => {
-    const opDate = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '');
-    return opDate >= range.startDate && opDate <= range.endDate;
-  });
-
-  const allClosings = (Array.isArray(payload.cashier_closings) ? payload.cashier_closings : []).filter(c => {
-    const cDate = c.closing_date ? (c.closing_date.toISOString ? c.closing_date.toISOString().split('T')[0] : String(c.closing_date).split('T')[0]) : '';
-    return cDate >= range.startDate && cDate <= range.endDate;
-  });
+  const allTrx = [];
+  const allClosings = [];
 
   let totalRev = 0;
   let paidRev = 0;
@@ -1186,29 +1356,43 @@ function filterOwnerMirrorPayloadByDateRange(payload, range) {
   let paidTrxCount = 0;
   let unpaidTrxCount = 0;
 
-  for (const t of allTrx) {
-    const gt = money(t.grand_total);
-    const comm = money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0);
-    totalRev += gt;
-    roomRev += money(t.room_total);
-    fnbRev += money(t.fnb_total);
-    lcRev += money(t.lc_total);
-    salesComm += comm;
+  for (const t of (payload.transactions || [])) {
+    const d = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '');
+    if (d && d >= range.startDate && d <= range.endDate) {
+      allTrx.push(t);
+      const gt = money(t.grand_total);
+      const comm = money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0);
+      totalRev += gt;
+      roomRev += money(t.room_total);
+      fnbRev += money(t.fnb_total);
+      lcRev += money(t.lc_total);
+      salesComm += comm;
 
-    if (t.payment_status === 'paid') {
-      paidTrxCount++;
-      paidRev += gt;
-      paidSalesComm += comm;
-      cashRev += money(t.cash_amount);
-      transferRev += money(t.transfer_amount);
-    } else {
-      unpaidTrxCount++;
-      unpaidRev += gt;
+      if (t.payment_status === 'paid') {
+        paidTrxCount++;
+        paidRev += gt;
+        paidSalesComm += comm;
+        cashRev += money(t.cash_amount);
+        transferRev += money(t.transfer_amount);
+      } else {
+        unpaidTrxCount++;
+        unpaidRev += gt;
+      }
+    }
+  }
+
+  for (const c of (payload.cashier_closings || [])) {
+    const cd = c.closing_date ? String(c.closing_date).split('T')[0] : '';
+    if (cd && cd >= range.startDate && cd <= range.endDate) {
+      allClosings.push(c);
     }
   }
 
   const fnbSold = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
   const lcItems = Array.isArray(payload.lc_performance?.items) ? payload.lc_performance.items : (payload.lc_performance_items || []);
+  const physicalItems = Array.isArray(payload.fnb_physical_consumption) && payload.fnb_physical_consumption.length > 0
+    ? payload.fnb_physical_consumption
+    : deriveFnbPhysicalConsumptionFromSnapshotPayload(payload);
 
   const filtered = {
     ...payload,
@@ -1237,7 +1421,8 @@ function filterOwnerMirrorPayloadByDateRange(payload, range) {
     },
     fnb_sold_summary: payload.fnb_sold_summary || { items: fnbSold },
     lc_performance: payload.lc_performance || { items: lcItems },
-    fnb_physical_consumption: Array.isArray(payload.fnb_physical_consumption) ? payload.fnb_physical_consumption : []
+    fnb_physical_consumption: physicalItems,
+    bundle_recipes: Array.isArray(payload.bundle_recipes) ? payload.bundle_recipes : []
   };
 
   filtered.analytics = deriveAnalyticsFromSnapshotPayload(filtered, 'custom');
@@ -1449,5 +1634,7 @@ module.exports = {
   deriveAnalyticsFromSnapshotPayload,
   deriveFnbPhysicalConsumptionFromSnapshotPayload,
   mergeOwnerMirrorPayloads,
-  filterOwnerMirrorPayloadByDateRange
+  filterOwnerMirrorPayloadByDateRange,
+  BASELINE_BUNDLE_BOMS,
+  getActiveBundleRecipes
 };

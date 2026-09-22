@@ -5,7 +5,8 @@ const db = require('../src/db');
 const {
   buildOwnerMirrorSnapshot,
   mergeOwnerMirrorPayloads,
-  filterOwnerMirrorPayloadByDateRange
+  filterOwnerMirrorPayloadByDateRange,
+  deriveFnbPhysicalConsumptionFromSnapshotPayload
 } = require('../src/services/ownerMirrorService');
 
 async function runTests() {
@@ -14,6 +15,7 @@ async function runTests() {
   await testOwnerHtmlAuditSection();
   await testBuildOwnerMirrorSnapshotPhysicalConsumption();
   await testMergeOwnerMirrorPayloadsPhysicalConsumption();
+  await testDeriveFnbPhysicalConsumptionWithRecipes();
 
   console.log('✅ ALL Owner Mirror Physical Consumption Audit Tests PASSED SUCCESSFULLY!');
 }
@@ -298,6 +300,68 @@ async function testMergeOwnerMirrorPayloadsPhysicalConsumption() {
   assert.strictEqual(beer.current_stock, 284, 'Sisa stok harus mengikuti snapshot terbaru');
 
   console.log('  ✓ mergeOwnerMirrorPayloads berhasil mengakumulasi konsumsi fisik lintas hari/periode');
+}
+
+async function testDeriveFnbPhysicalConsumptionWithRecipes() {
+  const payload = {
+    inventory_items: [
+      { stock_item_id: 'MENU-019', stock_item_name: 'Draft beer', category: 'Beer', unit: 'botol', stock_qty: 284 },
+      { stock_item_id: 'MENU-001', stock_item_name: 'French Fries', category: 'Food', unit: 'pack', stock_qty: 64 },
+      { stock_item_id: 'MENU-017', stock_item_name: 'Bintang', category: 'Beer', unit: 'botol', stock_qty: 120 },
+      { stock_item_id: 'MENU-096', stock_item_name: 'Coca-Cola', category: 'Beverage', unit: 'botol', stock_qty: 11 }
+    ],
+    fnb_sold_items: [
+      // 1. Paket BEER HOLIC DRAFT (2 bundle) -> harus mengurai 6 Draft beer & 2 French Fries via paket
+      { menu_id: 'MENU-1787491254399', menu_name: 'BEER HOLIC DRAFT', category: 'BEER', quantity: 2, revenue: 400000 },
+      // 2. Paket dinamis dari bundle_recipes (1 bundle BEER HOLIC BINTANG) -> 3 Bintang & 1 French Fries via paket
+      { menu_id: 'PKG-CUSTOM-BINTANG', menu_name: 'Paket Spesial Bintang', category: 'BEER', quantity: 1, revenue: 180000 },
+      // 3. Menu biasa ala carte (5 Coca-Cola) -> 5 Coca-Cola ala carte
+      { menu_id: 'MENU-096', menu_name: 'Coca-Cola', category: 'Beverage', quantity: 5, revenue: 50000 }
+    ],
+    bundle_recipes: [
+      // Resep dinamis yang dikirim kasir untuk paket baru di masa depan
+      { menu_id: 'PKG-CUSTOM-BINTANG', menu_name: 'Paket Spesial Bintang', item_id: 'MENU-017', stock_item_name: 'Bintang', qty_used: 3, unit: 'botol', component_mode: 'included' },
+      { menu_id: 'PKG-CUSTOM-BINTANG', menu_name: 'Paket Spesial Bintang', item_id: 'MENU-001', stock_item_name: 'French Fries', qty_used: 1, unit: 'pack', component_mode: 'bonus' }
+    ]
+  };
+
+  const derived = deriveFnbPhysicalConsumptionFromSnapshotPayload(payload);
+  assert.ok(Array.isArray(derived), 'Hasil wajib berupa array');
+  assert.strictEqual(derived.length, 4, 'Harus ada 4 item fisik');
+
+  // Verifikasi Draft beer dari BEER HOLIC DRAFT (baseline BOM)
+  const draftBeer = derived.find(i => i.stock_item_id === 'MENU-019');
+  assert.ok(draftBeer, 'Draft beer harus ada');
+  assert.strictEqual(draftBeer.ala_carte_qty, 0);
+  assert.strictEqual(draftBeer.package_qty, 6, '2 bundle x 3 botol = 6 botol');
+  assert.strictEqual(draftBeer.total_consumed, 6);
+  assert.strictEqual(draftBeer.current_stock, 284);
+
+  // Verifikasi French Fries (2 dari Beer Holic Draft + 1 dari Paket Spesial Bintang = 3 total keluar via paket)
+  const frenchFries = derived.find(i => i.stock_item_id === 'MENU-001');
+  assert.ok(frenchFries, 'French Fries harus ada');
+  assert.strictEqual(frenchFries.ala_carte_qty, 0);
+  assert.strictEqual(frenchFries.package_qty, 3, '(2 x 1) + (1 x 1) = 3 pack');
+  assert.strictEqual(frenchFries.total_consumed, 3);
+  assert.strictEqual(frenchFries.current_stock, 64);
+
+  // Verifikasi Bintang dari paket kustom dinamis
+  const bintang = derived.find(i => i.stock_item_id === 'MENU-017');
+  assert.ok(bintang, 'Bintang harus ada');
+  assert.strictEqual(bintang.ala_carte_qty, 0);
+  assert.strictEqual(bintang.package_qty, 3, '1 bundle x 3 botol = 3 botol');
+  assert.strictEqual(bintang.total_consumed, 3);
+  assert.strictEqual(bintang.current_stock, 120);
+
+  // Verifikasi Coca-Cola ala carte
+  const coke = derived.find(i => i.stock_item_id === 'MENU-096');
+  assert.ok(coke, 'Coca-Cola harus ada');
+  assert.strictEqual(coke.ala_carte_qty, 5);
+  assert.strictEqual(coke.package_qty, 0);
+  assert.strictEqual(coke.total_consumed, 5);
+  assert.strictEqual(coke.current_stock, 11);
+
+  console.log('  ✓ deriveFnbPhysicalConsumptionFromSnapshotPayload berhasil mengurai resep baseline & bundle dinamis masa depan');
 }
 
 runTests().catch(err => {
