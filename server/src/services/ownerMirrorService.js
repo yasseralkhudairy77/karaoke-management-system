@@ -951,6 +951,49 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
   };
 }
 
+function deriveFnbPhysicalConsumptionFromSnapshotPayload(payload) {
+  const invItems = Array.isArray(payload.inventory_items) ? payload.inventory_items : (payload.inventory?.items || []);
+  const fnbSold = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
+
+  if (invItems.length === 0) return [];
+
+  const consumptionMap = new Map();
+  for (const inv of invItems) {
+    const key = inv.stock_item_id || inv.stock_item_name;
+    consumptionMap.set(key, {
+      stock_item_id: inv.stock_item_id || '',
+      stock_item_name: inv.stock_item_name || '',
+      category: inv.category || 'General',
+      unit: inv.unit || 'pcs',
+      current_stock: Number(inv.stock_qty || 0),
+      ala_carte_qty: 0,
+      package_qty: 0,
+      total_consumed: 0
+    });
+  }
+
+  for (const sold of fnbSold) {
+    let entry = consumptionMap.get(sold.menu_id) || consumptionMap.get(sold.stock_item_id);
+    if (!entry && sold.menu_name) {
+      for (const val of consumptionMap.values()) {
+        if (val.stock_item_name && val.stock_item_name.toLowerCase() === sold.menu_name.toLowerCase()) {
+          entry = val;
+          break;
+        }
+      }
+    }
+    if (entry) {
+      const q = Number(sold.quantity || 0);
+      entry.ala_carte_qty += q;
+      entry.total_consumed += q;
+    }
+  }
+
+  return Array.from(consumptionMap.values())
+    .filter(item => item.total_consumed > 0)
+    .sort((a, b) => (b.total_consumed - a.total_consumed) || a.stock_item_name.localeCompare(b.stock_item_name));
+}
+
 function mergeOwnerMirrorPayloads(payloads, range) {
   const allTrx = [];
   const trxSeen = new Set();
@@ -1377,8 +1420,14 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     analytics = deriveAnalyticsFromSnapshotPayload(payload, period || storedPeriod);
   }
 
+  let physicalConsumption = payload.fnb_physical_consumption;
+  if (!Array.isArray(physicalConsumption) || physicalConsumption.length === 0) {
+    physicalConsumption = deriveFnbPhysicalConsumptionFromSnapshotPayload(payload);
+  }
+
   return {
     ...payload,
+    fnb_physical_consumption: physicalConsumption,
     analytics,
     mode: 'cloud_latest_snapshot',
     source_id: row.source_id,
@@ -1398,6 +1447,7 @@ module.exports = {
   saveOwnerMirrorSnapshot,
   getLatestOwnerMirrorSnapshot,
   deriveAnalyticsFromSnapshotPayload,
+  deriveFnbPhysicalConsumptionFromSnapshotPayload,
   mergeOwnerMirrorPayloads,
   filterOwnerMirrorPayloadByDateRange
 };
