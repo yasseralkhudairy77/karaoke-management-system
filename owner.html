@@ -1052,6 +1052,7 @@
     let inventoryCategoryFilter = "all";
     let inventoryStatusFilter = "all";
     let inventorySearchKeyword = "";
+    let fnbPhysicalSearchKeyword = "";
     let analyticsChartMode = "hourly";
     let analyticsCompareTo = "previous_period";
     let customAnalyticsData = null;
@@ -1993,6 +1994,17 @@
     function renderFnb(snapshot) {
       const summary = snapshot.fnb_sold_summary || {};
       const items = summary.items || snapshot.fnb_sold_items || [];
+      const physicalAll = Array.isArray(snapshot.fnb_physical_consumption) ? snapshot.fnb_physical_consumption : [];
+
+      const filteredPhysical = physicalAll.filter(item => {
+        if (!fnbPhysicalSearchKeyword.trim()) return true;
+        const q = fnbPhysicalSearchKeyword.trim().toLowerCase();
+        const matchName = String(item.stock_item_name || "").toLowerCase().includes(q);
+        const matchSku = String(item.stock_item_id || "").toLowerCase().includes(q);
+        const matchCat = String(item.category || "").toLowerCase().includes(q);
+        return matchName || matchSku || matchCat;
+      });
+
       return `
         <section class="metrics">
           ${metric("Omzet F&B", formatCurrency(summary.total_revenue), `${formatNumber(summary.total_qty)} item terjual`)}
@@ -2019,6 +2031,61 @@
             `),
             "Belum ada F&B terjual pada periode ini."
           )}
+        </section>
+        <section class="panel">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+            <div>
+              <h2 style="display: flex; align-items: center; gap: 8px; margin: 0 0 4px 0;">
+                <span>📦</span> Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)
+              </h2>
+              <p style="margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4;">
+                Menghitung total barang/bahan baku fisik yang keluar dari gudang (penjualan satuan + keluar via paket F&B/Room) disandingkan dengan sisa stok fisik aktual.
+              </p>
+            </div>
+            <div style="min-width: 200px; flex: 1; max-width: 320px;">
+              <input type="search" class="search-input" id="fnbPhysicalSearch" placeholder="🔍 Cari SKU atau nama barang..." value="${safe(fnbPhysicalSearchKeyword)}" style="width: 100%;" aria-label="Cari SKU atau nama barang fisik">
+            </div>
+          </div>
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%;">
+            ${table(
+              [
+                { label: "No" },
+                { label: "Kode SKU" },
+                { label: "Nama Barang Fisik" },
+                { label: "Kategori" },
+                { label: "Satuan" },
+                { label: "Terjual Satuan", right: true },
+                { label: "Keluar via Paket", right: true },
+                { label: "Total Fisik Keluar", right: true },
+                { label: "Sisa Stok Fisik", right: true },
+              ],
+              filteredPhysical.map((item, idx) => {
+                const alaCarte = Number(item.ala_carte_qty || 0);
+                const packageQty = Number(item.package_qty || 0);
+                const totalOut = Number(item.total_consumed || 0);
+                const stock = Number(item.current_stock || 0);
+                const stockTone = stock <= 0 ? "negative" : (stock <= 5 ? "low" : "safe");
+                return `
+                  <tr>
+                    <td style="color: var(--muted);">${idx + 1}</td>
+                    <td><strong>${safe(item.stock_item_id || "-")}</strong></td>
+                    <td><strong>${safe(item.stock_item_name || "-")}</strong></td>
+                    <td>${safe(item.category || "General")}</td>
+                    <td>${safe(item.unit || "pcs")}</td>
+                    <td class="right">${formatNumber(alaCarte)}</td>
+                    <td class="right"><strong class="text-green">${formatNumber(packageQty)}</strong></td>
+                    <td class="right"><strong style="font-size: 0.95rem;">${formatNumber(totalOut)}</strong></td>
+                    <td class="right">
+                      <span class="badge ${stockTone}" style="padding: 2px 8px; font-weight: 800;">
+                        ${formatNumber(stock)} ${safe(item.unit || "")}
+                      </span>
+                    </td>
+                  </tr>
+                `;
+              }),
+              "Belum ada pergerakan/konsumsi barang fisik pada periode ini."
+            )}
+          </div>
         </section>
       `;
     }
@@ -2180,6 +2247,14 @@
         inventorySearchKeyword = event.target.value;
         renderContent();
         const searchBox = document.getElementById("inventorySearch");
+        if (searchBox) {
+          searchBox.focus();
+          searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length);
+        }
+      } else if (event.target && event.target.id === "fnbPhysicalSearch") {
+        fnbPhysicalSearchKeyword = event.target.value;
+        renderContent();
+        const searchBox = document.getElementById("fnbPhysicalSearch");
         if (searchBox) {
           searchBox.focus();
           searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length);

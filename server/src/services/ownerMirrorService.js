@@ -166,6 +166,116 @@ async function buildFnbSoldSummary(transactions) {
   };
 }
 
+async function buildFnbPhysicalConsumption(transactions) {
+  try {
+    const orderIds = Array.from(new Set(
+      (transactions || []).flatMap(transaction => parseFnbOrderIds(transaction.fnb_order_ids))
+    ));
+
+    const invRes = await db.query(`
+      SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock
+      FROM inventory
+      WHERE (status = 'active' OR status IS NULL OR status = '')
+      ORDER BY category ASC, stock_item_name ASC
+    `);
+
+    if (!invRes.rows || invRes.rows.length === 0) {
+      return [];
+    }
+
+    const consumptionMap = new Map();
+    for (const inv of invRes.rows) {
+      consumptionMap.set(inv.stock_item_id, {
+        stock_item_id: inv.stock_item_id,
+        stock_item_name: inv.stock_item_name,
+        category: inv.category || 'General',
+        unit: inv.unit || 'pcs',
+        current_stock: Number(inv.stock_qty || 0),
+        ala_carte_qty: 0,
+        package_qty: 0,
+        total_consumed: 0
+      });
+    }
+
+    if (orderIds.length > 0) {
+      const [menuMasterRes, orderItemsRes, bundleComponentsRes] = await Promise.all([
+        db.query(`SELECT menu_id, stock_tracking, stock_item_id, stock_qty_per_unit, menu_type FROM menu`).catch(() => ({ rows: [] })),
+        db.query(`
+          SELECT menu_id, menu_type_snapshot, quantity
+          FROM fnb_order_items
+          WHERE order_id = ANY($1::text[]) AND (is_voided IS FALSE OR is_voided IS NULL)
+        `, [orderIds]).catch(() => ({ rows: [] })),
+        db.query(`
+          SELECT foic.item_id, SUM(foic.total_qty) AS total_qty
+          FROM fnb_order_item_components foic
+          WHERE foic.order_id = ANY($1::text[])
+          GROUP BY foic.item_id
+        `, [orderIds]).catch(() => ({ rows: [] }))
+      ]);
+
+      const menuMap = new Map((menuMasterRes.rows || []).map(m => [m.menu_id, m]));
+
+      for (const row of (orderItemsRes.rows || [])) {
+        if (row.menu_type_snapshot !== 'fnb_bundle') {
+          const mInfo = menuMap.get(row.menu_id);
+          if (mInfo && mInfo.stock_tracking === 'yes' && mInfo.stock_item_id && consumptionMap.has(mInfo.stock_item_id)) {
+            const entry = consumptionMap.get(mInfo.stock_item_id);
+            const consumed = Number(row.quantity || 0) * Number(mInfo.stock_qty_per_unit || 1);
+            entry.ala_carte_qty += consumed;
+            entry.total_consumed += consumed;
+          }
+        }
+      }
+
+      for (const comp of (bundleComponentsRes.rows || [])) {
+        if (comp.item_id && consumptionMap.has(comp.item_id)) {
+          const entry = consumptionMap.get(comp.item_id);
+          const consumed = Number(comp.total_qty || 0);
+          entry.package_qty += consumed;
+          entry.total_consumed += consumed;
+        }
+      }
+    }
+
+    const roomPackageTransactions = (transactions || []).filter(t => (
+      t.package_id && String(t.package_id).trim() !== '' && t.payment_status !== 'cancelled'
+    ));
+
+    if (roomPackageTransactions.length > 0) {
+      const packageDetailsRes = await db.query(`
+        SELECT package_id, component_ref_id, component_name, qty, unit
+        FROM package_details
+        WHERE component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `).catch(() => ({ rows: [] }));
+
+      const pkgDetailsMap = (packageDetailsRes.rows || []).reduce((map, row) => {
+        if (!map[row.package_id]) map[row.package_id] = [];
+        map[row.package_id].push(row);
+        return map;
+      }, {});
+
+      for (const trx of roomPackageTransactions) {
+        const components = pkgDetailsMap[trx.package_id] || [];
+        for (const comp of components) {
+          if (consumptionMap.has(comp.component_ref_id)) {
+            const entry = consumptionMap.get(comp.component_ref_id);
+            const consumed = Number(comp.qty || 1);
+            entry.package_qty += consumed;
+            entry.total_consumed += consumed;
+          }
+        }
+      }
+    }
+
+    return Array.from(consumptionMap.values())
+      .filter(item => item.total_consumed > 0)
+      .sort((a, b) => (b.total_consumed - a.total_consumed) || a.stock_item_name.localeCompare(b.stock_item_name));
+  } catch (err) {
+    console.warn('Gagal menghitung fnb physical consumption snapshot:', err.message);
+    return [];
+  }
+}
+
 async function buildLcPerformanceSummary(startDate, endDate) {
   const logsRes = await db.query(`
     SELECT
@@ -434,6 +544,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
   });
 
   const fnbSoldSummary = await buildFnbSoldSummary(transactionsRes.rows);
+  const fnbPhysicalConsumption = await buildFnbPhysicalConsumption(transactionsRes.rows);
 
   const summary = transactions.reduce((acc, transaction) => {
     const grandTotal = money(transaction.grand_total);
@@ -521,6 +632,7 @@ async function buildOwnerMirrorSnapshot(options = {}) {
     summary,
     fnb_sold_summary: fnbSoldSummary,
     fnb_sold_items: fnbSoldSummary.items,
+    fnb_physical_consumption: fnbPhysicalConsumption,
     lc_performance: lcPerformance,
     lc_performance_items: lcPerformance.items,
     rooms,
@@ -846,6 +958,7 @@ function mergeOwnerMirrorPayloads(payloads, range) {
   const closingSeen = new Set();
   const fnbItemsMap = new Map();
   const lcItemsMap = new Map();
+  const physicalItemsMap = new Map();
 
   let totalRev = 0;
   let paidRev = 0;
@@ -926,10 +1039,37 @@ function mergeOwnerMirrorPayloads(payloads, range) {
         existing.total_fee += money(it.total_fee);
       }
     }
+
+    const physicalItems = Array.isArray(p.fnb_physical_consumption) ? p.fnb_physical_consumption : [];
+    for (const it of physicalItems) {
+      const key = it.stock_item_id || it.stock_item_name;
+      if (!physicalItemsMap.has(key)) {
+        physicalItemsMap.set(key, {
+          stock_item_id: it.stock_item_id || '',
+          stock_item_name: it.stock_item_name || '',
+          category: it.category || 'General',
+          unit: it.unit || 'pcs',
+          ala_carte_qty: Number(it.ala_carte_qty || 0),
+          package_qty: Number(it.package_qty || 0),
+          total_consumed: Number(it.total_consumed || 0),
+          current_stock: Number(it.current_stock || 0)
+        });
+      } else {
+        const existing = physicalItemsMap.get(key);
+        existing.ala_carte_qty += Number(it.ala_carte_qty || 0);
+        existing.package_qty += Number(it.package_qty || 0);
+        existing.total_consumed += Number(it.total_consumed || 0);
+        if (it.current_stock !== undefined && it.current_stock !== null) {
+          existing.current_stock = Number(it.current_stock || 0);
+        }
+      }
+    }
   }
 
   const fnbMergedItems = Array.from(fnbItemsMap.values()).sort((a, b) => b.revenue - a.revenue);
   const lcMergedItems = Array.from(lcItemsMap.values()).sort((a, b) => b.total_fee - a.total_fee);
+  const physicalMergedItems = Array.from(physicalItemsMap.values())
+    .sort((a, b) => (b.total_consumed - a.total_consumed) || a.stock_item_name.localeCompare(b.stock_item_name));
   const base = payloads[0] || {};
 
   const merged = {
@@ -965,6 +1105,7 @@ function mergeOwnerMirrorPayloads(payloads, range) {
       items: fnbMergedItems
     },
     fnb_sold_items: fnbMergedItems,
+    fnb_physical_consumption: physicalMergedItems,
     lc_performance: {
       active_lc_count: lcMergedItems.length,
       total_sessions: lcMergedItems.reduce((s, it) => s + it.session_count, 0),
@@ -1052,7 +1193,8 @@ function filterOwnerMirrorPayloadByDateRange(payload, range) {
       transactions_with_commission: allTrx.filter(t => money(t.sales_commission_amount || t.sales_commission?.commission_amount || 0) > 0).length
     },
     fnb_sold_summary: payload.fnb_sold_summary || { items: fnbSold },
-    lc_performance: payload.lc_performance || { items: lcItems }
+    lc_performance: payload.lc_performance || { items: lcItems },
+    fnb_physical_consumption: Array.isArray(payload.fnb_physical_consumption) ? payload.fnb_physical_consumption : []
   };
 
   filtered.analytics = deriveAnalyticsFromSnapshotPayload(filtered, 'custom');
