@@ -1493,19 +1493,22 @@
       if (analyticsChartMode === "daily") {
         chartTitle = "Tren Pertumbuhan Harian (Daily Timeline Trend)";
         chartSubtitle = "Pergerakan omzet dan durasi sewa room hari-ke-hari sepanjang periode terpilih. Arahkan mouse/sentuh batang untuk rincian.";
-        const maxDaily = Math.max(1, ...daily.map(d => Number(d.daily_revenue) || 0));
+        const maxDaily = Math.max(1, ...daily.map(d => Number(d.currentRevenue ?? d.daily_revenue ?? 0)));
         chartBarsHtml = daily.map(d => {
-          const rev = Number(d.daily_revenue) || 0;
+          const rev = Number(d.currentRevenue ?? d.daily_revenue ?? 0);
           const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDaily) * 100));
-          const dateLabel = formatDisplayDate(d.operational_date);
+          const rawDate = d.date || d.operational_date;
+          const dateLabel = d.dateLabel || formatDisplayDate(rawDate);
           const compact = formatCompactCurrency(rev);
           const isPeak = rev === maxDaily && rev > 0;
+          const sessions = d.currentSessions ?? d.trx_count ?? 0;
+          const hours = Number(d.currentRoomHours ?? d.daily_room_hours ?? 0);
           return `
             <div class="analytics-bar-col"
                  data-tooltip-title="📅 ${safe(dateLabel)}"
                  data-tooltip-rev="${formatCurrency(rev)}"
-                 data-tooltip-sessions="${formatNumber(d.trx_count || 0)} Transaksi Lunas"
-                 data-tooltip-hours="${(Number(d.daily_room_hours) || 0).toFixed(1)} Jam Room">
+                 data-tooltip-sessions="${formatNumber(sessions)} Transaksi Lunas"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
               <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
                 <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
                   ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
@@ -1521,43 +1524,49 @@
         chartTitle = "Pola & Distribusi Hari Ramai (Day-of-Week Rhythm)";
         chartSubtitle = `Rata-rata performa bisnis per hari dalam sepekan (Senin s/d Minggu)${peakText}${slowText}`;
         const days = Array.isArray(dow.days) ? dow.days : [];
-        const maxDow = Math.max(1, ...days.map(d => Number(d.total_revenue) || 0));
+        const maxDow = Math.max(1, ...days.map(d => Number(d.totalRevenue ?? d.total_revenue ?? 0)));
         chartBarsHtml = days.map(d => {
-          const rev = Number(d.total_revenue) || 0;
+          const rev = Number(d.totalRevenue ?? d.total_revenue ?? 0);
           const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDow) * 100));
-          const isPeak = d.day_name === dow.peakDay;
-          const isSlowest = d.day_name === dow.slowestDay;
+          const dayName = d.dayName || d.day_name || "";
+          const isPeak = dayName === dow.peakDay;
+          const isSlowest = dayName === dow.slowestDay;
           const barCls = isPeak ? "peak" : (isSlowest ? "slowest" : "");
           const compact = formatCompactCurrency(rev);
+          const sessions = d.totalSessions ?? d.total_sessions ?? 0;
+          const hours = Number(d.totalRoomHours ?? d.total_room_hours ?? 0);
           return `
             <div class="analytics-bar-col"
-                 data-tooltip-title="📆 Hari ${safe(d.day_name)}"
+                 data-tooltip-title="📆 Hari ${safe(dayName)}"
                  data-tooltip-rev="${formatCurrency(rev)}"
-                 data-tooltip-sessions="${formatNumber(d.total_sessions || 0)} Total Sesi Karaoke"
-                 data-tooltip-hours="${(Number(d.total_room_hours) || 0).toFixed(1)} Jam Room">
+                 data-tooltip-sessions="${formatNumber(sessions)} Total Sesi Karaoke"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
               <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
                 <div class="analytics-bar-fill ${barCls}" style="height: ${pct}%;">
                   ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
                 </div>
               </div>
-              <div class="analytics-bar-label">${safe(d.day_name)}</div>
+              <div class="analytics-bar-label">${safe(dayName)}</div>
             </div>
           `;
         }).join("");
       } else {
-        const maxHourly = Math.max(1, ...hourly.map(h => Number(h.hourly_revenue) || 0));
+        const maxHourly = Math.max(1, ...hourly.map(h => Number(h.currentRevenue ?? h.hourly_revenue ?? 0)));
         chartBarsHtml = hourly.map(h => {
-          const rev = Number(h.hourly_revenue) || 0;
+          const rev = Number(h.currentRevenue ?? h.hourly_revenue ?? 0);
           const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxHourly) * 100));
-          const hourText = `${String(h.hour_wib).padStart(2, '0')}:00`;
+          const hourNum = h.hour ?? h.hour_wib ?? 0;
+          const hourText = h.hourLabel || `${String(hourNum).padStart(2, '0')}:00`;
           const isPeak = rev === maxHourly && rev > 0;
           const compact = formatCompactCurrency(rev);
+          const sessions = h.currentSessions ?? h.session_count ?? 0;
+          const hours = Number(h.currentRoomHours ?? h.hourly_room_hours ?? 0);
           return `
             <div class="analytics-bar-col"
                  data-tooltip-title="⏰ Pukul ${hourText} WIB"
                  data-tooltip-rev="${formatCurrency(rev)}"
-                 data-tooltip-sessions="${formatNumber(h.session_count || 0)} Sesi Karaoke"
-                 data-tooltip-hours="${(Number(h.hourly_room_hours) || 0).toFixed(1)} Jam Room">
+                 data-tooltip-sessions="${formatNumber(sessions)} Sesi Karaoke"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
               <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
                 <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
                   ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
@@ -1569,8 +1578,8 @@
         }).join("");
       }
 
-      const topRoomMaxRev = Math.max(1, ...roomLd.map(r => Number(r.total_revenue) || 0));
-      const topFnbMaxRev = Math.max(1, ...fnbLd.map(f => Number(f.total_revenue) || 0));
+      const topRoomMaxRev = Math.max(1, ...roomLd.map(r => Number(r.total_grand_revenue ?? r.total_revenue ?? 0)));
+      const topFnbMaxRev = Math.max(1, ...fnbLd.map(f => Number(f.total_sales ?? f.total_revenue ?? 0)));
 
       return `
         <div class="analytics-toolbar">
@@ -1719,12 +1728,13 @@
             <h2>Peringkat Room Terpopuler</h2>
             <div>
               ${roomLd.length ? roomLd.slice(0, 5).map(room => {
-                const rev = Number(room.total_revenue) || 0;
+                const rev = Number(room.total_grand_revenue ?? room.total_revenue ?? 0);
                 const pct = Math.max(5, Math.round((rev / topRoomMaxRev) * 100));
+                const sessions = room.total_sessions ?? room.session_count ?? 0;
                 return `
                   <div class="analytics-leaderboard-row">
                     <div class="analytics-leaderboard-top">
-                      <span><strong>${safe(room.room_name || room.room_id)}</strong> <span class="muted">(${formatNumber(room.session_count)} sesi)</span></span>
+                      <span><strong>${safe(room.room_name || room.room_id)}</strong> <span class="muted">(${formatNumber(sessions)} sesi)</span></span>
                       <span>${formatCurrency(rev)}</span>
                     </div>
                     <div class="analytics-progress-track">
@@ -1740,12 +1750,14 @@
             <h2>Peringkat F&amp;B Terlaris</h2>
             <div>
               ${fnbLd.length ? fnbLd.slice(0, 5).map(item => {
-                const rev = Number(item.total_revenue) || 0;
+                const rev = Number(item.total_sales ?? item.total_revenue ?? 0);
                 const pct = Math.max(5, Math.round((rev / topFnbMaxRev) * 100));
+                const itemName = item.item_name || item.menu_name || 'Item';
+                const qty = item.qty_sold ?? item.total_quantity ?? 0;
                 return `
                   <div class="analytics-leaderboard-row">
                     <div class="analytics-leaderboard-top">
-                      <span><strong>${safe(item.menu_name)}</strong> <span class="muted">(${formatNumber(item.total_quantity)} porsi)</span></span>
+                      <span><strong>${safe(itemName)}</strong> <span class="muted">(${formatNumber(qty)} porsi)</span></span>
                       <span>${formatCurrency(rev)}</span>
                     </div>
                     <div class="analytics-progress-track">

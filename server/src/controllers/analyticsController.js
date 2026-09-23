@@ -199,16 +199,27 @@ async function computeOperationalAnalytics(options = {}) {
       const h = (10 + i) % 24;
       const curRow = hourlyCurMap.get(h) || {};
       const cmpRow = hourlyCmpMap.get(h) || {};
+      const curRev = toNumber(curRow.hourly_revenue, 0);
+      const cmpRev = toNumber(cmpRow.hourly_revenue, 0);
+      const curHours = Math.round(toNumber(curRow.hourly_room_hours, 0) * 10) / 10;
+      const cmpHours = Math.round(toNumber(cmpRow.hourly_room_hours, 0) * 10) / 10;
+      const curSessions = toNumber(curRow.session_count, 0);
+      const cmpSessions = toNumber(cmpRow.session_count, 0);
 
       hourlySequence.push({
         hour: h,
         hourLabel: `${String(h).padStart(2, '0')}:00`,
-        currentRevenue: toNumber(curRow.hourly_revenue, 0),
-        compareRevenue: toNumber(cmpRow.hourly_revenue, 0),
-        currentRoomHours: Math.round(toNumber(curRow.hourly_room_hours, 0) * 10) / 10,
-        compareRoomHours: Math.round(toNumber(cmpRow.hourly_room_hours, 0) * 10) / 10,
-        currentSessions: toNumber(curRow.session_count, 0),
-        compareSessions: toNumber(cmpRow.session_count, 0),
+        currentRevenue: curRev,
+        compareRevenue: cmpRev,
+        currentRoomHours: curHours,
+        compareRoomHours: cmpHours,
+        currentSessions: curSessions,
+        compareSessions: cmpSessions,
+        // Aliases for owner mirror compatibility:
+        hour_wib: h,
+        hourly_revenue: curRev,
+        session_count: curSessions,
+        hourly_room_hours: curHours,
       });
     }
 
@@ -255,6 +266,10 @@ async function computeOperationalAnalytics(options = {}) {
 
       const curRev = toNumber(curRow.daily_revenue, 0);
       const cmpRev = toNumber(cmpRow.daily_revenue, 0);
+      const curHours = Math.round(toNumber(curRow.daily_room_hours, 0) * 10) / 10;
+      const cmpHours = Math.round(toNumber(cmpRow.daily_room_hours, 0) * 10) / 10;
+      const curSessions = toNumber(curRow.session_count, 0);
+      const cmpSessions = toNumber(cmpRow.session_count, 0);
 
       return {
         date: dStr,
@@ -263,11 +278,16 @@ async function computeOperationalAnalytics(options = {}) {
         compareDateLabel: cmpDateStr ? formatDateLabel(cmpDateStr) : '',
         currentRevenue: curRev,
         compareRevenue: cmpRev,
-        currentRoomHours: Math.round(toNumber(curRow.daily_room_hours, 0) * 10) / 10,
-        compareRoomHours: Math.round(toNumber(cmpRow.daily_room_hours, 0) * 10) / 10,
-        currentSessions: toNumber(curRow.session_count, 0),
-        compareSessions: toNumber(cmpRow.session_count, 0),
+        currentRoomHours: curHours,
+        compareRoomHours: cmpHours,
+        currentSessions: curSessions,
+        compareSessions: cmpSessions,
         deltaPercent: calculateDeltaPercent(curRev, cmpRev),
+        // Aliases for owner mirror compatibility:
+        operational_date: dStr,
+        daily_revenue: curRev,
+        trx_count: curSessions,
+        daily_room_hours: curHours,
       };
     });
 
@@ -331,11 +351,15 @@ async function computeOperationalAnalytics(options = {}) {
       dowList.push({
         dayNum: d,
         dayName: dayNamesId[d],
+        day_name: dayNamesId[d],
         totalRevenue: rev,
+        total_revenue: rev,
         avgRevenue: avgRev,
         daysCount: dCount,
         totalSessions: sessions,
+        total_sessions: sessions,
         totalRoomHours: hours,
+        total_room_hours: hours,
         percentOfTotal: 0,
         isPeak: false,
         isSlowest: false,
@@ -378,10 +402,13 @@ async function computeOperationalAnalytics(options = {}) {
         room_id: row.room_id,
         room_name: row.room_name,
         total_sessions: sessions,
+        session_count: sessions,
         total_hours: hours,
+        total_room_hours: hours,
         occupancy_rate_percent: occupancyRate,
         total_room_revenue: toNumber(row.total_room_revenue, 0),
         total_grand_revenue: toNumber(row.total_grand_revenue, 0),
+        total_revenue: toNumber(row.total_grand_revenue, 0),
         extension_rate_percent: extensionRate,
       };
     });
@@ -415,9 +442,12 @@ async function computeOperationalAnalytics(options = {}) {
       return {
         item_id: row.item_id,
         item_name: row.item_name,
+        menu_name: row.item_name,
         category: row.category,
         qty_sold: toNumber(row.qty_sold, 0),
+        total_quantity: toNumber(row.qty_sold, 0),
         total_sales: sales,
+        total_revenue: sales,
         total_profit: profit,
         margin_percent: margin,
       };

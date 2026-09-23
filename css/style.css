@@ -2406,8 +2406,11 @@ body::after {
 
 .rooms-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-card {
@@ -2421,6 +2424,10 @@ body::after {
   border-radius: var(--radius-md);
   color: var(--card-text);
   box-shadow: var(--shadow-panel);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .room-card.available {
@@ -8328,44 +8335,60 @@ select.action-confirmation-input option {
 .room-topline {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-topline-main {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-topline-sub {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-name {
   margin: 0;
-  font-size: 1.55rem;
+  font-size: 1.35rem;
   line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .room-status {
   flex: 0 0 auto;
-  padding: 7px 10px;
-  border-radius: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
   background: var(--status-bg);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .room-meta {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .meta-label {
@@ -8384,12 +8407,16 @@ select.action-confirmation-input option {
 }
 
 .room-booking-info {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 7px;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.1);
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-operational-helper {
@@ -8398,27 +8425,40 @@ select.action-confirmation-input option {
   font-size: 0.86rem;
   font-weight: 800;
   line-height: 1.35;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .room-booking-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin: 0;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .room-booking-label {
   color: var(--meta-text);
   font-size: 0.82rem;
   font-weight: 700;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .room-booking-value {
   color: var(--card-text);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   font-weight: 800;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 68%;
+  flex: 1 1 auto;
 }
 
 .room-lc-session-row {
@@ -8543,6 +8583,37 @@ select.action-confirmation-input option {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   width: 100%;
+  margin-top: auto;
+  box-sizing: border-box;
+}
+
+.room-actions > :only-child,
+.room-card.available .room-actions > .room-button,
+.room-card:not(.occupied) .room-actions > [data-action="toggle-session"]:only-child {
+  grid-column: 1 / -1 !important;
+  min-height: 44px !important;
+}
+
+.room-card.available .room-button-checkout {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(167, 243, 208, 0.45) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35) !important;
+  font-size: 0.95rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.01em !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.room-card.available .room-button-checkout:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%) !important;
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.5) !important;
+  transform: translateY(-1px) !important;
 }
 
 .room-actions-occupied {
@@ -11649,6 +11720,8 @@ select.action-confirmation-input option {
 }
 
 .room-card.occupied .room-meta {
+  display: flex !important;
+  flex-direction: column !important;
   width: 100% !important;
   max-width: 100% !important;
   min-width: 0 !important;
@@ -11675,7 +11748,7 @@ select.action-confirmation-input option {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  gap: 8px !important;
+  gap: 6px !important;
   padding: 2px 0 !important;
   width: 100% !important;
   max-width: 100% !important;
@@ -11700,6 +11773,11 @@ select.action-confirmation-input option {
   text-overflow: ellipsis !important;
   min-width: 0 !important;
   max-width: 68% !important;
+  flex: 1 1 auto !important;
+}
+
+.room-card.occupied .room-booking-row.room-lc-session-row {
+  align-items: flex-start !important;
 }
 
 /* Digital LED Countdown Display inside Occupied Card */
@@ -11752,7 +11830,7 @@ select.action-confirmation-input option {
 /* Redesigned F&B Breakdown Panel */
 .room-card-fnb-breakdown {
   margin-top: 0 !important;
-  padding: 7px 10px !important;
+  padding: 6px 8px !important;
   background: rgba(0, 0, 0, 0.32) !important;
   border-radius: 8px !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -11924,14 +12002,14 @@ select.action-confirmation-input option {
 .fnb-breakdown-footer {
   display: flex !important;
   justify-content: space-between !important;
-  align-items: center !important;
-  gap: 6px !important;
+  align-items: baseline !important;
+  gap: 4px !important;
   font-weight: 900 !important;
   color: #34d399 !important;
   margin-top: 5px !important;
   padding-top: 5px !important;
   border-top: 1px dashed rgba(52, 211, 153, 0.4) !important;
-  font-size: 0.82rem !important;
+  font-size: 0.8rem !important;
   line-height: 1.2 !important;
   width: 100% !important;
   max-width: 100% !important;
@@ -11943,7 +12021,7 @@ select.action-confirmation-input option {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   color: #34d399 !important;
   font-weight: 950 !important;
-  font-size: 0.88rem !important;
+  font-size: 0.82rem !important;
   text-align: right !important;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
@@ -11953,13 +12031,14 @@ select.action-confirmation-input option {
 .room-live-billing-panel {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
-  padding: 8px 10px !important;
+  padding: 7px 8px !important;
   background: linear-gradient(145deg, rgba(30, 24, 16, 0.92) 0%, rgba(18, 14, 10, 0.96) 100%) !important;
   border: 1px solid rgba(242, 196, 91, 0.45) !important;
   border-radius: 9px !important;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(242, 196, 91, 0.2) !important;
   width: 100% !important;
   max-width: 100% !important;
+  min-width: 0 !important;
   box-sizing: border-box !important;
 }
 
@@ -11968,27 +12047,32 @@ select.action-confirmation-input option {
   align-items: center !important;
   justify-content: space-between !important;
   gap: 6px !important;
-  margin-bottom: 6px !important;
+  margin-bottom: 5px !important;
   padding-bottom: 4px !important;
   border-bottom: 1px solid rgba(242, 196, 91, 0.22) !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .live-billing-title {
-  font-size: 0.78rem !important;
+  font-size: 0.76rem !important;
   font-weight: 800 !important;
-  letter-spacing: 0.03em !important;
+  letter-spacing: 0.02em !important;
   color: var(--gold-strong, #fbbf24) !important;
   display: flex !important;
   align-items: center !important;
   gap: 4px !important;
+  flex-shrink: 0 !important;
 }
 
 .live-billing-badge {
   font-size: 0.68rem !important;
   font-weight: 700 !important;
-  padding: 1px 6px !important;
-  border-radius: 6px !important;
+  padding: 1px 5px !important;
+  border-radius: 5px !important;
   white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 
 .live-billing-badge.is-upfront {
@@ -12007,30 +12091,38 @@ select.action-confirmation-input option {
   display: flex !important;
   flex-direction: column !important;
   gap: 3px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .live-billing-row {
   display: flex !important;
   align-items: baseline !important;
   gap: 4px !important;
-  font-size: 0.74rem !important;
+  font-size: 0.72rem !important;
   line-height: 1.35 !important;
   color: rgba(255, 255, 255, 0.85) !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .live-billing-item-label {
-  flex-shrink: 0 !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   font-weight: 600 !important;
   color: rgba(255, 255, 255, 0.82) !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
-  max-width: 65% !important;
 }
 
 .live-billing-dots {
-  flex: 1 1 auto !important;
-  min-width: 4px !important;
+  flex: 0 1 10px !important;
+  min-width: 3px !important;
   border-bottom: 1px dotted rgba(255, 255, 255, 0.25) !important;
   height: 1px !important;
   margin: 0 1px 3px 1px !important;
@@ -12041,32 +12133,43 @@ select.action-confirmation-input option {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   font-weight: 700 !important;
   color: #fef08a !important;
+  font-size: 0.72rem !important;
   text-align: right !important;
   white-space: nowrap !important;
 }
 
 .live-billing-total-row {
   display: flex !important;
-  align-items: center !important;
+  align-items: baseline !important;
   justify-content: space-between !important;
-  margin-top: 6px !important;
-  padding-top: 5px !important;
+  gap: 4px !important;
+  margin-top: 5px !important;
+  padding-top: 4px !important;
   border-top: 1px solid rgba(242, 196, 91, 0.35) !important;
-  font-size: 0.82rem !important;
+  font-size: 0.78rem !important;
   font-weight: 900 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .live-billing-total-label {
   color: var(--gold-strong, #fbbf24) !important;
   letter-spacing: 0.02em !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
 }
 
 .live-billing-total-val {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
-  font-size: 0.88rem !important;
+  font-size: 0.82rem !important;
   font-weight: 900 !important;
   color: #fbbf24 !important;
   text-shadow: 0 0 10px rgba(251, 191, 36, 0.35) !important;
+  flex-shrink: 0 !important;
+  text-align: right !important;
+  white-space: nowrap !important;
 }
 
 .live-billing-unpaid-row {

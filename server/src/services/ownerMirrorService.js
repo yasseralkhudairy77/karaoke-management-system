@@ -905,11 +905,23 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
       const hrs = getJakartaHour(dtStr);
       return hrs === h;
     });
+    const rev = inHour.reduce((s, t) => s + money(t.grand_total), 0);
+    const hours = Math.round(inHour.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60 * 10) / 10;
+    const sessions = inHour.length;
+
     hourlySequence.push({
+      hour: h,
+      hourLabel: `${String(h).padStart(2, '0')}:00`,
+      currentRevenue: rev,
+      compareRevenue: 0,
+      currentRoomHours: hours,
+      compareRoomHours: 0,
+      currentSessions: sessions,
+      compareSessions: 0,
       hour_wib: h,
-      session_count: inHour.length,
-      hourly_revenue: inHour.reduce((s, t) => s + money(t.grand_total), 0),
-      hourly_room_hours: Math.round(inHour.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60 * 10) / 10
+      session_count: sessions,
+      hourly_revenue: rev,
+      hourly_room_hours: hours
     });
   }
 
@@ -918,27 +930,54 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
   for (const t of paidTrx) {
     const d = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '2026-09-20');
     if (!dailyMap.has(d)) {
-      dailyMap.set(d, { operational_date: d, trx_count: 0, daily_revenue: 0, daily_room_hours: 0 });
+      dailyMap.set(d, {
+        date: d,
+        currentRevenue: 0,
+        currentRoomHours: 0,
+        currentSessions: 0,
+        operational_date: d,
+        trx_count: 0,
+        daily_revenue: 0,
+        daily_room_hours: 0
+      });
     }
     const item = dailyMap.get(d);
     item.trx_count += 1;
+    item.currentSessions += 1;
     item.daily_revenue += money(t.grand_total);
-    item.daily_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+    item.currentRevenue += money(t.grand_total);
+    const addedHours = Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+    item.daily_room_hours += addedHours;
+    item.currentRoomHours += addedHours;
   }
-  const dailySequence = Array.from(dailyMap.values()).sort((a, b) => a.operational_date.localeCompare(b.operational_date));
+  const dailySequence = Array.from(dailyMap.values()).sort((a, b) => (a.date || a.operational_date).localeCompare(b.date || b.operational_date));
 
   // Day of week pattern
   const dayNamesId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-  const dowList = dayNamesId.map(name => ({ day_name: name, total_sessions: 0, total_revenue: 0, total_room_hours: 0 }));
+  const dowList = dayNamesId.map(name => ({
+    dayName: name,
+    day_name: name,
+    totalSessions: 0,
+    total_sessions: 0,
+    totalRevenue: 0,
+    total_revenue: 0,
+    totalRoomHours: 0,
+    total_room_hours: 0
+  }));
   for (const t of paidTrx) {
     const dStr = t.operational_date || '';
     if (dStr) {
       const [y, m, d] = dStr.split('-').map(Number);
       if (y && m && d) {
         const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+        const gt = money(t.grand_total);
+        const rmHours = Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+        dowList[dow].totalSessions += 1;
         dowList[dow].total_sessions += 1;
-        dowList[dow].total_revenue += money(t.grand_total);
-        dowList[dow].total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+        dowList[dow].totalRevenue += gt;
+        dowList[dow].total_revenue += gt;
+        dowList[dow].totalRoomHours += rmHours;
+        dowList[dow].total_room_hours += rmHours;
       }
     }
   }
@@ -948,22 +987,39 @@ function deriveAnalyticsFromSnapshotPayload(payload = {}, period = 'today') {
   for (const t of paidTrx) {
     const rName = t.room_name || t.room_id || 'Room';
     if (!roomMap.has(rName)) {
-      roomMap.set(rName, { room_id: t.room_id, room_name: rName, session_count: 0, total_revenue: 0, total_room_hours: 0 });
+      roomMap.set(rName, {
+        room_id: t.room_id,
+        room_name: rName,
+        total_sessions: 0,
+        session_count: 0,
+        total_revenue: 0,
+        total_grand_revenue: 0,
+        total_hours: 0,
+        total_room_hours: 0
+      });
     }
     const rm = roomMap.get(rName);
     rm.session_count += 1;
+    rm.total_sessions += 1;
     rm.total_revenue += money(t.grand_total);
-    rm.total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+    rm.total_grand_revenue += money(t.grand_total);
+    const rmHours = Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+    rm.total_room_hours += rmHours;
+    rm.total_hours += rmHours;
   }
   const roomLeaderboard = Array.from(roomMap.values()).sort((a, b) => b.total_revenue - a.total_revenue);
 
   // FnB Leaderboard
   const fnbSold = Array.isArray(payload.fnb_sold_items) ? payload.fnb_sold_items : (payload.fnb_sold_summary?.items || []);
   const fnbLeaderboard = fnbSold.slice(0, 10).map(f => ({
+    item_id: f.menu_id || '',
+    item_name: f.menu_name || '',
     menu_id: f.menu_id || '',
     menu_name: f.menu_name || '',
     category: f.category || 'F&B',
+    qty_sold: Number(f.quantity || 0),
     total_quantity: Number(f.quantity || 0),
+    total_sales: money(f.revenue || 0),
     total_revenue: money(f.revenue || 0)
   }));
 

@@ -167,14 +167,47 @@ const { buildOwnerMirrorSnapshot, deriveAnalyticsFromSnapshotPayload } = require
 
     assert.ok(Array.isArray(analytics.hourlyTraffic), 'hourlyTraffic must be an array');
     assert.strictEqual(analytics.hourlyTraffic.length, 24, 'hourlyTraffic must have 24 hours');
+    const sampleHour = analytics.hourlyTraffic[0];
+    assert.ok('currentRevenue' in sampleHour && 'hourly_revenue' in sampleHour, 'hourlyTraffic item must have both currentRevenue and hourly_revenue alias');
+    assert.ok('currentSessions' in sampleHour && 'session_count' in sampleHour, 'hourlyTraffic item must have both currentSessions and session_count alias');
+    assert.ok('currentRoomHours' in sampleHour && 'hourly_room_hours' in sampleHour, 'hourlyTraffic item must have both currentRoomHours and hourly_room_hours alias');
+    assert.ok('hour' in sampleHour && 'hour_wib' in sampleHour, 'hourlyTraffic item must have both hour and hour_wib alias');
+
+    assert.ok(Array.isArray(analytics.dailyTrend), 'dailyTrend must be an array');
+    if (analytics.dailyTrend.length > 0) {
+      const sampleDay = analytics.dailyTrend[0];
+      assert.ok('currentRevenue' in sampleDay && 'daily_revenue' in sampleDay, 'dailyTrend item must have both currentRevenue and daily_revenue alias');
+      assert.ok('currentSessions' in sampleDay && 'trx_count' in sampleDay, 'dailyTrend item must have both currentSessions and trx_count alias');
+      assert.ok('currentRoomHours' in sampleDay && 'daily_room_hours' in sampleDay, 'dailyTrend item must have both currentRoomHours and daily_room_hours alias');
+      assert.ok('date' in sampleDay && 'operational_date' in sampleDay, 'dailyTrend item must have both date and operational_date alias');
+      assert.ok('dateLabel' in sampleDay, 'dailyTrend item must have dateLabel');
+    }
 
     assert.ok(Array.isArray(analytics.dayOfWeekPattern.days), 'dayOfWeekPattern must have days array');
     assert.strictEqual(analytics.dayOfWeekPattern.days.length, 7, 'dayOfWeekPattern must have 7 days');
+    const sampleDow = analytics.dayOfWeekPattern.days[0];
+    assert.ok('totalRevenue' in sampleDow && 'total_revenue' in sampleDow, 'dayOfWeekPattern item must have both totalRevenue and total_revenue alias');
+    assert.ok('dayName' in sampleDow && 'day_name' in sampleDow, 'dayOfWeekPattern item must have both dayName and day_name alias');
+    assert.ok('totalSessions' in sampleDow && 'total_sessions' in sampleDow, 'dayOfWeekPattern item must have both totalSessions and total_sessions alias');
+    assert.ok('totalRoomHours' in sampleDow && 'total_room_hours' in sampleDow, 'dayOfWeekPattern item must have both totalRoomHours and total_room_hours alias');
 
     assert.ok(Array.isArray(analytics.roomLeaderboard), 'roomLeaderboard must be an array');
-    assert.ok(Array.isArray(analytics.fnbLeaderboard), 'fnbLeaderboard must be an array');
+    if (analytics.roomLeaderboard.length > 0) {
+      const sampleRoom = analytics.roomLeaderboard[0];
+      assert.ok('total_grand_revenue' in sampleRoom && 'total_revenue' in sampleRoom, 'roomLeaderboard item must have both total_grand_revenue and total_revenue alias');
+      assert.ok('total_sessions' in sampleRoom && 'session_count' in sampleRoom, 'roomLeaderboard item must have both total_sessions and session_count alias');
+      assert.ok('total_hours' in sampleRoom && 'total_room_hours' in sampleRoom, 'roomLeaderboard item must have both total_hours and total_room_hours alias');
+    }
 
-    console.log('  ✓ PASS: Snapshot successfully encapsulates rich analytics data for Railway Owner Monitor');
+    assert.ok(Array.isArray(analytics.fnbLeaderboard), 'fnbLeaderboard must be an array');
+    if (analytics.fnbLeaderboard.length > 0) {
+      const sampleFnb = analytics.fnbLeaderboard[0];
+      assert.ok('total_sales' in sampleFnb && 'total_revenue' in sampleFnb, 'fnbLeaderboard item must have both total_sales and total_revenue alias');
+      assert.ok('qty_sold' in sampleFnb && 'total_quantity' in sampleFnb, 'fnbLeaderboard item must have both qty_sold and total_quantity alias');
+      assert.ok('item_name' in sampleFnb && 'menu_name' in sampleFnb, 'fnbLeaderboard item must have both item_name and menu_name alias');
+    }
+
+    console.log('  ✓ PASS: Snapshot successfully encapsulates rich analytics data for Railway Owner Monitor with full alias compatibility');
 
     // Test deriveAnalyticsFromSnapshotPayload timezone handling
     const samplePayload = {
