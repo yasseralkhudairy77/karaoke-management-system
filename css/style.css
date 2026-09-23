@@ -8327,10 +8327,24 @@ select.action-confirmation-input option {
 
 .room-topline {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.room-topline-main {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+
+.room-topline-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
 }
 
 .room-name {
@@ -11639,6 +11653,7 @@ select.action-confirmation-input option {
   max-width: 100% !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
+  gap: 6px !important;
 }
 
 /* Glassmorphic inner booking card */
@@ -11681,7 +11696,10 @@ select.action-confirmation-input option {
   font-weight: 800 !important;
   text-align: right !important;
   white-space: nowrap !important;
-  flex-shrink: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
+  max-width: 68% !important;
 }
 
 /* Digital LED Countdown Display inside Occupied Card */
@@ -11733,7 +11751,7 @@ select.action-confirmation-input option {
 
 /* Redesigned F&B Breakdown Panel */
 .room-card-fnb-breakdown {
-  margin-top: 7px !important;
+  margin-top: 0 !important;
   padding: 7px 10px !important;
   background: rgba(0, 0, 0, 0.32) !important;
   border-radius: 8px !important;
@@ -11933,8 +11951,8 @@ select.action-confirmation-input option {
 
 /* Live Estimated Billing Panel on Room Card */
 .room-live-billing-panel {
-  margin-top: 8px !important;
-  margin-bottom: 3px !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
   padding: 8px 10px !important;
   background: linear-gradient(145deg, rgba(30, 24, 16, 0.92) 0%, rgba(18, 14, 10, 0.96) 100%) !important;
   border: 1px solid rgba(242, 196, 91, 0.45) !important;

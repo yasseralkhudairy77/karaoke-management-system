@@ -10167,10 +10167,11 @@ function calculateRoomLiveEstimatedBilling(room) {
     const overtimeCharge = overtimeHours * overtimeRate;
 
     roomSubtotal = pkgPrice + overtimeCharge;
-    const pkgName = pkg ? pkg.package_name : (room.package_name || room.package_id);
+    const rawPkgName = pkg ? pkg.package_name : (room.package_name || room.package_id || "");
+    const cleanPkgName = String(rawPkgName).replace(/^paket\s+/i, "").trim();
     roomLabel = overtimeCharge > 0 
-      ? `Paket ${pkgName} (+OT ${overtimeHours}j)`
-      : `Paket ${pkgName}`;
+      ? `Paket ${cleanPkgName} (+OT ${overtimeHours}j)`
+      : `Paket ${cleanPkgName}`;
   } else {
     roomSubtotal = Math.ceil((durationMinutes / 60) * ratePerHour);
     roomLabel = `Room ${durationHours} jam (${formatCurrency(ratePerHour)}/j)`;
@@ -10356,6 +10357,9 @@ function createRoomCard(room) {
   const topLine = document.createElement("div");
   topLine.className = "room-topline";
 
+  const mainRow = document.createElement("div");
+  mainRow.className = "room-topline-main";
+
   const name = document.createElement("h2");
   name.className = "room-name";
   name.textContent = room.room_name;
@@ -10364,7 +10368,13 @@ function createRoomCard(room) {
   status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
   status.textContent = statusLabel;
 
+  mainRow.append(name, status);
+  topLine.appendChild(mainRow);
+
   if (room.status === "occupied") {
+    const subRow = document.createElement("div");
+    subRow.className = "room-topline-sub";
+
     if (room.is_upfront_paid) {
       const upfrontPaidBadge = document.createElement("span");
       upfrontPaidBadge.className = "room-status-badge upfront-paid-badge";
@@ -10383,7 +10393,7 @@ function createRoomCard(room) {
       } else {
         upfrontPaidBadge.textContent = "🟢 Lunas di Muka";
       }
-      topLine.append(name, status, upfrontPaidBadge);
+      subRow.appendChild(upfrontPaidBadge);
     } else {
       const openBillBadge = document.createElement("span");
       openBillBadge.className = "room-status-badge open-bill-badge";
@@ -10395,10 +10405,9 @@ function createRoomCard(room) {
       openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
       openBillBadge.style.fontWeight = "bold";
       openBillBadge.textContent = "Open Bill";
-      topLine.append(name, status, openBillBadge);
+      subRow.appendChild(openBillBadge);
     }
-  } else {
-    topLine.append(name, status);
+    topLine.appendChild(subRow);
   }
 
   const meta = document.createElement("div");
@@ -10633,7 +10642,9 @@ function createRoomBookingInfoElement(room) {
   ];
 
   if (room.package_id) {
-    rows.unshift(["Paket", roomPackage ? roomPackage.package_name : room.package_id]);
+    const rawPkgName = roomPackage ? roomPackage.package_name : room.package_id;
+    const cleanPkgName = String(rawPkgName || "").replace(/^paket\s+/i, "").trim();
+    rows.unshift(["Paket", cleanPkgName]);
   }
 
   rows.forEach(([labelText, valueText]) => {
@@ -10647,6 +10658,7 @@ function createRoomBookingInfoElement(room) {
     const value = document.createElement("span");
     value.className = "room-booking-value";
     value.textContent = valueText;
+    value.title = valueText;
 
     row.append(label, value);
     info.appendChild(row);
