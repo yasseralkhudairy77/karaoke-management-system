@@ -39,8 +39,25 @@ export const API_BASE_URL = (
   This is called directly by the cashier browser on the local network.
   Keep empty to disable physical TV control from the dashboard.
 */
-export const LOCAL_TV_BRIDGE_URL = "http://192.168.1.4:3030/tv-command";
+/*
+  Alamat bridge TV = PC bridge (192.168.1.3, port 3030).
+  Sebelumnya tertulis 192.168.1.4 yang tidak ada perangkatnya, sehingga setiap perintah TV
+  dari dashboard kasir (nyalakan saat mulai, matikan saat waktu habis) tidak pernah sampai.
+*/
+export const LOCAL_TV_BRIDGE_URL = String(
+  injectedTvBridge.url || "http://192.168.1.3:3030/tv-command"
+).trim();
 export const LOCAL_TV_BRIDGE_ENABLED = true;
+
+/*
+  Token bersama bridge <-> POS.
+  SENGAJA TIDAK ditulis di berkas ini: repositori ini publik dan juga dipakai untuk
+  GitHub Pages. Nilainya disuntikkan oleh server POS lewat /tv-bridge-config.js
+  (variabel window.__TV_BRIDGE__) dari .env server, jadi token tidak pernah ikut terunggah.
+*/
+const injectedTvBridge = (typeof window !== "undefined" && window.__TV_BRIDGE__) || {};
+
+export const LOCAL_TV_BRIDGE_TOKEN = String(injectedTvBridge.token || "").trim();
 
 /*
   Developer/testing helper.

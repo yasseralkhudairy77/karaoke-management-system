@@ -143,6 +143,7 @@ async function sendTvCommand(req, res, payload) {
         });
 
         const urlObj = new URL(middlewareUrl);
+        const bridgeToken = String(process.env.TV_BRIDGE_TOKEN || '').trim();
         const options = {
           hostname: urlObj.hostname,
           port: urlObj.port || 80,
@@ -150,7 +151,8 @@ async function sendTvCommand(req, res, payload) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData)
+            'Content-Length': Buffer.byteLength(postData),
+            ...(bridgeToken ? { 'X-API-Token': bridgeToken } : {})
           },
           timeout: 4000
         };

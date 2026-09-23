@@ -15,6 +15,79 @@ const expensesController = require('../controllers/expensesController');
 const backupController = require('../controllers/backupController');
 const analyticsController = require('../controllers/analyticsController');
 const { successResponse, errorResponse } = require('../utils/response');
+const tvBridge = require('../services/tvBridgeService');
+
+/*
+  Jembatan TV: setelah aksi sesi berhasil, posisi ruangan disesuaikan dengan bridge TV.
+  Ruangan aktif  -> jadwal peringatan + peniduran TV dipasang di bridge.
+  Ruangan selesai -> jadwal dibatalkan (dan TV ditidurkan bila memang billing ditutup).
+  Aksi dijalankan setelah respons dikirim, dan kegagalan bridge tidak menggagalkan transaksi kasir.
+*/
+function planTvSync(action, payload) {
+  const p = payload || {};
+  const plans = [];
+
+  switch (action) {
+    case 'payAndStartSession':
+    case 'startSession':
+    case 'payUpfrontSession':
+    case 'activatePreparedSession':
+    case 'restoreClosedSession':
+    case 'recoverExpiredRoomSession':
+      plans.push({ roomId: p.room_id, opts: { wakeOnStart: true, triggerSource: action } });
+      break;
+    case 'extendSession':
+    case 'adjustSessionTime':
+    case 'correctActiveRoomDuration':
+    case 'updateActiveSessionPackage':
+      plans.push({ roomId: p.room_id, opts: { wakeOnStart: false, triggerSource: action } });
+      break;
+    case 'moveActiveSessionRoom':
+      // Ruangan asal: sesi pindah -> batalkan jadwal lama, TV asal ditidurkan.
+      plans.push({ roomId: p.room_id, opts: { sleepWhenInactive: true, triggerSource: 'move_room_source' } });
+      // Ruangan tujuan: sesi berjalan di sana -> pasang jadwal baru + nyalakan TV.
+      plans.push({ roomId: p.target_room_id, opts: { wakeOnStart: true, triggerSource: 'move_room_target' } });
+      break;
+    case 'closeSession':
+    case 'cancelBooking':
+    case 'completeCleaning':
+      plans.push({ roomId: p.room_id, opts: { sleepWhenInactive: true, triggerSource: action } });
+      break;
+    default:
+      break;
+  }
+
+  return plans.filter((plan) => Boolean(plan.roomId));
+}
+
+function attachTvSync(res, action, payload) {
+  const plans = planTvSync(action, payload);
+  if (plans.length === 0) {
+    return;
+  }
+
+  const originalJson = res.json.bind(res);
+  let handled = false;
+
+  res.json = (body) => {
+    if (!handled) {
+      handled = true;
+      const isSuccess = !body || (body.ok !== false && body.success !== false);
+
+      if (isSuccess) {
+        const cashierName = payload.cashier_name || payload.requested_by || 'Sistem';
+        setImmediate(() => {
+          for (const plan of plans) {
+            tvBridge.syncRoom(plan.roomId, { ...plan.opts, cashierName })
+              .catch((error) => console.warn(`[TV bridge] sinkronisasi ${plan.roomId} gagal: ${error.message}`));
+          }
+        });
+      }
+    }
+
+    return originalJson(body);
+  };
+}
 
 // Helper to handle Apps Script GET actions
 async function handleGetAction(action, req, res) {
@@ -406,6 +479,7 @@ router.post('/exec', async (req, res) => {
   }
   const action = payload.action || req.query.action || '';
   if (!action) return errorResponse(res, 'Parameter action wajib diisi.');
+  attachTvSync(res, action, payload);
   try {
     return await handlePostAction(action, req, res, payload);
   } catch (err) {

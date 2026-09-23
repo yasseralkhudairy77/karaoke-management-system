@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const apiRoutes = require('./routes/api');
 const { startSyncWorker, getSyncStatus } = require('./services/railwaySyncWorker');
 const { startOwnerMirrorPushWorker, getOwnerMirrorPushStatus } = require('./services/ownerMirrorPushWorker');
+const { startTvSweeperWorker, getTvSweeperStatus, getBridgeHealth } = require('./services/tvBridgeService');
 const { getServerTimeFields } = require('./utils/response');
 
 const app = express();
@@ -53,6 +54,20 @@ app.use((req, res, next) => {
   res.set('Expires', '0');
   next();
 });
+/*
+  Konfigurasi bridge TV untuk dashboard kasir.
+  Token disuntikkan dari .env server di sini supaya tidak pernah tersimpan di git
+  (repositori ini publik; js/config.js hanya memuat alamat bridge).
+*/
+app.get('/tv-bridge-config.js', (req, res) => {
+  res.type('application/javascript');
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.send(`window.__TV_BRIDGE__ = ${JSON.stringify({
+    url: String(process.env.TV_BRIDGE_PUBLIC_URL || 'http://192.168.1.3:3030/tv-command').trim(),
+    token: String(process.env.TV_BRIDGE_TOKEN || '').trim(),
+  })};`);
+});
+
 app.use(express.static(frontendRoot, {
   index: 'index.html',
   extensions: ['html']
@@ -69,7 +84,18 @@ app.get('/health', (req, res) => {
 app.get('/sync/status', async (req, res) => {
   try {
     const status = await getSyncStatus();
-    res.json({ ok: true, success: true, ...status, owner_mirror_push: getOwnerMirrorPushStatus() });
+    const bridge = await getBridgeHealth();
+    res.json({
+      ok: true,
+      success: true,
+      ...status,
+      owner_mirror_push: getOwnerMirrorPushStatus(),
+      tv_bridge: {
+        ...getTvSweeperStatus(),
+        reachable: bridge.ok === true,
+        bridge_error: bridge.ok === true ? null : bridge.error || null,
+      },
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -99,6 +125,9 @@ function startServer(port = PORT, bindHost = BIND_HOST) {
   }
   if (process.env.DISABLE_OWNER_MIRROR_PUSH_WORKER !== '1') {
     startOwnerMirrorPushWorker(parseInt(process.env.OWNER_MIRROR_PUSH_INTERVAL_MS || '1800000', 10));
+  }
+  if (process.env.DISABLE_TV_SWEEPER !== '1') {
+    startTvSweeperWorker(parseInt(process.env.TV_BRIDGE_SWEEP_INTERVAL_MS || '60000', 10));
   }
 
   return app.listen(port, bindHost, () => {

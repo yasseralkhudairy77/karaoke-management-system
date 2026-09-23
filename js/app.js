@@ -11,6 +11,7 @@ import {
   DEV_MIN_SESSION_MINUTES,
   DEV_SHORT_SESSION_ENABLED,
   LOCAL_TV_BRIDGE_ENABLED,
+  LOCAL_TV_BRIDGE_TOKEN,
   LOCAL_TV_BRIDGE_URL,
 } from "./config.js?v=stable-api-v229";
 import { rooms as mockRooms } from "./mock-data.js";
@@ -416,13 +417,18 @@ async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 2500);
+  // Batas 8 detik: bridge meneruskan perintah ke ADB TV (timeout ADB sampai 15 detik),
+  // batas 2,5 detik membuat kasir melihat "gagal" padahal perintah tetap dikerjakan.
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
     const response = await fetch(LOCAL_TV_BRIDGE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(String(LOCAL_TV_BRIDGE_TOKEN || "").trim()
+          ? { "X-API-Token": String(LOCAL_TV_BRIDGE_TOKEN).trim() }
+          : {}),
       },
       cache: "no-store",
       signal: controller.signal,
@@ -448,7 +454,7 @@ async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
     return data;
   } catch (err) {
     if (err.name === "AbortError") {
-      throw new Error("Koneksi ke Bridge TV fisik batas waktu habis (timeout 2.5 detik).");
+      throw new Error("Koneksi ke Bridge TV fisik batas waktu habis (timeout 8 detik).");
     }
     throw err;
   } finally {
