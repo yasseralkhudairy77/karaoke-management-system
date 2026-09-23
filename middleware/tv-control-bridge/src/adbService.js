@@ -18,6 +18,19 @@ const {
 const execFileAsync = promisify(execFile);
 const adbBin = process.env.ADB_BIN || 'adb';
 
+// Batas waktu perintah ADB. PENTING: config/rooms.json tidak memuat adbTimeoutMs, dan tanpa
+// nilai bawaan perintah ke TV yang mati bisa menggantung lama sekali (temuan uji 2026-09-23).
+const defaultAdbTimeoutMs = Math.max(1000, Number(process.env.ADB_TIMEOUT_MS) || 15000);
+
+function adbTimeout(room) {
+  const value = Number(room && room.adbTimeoutMs);
+  return Number.isFinite(value) && value > 0 ? value : defaultAdbTimeoutMs;
+}
+
+// Paket APK overlay di layar TV (dipasang 2026-09-23, terbukti lolos uji T1-T7).
+const overlayPackageDefault = process.env.TV_NOTIFY_PACKAGE || 'com.happysong.tvnotify';
+const overlayServiceName = 'OverlayService';
+
 const runtimeByRoomId = new Map();
 
 function makeRuntimeState() {
@@ -109,7 +122,7 @@ async function runAdb(args, label, timeoutMs) {
 async function verifyConnected(room) {
   const serial = serialFromRoom(room);
   try {
-    const state = await runAdb(['-s', serial, 'get-state'], `Checking device state for ${room.id}`, room.adbTimeoutMs);
+    const state = await runAdb(['-s', serial, 'get-state'], `Checking device state for ${room.id}`, adbTimeout(room));
     const isConnected = state === 'device';
     setConnected(room.id, isConnected, null, serial);
     return isConnected;
@@ -144,7 +157,7 @@ async function connectToRoom(roomSelector) {
   }
 
   try {
-    await runAdb(['connect', serial], `Connecting to ${serial}`, room.adbTimeoutMs);
+    await runAdb(['connect', serial], `Connecting to ${serial}`, adbTimeout(room));
   } catch (error) {
     const message = String(error && error.message ? error.message : error);
     if (!/already connected/i.test(message)) {
@@ -177,7 +190,7 @@ async function ensureConnected(roomSelector) {
 
 async function runShell(room, command, label) {
   const shellArgs = Array.isArray(command) ? command : [String(command)];
-  const output = await runAdb(['-s', serialFromRoom(room), 'shell', ...shellArgs], label, room.adbTimeoutMs);
+  const output = await runAdb(['-s', serialFromRoom(room), 'shell', ...shellArgs], label, adbTimeout(room));
   return output;
 }
 
@@ -193,15 +206,53 @@ async function sendSleepKeyevent(roomSelector, keycode) {
     throw new Error('keycode must be a number');
   }
 
+  // Kalau TV sudah tidur atau tidak menjawab sama sekali, tidak ada gunanya mengirim keyevent:
+  // tujuannya sudah tercapai. Dicatat sebagai berhasil dengan catatan, supaya audit POS tidak
+  // melaporkan "gagal mematikan TV" padahal TV memang sudah mati (temuan uji 2026-09-23).
+  const before = await getTvPowerState(room).catch(() => ({ reachable: false, wakefulness: null }));
+  if (!before.reachable) {
+    log(`TV ${room.name} tidak menjawab; dianggap sudah tidur, tidak ada perintah dikirim`);
+    return {
+      ok: true,
+      roomId: room.id,
+      roomName: room.name,
+      serial: serialFromRoom(room),
+      keycode: numericKeycode,
+      alreadyAsleep: true,
+      note: 'TV tidak menjawab (kemungkinan sudah tidur); tidak ada perintah dikirim.',
+      output: '',
+    };
+  }
+
+  if (before.wakefulness && /asleep|dozing/i.test(before.wakefulness)) {
+    log(`Layar ${room.name} sudah ${before.wakefulness}; tidak ada perintah dikirim`);
+    return {
+      ok: true,
+      roomId: room.id,
+      roomName: room.name,
+      serial: serialFromRoom(room),
+      keycode: numericKeycode,
+      alreadyAsleep: true,
+      note: `Layar TV sudah ${before.wakefulness}; tidak ada perintah dikirim.`,
+      output: '',
+    };
+  }
+
   const serial = await ensureConnected(room);
   const output = await runShell(room, ['input', 'keyevent', String(numericKeycode)], `Sending keyevent ${numericKeycode}`);
-  log(`Sleep command sent to ${serial}`);
+  const after = await getTvPowerState(room).catch(() => ({ reachable: false, wakefulness: null }));
+  const verified = !after.reachable || !after.wakefulness || /asleep|dozing/i.test(after.wakefulness);
+  log(`Sleep command sent to ${serial} (terverifikasi: ${verified ? 'ya' : 'belum'})`);
   return {
     ok: true,
     roomId: room.id,
     roomName: room.name,
     serial,
     keycode: numericKeycode,
+    verified,
+    note: verified
+      ? `TV ditidurkan dan terverifikasi (layar ${after.wakefulness || 'tidak menjawab'}).`
+      : `Perintah terkirim tetapi layar masih ${after.wakefulness || 'tidak diketahui'}.`,
     output,
   };
 }
@@ -336,6 +387,163 @@ async function launchApp(packageName, roomSelector) {
   };
 }
 
+/**
+ * Memastikan TV bangun dan ADB siap dipakai.
+ * Alasannya nyata (ditemukan saat uji 2026-09-23): TV bisa tidur sendiri sebelum peringatan
+ * jatuh tempo, sehingga perintah overlay gagal dengan "device offline".
+ */
+/** Membaca status layar TV: Awake / Asleep / Dozing / Dream (screensaver). */
+async function readWakefulness(room) {
+  try {
+    const output = await runShell(room, ['dumpsys', 'power'], `Membaca status daya ${room.name}`);
+    const match = /mWakefulness=(\w+)/.exec(output || '');
+    return match ? match[1] : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function ensureAwakeAndConnected(roomSelector) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
+  assertRoomHasIp(room);
+
+  let serial = null;
+  try {
+    serial = await ensureConnected(room);
+  } catch (error) {
+    log(`ADB ${room.name} belum siap (${error.message}); mencoba membangunkan...`);
+  }
+
+  if (!serial) {
+    try {
+      await wakeRoom(room);
+    } catch (error) {
+      log(`Percobaan bangunkan ${room.name} gagal: ${error.message}`);
+    }
+
+    await sleep(4000);
+
+    let lastError = null;
+    // Dua percobaan saja: cukup untuk TV yang baru tidur, dan tidak membuat jadwal
+    // menggantung lama ketika TV benar-benar mati (mis. NIC mati saat standby).
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        serial = await ensureConnected(room);
+        break;
+      } catch (error) {
+        lastError = error;
+        await sleep(1500);
+      }
+    }
+
+    if (!serial) {
+      throw new Error(`TV ${room.name} tidak bisa dibangunkan/dihubungi: ${lastError ? lastError.message : 'tidak diketahui'}`);
+    }
+  }
+
+  // PENTING: ADB tetap menjawab walau layar TV sedang tidur, jadi keberhasilan ADB saja
+  // bukan bukti layar menyala. Layar diperiksa dan dibangunkan bila perlu supaya peringatan
+  // benar-benar terlihat pelanggan (temuan uji 2026-09-23).
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const wakefulness = await readWakefulness(room);
+    if (wakefulness === null || /awake|dream/i.test(wakefulness)) {
+      return serial;
+    }
+
+    log(`Layar ${room.name} sedang ${wakefulness}; membangunkan sebelum menampilkan peringatan (percobaan ${attempt}/2)...`);
+    try {
+      await wakeRoom(room);
+    } catch (error) {
+      log(`Bangunkan ${room.name} gagal: ${error.message}`);
+    }
+    await sleep(3500);
+  }
+
+  const finalState = await readWakefulness(room);
+  log(`Catatan: status layar ${room.name} masih ${finalState || 'tidak diketahui'} setelah dibangunkan; peringatan tetap dikirim.`);
+  return serial;
+}
+
+function sanitizeOverlayText(value, fallback = '') {
+  const raw = typeof value === 'string' ? value : '';
+  const clean = raw.replace(/["'`$\\\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean || fallback;
+}
+
+/**
+ * Menampilkan peringatan di layar TV lewat ADB (APK overlay, jendela non-fokus).
+ *
+ * PENTING: nilai teks dibungkus kutipan tunggal DI DALAM argumen, karena shell di TV
+ * yang memecah spasi - tanpa itu "SISA WAKTU 15 MENIT" sampai hanya sebagai kata pertama.
+ * (Teks dibersihkan lebih dulu supaya kutipan/karakter kendali tidak bisa menyusup.)
+ */
+async function sendOverlay(roomSelector, options = {}) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
+  assertRoomHasIp(room);
+
+  const packageName = sanitizeOverlayText(options.packageName || room.notifyPackage || overlayPackageDefault, overlayPackageDefault);
+  const text = sanitizeOverlayText(options.text, 'SISA WAKTU');
+  const subtext = sanitizeOverlayText(options.subtext, '');
+  const seconds = Math.min(Math.max(Math.round(Number(options.seconds) || 20), 3), 600);
+
+  // Peringatan hanya berguna kalau layar TV benar-benar menyala, jadi kalau TV sedang tidur
+  // ia dibangunkan lebih dulu. Matikan dengan { ensureAwake: false } bila tidak diinginkan.
+  const needAwake = options.ensureAwake !== false;
+  const serial = needAwake ? await ensureAwakeAndConnected(room) : await ensureConnected(room);
+  const argv = [
+    'am',
+    'start-foreground-service',
+    '-n',
+    `${packageName}/.${overlayServiceName}`,
+    '--es',
+    'text',
+    `'${text}'`,
+    '--ei',
+    'seconds',
+    String(seconds),
+  ];
+
+  if (subtext) {
+    argv.push('--es', 'subtext', `'${subtext}'`);
+  }
+
+  const output = await runShell(room, argv, `Menampilkan peringatan di ${room.name}`);
+  if (/error|exception|not found|does not exist/i.test(output)) {
+    throw new Error(`Peringatan gagal dikirim ke ${room.name}: ${output}`);
+  }
+
+  log(`Peringatan terkirim ke ${serial}: ${text}`);
+  return {
+    ok: true,
+    roomId: room.id,
+    roomName: room.name,
+    serial,
+    text,
+    subtext,
+    seconds,
+    packageName,
+    output,
+  };
+}
+
+/**
+ * Membaca keadaan TV: apakah ADB menjawab, dan layarnya tidur atau nyala.
+ * Dipakai sebelum/sesudah menidurkan TV supaya "TV tidak menjawab" tidak dicatat
+ * sebagai kegagalan padahal artinya TV sudah tidur (temuan uji 2026-09-23).
+ */
+async function getTvPowerState(roomSelector) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+
+  const connected = await verifyConnected(room);
+  if (!connected) {
+    return { reachable: false, wakefulness: null, error: getRuntimeState(room.id).lastError };
+  }
+
+  return { reachable: true, wakefulness: await readWakefulness(room), error: null };
+}
+
 async function getStatus(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
   assertRoomHasIp(room);
@@ -411,7 +619,9 @@ function listTestDeviceStatuses() {
 
 module.exports = {
   connectToRoom,
+  ensureAwakeAndConnected,
   ensureConnected,
+  getTvPowerState,
   getDefaultRoomId,
   getRoomRuntime,
   getRuntime,
@@ -422,6 +632,7 @@ module.exports = {
   listTestDeviceStatuses,
   resolveRoomId: getRoomIdOrNull,
   resolveTestDeviceId: getTestDeviceIdOrNull,
+  sendOverlay,
   sleepRoom: sendSleepKeyevent,
   wakeRoom,
 };

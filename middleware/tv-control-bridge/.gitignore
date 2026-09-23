@@ -1,5 +1,28 @@
+# Kode bridge yang tercermin dari C:\karaoke-tv-bridge (folder kerja yang dijalankan).
+# Rahasia dan limbah TIDAK pernah masuk ke sini.
+
+# Rahasia
+.env
+*.env
+local.properties
+
+# Limbah runtime
 node_modules/
+logs/
+data/
+*.log
+cadangan-*/
+bukti-*/
+
+# Alat bantu lama
 ngrok
 ngrok.exe
 ngrok.yml
 ngrok-*.tgz
+
+# Hasil build APK overlay (hanya kode sumber yang dicerminkan)
+tv-notify-overlay/build/
+tv-notify-overlay/.gradle/
+tv-notify-overlay/.idea/
+*.apk
+*.ap_

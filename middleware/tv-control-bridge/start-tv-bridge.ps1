@@ -1,33 +1,18 @@
 $ErrorActionPreference = "Stop"
 
-$bridgeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$bridgeDir = "C:\karaoke-tv-bridge"
 $logPath = Join-Path $bridgeDir "windows-bridge.log"
 
 Set-Location $bridgeDir
 
-# Reconnect every configured TV after the network and Android TVs recover.
-$env:AUTO_CONNECT_ALL = "true"
-$env:AUTO_CONNECT_DELAY_MS = "15000"
-$env:AUTO_CONNECT_RETRIES = "8"
-
-$platformToolsAdb = Join-Path $env:SystemDrive "platform-tools\adb.exe"
-if (Test-Path -LiteralPath $platformToolsAdb) {
-  $env:ADB_BIN = $platformToolsAdb
-}
-
-$existing = Get-CimInstance Win32_Process |
-  Where-Object {
-    $_.CommandLine -match "node(\.exe)?\s+server\.js" -and
-    $_.CommandLine -like "*tv-control-bridge*"
-  }
-
-if ($existing) {
-  "[$(Get-Date -Format o)] tv-control-bridge already running. PID: $($existing.ProcessId -join ', ')" |
-    Out-File -FilePath $logPath -Append -Encoding utf8
+$listener = Get-NetTCPConnection -LocalPort 3030 -State Listen -ErrorAction SilentlyContinue
+if ($listener) {
+  "[$(Get-Date -Format o)] Bridge already listening on port 3030" | Out-File -FilePath $logPath -Append -Encoding utf8
   exit 0
 }
 
-"[$(Get-Date -Format o)] Starting tv-control-bridge from $bridgeDir" |
-  Out-File -FilePath $logPath -Append -Encoding utf8
+"[$(Get-Date -Format o)] Starting tv-control-bridge" | Out-File -FilePath $logPath -Append -Encoding utf8
 
-npm start >> $logPath 2>&1
+Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c cd /d C:\karaoke-tv-bridge && node server.js >> windows-bridge.log 2>&1" `
+  -WindowStyle Hidden

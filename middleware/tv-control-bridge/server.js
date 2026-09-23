@@ -11,6 +11,7 @@ const {
   launchApp,
   listRoomStatuses,
   listTestDeviceStatuses,
+  sendOverlay,
   sleepRoom,
   wakeRoom,
   resolveRoomId,
@@ -22,8 +23,10 @@ const {
   getCountdown,
   listCountdowns,
   readDurationSeconds,
+  restoreSchedules,
   startCountdown,
 } = require("./src/countdownService");
+const { listEvents } = require("./src/tvEventLog");
 
 const PORT = Number(process.env.PORT) || 3030;
 const apiToken = String(process.env.API_TOKEN || "").trim();
@@ -31,6 +34,11 @@ const autoConnect = String(process.env.AUTO_CONNECT || "false").toLowerCase() ==
 const autoConnectAll = String(process.env.AUTO_CONNECT_ALL || "false").toLowerCase() === "true";
 const autoConnectDelayMs = Math.max(0, Number(process.env.AUTO_CONNECT_DELAY_MS) || 15000);
 const autoConnectRetries = Math.max(1, Number(process.env.AUTO_CONNECT_RETRIES) || 8);
+
+// Peralihan token: walau API_TOKEN sudah hidup, /tv-command masih menerima permintaan dari
+// LAN venue supaya halaman kasir yang belum dimuat ulang tidak langsung mati.
+// Setelah POS versi baru dipakai, set TV_COMMAND_ALLOW_LAN_FALLBACK=false lalu restart bridge.
+const allowLanFallback = String(process.env.TV_COMMAND_ALLOW_LAN_FALLBACK || "false").toLowerCase() === "true";
 
 const app = express();
 
@@ -136,6 +144,42 @@ function requireApiToken(req, res, next) {
     success: false,
     error: "Unauthorized",
     message: "Unauthorized",
+  });
+}
+
+function isPrivateLanAddress(req) {
+  const raw = String((req.socket && req.socket.remoteAddress) || req.ip || "")
+    .replace(/^::ffff:/i, "")
+    .toLowerCase();
+
+  return (
+    raw === "::1" ||
+    raw.startsWith("127.") ||
+    raw.startsWith("192.168.") ||
+    raw.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(raw)
+  );
+}
+
+function requireTvCommandToken(req, res, next) {
+  if (!apiToken) {
+    return next();
+  }
+
+  if (getRequestToken(req) === apiToken) {
+    return next();
+  }
+
+  if (allowLanFallback && isPrivateLanAddress(req)) {
+    log("Catatan: /tv-command diakses tanpa token dari LAN (mode peralihan masih hidup)");
+    return next();
+  }
+
+  return res.status(401).json({
+    success: false,
+    result: "failed",
+    message: "Unauthorized",
+    block_reason: "UNAUTHORIZED",
   });
 }
 
@@ -323,7 +367,7 @@ app.get("/api/auth/status", (_req, res) => {
 });
 
 // Compatibility endpoint for Google Apps Script TVDevices.middleware_url.
-app.post("/tv-command", async (req, res) => {
+app.post("/tv-command", requireTvCommandToken, async (req, res) => {
   const body = req.body || {};
   const roomId = String(body.room_id || "").trim();
   const tvAction = String(body.tv_action || "").trim().toLowerCase();
@@ -337,11 +381,11 @@ app.post("/tv-command", async (req, res) => {
     });
   }
 
-  if (!["test", "power_on", "power_off"].includes(tvAction)) {
+  if (!["test", "power_on", "power_off", "notify"].includes(tvAction)) {
     return res.status(400).json({
       success: false,
       result: "failed",
-      message: "tv_action tidak valid. Gunakan: power_on, power_off, test.",
+      message: "tv_action tidak valid. Gunakan: power_on, power_off, notify, test.",
       block_reason: "INVALID_TV_ACTION",
     });
   }
@@ -370,6 +414,20 @@ app.post("/tv-command", async (req, res) => {
         result: status.connected ? "sent" : "tested",
         message: `Test ADB ${status.roomName}: ${status.connected ? "terhubung" : "belum terhubung"}.`,
         data: status,
+      });
+    }
+
+    if (tvAction === "notify") {
+      const result = await sendOverlay(normalizedRoomId, {
+        text: body.text,
+        subtext: body.subtext,
+        seconds: body.seconds,
+      });
+      return res.json({
+        success: true,
+        result: "sent",
+        message: `Peringatan dikirim ke layar ${result.roomName}.`,
+        data: result,
       });
     }
 
@@ -500,6 +558,30 @@ app.post("/api/rooms/sleep-all", async (req, res) => {
   }
 });
 
+app.post("/api/rooms/:roomId/notify", async (req, res) => {
+  try {
+    const roomId = resolveRouteRoom(req, res);
+    if (!roomId || sendDisabledRoom(res, roomId)) {
+      return;
+    }
+
+    const body = req.body || {};
+    const result = await sendOverlay(roomId, {
+      text: body.text,
+      subtext: body.subtext,
+      seconds: body.seconds,
+    });
+    res.json(successResult({ result }));
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get("/api/events", (req, res) => {
+  const limit = Number(req.query.limit) || 50;
+  res.json(successResult({ events: listEvents(limit) }));
+});
+
 app.get("/api/rooms/:roomId/countdown", (req, res) => {
   const roomId = resolveRouteRoom(req, res);
   if (!roomId) {
@@ -516,11 +598,21 @@ app.post("/api/rooms/:roomId/countdown/start", (req, res) => {
       return;
     }
 
-    const durationSeconds = readDurationSeconds(req.body || {});
+    const body = req.body || {};
+    const durationSeconds = readDurationSeconds(body);
     const countdown = startCountdown({
       targetType: "room",
       target: getRoomRuntime(roomId),
       durationSeconds,
+      warnOffsetsSeconds: body.warnOffsetsSeconds,
+      warnMinutes: body.warnMinutes,
+      messages: body.messages,
+      graceSeconds: body.graceSeconds,
+      finalSeconds: body.finalSeconds,
+      finalMessage: body.finalMessage,
+      wakeOnStart: body.wakeOnStart,
+      powerOffRetries: body.powerOffRetries,
+      powerOffIntervalMs: body.powerOffIntervalMs,
     });
     res.json(successResult({ countdown }));
   } catch (error) {
@@ -634,6 +726,12 @@ app.listen(PORT, async () => {
   console.log("  GET  /api/rooms");
   console.log("  POST /api/rooms/:roomId/wake");
   console.log("  POST /api/rooms/:roomId/sleep");
+  console.log("  POST /api/rooms/:roomId/notify        (peringatan di layar TV)");
+  console.log("  POST /api/rooms/:roomId/countdown/start (jadwal T-15/T-5/T-0)");
+  console.log("  GET  /api/events                      (riwayat peringatan + tidurkan TV)");
+  console.log(`Token API: ${apiToken ? "hidup" : "mati"} | /tv-command terima LAN tanpa token: ${allowLanFallback ? "ya (mode peralihan)" : "tidak"}`);
+
+  restoreSchedules();
 
   if (autoConnectAll) {
     setTimeout(() => autoConnectConfiguredRooms().catch((error) => {
