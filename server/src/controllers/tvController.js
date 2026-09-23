@@ -139,7 +139,11 @@ async function sendTvCommand(req, res, payload) {
           tv_device_id: targetDeviceId,
           tv_action,
           trigger_source,
-          requested_by: cashier_name
+          requested_by: cashier_name,
+          // Dipakai aksi "notify": teks pesan yang tampil di layar TV.
+          text: payload.text || undefined,
+          subtext: payload.subtext || undefined,
+          seconds: payload.seconds || undefined
         });
 
         const urlObj = new URL(middlewareUrl);
@@ -154,7 +158,9 @@ async function sendTvCommand(req, res, payload) {
             'Content-Length': Buffer.byteLength(postData),
             ...(bridgeToken ? { 'X-API-Token': bridgeToken } : {})
           },
-          timeout: 4000
+          // Menyalakan TV = keyevent 224 + paket WoL ke beberapa alamat, jadi bisa lebih dari
+          // 4 detik. Batas 4 detik sebelumnya membuat POS mencatat "gagal" padahal TV menyala.
+          timeout: Number(process.env.TV_BRIDGE_TIMEOUT_MS || 12000)
         };
 
         rawResponse = await new Promise((resolve, reject) => {

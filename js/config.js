@@ -44,18 +44,20 @@ export const API_BASE_URL = (
   Sebelumnya tertulis 192.168.1.4 yang tidak ada perangkatnya, sehingga setiap perintah TV
   dari dashboard kasir (nyalakan saat mulai, matikan saat waktu habis) tidak pernah sampai.
 */
-export const LOCAL_TV_BRIDGE_URL = String(
-  injectedTvBridge.url || "http://192.168.1.3:3030/tv-command"
-).trim();
-export const LOCAL_TV_BRIDGE_ENABLED = true;
-
 /*
   Token bersama bridge <-> POS.
   SENGAJA TIDAK ditulis di berkas ini: repositori ini publik dan juga dipakai untuk
   GitHub Pages. Nilainya disuntikkan oleh server POS lewat /tv-bridge-config.js
   (variabel window.__TV_BRIDGE__) dari .env server, jadi token tidak pernah ikut terunggah.
+  PENTING: deklarasi ini harus berada DI ATAS pemakaiannya, kalau tidak modul gagal dimuat
+  dan seluruh dashboard (termasuk layar login) tidak akan muncul.
 */
 const injectedTvBridge = (typeof window !== "undefined" && window.__TV_BRIDGE__) || {};
+
+export const LOCAL_TV_BRIDGE_URL = String(
+  injectedTvBridge.url || "http://192.168.1.3:3030/tv-command"
+).trim();
+export const LOCAL_TV_BRIDGE_ENABLED = true;
 
 export const LOCAL_TV_BRIDGE_TOKEN = String(injectedTvBridge.token || "").trim();
 
