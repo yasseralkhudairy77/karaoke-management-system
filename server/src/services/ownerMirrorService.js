@@ -2,6 +2,7 @@ const db = require('../db');
 const { getOperationalDateRange, toJakartaIsoString, getJakartaComponents } = require('../utils/operationalDate');
 const { getSyncStatus } = require('./railwaySyncWorker');
 const { computeOperationalAnalytics } = require('../controllers/analyticsController');
+const { resolvePackageComponentStockItemSync } = require('../utils/packageStockResolver');
 
 const BASELINE_BUNDLE_BOMS = {
   'beer holic draft': [
@@ -55,15 +56,25 @@ async function getActiveBundleRecipes() {
     return [
       ...(recipeRes.rows || []),
       ...(pkgRes.rows || [])
-    ].map(row => ({
-      menu_id: row.menu_id || row.package_id || '',
-      menu_name: row.menu_name || row.package_name || '',
-      item_id: row.item_id || '',
-      stock_item_name: row.stock_item_name || '',
-      qty_used: Number(row.qty_used || 1),
-      unit: row.unit || 'pcs',
-      component_mode: row.component_mode || 'included'
-    }));
+    ].map(row => {
+      let resolvedItemId = row.item_id || '';
+      if (!row.menu_id && row.package_id) {
+        resolvedItemId = resolvePackageComponentStockItemSync(
+          { component_ref_id: row.item_id, component_name: row.stock_item_name },
+          row.package_id,
+          row.package_name
+        ) || row.item_id;
+      }
+      return {
+        menu_id: row.menu_id || row.package_id || '',
+        menu_name: row.menu_name || row.package_name || '',
+        item_id: resolvedItemId,
+        stock_item_name: row.stock_item_name || '',
+        qty_used: Number(row.qty_used || 1),
+        unit: row.unit || 'pcs',
+        component_mode: row.component_mode || 'included'
+      };
+    });
   } catch (err) {
     console.warn('Gagal membaca active bundle recipes:', err.message);
     return [];
@@ -354,8 +365,9 @@ async function buildFnbPhysicalConsumption(transactions) {
       for (const trx of roomPackageTransactions) {
         const components = pkgDetailsMap[trx.package_id] || [];
         for (const comp of components) {
-          if (consumptionMap.has(comp.component_ref_id)) {
-            const entry = consumptionMap.get(comp.component_ref_id);
+          const refId = resolvePackageComponentStockItemSync(comp, trx.package_id, trx.package_name, consumptionMap);
+          if (refId && consumptionMap.has(refId)) {
+            const entry = consumptionMap.get(refId);
             const consumed = Number(comp.qty || 1);
             entry.package_qty += consumed;
             entry.total_consumed += consumed;

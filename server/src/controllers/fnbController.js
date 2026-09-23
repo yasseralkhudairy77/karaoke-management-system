@@ -2,6 +2,7 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
 const { writeOperationalAudit } = require('../services/operationalAuditService');
+const { resolvePackageComponentStockItemSync } = require('../utils/packageStockResolver');
 
 const FNB_GENERAL_ROOM_ID = 'FNB-GENERAL';
 const FNB_GENERAL_ROOM_NAME = 'F&B Umum';
@@ -1262,8 +1263,9 @@ async function getTodayFnbSalesReport(req, res) {
     for (const row of (roomPackagesResult.rows || [])) {
       const components = packageDetailsByPkg[row.package_id] || [];
       for (const comp of components) {
-        if (consumptionMap.has(comp.component_ref_id)) {
-          const entry = consumptionMap.get(comp.component_ref_id);
+        const refId = resolvePackageComponentStockItemSync(comp, row.package_id, row.package_name, consumptionMap);
+        if (refId && consumptionMap.has(refId)) {
+          const entry = consumptionMap.get(refId);
           const consumed = Number(comp.qty || 1);
           entry.package_qty += consumed;
           entry.total_consumed += consumed;

@@ -2,6 +2,7 @@ const db = require('../db');
 const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate } = require('../utils/operationalDate');
 const { writeOperationalAudit } = require('../services/operationalAuditService');
+const { resolvePackageComponentStockItem } = require('../utils/packageStockResolver');
 
 function parseSessionPackageMeta(session) {
   const note = String(session?.note || '');
@@ -1886,16 +1887,11 @@ async function deductStockForRoomPackage(client, packageId, packageName, transac
   const movements = [];
 
   for (const comp of detailsRes.rows) {
-    let stockItemId = comp.component_ref_id;
     const qtyDeduct = Number(comp.qty || 1);
-    if (!stockItemId || qtyDeduct <= 0) continue;
+    if (qtyDeduct <= 0) continue;
 
-    if (comp.component_type === 'menu') {
-      const menuRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
-      if (menuRes.rowCount > 0 && menuRes.rows[0].stock_item_id) {
-        stockItemId = menuRes.rows[0].stock_item_id;
-      }
-    }
+    const stockItemId = await resolvePackageComponentStockItem(client, comp, packageId, packageName);
+    if (!stockItemId) continue;
 
     const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
     if (invRes.rowCount > 0) {

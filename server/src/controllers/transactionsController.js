@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
 const { verifyAndUpgradePin } = require('../middleware/auth');
 const { writeOperationalAudit } = require('../services/operationalAuditService');
+const { resolvePackageComponentStockItem } = require('../utils/packageStockResolver');
 
 function toNumber(value, fallback = 0) {
   const numberValue = Number(value);
@@ -2014,16 +2015,11 @@ async function deleteTransaction(req, res, payload) {
       `, [oldTransaction.package_id]);
 
       for (const comp of pkgDetailsRes.rows) {
-        let stockItemId = comp.component_ref_id;
         const qtyReturn = Number(comp.qty || 1);
-        if (!stockItemId || qtyReturn <= 0) continue;
+        if (qtyReturn <= 0) continue;
 
-        if (comp.component_type === 'menu') {
-          const menuPkgRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
-          if (menuPkgRes.rowCount > 0 && menuPkgRes.rows[0].stock_item_id) {
-            stockItemId = menuPkgRes.rows[0].stock_item_id;
-          }
-        }
+        const stockItemId = await resolvePackageComponentStockItem(client, comp, oldTransaction.package_id, oldTransaction.package_name);
+        if (!stockItemId) continue;
 
         const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
         if (invRes.rowCount > 0) {
@@ -2932,16 +2928,11 @@ async function createManualOutageTransaction(req, res, payload) {
       `, [payload.package_id]);
 
       for (const comp of detailsRes.rows) {
-        let stockItemId = comp.component_ref_id;
         const qtyDeduct = Number(comp.qty || 1);
-        if (!stockItemId || qtyDeduct <= 0) continue;
+        if (qtyDeduct <= 0) continue;
 
-        if (comp.component_type === 'menu') {
-          const menuPkgRes = await client.query('SELECT stock_item_id FROM menu WHERE menu_id = $1', [comp.component_ref_id]);
-          if (menuPkgRes.rowCount > 0 && menuPkgRes.rows[0].stock_item_id) {
-            stockItemId = menuPkgRes.rows[0].stock_item_id;
-          }
-        }
+        const stockItemId = await resolvePackageComponentStockItem(client, comp, payload.package_id, transactionPackageName);
+        if (!stockItemId) continue;
 
         const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
         if (invRes.rowCount > 0) {
