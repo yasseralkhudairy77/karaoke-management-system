@@ -946,6 +946,7 @@ let tvDeviceModalState = null;
 let tvNotifyModalState = null;
 let isExecutingTvCommand = false;
 let tvControlLogsList = [];
+let tvControlLogsError = null;
 let isLoadingTvControlLogs = false;
 let tvControlLogFilterRoom = "";
 let tvControlLogPage = 1;
@@ -23328,7 +23329,20 @@ function createSettingsSubTabsElement() {
 
 function getActiveSettingsSectionElement() {
   if (activeSettingsSubTab === "tv_control") {
-    return createTvControlSectionElement();
+    // Satu sub-tab yang gagal dibangun tidak boleh membuat SELURUH tab Pengaturan
+    // kosong tanpa penjelasan: tampilkan pesannya di tempat sub-tab itu berada.
+    try {
+      return createTvControlSectionElement();
+    } catch (error) {
+      console.error("Gagal membangun sub-tab Kontrol TV.", error);
+      const container = document.createElement("section");
+      container.className = "master-section tv-control-section";
+      container.appendChild(createStateMessage(
+        `Sub-tab Kontrol TV gagal ditampilkan: ${error?.message || error}. Laporkan pesan ini, jangan diabaikan.`,
+        "error"
+      ));
+      return container;
+    }
   }
 
   if (activeSettingsSubTab === "menu") {
