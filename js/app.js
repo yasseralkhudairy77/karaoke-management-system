@@ -24852,18 +24852,235 @@ function loadTvControlOverview(options = {}) {
     });
 }
 
+function loadTvControlLogs(options = {}) {
+  if (!API_BASE_URL.trim()) return Promise.resolve();
+  isLoadingTvControlLogs = true;
+  tvControlLogsError = null;
+  if (!options.silent) {
+    renderRooms();
+  }
+
+  const params = new URLSearchParams();
+  params.set("action", "getTvControlLogs");
+  if (tvControlLogFilterRoom) {
+    params.set("room_id", tvControlLogFilterRoom);
+  }
+  params.set("limit", "100");
+
+  return fetch(`${API_BASE_URL}?${params.toString()}`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((data) => {
+      if (data && (data.ok || data.success) && (Array.isArray(data.logs) || Array.isArray(data.tv_control_logs))) {
+        tvControlLogsList = data.logs || data.tv_control_logs;
+      } else {
+        throw new Error(data?.message || data?.error || "Gagal memuat log kontrol TV.");
+      }
+    })
+    .catch((err) => {
+      tvControlLogsError = err.message || "Gagal memuat riwayat log.";
+      console.warn("loadTvControlLogs error:", err);
+    })
+    .finally(() => {
+      isLoadingTvControlLogs = false;
+      renderRooms();
+    });
+}
+
 function createTvControlLogsSectionElement() {
   const container = document.createElement("div");
   container.className = "tv-control-logs-container";
-  container.style.marginTop = "24px";
+  container.style.marginTop = "32px";
 
   const head = document.createElement("div");
   head.className = "master-section-header";
+  head.style.display = "flex";
+  head.style.justifyContent = "space-between";
+  head.style.alignItems = "center";
+  head.style.flexWrap = "wrap";
+  head.style.gap = "12px";
+
+  const titleGroup = document.createElement("div");
   const title = document.createElement("h4");
   title.className = "master-section-title";
-  title.textContent = "Riwayat Perintah Kontrol TV";
-  head.appendChild(title);
+  title.style.margin = "0";
+  title.textContent = "Riwayat Perintah & Aktivitas TV";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "master-section-subtitle";
+  subtitle.style.margin = "4px 0 0";
+  subtitle.textContent = "Catatan audit otomatis untuk setiap perintah daya, WoL, pengujian ADB, dan pesan overlay.";
+  titleGroup.append(title, subtitle);
+
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.alignItems = "center";
+  toolbar.style.gap = "8px";
+
+  const roomSelect = document.createElement("select");
+  roomSelect.className = "master-form-input";
+  roomSelect.style.width = "auto";
+  roomSelect.style.padding = "6px 12px";
+
+  const allOpt = document.createElement("option");
+  allOpt.value = "";
+  allOpt.textContent = "Semua Ruangan";
+  roomSelect.appendChild(allOpt);
+
+  const allRooms = Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : [];
+  allRooms.forEach((r) => {
+    const opt = document.createElement("option");
+    opt.value = r.room_id;
+    opt.textContent = `${r.room_name || r.room_id} (${r.room_id})`;
+    if (r.room_id === tvControlLogFilterRoom) opt.selected = true;
+    roomSelect.appendChild(opt);
+  });
+
+  roomSelect.addEventListener("change", (e) => {
+    tvControlLogFilterRoom = e.target.value;
+    tvControlLogPage = 1;
+    loadTvControlLogs();
+  });
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "master-button secondary";
+  refreshBtn.dataset.action = "refresh-tv-logs";
+  refreshBtn.disabled = isLoadingTvControlLogs;
+  refreshBtn.textContent = isLoadingTvControlLogs ? "Memuat..." : "Refresh Log";
+
+  toolbar.append(roomSelect, refreshBtn);
+  head.append(titleGroup, toolbar);
   container.appendChild(head);
+
+  if (tvControlLogsList.length === 0 && !isLoadingTvControlLogs && !tvControlLogsError) {
+    setTimeout(() => { loadTvControlLogs(); }, 0);
+  }
+
+  if (isLoadingTvControlLogs && tvControlLogsList.length === 0) {
+    container.appendChild(createStateMessage("Memuat riwayat log kontrol TV..."));
+    return container;
+  }
+
+  if (tvControlLogsError && tvControlLogsList.length === 0) {
+    container.appendChild(createStateMessage(`Gagal memuat log: ${tvControlLogsError}`, "error"));
+    return container;
+  }
+
+  const logs = Array.isArray(tvControlLogsList) ? tvControlLogsList : [];
+  if (logs.length === 0) {
+    const emptyNotice = createStateMessage("Belum ada riwayat aktivitas kontrol TV tercatat.");
+    emptyNotice.style.margin = "16px 0";
+    container.appendChild(emptyNotice);
+    return container;
+  }
+
+  const perPage = TV_CONTROL_LOG_PAGE_SIZE || 10;
+  const totalPages = Math.ceil(logs.length / perPage) || 1;
+  if (tvControlLogPage > totalPages) tvControlLogPage = totalPages;
+  if (tvControlLogPage < 1) tvControlLogPage = 1;
+
+  const startIdx = (tvControlLogPage - 1) * perPage;
+  const currentLogs = logs.slice(startIdx, startIdx + perPage);
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "master-table-wrapper";
+  tableWrapper.style.marginTop = "12px";
+
+  const table = document.createElement("table");
+  table.className = "master-table tv-logs-table";
+
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  ["Waktu", "Ruangan", "Aksi", "Pemicu", "Operator", "Status", "Pesan / Keterangan"].forEach((h) => {
+    const th = document.createElement("th");
+    th.textContent = h;
+    trHead.appendChild(th);
+  });
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  currentLogs.forEach((log) => {
+    const tr = document.createElement("tr");
+
+    const tdTime = document.createElement("td");
+    tdTime.style.whiteSpace = "nowrap";
+    tdTime.style.fontSize = "12px";
+    try {
+      const dt = new Date(log.created_at);
+      tdTime.textContent = Number.isNaN(dt.getTime())
+        ? (log.created_at || "-")
+        : dt.toLocaleString("id-ID", { dateStyle: "short", timeStyle: "medium" });
+    } catch (_e) {
+      tdTime.textContent = log.created_at || "-";
+    }
+
+    const tdRoom = document.createElement("td");
+    tdRoom.innerHTML = `<strong>${escapeHtml(log.room_id || "-")}</strong>`;
+
+    const tdAction = document.createElement("td");
+    tdAction.innerHTML = `<code>${escapeHtml(log.action || "-")}</code>`;
+
+    const tdSource = document.createElement("td");
+    tdSource.textContent = log.trigger_source || "manual";
+
+    const tdOp = document.createElement("td");
+    tdOp.textContent = log.cashier_name || "Admin";
+
+    const tdStatus = document.createElement("td");
+    const isSuccess = log.success === true || log.result === "connected" || log.result === "sent";
+    const statusBadge = document.createElement("span");
+    statusBadge.className = isSuccess ? "status-badge active" : "status-badge inactive";
+    statusBadge.textContent = isSuccess ? "Berhasil" : "Gagal";
+    tdStatus.appendChild(statusBadge);
+
+    const tdMsg = document.createElement("td");
+    tdMsg.style.fontSize = "12px";
+    tdMsg.style.color = "#d1d5db";
+    tdMsg.textContent = log.message || "-";
+
+    tr.append(tdTime, tdRoom, tdAction, tdSource, tdOp, tdStatus, tdMsg);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.appendChild(tableWrapper);
+
+  const pagination = document.createElement("div");
+  pagination.style.display = "flex";
+  pagination.style.justifyContent = "space-between";
+  pagination.style.alignItems = "center";
+  pagination.style.marginTop = "12px";
+  pagination.style.fontSize = "13px";
+
+  const info = document.createElement("span");
+  info.style.color = "#9ca3af";
+  info.textContent = `Halaman ${tvControlLogPage} dari ${totalPages} (${logs.length} riwayat)`;
+
+  const navBtns = document.createElement("div");
+  navBtns.style.display = "flex";
+  navBtns.style.gap = "8px";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "master-button secondary";
+  prevBtn.dataset.action = "prev-tv-logs-page";
+  prevBtn.disabled = tvControlLogPage <= 1;
+  prevBtn.textContent = "« Sebelumnya";
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "master-button secondary";
+  nextBtn.dataset.action = "next-tv-logs-page";
+  nextBtn.disabled = tvControlLogPage >= totalPages;
+  nextBtn.textContent = "Selanjutnya »";
+
+  navBtns.append(prevBtn, nextBtn);
+  pagination.append(info, navBtns);
+  container.appendChild(pagination);
 
   return container;
 }
@@ -35246,6 +35463,7 @@ async function handleRoomAction(event) {
     } catch (_e) {}
     if (activeSettingsSubTab === "tv_control") {
       loadTvControlOverview();
+      loadTvControlLogs({ silent: true });
     }
     if (activeSettingsSubTab === "backup" && !databaseBackupStatus) {
       loadDatabaseBackupStatus();
@@ -35611,6 +35829,26 @@ async function handleRoomAction(event) {
         }
       }
     });
+    return;
+  }
+
+  if (action === "refresh-tv-logs") {
+    await loadTvControlLogs({ silent: false });
+    showInlineNotice("Riwayat log kontrol TV berhasil diperbarui.", "success");
+    return;
+  }
+
+  if (action === "prev-tv-logs-page") {
+    if (tvControlLogPage > 1) {
+      tvControlLogPage--;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "next-tv-logs-page") {
+    tvControlLogPage++;
+    renderRooms();
     return;
   }
 

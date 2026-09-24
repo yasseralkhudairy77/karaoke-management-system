@@ -8,4 +8,7 @@ Task 1: complete (commits f4776cc..ba72f79, tests: node tests/tv-devices-schema-
 Task 2: complete (commits ba72f79..c2e6a37, tests: node tests/tv-bridge-config-endpoint.test.js -> PASS)
 Task 3: complete (commits c2e6a37..850526f, tests: node tests/tv-control-api-actions.test.js -> PASS)
 Task 4: complete (commits 850526f..71fb64d, tests: node tests/tv-control-ui-subtab.test.js -> PASS)
-Task 5: complete (tests: node server/tests/tv-control-modal-actions.test.js -> PASS)
+Task 5: complete (commits 71fb64d..920c81d, tests: node server/tests/tv-control-modal-actions.test.js -> PASS)
+Task 6: complete (tests: node server/tests/tv-control-logs-ui.test.js -> PASS)
+
+All 6 tasks complete! Pre-flight verified. All 6 unit tests passing.
