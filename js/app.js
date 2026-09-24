@@ -928,7 +928,27 @@ let settingsPackageSearchQuery = "";
 let selectedSettingsPackageId = "";
 let packageDetailsByPackageId = {};
 let isLoadingPackageDetails = false;
-let activeSettingsSubTab = "rooms";
+let activeSettingsSubTab = (() => {
+  try {
+    const saved = localStorage.getItem("active_settings_subtab");
+    if (saved && ["rooms", "tv_control", "menu", "packages", "inventory", "access", "audit", "quality", "backup"].includes(saved)) {
+      return saved;
+    }
+  } catch (_e) {}
+  return "rooms";
+})();
+let tvRoomOverviewList = [];
+let isLoadingTvRoomOverview = false;
+let tvRoomOverviewError = null;
+let tvControlFilterOnlyActive = true;
+let tvDeviceModalState = null;
+let tvNotifyModalState = null;
+let isExecutingTvCommand = false;
+let tvControlLogsList = [];
+let isLoadingTvControlLogs = false;
+let tvControlLogFilterRoom = "";
+let tvControlLogPage = 1;
+const TV_CONTROL_LOG_PAGE_SIZE = 10;
 let databaseBackupStatus = null;
 let isLoadingDatabaseBackupStatus = false;
 let isExportingDatabaseBackup = false;
@@ -23280,6 +23300,7 @@ function matchesSettingsMenuAnalysisFilter(menuItem) {
 function createSettingsSubTabsElement() {
   const tabs = [
     ["rooms", "Ruangan"],
+    ["tv_control", "Kontrol TV"],
     ["menu", "Menu F&B"],
     ["packages", "Paket"],
     ["inventory", "Inventory"],
@@ -23305,6 +23326,10 @@ function createSettingsSubTabsElement() {
 }
 
 function getActiveSettingsSectionElement() {
+  if (activeSettingsSubTab === "tv_control") {
+    return createTvControlSectionElement();
+  }
+
   if (activeSettingsSubTab === "menu") {
     return createMenuSettingsSection();
   }
@@ -24790,6 +24815,302 @@ function createMasterAuditLogSection() {
         "settingsAudit"
       )
   );
+
+  return section;
+}
+
+function loadTvControlOverview(options = {}) {
+  if (!API_BASE_URL.trim()) return Promise.resolve();
+  isLoadingTvRoomOverview = true;
+  tvRoomOverviewError = null;
+  if (!options.silent) {
+    renderRooms();
+  }
+
+  const params = new URLSearchParams();
+  params.set("action", "getTvRoomOverview");
+
+  return fetch(`${API_BASE_URL}?${params.toString()}`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((data) => {
+      if (data && (data.ok || data.success) && Array.isArray(data.rooms)) {
+        tvRoomOverviewList = data.rooms;
+      } else {
+        throw new Error(data?.message || data?.error || "Gagal memuat overview TV.");
+      }
+    })
+    .catch((err) => {
+      tvRoomOverviewError = err.message || "Gagal menghubungi server.";
+      console.warn("loadTvControlOverview error:", err);
+    })
+    .finally(() => {
+      isLoadingTvRoomOverview = false;
+      renderRooms();
+    });
+}
+
+function createTvControlLogsSectionElement() {
+  const container = document.createElement("div");
+  container.className = "tv-control-logs-container";
+  container.style.marginTop = "24px";
+
+  const head = document.createElement("div");
+  head.className = "master-section-header";
+  const title = document.createElement("h4");
+  title.className = "master-section-title";
+  title.textContent = "Riwayat Perintah Kontrol TV";
+  head.appendChild(title);
+  container.appendChild(head);
+
+  return container;
+}
+
+function createTvControlSectionElement() {
+  const section = document.createElement("section");
+  section.className = "master-section tv-control-section";
+
+  const header = document.createElement("div");
+  header.className = "master-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "master-section-title";
+  title.textContent = "Manajemen & Kontrol TV Ruangan";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "master-section-subtitle";
+  subtitle.textContent = "Pantau status sambungan ADB, daya layar, dan konfigurasi TV 9 ruangan aktif.";
+  titleGroup.append(title, subtitle);
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "master-form-actions";
+  toolbar.style.marginTop = "0";
+
+  const addBtn = document.createElement("button");
+  addBtn.className = "master-button primary";
+  addBtn.type = "button";
+  addBtn.dataset.action = "add-tv-device";
+  addBtn.textContent = "+ Tambah / Konfigurasi Ruangan Baru";
+
+  const checkAllBtn = document.createElement("button");
+  checkAllBtn.className = "master-button secondary";
+  checkAllBtn.type = "button";
+  checkAllBtn.dataset.action = "check-all-tv-devices";
+  checkAllBtn.disabled = isLoadingTvRoomOverview;
+  checkAllBtn.textContent = isLoadingTvRoomOverview ? "Memeriksa..." : "Periksa Semua";
+
+  const filterBtn = document.createElement("button");
+  filterBtn.className = "master-button secondary";
+  filterBtn.type = "button";
+  filterBtn.dataset.action = "toggle-tv-active-filter";
+  filterBtn.textContent = tvControlFilterOnlyActive ? "Tampilkan Semua Ruangan" : "Tampilkan 9 Ruangan Aktif";
+
+  toolbar.append(addBtn, checkAllBtn, filterBtn);
+  header.append(titleGroup, toolbar);
+  section.appendChild(header);
+
+  if (tvRoomOverviewList.length === 0 && !isLoadingTvRoomOverview && !tvRoomOverviewError) {
+    setTimeout(() => { loadTvControlOverview(); }, 0);
+  }
+
+  if (isLoadingTvRoomOverview && tvRoomOverviewList.length === 0) {
+    section.appendChild(createStateMessage("Memeriksa status perangkat TV dan menghubungi bridge..."));
+    return section;
+  }
+
+  if (tvRoomOverviewError && tvRoomOverviewList.length === 0) {
+    const errorBox = createStateMessage(`Gagal memuat status TV: ${tvRoomOverviewError}`, "error");
+    section.appendChild(errorBox);
+    return section;
+  }
+
+  const activeRoomIds = ["ROOM-001", "ROOM-002", "ROOM-003", "ROOM-004", "ROOM-005", "ROOM-006", "ROOM-007", "ROOM-008", "ROOM-009"];
+  const displayRooms = tvControlFilterOnlyActive
+    ? tvRoomOverviewList.filter((r) => activeRoomIds.includes(r.room_id) || r.status === "active")
+    : tvRoomOverviewList;
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "master-table-wrapper";
+
+  const table = document.createElement("table");
+  table.className = "master-table tv-control-table";
+
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  const headers = ["Ruangan", "Perangkat", "Tipe", "IP TV", "MAC TV", "ADB", "Layar", "ARP", "Masalah", "Aksi"];
+  headers.forEach((h) => {
+    const th = document.createElement("th");
+    th.textContent = h;
+    trHead.appendChild(th);
+  });
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  if (displayRooms.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = headers.length;
+    td.textContent = "Tidak ada ruangan yang sesuai filter.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  } else {
+    displayRooms.forEach((r) => {
+      const tr = document.createElement("tr");
+
+      const tdRoom = document.createElement("td");
+      tdRoom.innerHTML = `<strong>${escapeHtml(r.room_name || r.room_id)}</strong><br><small style="color:#9ca3af;">${escapeHtml(r.room_id)}</small>`;
+
+      const tdDev = document.createElement("td");
+      tdDev.textContent = r.device_name || r.tv_device_id || "-";
+
+      const tdType = document.createElement("td");
+      const typeBadge = document.createElement("span");
+      typeBadge.className = r.control_type === "mock" ? "status-badge" : "status-badge active";
+      typeBadge.style.fontSize = "11px";
+      typeBadge.textContent = r.control_type || "middleware";
+      tdType.appendChild(typeBadge);
+
+      const tdIp = document.createElement("td");
+      tdIp.innerHTML = `<code>${escapeHtml(r.tv_ip || "-")}</code>`;
+
+      const tdMac = document.createElement("td");
+      tdMac.innerHTML = `<code>${escapeHtml(r.tv_mac || "-")}</code>`;
+
+      const tdAdb = document.createElement("td");
+      const adbBadge = document.createElement("span");
+      if (r.control_type === "mock") {
+        adbBadge.className = "status-badge";
+        adbBadge.textContent = "Mock";
+      } else if (r.device_connected) {
+        adbBadge.className = "status-badge active";
+        adbBadge.textContent = "Tersambung";
+      } else {
+        adbBadge.className = "status-badge inactive";
+        adbBadge.textContent = "Terputus";
+      }
+      tdAdb.appendChild(adbBadge);
+
+      const tdScreen = document.createElement("td");
+      const screenBadge = document.createElement("span");
+      if (r.wakefulness === "Awake") {
+        screenBadge.className = "status-badge active";
+        screenBadge.textContent = "Menyala";
+      } else if (r.wakefulness === "Asleep") {
+        screenBadge.className = "status-badge inactive";
+        screenBadge.textContent = "Tidur";
+      } else if (r.wakefulness === "Dreaming" || r.wakefulness === "Dozing") {
+        screenBadge.className = "status-badge";
+        screenBadge.style.background = "#d97706";
+        screenBadge.style.color = "#fff";
+        screenBadge.textContent = "Screensaver";
+      } else {
+        screenBadge.className = "status-badge";
+        screenBadge.textContent = "-";
+      }
+      tdScreen.appendChild(screenBadge);
+
+      const tdArp = document.createElement("td");
+      const arpBadge = document.createElement("span");
+      if (r.mac_matches_arp === "cocok") {
+        arpBadge.className = "status-badge active";
+        arpBadge.title = r.arp_mac || "";
+        arpBadge.textContent = "Cocok";
+      } else if (r.mac_matches_arp === "beda") {
+        arpBadge.className = "status-badge inactive";
+        arpBadge.title = `ARP: ${r.arp_mac || "tidak diketahui"}`;
+        arpBadge.textContent = "Beda";
+      } else {
+        arpBadge.className = "status-badge";
+        arpBadge.textContent = "-";
+      }
+      tdArp.appendChild(arpBadge);
+
+      const tdIssue = document.createElement("td");
+      if (!Array.isArray(r.masalah) || r.masalah.length === 0) {
+        const okSpan = document.createElement("span");
+        okSpan.style.color = "#10b981";
+        okSpan.style.fontSize = "12px";
+        okSpan.textContent = "Normal";
+        tdIssue.appendChild(okSpan);
+      } else {
+        r.masalah.forEach((m) => {
+          const mBadge = document.createElement("div");
+          mBadge.className = "status-badge inactive";
+          mBadge.style.display = "block";
+          mBadge.style.marginBottom = "2px";
+          mBadge.style.fontSize = "11px";
+          mBadge.textContent = m;
+          tdIssue.appendChild(mBadge);
+        });
+      }
+
+      const tdActions = document.createElement("td");
+      const btnGroup = document.createElement("div");
+      btnGroup.className = "master-row-actions";
+      btnGroup.style.display = "flex";
+      btnGroup.style.flexWrap = "wrap";
+      btnGroup.style.gap = "4px";
+
+      const checkBtn = document.createElement("button");
+      checkBtn.className = "master-button secondary";
+      checkBtn.type = "button";
+      checkBtn.dataset.action = "check-tv-device";
+      checkBtn.dataset.roomId = r.room_id;
+      checkBtn.textContent = "Cek";
+
+      const wakeBtn = document.createElement("button");
+      wakeBtn.className = "master-button";
+      wakeBtn.type = "button";
+      wakeBtn.dataset.action = "wake-tv-device";
+      wakeBtn.dataset.roomId = r.room_id;
+      wakeBtn.textContent = "Nyalakan";
+
+      const sleepBtn = document.createElement("button");
+      sleepBtn.className = "master-button secondary";
+      sleepBtn.type = "button";
+      sleepBtn.dataset.action = "sleep-tv-device";
+      sleepBtn.dataset.roomId = r.room_id;
+      sleepBtn.textContent = "Matikan";
+
+      const testBtn = document.createElement("button");
+      testBtn.className = "master-button secondary";
+      testBtn.type = "button";
+      testBtn.dataset.action = "test-tv-device";
+      testBtn.dataset.roomId = r.room_id;
+      testBtn.textContent = "Uji ADB";
+
+      const notifyBtn = document.createElement("button");
+      notifyBtn.className = "master-button secondary";
+      notifyBtn.type = "button";
+      notifyBtn.dataset.action = "notify-tv-device";
+      notifyBtn.dataset.roomId = r.room_id;
+      notifyBtn.dataset.roomName = r.room_name || r.room_id;
+      notifyBtn.textContent = "Pesan";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "master-button";
+      editBtn.type = "button";
+      editBtn.dataset.action = "edit-tv-device";
+      editBtn.dataset.roomId = r.room_id;
+      editBtn.textContent = "Edit";
+
+      btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+      tdActions.appendChild(btnGroup);
+
+      tr.append(tdRoom, tdDev, tdType, tdIp, tdMac, tdAdb, tdScreen, tdArp, tdIssue, tdActions);
+      tbody.appendChild(tr);
+    });
+  }
+
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  section.appendChild(tableWrapper);
+
+  section.appendChild(createTvControlLogsSectionElement());
 
   return section;
 }
@@ -34571,10 +34892,28 @@ async function handleRoomAction(event) {
 
   if (action === "switch-settings-subtab") {
     activeSettingsSubTab = button.dataset.settingsTab || "rooms";
+    try {
+      localStorage.setItem("active_settings_subtab", activeSettingsSubTab);
+    } catch (_e) {}
+    if (activeSettingsSubTab === "tv_control") {
+      loadTvControlOverview();
+    }
     if (activeSettingsSubTab === "backup" && !databaseBackupStatus) {
       loadDatabaseBackupStatus();
     }
     renderRooms();
+    return;
+  }
+
+  if (action === "toggle-tv-active-filter") {
+    tvControlFilterOnlyActive = !tvControlFilterOnlyActive;
+    renderRooms();
+    return;
+  }
+
+  if (action === "check-all-tv-devices") {
+    await loadTvControlOverview({ force: true });
+    showInlineNotice("Pemeriksaan status perangkat TV selesai diperbarui.", "success");
     return;
   }
 
