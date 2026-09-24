@@ -24868,6 +24868,346 @@ function createTvControlLogsSectionElement() {
   return container;
 }
 
+function createTvDeviceModalElement() {
+  if (!tvDeviceModalState || !tvDeviceModalState.isOpen) return null;
+  const modal = tvDeviceModalState;
+
+  const overlay = document.createElement("div");
+  overlay.className = "master-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.75)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1050";
+  overlay.style.padding = "16px";
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-modal-dialog";
+  dialog.style.maxWidth = "620px";
+  dialog.style.width = "90%";
+  dialog.style.maxHeight = "90vh";
+  dialog.style.overflowY = "auto";
+  dialog.style.backgroundColor = "var(--surface-raised, #1f2937)";
+  dialog.style.border = "1px solid var(--border, #374151)";
+  dialog.style.borderRadius = "var(--radius-md, 8px)";
+  dialog.style.padding = "24px";
+  dialog.style.boxShadow = "0 20px 25px -5px rgba(0, 0, 0, 0.5)";
+
+  const isEditMode = modal.isEdit || modal.mode === "edit";
+
+  const title = document.createElement("h3");
+  title.className = "master-modal-title";
+  title.textContent = isEditMode
+    ? `Edit Pengaturan TV: ${modal.roomId}`
+    : "Tambah / Konfigurasi TV Ruangan Baru";
+
+  const desc = document.createElement("p");
+  desc.className = "master-modal-desc";
+  desc.textContent = "Pengaturan perangkat TV karaoke disimpan langsung ke database POS dan disinkronkan ke TV Bridge.";
+
+  const form = document.createElement("div");
+  form.className = "master-form-grid";
+
+  if (isEditMode) {
+    const roomField = document.createElement("label");
+    roomField.className = "master-form-field";
+    roomField.innerHTML = `<span class="master-form-label">Ruangan</span><input type="text" class="master-form-input" value="${escapeHtml(modal.roomId)}" readonly style="opacity:0.8;background:rgba(0,0,0,0.2);">`;
+    form.appendChild(roomField);
+  } else {
+    const roomSelectField = document.createElement("label");
+    roomSelectField.className = "master-form-field";
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "master-form-label";
+    labelSpan.textContent = "Pilih Ruangan";
+    const select = document.createElement("select");
+    select.className = "master-form-input";
+    select.dataset.prop = "roomId";
+
+    const allRooms = Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : [];
+    allRooms.forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r.room_id;
+      opt.textContent = `${r.room_name || r.room_id} (${r.room_id})`;
+      if (r.room_id === modal.roomId) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.addEventListener("change", (e) => {
+      modal.roomId = e.target.value;
+      if (!modal.deviceName || modal.deviceName.startsWith("TV ")) {
+        modal.deviceName = `TV ${modal.roomId}`;
+      }
+      renderRooms();
+    });
+    roomSelectField.append(labelSpan, select);
+    form.appendChild(roomSelectField);
+  }
+
+  const nameField = document.createElement("label");
+  nameField.className = "master-form-field";
+  nameField.innerHTML = `<span class="master-form-label">Nama Perangkat</span><input type="text" class="master-form-input" data-prop="deviceName" value="${escapeHtml(modal.deviceName || "")}" placeholder="Contoh: TV VIP-4">`;
+  form.appendChild(nameField);
+
+  const typeField = document.createElement("label");
+  typeField.className = "master-form-field";
+  typeField.innerHTML = `
+    <span class="master-form-label">Tipe Kontrol</span>
+    <select class="master-form-input" data-prop="controlType">
+      <option value="middleware"${modal.controlType === "middleware" ? " selected" : ""}>Middleware (TV Control Bridge)</option>
+      <option value="mock"${modal.controlType === "mock" ? " selected" : ""}>Mock (Simulasi Tanpa Perangkat)</option>
+    </select>
+  `;
+  form.appendChild(typeField);
+
+  const ipField = document.createElement("label");
+  ipField.className = "master-form-field";
+  ipField.innerHTML = `
+    <span class="master-form-label">Alamat IP TV</span>
+    <input type="text" class="master-form-input" data-prop="tvIp" value="${escapeHtml(modal.tvIp || "")}" placeholder="Contoh: 192.168.1.104">
+    <small style="color:#9ca3af;font-size:11px;">Alamat IPv4 TV Android di LAN venue.</small>
+  `;
+  form.appendChild(ipField);
+
+  const macField = document.createElement("label");
+  macField.className = "master-form-field";
+  macField.innerHTML = `
+    <span class="master-form-label">Alamat MAC TV</span>
+    <input type="text" class="master-form-input" data-prop="tvMac" value="${escapeHtml(modal.tvMac || "")}" placeholder="Contoh: 74:81:9a:ff:72:be">
+    <small style="color:#9ca3af;font-size:11px;">Digunakan untuk paket Wake-on-LAN menyalakan TV saat standby.</small>
+  `;
+  form.appendChild(macField);
+
+  const portField = document.createElement("label");
+  portField.className = "master-form-field";
+  portField.innerHTML = `
+    <span class="master-form-label">Port ADB</span>
+    <input type="number" class="master-form-input" data-prop="adbPort" value="${modal.adbPort || 5555}">
+  `;
+  form.appendChild(portField);
+
+  const wolField = document.createElement("label");
+  wolField.className = "master-form-field";
+  wolField.innerHTML = `
+    <span class="master-form-label">Broadcast WoL</span>
+    <input type="text" class="master-form-input" data-prop="wolBroadcast" value="${escapeHtml(modal.wolBroadcast || "192.168.1.255")}">
+  `;
+  form.appendChild(wolField);
+
+  const notesField = document.createElement("label");
+  notesField.className = "master-form-field";
+  notesField.style.gridColumn = "1 / -1";
+  notesField.innerHTML = `
+    <span class="master-form-label">Catatan Perangkat</span>
+    <input type="text" class="master-form-input" data-prop="notes" value="${escapeHtml(modal.notes || "")}" placeholder="Contoh: Ethernet statis port 4">
+  `;
+  form.appendChild(notesField);
+
+  const statusField = document.createElement("label");
+  statusField.className = "master-form-field";
+  statusField.innerHTML = `
+    <span class="master-form-label">Status Ruangan</span>
+    <select class="master-form-input" data-prop="status">
+      <option value="active"${modal.status === "active" ? " selected" : ""}>Active (Operasional)</option>
+      <option value="inactive"${modal.status === "inactive" ? " selected" : ""}>Inactive (Non-Aktif)</option>
+    </select>
+  `;
+  form.appendChild(statusField);
+
+  const pinField = document.createElement("label");
+  pinField.className = "master-form-field";
+  pinField.innerHTML = `
+    <span class="master-form-label" style="color:#f59e0b;">PIN Otorisasi Admin/Owner *</span>
+    <input type="password" class="master-form-input" data-prop="adminPin" value="${escapeHtml(modal.adminPin || "")}" placeholder="Masukkan PIN" maxlength="10">
+  `;
+  form.appendChild(pinField);
+
+  const testSection = document.createElement("div");
+  testSection.style.gridColumn = "1 / -1";
+  testSection.style.marginTop = "8px";
+  testSection.style.padding = "10px";
+  testSection.style.borderRadius = "6px";
+  testSection.style.background = "rgba(255,255,255,0.04)";
+
+  const testBtn = document.createElement("button");
+  testBtn.type = "button";
+  testBtn.className = "master-button secondary";
+  testBtn.dataset.action = "test-modal-tv-device";
+  testBtn.disabled = modal.isChecking || modal.isSaving;
+  testBtn.textContent = modal.isChecking ? "Menguji Koneksi..." : "Uji Sambungan Sekarang";
+  testSection.appendChild(testBtn);
+
+  if (modal.checkResult) {
+    const resDiv = document.createElement("div");
+    resDiv.style.marginTop = "8px";
+    resDiv.style.fontSize = "12px";
+    resDiv.style.color = modal.checkResult.status === "connected" ? "#10b981" : "#ef4444";
+    resDiv.textContent = modal.checkResult.message || (modal.checkResult.status === "connected" ? "Koneksi ADB Berhasil!" : "Gagal terhubung.");
+    testSection.appendChild(resDiv);
+  }
+  form.appendChild(testSection);
+
+  if (modal.error) {
+    const errBox = document.createElement("div");
+    errBox.className = "master-form-error";
+    errBox.style.color = "#ef4444";
+    errBox.style.fontSize = "13px";
+    errBox.style.marginTop = "8px";
+    errBox.textContent = modal.error;
+    dialog.appendChild(errBox);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "master-form-actions";
+  actions.style.marginTop = "16px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "master-button secondary";
+  cancelBtn.dataset.action = "close-tv-device-modal";
+  cancelBtn.disabled = modal.isSaving;
+  cancelBtn.textContent = "Batal";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "master-button primary";
+  saveBtn.dataset.action = "save-tv-device-settings";
+  saveBtn.disabled = modal.isSaving;
+  saveBtn.textContent = modal.isSaving ? "Menyimpan..." : "Simpan Pengaturan";
+
+  actions.append(cancelBtn, saveBtn);
+  dialog.append(title, desc, form, actions);
+  overlay.appendChild(dialog);
+
+  dialog.addEventListener("input", (e) => {
+    const prop = e.target.dataset.prop;
+    if (prop) {
+      modal[prop] = e.target.value;
+      if (modal.error) modal.error = null;
+    }
+  });
+
+  return overlay;
+}
+
+function createTvNotifyModalElement() {
+  if (!tvNotifyModalState || !tvNotifyModalState.isOpen) return null;
+  const modal = tvNotifyModalState;
+
+  const overlay = document.createElement("div");
+  overlay.className = "master-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.75)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "1050";
+  overlay.style.padding = "16px";
+
+  const dialog = document.createElement("div");
+  dialog.className = "master-modal-dialog";
+  dialog.style.maxWidth = "480px";
+  dialog.style.width = "90%";
+  dialog.style.backgroundColor = "var(--surface-raised, #1f2937)";
+  dialog.style.border = "1px solid var(--border, #374151)";
+  dialog.style.borderRadius = "var(--radius-md, 8px)";
+  dialog.style.padding = "24px";
+  dialog.style.boxShadow = "0 20px 25px -5px rgba(0, 0, 0, 0.5)";
+
+  const title = document.createElement("h3");
+  title.className = "master-modal-title";
+  title.textContent = `Kirim Peringatan: ${modal.roomName || modal.roomId}`;
+
+  const desc = document.createElement("p");
+  desc.className = "master-modal-desc";
+  desc.textContent = "Pesan akan ditampilkan dalam banner overlay di layar TV tanpa menghentikan lagu.";
+
+  const form = document.createElement("div");
+  form.className = "master-form-grid";
+
+  const textField = document.createElement("label");
+  textField.className = "master-form-field";
+  textField.style.gridColumn = "1 / -1";
+  textField.innerHTML = `
+    <span class="master-form-label">Teks Pesan Utama *</span>
+    <input type="text" class="master-form-input" data-prop="text" value="${escapeHtml(modal.text || "")}" placeholder="Contoh: Waktu Bernyanyi Tersisa 10 Menit">
+  `;
+  form.appendChild(textField);
+
+  const subtextField = document.createElement("label");
+  subtextField.className = "master-form-field";
+  subtextField.style.gridColumn = "1 / -1";
+  subtextField.innerHTML = `
+    <span class="master-form-label">Penjelasan / Subteks</span>
+    <input type="text" class="master-form-input" data-prop="subtext" value="${escapeHtml(modal.subtext || "")}" placeholder="Contoh: Hubungi kasir untuk penambahan waktu.">
+  `;
+  form.appendChild(subtextField);
+
+  const secField = document.createElement("label");
+  secField.className = "master-form-field";
+  secField.innerHTML = `
+    <span class="master-form-label">Durasi Tayang (Detik)</span>
+    <input type="number" class="master-form-input" data-prop="seconds" value="${modal.seconds || 15}" min="3" max="60">
+  `;
+  form.appendChild(secField);
+
+  const pinField = document.createElement("label");
+  pinField.className = "master-form-field";
+  pinField.innerHTML = `
+    <span class="master-form-label" style="color:#f59e0b;">PIN Admin/Owner *</span>
+    <input type="password" class="master-form-input" data-prop="adminPin" value="${escapeHtml(modal.adminPin || "")}" placeholder="Masukkan PIN">
+  `;
+  form.appendChild(pinField);
+
+  if (modal.error) {
+    const errBox = document.createElement("div");
+    errBox.style.color = "#ef4444";
+    errBox.style.fontSize = "13px";
+    errBox.style.gridColumn = "1 / -1";
+    errBox.textContent = modal.error;
+    form.appendChild(errBox);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "master-form-actions";
+  actions.style.marginTop = "16px";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "master-button secondary";
+  cancelBtn.dataset.action = "close-tv-notify-modal";
+  cancelBtn.disabled = modal.isSending;
+  cancelBtn.textContent = "Batal";
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "master-button primary";
+  sendBtn.dataset.action = "send-tv-notify";
+  sendBtn.disabled = modal.isSending;
+  sendBtn.textContent = modal.isSending ? "Mengirim..." : "Kirim ke Layar";
+
+  actions.append(cancelBtn, sendBtn);
+  dialog.append(title, desc, form, actions);
+  overlay.appendChild(dialog);
+
+  dialog.addEventListener("input", (e) => {
+    const prop = e.target.dataset.prop;
+    if (prop) {
+      modal[prop] = e.target.value;
+      if (modal.error) modal.error = null;
+    }
+  });
+
+  return overlay;
+}
+
 function createTvControlSectionElement() {
   const section = document.createElement("section");
   section.className = "master-section tv-control-section";
@@ -25150,6 +25490,15 @@ function createSettingsPanelElement() {
 
   panel.appendChild(createDeleteMasterConfirmationElement());
   panel.appendChild(createAdminPinModalElement());
+
+  const tvDeviceModal = createTvDeviceModalElement();
+  if (tvDeviceModal) {
+    panel.appendChild(tvDeviceModal);
+  }
+  const tvNotifyModal = createTvNotifyModalElement();
+  if (tvNotifyModal) {
+    panel.appendChild(tvNotifyModal);
+  }
 
   if (isLoadingSettingsData) {
     panel.appendChild(createStateMessage("Memuat data pengaturan..."));
@@ -34914,6 +35263,354 @@ async function handleRoomAction(event) {
   if (action === "check-all-tv-devices") {
     await loadTvControlOverview({ force: true });
     showInlineNotice("Pemeriksaan status perangkat TV selesai diperbarui.", "success");
+    return;
+  }
+
+  if (action === "add-tv-device") {
+    const allRooms = Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : [];
+    const firstRoom = allRooms.length > 0 ? allRooms[0].room_id : "";
+    tvDeviceModalState = {
+      isOpen: true,
+      mode: "create",
+      roomId: firstRoom,
+      roomName: allRooms.length > 0 ? (allRooms[0].room_name || firstRoom) : "",
+      tvDeviceId: firstRoom ? `TV-${firstRoom}` : "",
+      deviceName: firstRoom ? `TV ${firstRoom}` : "",
+      brand: "TCL",
+      controlType: "middleware",
+      tvIp: "",
+      tvMac: "",
+      adbPort: 5555,
+      wolBroadcast: "192.168.1.255",
+      notes: "",
+      status: "active",
+      adminPin: "",
+      isSaving: false,
+      isChecking: false,
+      checkResult: null,
+      error: null
+    };
+    renderRooms();
+    return;
+  }
+
+  if (action === "edit-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    const item = (Array.isArray(tvRoomOverviewList) ? tvRoomOverviewList.find((r) => r.room_id === targetRoomId) : null)
+      || (Array.isArray(rooms) ? rooms.find((r) => r.room_id === targetRoomId) : null);
+    tvDeviceModalState = {
+      isOpen: true,
+      mode: "edit",
+      roomId: targetRoomId,
+      roomName: item ? (item.room_name || item.room_id) : targetRoomId,
+      tvDeviceId: item ? (item.tv_device_id || `TV-${targetRoomId}`) : `TV-${targetRoomId}`,
+      deviceName: item ? (item.device_name || `TV ${item.room_name || targetRoomId}`) : `TV ${targetRoomId}`,
+      brand: item?.brand || "TCL",
+      controlType: item?.control_type || "middleware",
+      tvIp: item?.tv_ip || "",
+      tvMac: item?.tv_mac || "",
+      adbPort: item?.adb_port || 5555,
+      wolBroadcast: item?.wol_broadcast || "192.168.1.255",
+      notes: item?.notes || "",
+      status: item?.status || "active",
+      adminPin: "",
+      isSaving: false,
+      isChecking: false,
+      checkResult: null,
+      error: null
+    };
+    renderRooms();
+    return;
+  }
+
+  if (action === "close-tv-device-modal") {
+    if (tvDeviceModalState && !tvDeviceModalState.isSaving) {
+      tvDeviceModalState = null;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "test-modal-tv-device") {
+    if (!tvDeviceModalState) return;
+    if (!tvDeviceModalState.tvIp) {
+      tvDeviceModalState.error = "Alamat IP TV wajib diisi sebelum melakukan pengujian sambungan.";
+      renderRooms();
+      return;
+    }
+    if (!tvDeviceModalState.adminPin) {
+      tvDeviceModalState.error = "PIN Otorisasi Admin/Owner wajib diisi.";
+      renderRooms();
+      return;
+    }
+    tvDeviceModalState.isChecking = true;
+    tvDeviceModalState.checkResult = null;
+    tvDeviceModalState.error = null;
+    renderRooms();
+
+    try {
+      const res = await postApiAction({
+        action: "checkTvDevice",
+        room_id: tvDeviceModalState.roomId || "ROOM-001",
+        admin_pin: tvDeviceModalState.adminPin,
+        tv_ip: tvDeviceModalState.tvIp,
+        tv_mac: tvDeviceModalState.tvMac
+      });
+      tvDeviceModalState.isChecking = false;
+      if (res && (res.ok || res.success)) {
+        tvDeviceModalState.checkResult = {
+          status: res.status || "connected",
+          message: res.message || res.last_check_message || "Sambungan berhasil diverifikasi."
+        };
+      } else {
+        tvDeviceModalState.checkResult = {
+          status: "offline",
+          message: res?.message || "Gagal menghubungi TV atau bridge offline."
+        };
+      }
+    } catch (err) {
+      tvDeviceModalState.isChecking = false;
+      tvDeviceModalState.checkResult = {
+        status: "offline",
+        message: err.message
+      };
+    }
+    renderRooms();
+    return;
+  }
+
+  if (action === "save-tv-device-settings") {
+    if (!tvDeviceModalState || tvDeviceModalState.isSaving) return;
+    const m = tvDeviceModalState;
+    if (!m.roomId || !m.roomId.trim()) {
+      m.error = "Ruangan wajib dipilih.";
+      renderRooms();
+      return;
+    }
+    if (!m.adminPin || !m.adminPin.trim()) {
+      m.error = "PIN Otorisasi Admin/Owner wajib diisi.";
+      renderRooms();
+      return;
+    }
+    m.isSaving = true;
+    m.error = null;
+    renderRooms();
+
+    try {
+      const res = await postApiAction({
+        action: "saveTvDeviceSettings",
+        room_id: m.roomId.trim(),
+        device_name: m.deviceName || `TV ${m.roomName || m.roomId}`,
+        control_type: m.controlType || "middleware",
+        tv_ip: m.tvIp ? m.tvIp.trim() : "",
+        tv_mac: m.tvMac ? m.tvMac.trim() : "",
+        adb_port: m.adbPort ? Number(m.adbPort) : 5555,
+        wol_broadcast: m.wolBroadcast ? m.wolBroadcast.trim() : "192.168.1.255",
+        notes: m.notes ? m.notes.trim() : "",
+        status: m.status || "active",
+        admin_pin: m.adminPin.trim()
+      });
+
+      if (res && (res.ok || res.success)) {
+        showFloatingToast(res.message || "Pengaturan TV berhasil disimpan.", "success");
+        tvDeviceModalState = null;
+        await loadTvControlOverview({ force: true });
+      } else {
+        m.isSaving = false;
+        m.error = res?.message || "Gagal menyimpan pengaturan TV.";
+        renderRooms();
+      }
+    } catch (err) {
+      m.isSaving = false;
+      m.error = err.message;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "notify-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    const targetRoomName = button.dataset.roomName || targetRoomId;
+    tvNotifyModalState = {
+      isOpen: true,
+      roomId: targetRoomId,
+      roomName: targetRoomName,
+      text: "",
+      subtext: "",
+      seconds: 15,
+      adminPin: "",
+      isSending: false,
+      error: null
+    };
+    renderRooms();
+    return;
+  }
+
+  if (action === "close-tv-notify-modal") {
+    if (tvNotifyModalState && !tvNotifyModalState.isSending) {
+      tvNotifyModalState = null;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "send-tv-notify") {
+    if (!tvNotifyModalState || tvNotifyModalState.isSending) return;
+    const notif = tvNotifyModalState;
+    if (!notif.text || !notif.text.trim()) {
+      notif.error = "Teks pesan utama wajib diisi.";
+      renderRooms();
+      return;
+    }
+    if (!notif.adminPin || !notif.adminPin.trim()) {
+      notif.error = "PIN Otorisasi Admin/Owner wajib diisi.";
+      renderRooms();
+      return;
+    }
+    notif.isSending = true;
+    notif.error = null;
+    renderRooms();
+
+    try {
+      const res = await postApiAction({
+        action: "notifyTvDevice",
+        room_id: notif.roomId,
+        text: notif.text.trim(),
+        subtext: notif.subtext ? notif.subtext.trim() : "",
+        seconds: notif.seconds ? Number(notif.seconds) : 15,
+        admin_pin: notif.adminPin.trim()
+      });
+
+      if (res && (res.ok || res.success)) {
+        showFloatingToast(`Pesan berhasil dikirim ke layar ${notif.roomName || notif.roomId}.`, "success");
+        tvNotifyModalState = null;
+        renderRooms();
+      } else {
+        notif.isSending = false;
+        notif.error = res?.message || "Gagal mengirim pesan ke TV.";
+        renderRooms();
+      }
+    } catch (err) {
+      notif.isSending = false;
+      notif.error = err.message;
+      renderRooms();
+    }
+    return;
+  }
+
+  if (action === "check-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    openAdminPinModal({
+      title: "Otorisasi Cek TV",
+      message: `Masukkan PIN untuk memeriksa status sambungan TV ruangan ${targetRoomId}.`,
+      requestedAction: "check_tv_device",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          showInlineNotice(`Memeriksa TV ${targetRoomId}...`);
+          const res = await postApiAction({
+            action: "checkTvDevice",
+            room_id: targetRoomId,
+            admin_pin: pin
+          });
+          if (res && (res.ok || res.success)) {
+            showFloatingToast(`TV ${targetRoomId}: ${res.last_check_message || res.message || "Pemeriksaan selesai."}`, "success");
+            await loadTvControlOverview({ force: true });
+          } else {
+            showFloatingToast(`Gagal cek TV ${targetRoomId}: ${res?.message || "Kesalahan bridge"}`, "error");
+          }
+        } catch (err) {
+          showFloatingToast(`Gagal cek TV ${targetRoomId}: ${err.message}`, "error");
+        }
+      }
+    });
+    return;
+  }
+
+  if (action === "wake-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    openAdminPinModal({
+      title: "Otorisasi Nyalakan TV",
+      message: `Masukkan PIN untuk mengirim perintah menyalakan TV ruangan ${targetRoomId}.`,
+      requestedAction: "wake_tv_device",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          showInlineNotice(`Menyalakan TV ${targetRoomId}...`);
+          const res = await postApiAction({
+            action: "wakeTvDevice",
+            room_id: targetRoomId,
+            admin_pin: pin
+          });
+          if (res && (res.ok || res.success)) {
+            showFloatingToast(`Perintah nyalakan TV ${targetRoomId} terkirim.`, "success");
+            await loadTvControlOverview({ force: true });
+          } else {
+            showFloatingToast(`Gagal menyalakan TV ${targetRoomId}: ${res?.message || "Kesalahan bridge"}`, "error");
+          }
+        } catch (err) {
+          showFloatingToast(`Gagal menyalakan TV ${targetRoomId}: ${err.message}`, "error");
+        }
+      }
+    });
+    return;
+  }
+
+  if (action === "sleep-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    openAdminPinModal({
+      title: "Otorisasi Matikan TV",
+      message: `Masukkan PIN untuk mengirim perintah mematikan TV ruangan ${targetRoomId}.`,
+      requestedAction: "sleep_tv_device",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          showInlineNotice(`Mematikan TV ${targetRoomId}...`);
+          const res = await postApiAction({
+            action: "sleepTvDevice",
+            room_id: targetRoomId,
+            admin_pin: pin
+          });
+          if (res && (res.ok || res.success)) {
+            showFloatingToast(`Perintah matikan TV ${targetRoomId} terkirim.`, "success");
+            await loadTvControlOverview({ force: true });
+          } else {
+            showFloatingToast(`Gagal mematikan TV ${targetRoomId}: ${res?.message || "Kesalahan bridge"}`, "error");
+          }
+        } catch (err) {
+          showFloatingToast(`Gagal mematikan TV ${targetRoomId}: ${err.message}`, "error");
+        }
+      }
+    });
+    return;
+  }
+
+  if (action === "test-tv-device") {
+    const targetRoomId = button.dataset.roomId;
+    openAdminPinModal({
+      title: "Otorisasi Uji ADB TV",
+      message: `Masukkan PIN untuk menguji sambungan ADB TV ruangan ${targetRoomId}.`,
+      requestedAction: "test_tv_device",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          showInlineNotice(`Menguji sambungan ADB TV ${targetRoomId}...`);
+          const res = await postApiAction({
+            action: "testTvDevice",
+            room_id: targetRoomId,
+            admin_pin: pin
+          });
+          if (res && (res.ok || res.success)) {
+            showFloatingToast(`Uji ADB TV ${targetRoomId}: ${res.message || "Berhasil terhubung."}`, "success");
+            await loadTvControlOverview({ force: true });
+          } else {
+            showFloatingToast(`Uji ADB TV ${targetRoomId} gagal: ${res?.message || "Kesalahan bridge"}`, "error");
+          }
+        } catch (err) {
+          showFloatingToast(`Uji ADB TV ${targetRoomId} gagal: ${err.message}`, "error");
+        }
+      }
+    });
     return;
   }
 
