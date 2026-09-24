@@ -940,6 +940,7 @@ let activeSettingsSubTab = (() => {
 let tvRoomOverviewList = [];
 let isLoadingTvRoomOverview = false;
 let tvRoomOverviewError = null;
+let hasRequestedTvOverview = false;
 let tvControlFilterOnlyActive = true;
 let tvDeviceModalState = null;
 let tvNotifyModalState = null;
@@ -24821,29 +24822,39 @@ function createMasterAuditLogSection() {
 
 function loadTvControlOverview(options = {}) {
   if (!API_BASE_URL.trim()) return Promise.resolve();
+  if (isLoadingTvRoomOverview && !options.force) return Promise.resolve();
   isLoadingTvRoomOverview = true;
   tvRoomOverviewError = null;
   if (!options.silent) {
     renderRooms();
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
   const params = new URLSearchParams();
   params.set("action", "getTvRoomOverview");
 
-  return fetch(`${API_BASE_URL}?${params.toString()}`)
+  return fetch(`${API_BASE_URL}?${params.toString()}`, { signal: controller.signal })
     .then((res) => {
+      clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     })
     .then((data) => {
       if (data && (data.ok || data.success) && Array.isArray(data.rooms)) {
         tvRoomOverviewList = data.rooms;
+        tvRoomOverviewError = null;
       } else {
         throw new Error(data?.message || data?.error || "Gagal memuat overview TV.");
       }
     })
     .catch((err) => {
-      tvRoomOverviewError = err.message || "Gagal menghubungi server.";
+      clearTimeout(timeoutId);
+      const isAbort = err.name === "AbortError";
+      tvRoomOverviewError = isAbort
+        ? "Waktu pemeriksaan status TV habis (6 detik)."
+        : (err.message || "Gagal menghubungi server.");
       console.warn("loadTvControlOverview error:", err);
     })
     .finally(() => {
@@ -25469,25 +25480,58 @@ function createTvControlSectionElement() {
   header.append(titleGroup, toolbar);
   section.appendChild(header);
 
-  if (tvRoomOverviewList.length === 0 && !isLoadingTvRoomOverview && !tvRoomOverviewError) {
-    setTimeout(() => { loadTvControlOverview(); }, 0);
+  if (tvRoomOverviewList.length === 0 && !isLoadingTvRoomOverview && !tvRoomOverviewError && !hasRequestedTvOverview) {
+    hasRequestedTvOverview = true;
+    setTimeout(() => { loadTvControlOverview({ silent: true }); }, 50);
   }
 
-  if (isLoadingTvRoomOverview && tvRoomOverviewList.length === 0) {
-    section.appendChild(createStateMessage("Memeriksa status perangkat TV dan menghubungi bridge..."));
-    return section;
+  if (isLoadingTvRoomOverview) {
+    const loadingBanner = document.createElement("div");
+    loadingBanner.style.padding = "8px 14px";
+    loadingBanner.style.marginBottom = "14px";
+    loadingBanner.style.background = "rgba(59,130,246,0.12)";
+    loadingBanner.style.border = "1px solid rgba(59,130,246,0.25)";
+    loadingBanner.style.borderRadius = "6px";
+    loadingBanner.style.fontSize = "12px";
+    loadingBanner.style.color = "#93c5fd";
+    loadingBanner.textContent = "Sedang memeriksa status perangkat TV dan komunikasi bridge di latar belakang...";
+    section.appendChild(loadingBanner);
+  } else if (tvRoomOverviewError) {
+    const errorBanner = document.createElement("div");
+    errorBanner.style.padding = "8px 14px";
+    errorBanner.style.marginBottom = "14px";
+    errorBanner.style.background = "rgba(239,68,68,0.12)";
+    errorBanner.style.border = "1px solid rgba(239,68,68,0.25)";
+    errorBanner.style.borderRadius = "6px";
+    errorBanner.style.fontSize = "12px";
+    errorBanner.style.color = "#fca5a5";
+    errorBanner.textContent = `Pemberitahuan: ${tvRoomOverviewError} Menampilkan data konfigurasi lokal.`;
+    section.appendChild(errorBanner);
   }
 
-  if (tvRoomOverviewError && tvRoomOverviewList.length === 0) {
-    const errorBox = createStateMessage(`Gagal memuat status TV: ${tvRoomOverviewError}`, "error");
-    section.appendChild(errorBox);
-    return section;
-  }
+  const fallbackRooms = (Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : []).map((r) => ({
+    room_id: r.room_id,
+    room_name: r.room_name || r.room_id,
+    has_device: false,
+    device_name: `TV ${r.room_name || r.room_id}`,
+    control_type: "middleware",
+    status: r.status || "active",
+    tv_ip: "",
+    tv_mac: "",
+    device_connected: false,
+    wakefulness: null,
+    mac_matches_arp: "tidak diketahui",
+    arp_mac: "",
+    last_check_result: "",
+    last_check_message: "",
+    masalah: isLoadingTvRoomOverview ? ["Sedang memeriksa status..."] : ["Status belum dimuat"],
+  }));
 
+  const sourceList = tvRoomOverviewList.length > 0 ? tvRoomOverviewList : fallbackRooms;
   const activeRoomIds = ["ROOM-001", "ROOM-002", "ROOM-003", "ROOM-004", "ROOM-005", "ROOM-006", "ROOM-007", "ROOM-008", "ROOM-009"];
   const displayRooms = tvControlFilterOnlyActive
-    ? tvRoomOverviewList.filter((r) => activeRoomIds.includes(r.room_id) || r.status === "active")
-    : tvRoomOverviewList;
+    ? sourceList.filter((r) => activeRoomIds.includes(r.room_id) || r.status === "active")
+    : sourceList;
 
   const tableWrapper = document.createElement("div");
   tableWrapper.className = "master-table-wrapper";

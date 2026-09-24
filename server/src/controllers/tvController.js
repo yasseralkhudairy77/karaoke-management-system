@@ -441,11 +441,12 @@ async function getTvRoomOverview(req, res) {
         arpMac = bRoom.arpMac || (bRoom.runtime && bRoom.runtime.arpMac) || '';
       }
 
-      // Cadangan: jika field itu tidak ada dan bridge aktif, panggil tvBridgeService.getBridgeRoomStatus(room_id)
-      // untuk ruangan yang sedang diperiksa (jangan untuk semua ruangan sekaligus — 13 panggilan ADB berturut-turut akan lambat)
-      if (!hasConnectionField && bridgeReachable) {
+      // Cadangan: jika bRoom ada tapi field status connected tidak ada dan bridge aktif,
+      // panggil tvBridgeService.getBridgeRoomStatus(room_id) untuk ruangan yang sedang diperiksa
+      // (jangan untuk semua ruangan — hanya ruangan yang memang ada di bridge tapi datanya belum lengkap)
+      if (bRoom && !hasConnectionField && bridgeReachable) {
         try {
-          const singleStatus = await tvBridgeService.getBridgeRoomStatus(r.room_id);
+          const singleStatus = await tvBridgeService.getBridgeRoomStatus(bRoom.id || r.room_id);
           if (singleStatus && singleStatus.ok && singleStatus.data) {
             const sData = singleStatus.data;
             if (typeof sData.connected === 'boolean') {

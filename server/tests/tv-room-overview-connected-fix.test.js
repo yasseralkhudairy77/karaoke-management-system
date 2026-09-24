@@ -15,10 +15,10 @@ assert(
   'tvController wajib membaca status connected dari bRoom.runtime.connected'
 );
 
-// 2. Verifikasi cadangan single room status getBridgeRoomStatus(r.room_id)
+// 2. Verifikasi cadangan single room status getBridgeRoomStatus
 assert(
-  tvControllerSrc.includes('tvBridgeService.getBridgeRoomStatus(r.room_id)'),
-  'tvController wajib memanggil getBridgeRoomStatus(r.room_id) sebagai cadangan per ruangan'
+  tvControllerSrc.includes('tvBridgeService.getBridgeRoomStatus('),
+  'tvController wajib memanggil getBridgeRoomStatus sebagai cadangan per ruangan'
 );
 
 // 3. Verifikasi pemetaan Executive Room via alias (idKey, nameKey, nameSlug)

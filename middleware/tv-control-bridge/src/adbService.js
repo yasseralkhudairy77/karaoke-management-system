@@ -395,7 +395,7 @@ async function launchApp(packageName, roomSelector) {
 /** Membaca status layar TV: Awake / Asleep / Dozing / Dream (screensaver). */
 async function readWakefulness(room) {
   try {
-    const output = await runShell(room, ['dumpsys', 'power'], `Membaca status daya ${room.name}`);
+    const output = await runAdb(['-s', serialFromRoom(room), 'shell', 'dumpsys', 'power'], `Membaca status daya ${room.name}`, 2500);
     const match = /mWakefulness=(\w+)/.exec(output || '');
     return match ? match[1] : null;
   } catch (error) {

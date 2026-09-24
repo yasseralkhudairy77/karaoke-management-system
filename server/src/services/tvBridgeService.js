@@ -440,12 +440,12 @@ async function getBridgeHealth() {
 
 async function getBridgeRooms() {
   const config = getConfig();
-  return bridgeFetch('/api/rooms', { timeoutMs: Math.min(config.timeoutMs, 3000) });
+  return bridgeFetch('/api/rooms', { timeoutMs: Math.min(config.timeoutMs, 4000) });
 }
 
 async function getBridgeRoomStatus(roomId) {
   const config = getConfig();
-  return bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/status`, { timeoutMs: Math.min(config.timeoutMs, 5000) });
+  return bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/status`, { timeoutMs: Math.min(config.timeoutMs, 3000) });
 }
 
 async function updateBridgeRoomConfig(roomId, roomConfig) {
