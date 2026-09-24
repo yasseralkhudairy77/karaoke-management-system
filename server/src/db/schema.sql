@@ -51,8 +51,29 @@ CREATE TABLE IF NOT EXISTS tv_devices (
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     middleware_url TEXT,
     device_identifier VARCHAR(100),
+    tv_ip VARCHAR(45),
+    tv_mac VARCHAR(32),
+    adb_port INT DEFAULT 5555,
+    adb_timeout_ms INT DEFAULT 15000,
+    wol_broadcast VARCHAR(45) DEFAULT '192.168.1.255',
+    notify_package VARCHAR(100) DEFAULT 'com.happysong.tvnotify',
+    notes TEXT,
+    last_checked_at TIMESTAMPTZ,
+    last_check_result VARCHAR(30),
+    last_check_message TEXT,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS tv_ip            VARCHAR(45);
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS tv_mac           VARCHAR(32);
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS adb_port         INT DEFAULT 5555;
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS adb_timeout_ms   INT DEFAULT 15000;
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS wol_broadcast    VARCHAR(45) DEFAULT '192.168.1.255';
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS notify_package   VARCHAR(100) DEFAULT 'com.happysong.tvnotify';
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS notes            TEXT;
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_checked_at  TIMESTAMPTZ;
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_result VARCHAR(30);
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_message TEXT;
 
 CREATE TABLE IF NOT EXISTS tv_displays (
     display_id VARCHAR(50) PRIMARY KEY,
