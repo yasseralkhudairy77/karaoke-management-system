@@ -140,14 +140,15 @@ Sesuai Opsi 1 (rekomendasi Bagian 7.3a dokumen Hermes):
 - Peningkatan cache buster pada `index.html` (`js/app.js?v=tv-control-v1`).
 
 ### 5.2 Tiga Bagian Komponen Utama
-1. Tabel Status Ruangan (13 Ruangan Bridge):
+1. Tabel Status Ruangan (Fokus 9 Ruangan Aktif Operasional):
+   - Menampilkan 9 ruangan operasional aktif yang saat ini digunakan di lapangan (VIP-1 s/d VIP-8 dan Executive/VIP-9), dengan kemampuan memfilter atau melihat ruangan non-aktif.
+   - Tombol Toolbar: "Periksa Semua Perangkat" dan "+ Tambah / Konfigurasi Ruangan Baru" (membuka modal pendaftaran perangkat TV untuk ruangan baru atau mengaktifkan ruangan tambahan).
    - Kolom: Ruangan, Nama Perangkat, Tipe, Alamat IP, Alamat MAC, Status ADB, Status Layar, Validitas ARP, Terakhir Dicek, Aksi.
    - Indikator Status Jujur:
      - ADB: Lencana Hijau "Tersambung" / Lencana Merah "Terputus" / Lencana Abu "Belum Dicek".
      - Layar: "Menyala" (Awake) / "Tidur" (Asleep) / "Screensaver" (Dreaming/Dozing) / "Tidak Diketahui".
      - Kolom Masalah: Menampilkan badge kuning/merah jika ada kendala (misal: tunnel mati TV-002, MAC belum terisi).
    - Tombol Aksi per Baris: "Cek", "Nyalakan", "Matikan", "Uji ADB", "Kirim Pesan", "Edit".
-   - Toolbar Atas: Tombol "Periksa Semua Perangkat" dengan status progress loading yang jelas.
 2. Modal Form Pengaturan TV:
    - Pilihan Ruangan (dropdown dari daftar ruangan aktif).
    - Nama Perangkat & Tipe Kontrol (`middleware` atau `mock`).
