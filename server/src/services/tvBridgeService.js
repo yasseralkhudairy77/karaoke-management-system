@@ -438,6 +438,33 @@ async function getBridgeHealth() {
   return bridgeFetch('/health', { timeoutMs: Math.min(config.timeoutMs, 4000) });
 }
 
+async function getBridgeRooms() {
+  const config = getConfig();
+  return bridgeFetch('/api/rooms', { timeoutMs: Math.min(config.timeoutMs, 3000) });
+}
+
+async function getBridgeRoomStatus(roomId) {
+  const config = getConfig();
+  return bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/status`, { timeoutMs: Math.min(config.timeoutMs, 5000) });
+}
+
+async function updateBridgeRoomConfig(roomId, roomConfig) {
+  const config = getConfig();
+  return bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/config`, {
+    method: 'PUT',
+    body: roomConfig,
+    timeoutMs: Math.min(config.timeoutMs, 5000),
+  });
+}
+
+async function reloadBridgeConfig() {
+  const config = getConfig();
+  return bridgeFetch('/api/config/reload', {
+    method: 'POST',
+    timeoutMs: Math.min(config.timeoutMs, 5000),
+  });
+}
+
 const lastSweepAttemptByRoom = new Map();
 
 let sweeperHandle = null;
@@ -497,13 +524,17 @@ module.exports = {
   cancelSchedule,
   isRoomAllowed,
   getBridgeHealth,
+  getBridgeRooms,
+  getBridgeRoomStatus,
   getConfig,
   getTvSweeperStatus,
   notifyRoom,
   recordTvLog,
+  reloadBridgeConfig,
   sendTvCommand,
   startSchedule,
   startTvSweeperWorker,
   sweepExpiredRooms,
   syncRoom,
+  updateBridgeRoomConfig,
 };

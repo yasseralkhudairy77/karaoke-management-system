@@ -149,6 +149,8 @@ async function handleGetAction(action, req, res) {
       return lcController.getLcPayrollHistory(req, res);
     case 'getLcPayrollDetails':
       return lcController.getLcPayrollDetails(req, res);
+    case 'getTvRoomOverview':
+      return tvController.getTvRoomOverview(req, res);
     case 'getTvDevices':
       return tvController.getTvDevices(req, res);
     case 'getTvControlLogs':
@@ -359,6 +361,20 @@ async function handlePostAction(action, req, res, payload) {
       return successResponse(res, { message: 'Fondasi stok lokal siap; inisialisasi massal produksi tidak dijalankan otomatis.', initialized: false });
     case 'sendTvCommand':
       return tvController.sendTvCommand(req, res, payload);
+    case 'saveTvDeviceSettings':
+      return tvController.saveTvDeviceSettings(req, res, payload);
+    case 'checkTvDevice':
+      return tvController.checkTvDevice(req, res, payload);
+    case 'testTvDevice':
+      return tvController.testTvDevice(req, res, payload);
+    case 'wakeTvDevice':
+      return tvController.wakeTvDevice(req, res, payload);
+    case 'sleepTvDevice':
+      return tvController.sleepTvDevice(req, res, payload);
+    case 'notifyTvDevice':
+      return tvController.notifyTvDevice(req, res, payload);
+    case 'reloadTvBridgeConfig':
+      return tvController.reloadTvBridgeConfig(req, res, payload);
     case 'saveTvDevice':
       return tvController.saveTvDevice(req, res, payload);
     case 'updateTvDevice':

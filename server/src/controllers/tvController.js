@@ -1,7 +1,72 @@
 const db = require('../db');
 const http = require('http');
 const crypto = require('crypto');
+const tvBridgeService = require('../services/tvBridgeService');
 const { successResponse, errorResponse } = require('../utils/response');
+
+function normalizeMac(mac) {
+  if (!mac) return '';
+  const clean = String(mac).trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+  if (clean.length !== 12) return '';
+  return clean.match(/.{1,2}/g).join(':');
+}
+
+function isValidIpv4(ip) {
+  if (!ip) return false;
+  const parts = String(ip).trim().split('.');
+  if (parts.length !== 4) return false;
+  return parts.every(p => {
+    const num = Number(p);
+    return Number.isInteger(num) && num >= 0 && num <= 255 && String(num) === p;
+  });
+}
+
+async function verifyAdminPinPayload(payload, requiredRole = 'admin') {
+  const pin = payload && (payload.admin_pin || payload.pin);
+  if (!pin) {
+    const err = new Error('PIN Admin/Owner wajib diisi.');
+    err.code = 'INVALID_ADMIN_PIN';
+    throw err;
+  }
+
+  const requestedRole = String(requiredRole || 'admin').trim().toLowerCase();
+  const allowedRoles = requestedRole === 'owner' ? ['owner'] : ['owner', 'manager'];
+
+  const result = await db.query(`
+    SELECT employee_id, employee_name, role, pin, pin_hash
+    FROM employees
+    WHERE role = ANY($1::text[]) AND is_active = TRUE
+    ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END
+  `, [allowedRoles]);
+
+  let matchedEmp = null;
+  for (const emp of result.rows) {
+    if (emp.pin && String(emp.pin) === String(pin)) {
+      matchedEmp = emp;
+      break;
+    }
+    if (emp.pin_hash) {
+      const hash = crypto.createHash('sha256').update(String(pin)).digest('hex');
+      if (emp.pin_hash === hash) {
+        matchedEmp = emp;
+        break;
+      }
+    }
+  }
+
+  // Fallback khusus dev jika DB kosong
+  if (!matchedEmp && result.rows.length === 0 && (pin === '123456' || pin === '654321')) {
+    matchedEmp = { employee_id: 'EMP-OWNER-MOCK', employee_name: 'Owner (Default)', role: 'owner' };
+  }
+
+  if (!matchedEmp) {
+    const err = new Error('PIN Admin/Owner tidak valid.');
+    err.code = 'INVALID_ADMIN_PIN';
+    throw err;
+  }
+
+  return matchedEmp;
+}
 
 async function getTvDevices(req, res) {
   try {
@@ -271,14 +336,387 @@ async function seedPilotTvDisplay(req, res, payload) {
   }
 }
 
+async function getTvRoomOverview(req, res) {
+  try {
+    const roomsRes = await db.query(`
+      SELECT room_id, room_name, status, updated_at
+      FROM rooms
+      WHERE room_id <> 'FNB-GENERAL'
+      ORDER BY room_id ASC
+    `);
+
+    const devRes = await db.query(`
+      SELECT * FROM tv_devices ORDER BY room_id ASC
+    `);
+    const devMap = new Map();
+    devRes.rows.forEach(d => {
+      devMap.set(d.room_id, d);
+    });
+
+    const bridgeConfig = tvBridgeService.getConfig();
+    let bridgeRooms = [];
+    let bridgeReachable = false;
+    try {
+      const bridgeRes = await tvBridgeService.getBridgeRooms();
+      if (bridgeRes.ok && bridgeRes.data && Array.isArray(bridgeRes.data.rooms)) {
+        bridgeRooms = bridgeRes.data.rooms;
+        bridgeReachable = true;
+      }
+    } catch (_e) {
+      bridgeReachable = false;
+    }
+
+    const bridgeMap = new Map();
+    bridgeRooms.forEach(b => {
+      if (b.id) bridgeMap.set(String(b.id).toLowerCase(), b);
+      if (Array.isArray(b.aliases)) {
+        b.aliases.forEach(a => bridgeMap.set(String(a).toLowerCase(), b));
+      }
+    });
+
+    const result = roomsRes.rows.map(r => {
+      const dev = devMap.get(r.room_id) || {};
+      const bRoom = bridgeMap.get(r.room_id.toLowerCase()) || bridgeMap.get(r.room_name.toLowerCase()) || null;
+
+      const tvDeviceId = dev.tv_device_id || `TV-${r.room_id}`;
+      const controlType = dev.control_type || 'middleware';
+      const status = dev.status || 'active';
+      const tvIp = dev.tv_ip || (bRoom ? bRoom.ip : '') || '';
+      const tvMac = dev.tv_mac || (dev.device_identifier && dev.device_identifier.includes(':') ? dev.device_identifier : '') || (bRoom ? bRoom.mac : '') || '';
+      const adbPort = dev.adb_port || (bRoom ? bRoom.adbPort : 5555) || 5555;
+      const adbTimeoutMs = dev.adb_timeout_ms || 15000;
+      const wolBroadcast = dev.wol_broadcast || '192.168.1.255';
+      const notifyPackage = dev.notify_package || 'com.happysong.tvnotify';
+      const notes = dev.notes || '';
+      const middlewareUrl = dev.middleware_url || bridgeConfig.url;
+
+      const deviceConnected = bRoom ? Boolean(bRoom.connected) : false;
+      const wakefulness = bRoom ? (bRoom.wakefulness || (deviceConnected ? 'Awake' : null)) : null;
+      const arpMac = bRoom ? (bRoom.arpMac || '') : '';
+      const macMatchesArp = (!tvMac || !arpMac) ? 'tidak diketahui' : (tvMac.toLowerCase() === arpMac.toLowerCase() ? 'cocok' : 'beda');
+
+      const masalah = [];
+      if (controlType === 'mock') {
+        masalah.push('Mode mock aktif (tanpa perangkat nyata)');
+      } else {
+        if (!tvMac) masalah.push('Alamat MAC belum diisi');
+        if (!tvIp) masalah.push('Alamat IP belum diisi');
+        else if (!isValidIpv4(tvIp)) masalah.push('Format IP tidak valid');
+        if (middlewareUrl && middlewareUrl.includes('lhr.life')) {
+          masalah.push('Tunnel middleware lama tidak aktif (lhr.life)');
+        }
+        if (!bridgeReachable) {
+          masalah.push('TV Bridge lokal (127.0.0.1:3030) tidak dapat dihubungi');
+        } else if (!deviceConnected && bRoom && bRoom.enabled) {
+          masalah.push('ADB tidak tersambung ke perangkat TV');
+        }
+      }
+
+      return {
+        room_id: r.room_id,
+        room_name: r.room_name,
+        tv_device_id: tvDeviceId,
+        device_name: dev.device_name || `TV ${r.room_name}`,
+        control_type: controlType,
+        status,
+        tv_ip: tvIp,
+        tv_mac: tvMac,
+        adb_port: adbPort,
+        adb_timeout_ms: adbTimeoutMs,
+        wol_broadcast: wolBroadcast,
+        notify_package: notifyPackage,
+        notes,
+        middleware_url: middlewareUrl,
+        bridge_url: bridgeConfig.url,
+        bridge_reachable: bridgeReachable,
+        device_connected: deviceConnected,
+        wakefulness,
+        mac_matches_arp: macMatchesArp,
+        arp_mac: arpMac,
+        last_checked_at: dev.last_checked_at ? new Date(dev.last_checked_at).toISOString() : '',
+        last_check_result: dev.last_check_result || '',
+        last_check_message: dev.last_check_message || '',
+        masalah
+      };
+    });
+
+    return res.json({ ok: true, success: true, rooms: result });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function saveTvDeviceSettings(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const controlType = payload.control_type || 'middleware';
+    let tvMac = String(payload.tv_mac || '').trim();
+    let tvIp = String(payload.tv_ip || '').trim();
+
+    if (tvMac) {
+      const normalized = normalizeMac(tvMac);
+      if (!normalized) throw new Error('Format MAC address tidak valid. Gunakan format seperti 74:81:9a:ff:72:be.');
+      tvMac = normalized;
+    }
+
+    if (tvIp && !isValidIpv4(tvIp)) {
+      throw new Error('Format IP address tidak valid. Gunakan format IPv4 (contoh: 192.168.1.104).');
+    }
+
+    const tvDeviceId = `TV-${roomId}`;
+    const deviceName = payload.device_name || `TV ${roomId}`;
+    const status = payload.status || 'active';
+    const adbPort = Number(payload.adb_port || 5555);
+    const adbTimeoutMs = Number(payload.adb_timeout_ms || 15000);
+    const wolBroadcast = String(payload.wol_broadcast || '192.168.1.255').trim();
+    const notifyPackage = String(payload.notify_package || 'com.happysong.tvnotify').trim();
+    const notes = String(payload.notes || '').trim();
+    const middlewareUrl = String(payload.middleware_url || '').trim() || tvBridgeService.getConfig().url;
+
+    await db.query(`
+      INSERT INTO tv_devices (
+        tv_device_id, room_id, device_name, control_type, status,
+        middleware_url, device_identifier, tv_ip, tv_mac, adb_port,
+        adb_timeout_ms, wol_broadcast, notify_package, notes, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP)
+      ON CONFLICT (tv_device_id) DO UPDATE SET
+        room_id = EXCLUDED.room_id,
+        device_name = EXCLUDED.device_name,
+        control_type = EXCLUDED.control_type,
+        status = EXCLUDED.status,
+        middleware_url = EXCLUDED.middleware_url,
+        device_identifier = EXCLUDED.device_identifier,
+        tv_ip = EXCLUDED.tv_ip,
+        tv_mac = EXCLUDED.tv_mac,
+        adb_port = EXCLUDED.adb_port,
+        adb_timeout_ms = EXCLUDED.adb_timeout_ms,
+        wol_broadcast = EXCLUDED.wol_broadcast,
+        notify_package = EXCLUDED.notify_package,
+        notes = EXCLUDED.notes,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      tvDeviceId, roomId, deviceName, controlType, status,
+      middlewareUrl, tvMac || null, tvIp || null, tvMac || null, adbPort,
+      adbTimeoutMs, wolBroadcast, notifyPackage, notes
+    ]);
+
+    // Kirim pembaruan ke TV Bridge lokal jika control_type === 'middleware'
+    let bridgeSyncResult = null;
+    if (controlType === 'middleware') {
+      try {
+        bridgeSyncResult = await tvBridgeService.updateBridgeRoomConfig(roomId, {
+          ip: tvIp,
+          mac: tvMac,
+          adbPort,
+          adbTimeoutMs,
+          wolBroadcast,
+          notes,
+          enabled: status === 'active'
+        });
+      } catch (bridgeErr) {
+        bridgeSyncResult = { ok: false, error: bridgeErr.message };
+      }
+    }
+
+    await tvBridgeService.recordTvLog({
+      roomId,
+      tvDeviceId,
+      action: 'save_settings',
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin',
+      controlType,
+      result: 'sent',
+      success: true,
+      message: `Pengaturan TV ruangan ${roomId} disimpan oleh ${operator.employee_name || 'Admin'}.`,
+      rawResponse: JSON.stringify(bridgeSyncResult || {})
+    });
+
+    return successResponse(res, {
+      message: 'Pengaturan TV berhasil disimpan.',
+      tv_device_id: tvDeviceId,
+      bridge_sync: bridgeSyncResult
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'SAVE_ERROR');
+  }
+}
+
+async function checkTvDevice(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const statusRes = await tvBridgeService.getBridgeRoomStatus(roomId);
+    let checkResult = 'offline';
+    let checkMessage = 'Tidak dapat menghubungi bridge TV lokal.';
+    let bridgeData = null;
+
+    if (statusRes.ok && statusRes.data) {
+      bridgeData = statusRes.data;
+      checkResult = bridgeData.connected ? 'connected' : 'offline';
+      checkMessage = bridgeData.message || (bridgeData.connected ? 'Terhubung ke ADB' : 'ADB tidak tersambung');
+    } else if (statusRes.error) {
+      checkMessage = statusRes.error;
+    }
+
+    try {
+      await db.query(`
+        UPDATE tv_devices
+        SET last_checked_at = CURRENT_TIMESTAMP,
+            last_check_result = $1,
+            last_check_message = $2,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE room_id = $3
+      `, [checkResult, checkMessage, roomId]);
+    } catch (_dbErr) {}
+
+    await tvBridgeService.recordTvLog({
+      roomId,
+      action: 'check_device',
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin',
+      result: checkResult,
+      success: checkResult === 'connected',
+      message: `Pemeriksaan TV ${roomId}: ${checkMessage}`,
+      rawResponse: JSON.stringify(statusRes || {})
+    });
+
+    return successResponse(res, {
+      message: `Pemeriksaan TV ${roomId} selesai: ${checkMessage}`,
+      status: checkResult,
+      details: bridgeData,
+      last_check_message: checkMessage
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'CHECK_ERROR');
+  }
+}
+
+async function testTvDevice(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const cmdRes = await tvBridgeService.sendTvCommand(roomId, 'test', {
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    return successResponse(res, {
+      message: cmdRes.ok ? `Uji ADB ruangan ${roomId} berhasil dikirim.` : `Uji ADB ruangan ${roomId} gagal: ${cmdRes.error}`,
+      success: cmdRes.ok,
+      data: cmdRes.data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'TEST_ERROR');
+  }
+}
+
+async function wakeTvDevice(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const cmdRes = await tvBridgeService.sendTvCommand(roomId, 'power_on', {
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    return successResponse(res, {
+      message: cmdRes.ok ? `Perintah menyalakan TV ruangan ${roomId} berhasil dikirim.` : `Gagal menyalakan TV: ${cmdRes.error}`,
+      success: cmdRes.ok,
+      data: cmdRes.data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'WAKE_ERROR');
+  }
+}
+
+async function sleepTvDevice(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const cmdRes = await tvBridgeService.sendTvCommand(roomId, 'power_off', {
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    return successResponse(res, {
+      message: cmdRes.ok ? `Perintah mematikan TV ruangan ${roomId} berhasil dikirim.` : `Gagal mematikan TV: ${cmdRes.error}`,
+      success: cmdRes.ok,
+      data: cmdRes.data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'SLEEP_ERROR');
+  }
+}
+
+async function notifyTvDevice(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+    const text = String(payload.text || '').trim();
+    if (!text) throw new Error('Teks pesan notifikasi wajib diisi.');
+
+    const cmdRes = await tvBridgeService.sendTvCommand(roomId, 'notify', {
+      text,
+      subtext: payload.subtext,
+      seconds: payload.seconds ? Number(payload.seconds) : 10,
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    return successResponse(res, {
+      message: cmdRes.ok ? `Pesan notifikasi berhasil dikirim ke layar TV ${roomId}.` : `Gagal mengirim notifikasi: ${cmdRes.error}`,
+      success: cmdRes.ok,
+      data: cmdRes.data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'NOTIFY_ERROR');
+  }
+}
+
+async function reloadTvBridgeConfig(req, res, payload) {
+  try {
+    await verifyAdminPinPayload(payload);
+    const reloadRes = await tvBridgeService.reloadBridgeConfig();
+    return successResponse(res, {
+      message: reloadRes.ok ? 'Konfigurasi bridge berhasil dimuat ulang.' : `Gagal reload bridge: ${reloadRes.error}`,
+      success: reloadRes.ok,
+      data: reloadRes.data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'RELOAD_ERROR');
+  }
+}
+
 module.exports = {
-  getTvDevices,
-  getTvControlLogs,
-  getTvDisplaySetupList,
+  checkTvDevice,
   getCustomerDisplayState,
-  sendTvCommand,
-  saveTvDevice,
+  getTvControlLogs,
+  getTvDevices,
+  getTvDisplaySetupList,
+  getTvRoomOverview,
+  isValidIpv4,
+  normalizeMac,
+  notifyTvDevice,
+  reloadTvBridgeConfig,
   rotateTvDisplayToken,
-  seedTvDisplaysForAllRooms,
+  saveTvDevice,
+  saveTvDeviceSettings,
   seedPilotTvDisplay,
+  seedTvDisplaysForAllRooms,
+  sendTvCommand,
+  sleepTvDevice,
+  testTvDevice,
+  wakeTvDevice,
 };
