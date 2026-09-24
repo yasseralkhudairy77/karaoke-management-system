@@ -17,7 +17,7 @@ const {
   resolveRoomId,
   resolveTestDeviceId,
 } = require("./src/adbService");
-const { listRooms } = require("./src/roomConfig");
+const { listRooms, updateRoomConfig, reloadRoomConfig } = require("./src/roomConfig");
 const {
   cancelCountdown,
   getCountdown,
@@ -487,6 +487,31 @@ app.get("/api/rooms/:roomId/status", async (req, res) => {
     res.json(await getStatus(roomId));
   } catch (error) {
     sendError(res, error);
+  }
+});
+
+app.put("/api/rooms/:roomId/config", async (req, res) => {
+  try {
+    const roomId = resolveRouteRoom(req, res);
+    if (!roomId) {
+      return;
+    }
+
+    const updated = updateRoomConfig(roomId, req.body || {});
+    log(`Konfigurasi ruangan ${roomId} diperbarui lewat API.`);
+    res.json(successResult({ room: updated }));
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post("/api/config/reload", (_req, res) => {
+  try {
+    const result = reloadRoomConfig();
+    log(`Konfigurasi bridge dimuat ulang lewat API.`);
+    res.json(successResult(result));
+  } catch (error) {
+    sendError(res, error, 500);
   }
 });
 

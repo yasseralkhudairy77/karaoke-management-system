@@ -239,8 +239,60 @@ function getDefaultRoom() {
   return resolveRoom(getDefaultRoomId());
 }
 
-function getConfigPath() {
-  return DEFAULT_CONFIG_PATH;
+function updateRoomConfig(roomId, updates = {}) {
+  const resolved = getRoom(roomId);
+  if (!resolved) {
+    throw new Error(`Unknown room: ${roomId}`);
+  }
+
+  const index = rooms.findIndex((r) => r.id.toLowerCase() === resolved.id.toLowerCase());
+  if (index === -1) {
+    throw new Error(`Unknown room: ${roomId}`);
+  }
+
+  const current = rooms[index];
+  const updated = normalizeRoom({
+    ...current,
+    ...updates,
+    id: current.id,
+    aliases: current.aliases,
+  }, index);
+
+  rooms[index] = updated;
+  roomsById.set(updated.id.toLowerCase(), updated);
+  roomsByName.set(updated.name.toLowerCase(), updated);
+  updated.aliases.forEach((alias) => {
+    roomsByAlias.set(alias.toLowerCase(), updated);
+  });
+
+  const configToSave = {
+    defaultRoomId: getDefaultRoomId(),
+    rooms,
+    testDevices: listTestDevices(),
+  };
+
+  const tmpPath = `${DEFAULT_CONFIG_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(configToSave, null, 4), 'utf8');
+  fs.renameSync(tmpPath, DEFAULT_CONFIG_PATH);
+
+  return { ...updated };
+}
+
+function reloadRoomConfig() {
+  const loaded = loadRoomFile();
+  rooms.length = 0;
+  rooms.push(...loaded.rooms);
+  roomsById.clear();
+  roomsByName.clear();
+  roomsByAlias.clear();
+  rooms.forEach((r) => {
+    roomsById.set(r.id.toLowerCase(), r);
+    roomsByName.set(r.name.toLowerCase(), r);
+    r.aliases.forEach((alias) => {
+      roomsByAlias.set(alias.toLowerCase(), r);
+    });
+  });
+  return { ok: true, roomCount: rooms.length };
 }
 
 module.exports = {
@@ -255,5 +307,7 @@ module.exports = {
   listTestDevices,
   normalizeRoom,
   normalizeTestDevice,
+  reloadRoomConfig,
   resolveRoom,
+  updateRoomConfig,
 };
