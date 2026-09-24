@@ -25522,13 +25522,23 @@ function createTvControlSectionElement() {
       tdRoom.innerHTML = `<strong>${escapeHtml(r.room_name || r.room_id)}</strong><br><small style="color:#9ca3af;">${escapeHtml(r.room_id)}</small>`;
 
       const tdDev = document.createElement("td");
-      tdDev.textContent = r.device_name || r.tv_device_id || "-";
+      if (r.has_device === false) {
+        tdDev.innerHTML = `<span style="color:#9ca3af;font-style:italic;">- (Belum diatur)</span>`;
+      } else {
+        tdDev.textContent = r.device_name || r.tv_device_id || "-";
+      }
 
       const tdType = document.createElement("td");
       const typeBadge = document.createElement("span");
-      typeBadge.className = r.control_type === "mock" ? "status-badge" : "status-badge active";
-      typeBadge.style.fontSize = "11px";
-      typeBadge.textContent = r.control_type || "middleware";
+      if (r.has_device === false) {
+        typeBadge.className = "status-badge";
+        typeBadge.style.fontSize = "11px";
+        typeBadge.textContent = "Belum diatur";
+      } else {
+        typeBadge.className = r.control_type === "mock" ? "status-badge" : "status-badge active";
+        typeBadge.style.fontSize = "11px";
+        typeBadge.textContent = r.control_type || "middleware";
+      }
       tdType.appendChild(typeBadge);
 
       const tdIp = document.createElement("td");
@@ -25539,7 +25549,10 @@ function createTvControlSectionElement() {
 
       const tdAdb = document.createElement("td");
       const adbBadge = document.createElement("span");
-      if (r.control_type === "mock") {
+      if (r.has_device === false) {
+        adbBadge.className = "status-badge";
+        adbBadge.textContent = "-";
+      } else if (r.control_type === "mock") {
         adbBadge.className = "status-badge";
         adbBadge.textContent = "Mock";
       } else if (r.device_connected) {
@@ -25551,9 +25564,32 @@ function createTvControlSectionElement() {
       }
       tdAdb.appendChild(adbBadge);
 
+      // Tampilkan catatan riwayat pemeriksaan terakhir agar layar tidak berbohong sepihak
+      if (r.last_check_result || r.last_check_message) {
+        const lastCheckDiv = document.createElement("div");
+        lastCheckDiv.style.fontSize = "10px";
+        lastCheckDiv.style.color = "#9ca3af";
+        lastCheckDiv.style.marginTop = "3px";
+        lastCheckDiv.style.lineHeight = "1.2";
+        let timeText = "";
+        if (r.last_checked_at) {
+          try {
+            const d = new Date(r.last_checked_at);
+            timeText = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          } catch (_e) {}
+        }
+        const msg = r.last_check_message || (r.last_check_result === "connected" ? "Terhubung ke ADB" : r.last_check_result);
+        lastCheckDiv.textContent = timeText ? `${msg} (${timeText})` : msg;
+        lastCheckDiv.title = `Pemeriksaan terakhir: ${r.last_checked_at || "-"}`;
+        tdAdb.appendChild(lastCheckDiv);
+      }
+
       const tdScreen = document.createElement("td");
       const screenBadge = document.createElement("span");
-      if (r.wakefulness === "Awake") {
+      if (r.has_device === false) {
+        screenBadge.className = "status-badge";
+        screenBadge.textContent = "-";
+      } else if (r.wakefulness === "Awake") {
         screenBadge.className = "status-badge active";
         screenBadge.textContent = "Menyala";
       } else if (r.wakefulness === "Asleep") {
@@ -25612,50 +25648,61 @@ function createTvControlSectionElement() {
       btnGroup.style.flexWrap = "wrap";
       btnGroup.style.gap = "4px";
 
-      const checkBtn = document.createElement("button");
-      checkBtn.className = "master-button secondary";
-      checkBtn.type = "button";
-      checkBtn.dataset.action = "check-tv-device";
-      checkBtn.dataset.roomId = r.room_id;
-      checkBtn.textContent = "Cek";
+      if (r.has_device === false) {
+        const addDevBtn = document.createElement("button");
+        addDevBtn.className = "master-button primary";
+        addDevBtn.type = "button";
+        addDevBtn.dataset.action = "add-tv-device";
+        addDevBtn.dataset.roomId = r.room_id;
+        addDevBtn.textContent = "+ Tambah Perangkat";
+        btnGroup.appendChild(addDevBtn);
+      } else {
+        const checkBtn = document.createElement("button");
+        checkBtn.className = "master-button secondary";
+        checkBtn.type = "button";
+        checkBtn.dataset.action = "check-tv-device";
+        checkBtn.dataset.roomId = r.room_id;
+        checkBtn.textContent = "Cek";
 
-      const wakeBtn = document.createElement("button");
-      wakeBtn.className = "master-button";
-      wakeBtn.type = "button";
-      wakeBtn.dataset.action = "wake-tv-device";
-      wakeBtn.dataset.roomId = r.room_id;
-      wakeBtn.textContent = "Nyalakan";
+        const wakeBtn = document.createElement("button");
+        wakeBtn.className = "master-button";
+        wakeBtn.type = "button";
+        wakeBtn.dataset.action = "wake-tv-device";
+        wakeBtn.dataset.roomId = r.room_id;
+        wakeBtn.textContent = "Nyalakan";
 
-      const sleepBtn = document.createElement("button");
-      sleepBtn.className = "master-button secondary";
-      sleepBtn.type = "button";
-      sleepBtn.dataset.action = "sleep-tv-device";
-      sleepBtn.dataset.roomId = r.room_id;
-      sleepBtn.textContent = "Matikan";
+        const sleepBtn = document.createElement("button");
+        sleepBtn.className = "master-button secondary";
+        sleepBtn.type = "button";
+        sleepBtn.dataset.action = "sleep-tv-device";
+        sleepBtn.dataset.roomId = r.room_id;
+        sleepBtn.textContent = "Matikan";
 
-      const testBtn = document.createElement("button");
-      testBtn.className = "master-button secondary";
-      testBtn.type = "button";
-      testBtn.dataset.action = "test-tv-device";
-      testBtn.dataset.roomId = r.room_id;
-      testBtn.textContent = "Uji ADB";
+        const testBtn = document.createElement("button");
+        testBtn.className = "master-button secondary";
+        testBtn.type = "button";
+        testBtn.dataset.action = "test-tv-device";
+        testBtn.dataset.roomId = r.room_id;
+        testBtn.textContent = "Uji ADB";
 
-      const notifyBtn = document.createElement("button");
-      notifyBtn.className = "master-button secondary";
-      notifyBtn.type = "button";
-      notifyBtn.dataset.action = "notify-tv-device";
-      notifyBtn.dataset.roomId = r.room_id;
-      notifyBtn.dataset.roomName = r.room_name || r.room_id;
-      notifyBtn.textContent = "Pesan";
+        const notifyBtn = document.createElement("button");
+        notifyBtn.className = "master-button secondary";
+        notifyBtn.type = "button";
+        notifyBtn.dataset.action = "notify-tv-device";
+        notifyBtn.dataset.roomId = r.room_id;
+        notifyBtn.dataset.roomName = r.room_name || r.room_id;
+        notifyBtn.textContent = "Pesan";
 
-      const editBtn = document.createElement("button");
-      editBtn.className = "master-button";
-      editBtn.type = "button";
-      editBtn.dataset.action = "edit-tv-device";
-      editBtn.dataset.roomId = r.room_id;
-      editBtn.textContent = "Edit";
+        const editBtn = document.createElement("button");
+        editBtn.className = "master-button";
+        editBtn.type = "button";
+        editBtn.dataset.action = "edit-tv-device";
+        editBtn.dataset.roomId = r.room_id;
+        editBtn.textContent = "Edit";
 
-      btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+        btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+      }
+
       tdActions.appendChild(btnGroup);
 
       tr.append(tdRoom, tdDev, tdType, tdIp, tdMac, tdAdb, tdScreen, tdArp, tdIssue, tdActions);
@@ -35485,15 +35532,18 @@ async function handleRoomAction(event) {
   }
 
   if (action === "add-tv-device") {
+    const specifiedRoomId = (button && button.dataset && button.dataset.roomId) || "";
     const allRooms = Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : [];
-    const firstRoom = allRooms.length > 0 ? allRooms[0].room_id : "";
+    const targetRoomId = specifiedRoomId || (allRooms.length > 0 ? allRooms[0].room_id : "");
+    const targetRoom = allRooms.find((r) => r.room_id === targetRoomId);
+    const targetRoomName = targetRoom ? (targetRoom.room_name || targetRoomId) : targetRoomId;
     tvDeviceModalState = {
       isOpen: true,
       mode: "create",
-      roomId: firstRoom,
-      roomName: allRooms.length > 0 ? (allRooms[0].room_name || firstRoom) : "",
-      tvDeviceId: firstRoom ? `TV-${firstRoom}` : "",
-      deviceName: firstRoom ? `TV ${firstRoom}` : "",
+      roomId: targetRoomId,
+      roomName: targetRoomName,
+      tvDeviceId: targetRoomId ? `TV-${targetRoomId}` : "",
+      deviceName: targetRoomName ? `TV ${targetRoomName}` : (targetRoomId ? `TV ${targetRoomId}` : ""),
       brand: "TCL",
       controlType: "middleware",
       tvIp: "",

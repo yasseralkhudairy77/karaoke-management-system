@@ -4,15 +4,18 @@ require("dotenv").config();
 
 const {
   connectToRoom,
+  getArpTable,
+  getRoomRuntime,
   getRuntime,
   getStatus,
-  getRoomRuntime,
   getTestDeviceRuntime,
   launchApp,
   listRoomStatuses,
   listTestDeviceStatuses,
+  readWakefulness,
   sendOverlay,
   sleepRoom,
+  syncConnectedStatesFromAdb,
   wakeRoom,
   resolveRoomId,
   resolveTestDeviceId,
@@ -465,8 +468,44 @@ app.get("/api/runtime", (_req, res) => {
   res.json(successResult({ data: getRuntime() }));
 });
 
-app.get("/api/rooms", (_req, res) => {
-  res.json(successResult({ rooms: listRoomStatuses() }));
+app.get("/api/rooms", async (_req, res) => {
+  try {
+    await syncConnectedStatesFromAdb().catch(() => {});
+    const rawRooms = listRoomStatuses();
+    const arpTable = await getArpTable().catch(() => new Map());
+
+    const enriched = await Promise.all(rawRooms.map(async (r) => {
+      const isConnected = Boolean(r.runtime && r.runtime.connected);
+      let wakefulness = null;
+      // wakefulness hanya diisi kalau perangkat tersambung (baca dumpsys power), dan kosong kalau tidak, supaya tidak menebak
+      if (isConnected && r.ip) {
+        try {
+          wakefulness = await readWakefulness(r);
+        } catch (_err) {
+          wakefulness = null;
+        }
+      }
+
+      const arpMac = (r.ip && arpTable.get(r.ip)) || "";
+
+      return {
+        ...r,
+        connected: isConnected,
+        wakefulness,
+        arpMac,
+        runtime: {
+          ...r.runtime,
+          connected: isConnected,
+          wakefulness,
+          arpMac,
+        },
+      };
+    }));
+
+    res.json(successResult({ rooms: enriched }));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/test-devices", (_req, res) => {

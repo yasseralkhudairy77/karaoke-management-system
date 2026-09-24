@@ -1,8 +1,31 @@
 const db = require('../db');
 const http = require('http');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const tvBridgeService = require('../services/tvBridgeService');
 const { successResponse, errorResponse } = require('../utils/response');
+
+function getLocalArpTable() {
+  return new Promise((resolve) => {
+    execFile('arp', ['-a'], { timeout: 3000 }, (err, stdout) => {
+      if (err || !stdout) return resolve(new Map());
+      const map = new Map();
+      const lines = String(stdout).split(/\r?\n/);
+      for (const line of lines) {
+        const match = line.trim().match(/(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]+)/);
+        if (match) {
+          const ip = match[1];
+          const rawMac = match[2].replace(/-/g, ':').toLowerCase();
+          const normalized = normalizeMac(rawMac);
+          if (normalized) {
+            map.set(ip, normalized);
+          }
+        }
+      }
+      resolve(map);
+    });
+  });
+}
 
 function normalizeMac(mac) {
   if (!mac) return '';
@@ -369,34 +392,87 @@ async function getTvRoomOverview(req, res) {
     const bridgeMap = new Map();
     bridgeRooms.forEach(b => {
       if (b.id) bridgeMap.set(String(b.id).toLowerCase(), b);
+      if (b.name) bridgeMap.set(String(b.name).toLowerCase(), b);
       if (Array.isArray(b.aliases)) {
         b.aliases.forEach(a => bridgeMap.set(String(a).toLowerCase(), b));
       }
     });
 
-    const result = roomsRes.rows.map(r => {
-      const dev = devMap.get(r.room_id) || {};
-      const bRoom = bridgeMap.get(r.room_id.toLowerCase()) || bridgeMap.get(r.room_name.toLowerCase()) || null;
+    const localArpTable = await getLocalArpTable().catch(() => new Map());
 
-      const tvDeviceId = dev.tv_device_id || `TV-${r.room_id}`;
-      const controlType = dev.control_type || 'middleware';
-      const status = dev.status || 'active';
-      const tvIp = dev.tv_ip || (bRoom ? bRoom.ip : '') || '';
-      const tvMac = dev.tv_mac || (dev.device_identifier && dev.device_identifier.includes(':') ? dev.device_identifier : '') || (bRoom ? bRoom.mac : '') || '';
-      const adbPort = dev.adb_port || (bRoom ? bRoom.adbPort : 5555) || 5555;
-      const adbTimeoutMs = dev.adb_timeout_ms || 15000;
-      const wolBroadcast = dev.wol_broadcast || '192.168.1.255';
-      const notifyPackage = dev.notify_package || 'com.happysong.tvnotify';
-      const notes = dev.notes || '';
-      const middlewareUrl = dev.middleware_url || bridgeConfig.url;
+    const result = [];
+    for (const r of roomsRes.rows) {
+      const dev = devMap.get(r.room_id) || null;
+      const hasDevice = Boolean(dev && dev.tv_device_id);
 
-      const deviceConnected = bRoom ? Boolean(bRoom.connected) : false;
-      const wakefulness = bRoom ? (bRoom.wakefulness || (deviceConnected ? 'Awake' : null)) : null;
-      const arpMac = bRoom ? (bRoom.arpMac || '') : '';
-      const macMatchesArp = (!tvMac || !arpMac) ? 'tidak diketahui' : (tvMac.toLowerCase() === arpMac.toLowerCase() ? 'cocok' : 'beda');
+      const idKey = String(r.room_id || '').toLowerCase().trim();
+      const nameKey = String(r.room_name || '').toLowerCase().trim();
+      const nameSlug = nameKey.replace(/\s+room$/i, '').trim();
+      const bRoom = bridgeMap.get(idKey) || bridgeMap.get(nameKey) || bridgeMap.get(nameSlug) || null;
+
+      const tvDeviceId = dev ? (dev.tv_device_id || `TV-${r.room_id}`) : (bRoom ? `TV-${r.room_id}` : '');
+      const deviceName = dev ? (dev.device_name || `TV ${r.room_name}`) : (bRoom ? `TV ${r.room_name}` : `TV ${r.room_name}`);
+      const controlType = dev ? (dev.control_type || 'middleware') : (bRoom ? 'middleware' : null);
+      const status = dev ? (dev.status || 'active') : (r.status || 'active');
+      const tvIp = (dev && dev.tv_ip) || (bRoom ? bRoom.ip : '') || '';
+      const tvMac = (dev && dev.tv_mac) || (dev && dev.device_identifier && dev.device_identifier.includes(':') ? dev.device_identifier : '') || (bRoom ? bRoom.mac : '') || '';
+      const adbPort = (dev && dev.adb_port) || (bRoom ? bRoom.adbPort : 5555) || 5555;
+      const adbTimeoutMs = (dev && dev.adb_timeout_ms) || 15000;
+      const wolBroadcast = (dev && dev.wol_broadcast) || '192.168.1.255';
+      const notifyPackage = (dev && dev.notify_package) || 'com.happysong.tvnotify';
+      const notes = (dev && dev.notes) || '';
+      const middlewareUrl = (dev && dev.middleware_url) || bridgeConfig.url;
+
+      // 1. Baca status sambungan dari bRoom.runtime.connected atau bRoom.connected
+      let deviceConnected = false;
+      let wakefulness = null;
+      let arpMac = '';
+      let hasConnectionField = false;
+
+      if (bRoom) {
+        if (bRoom.runtime && typeof bRoom.runtime.connected === 'boolean') {
+          deviceConnected = bRoom.runtime.connected;
+          hasConnectionField = true;
+        } else if (typeof bRoom.connected === 'boolean') {
+          deviceConnected = bRoom.connected;
+          hasConnectionField = true;
+        }
+        wakefulness = bRoom.wakefulness || (bRoom.runtime && bRoom.runtime.wakefulness) || null;
+        arpMac = bRoom.arpMac || (bRoom.runtime && bRoom.runtime.arpMac) || '';
+      }
+
+      // Cadangan: jika field itu tidak ada dan bridge aktif, panggil tvBridgeService.getBridgeRoomStatus(room_id)
+      // untuk ruangan yang sedang diperiksa (jangan untuk semua ruangan sekaligus — 13 panggilan ADB berturut-turut akan lambat)
+      if (!hasConnectionField && bridgeReachable) {
+        try {
+          const singleStatus = await tvBridgeService.getBridgeRoomStatus(r.room_id);
+          if (singleStatus && singleStatus.ok && singleStatus.data) {
+            const sData = singleStatus.data;
+            if (typeof sData.connected === 'boolean') {
+              deviceConnected = sData.connected;
+              hasConnectionField = true;
+            }
+            if (sData.wakefulness) wakefulness = sData.wakefulness;
+            if (sData.arpMac) arpMac = sData.arpMac;
+          }
+        } catch (_err) {
+          // Cadangan best-effort gagal, biarkan false
+        }
+      }
+
+      // Fallback ARP lokal bila bridge tidak mengembalikan arpMac tetapi tvIp ada
+      if (!arpMac && tvIp && localArpTable.has(tvIp)) {
+        arpMac = localArpTable.get(tvIp);
+      }
+
+      const normTvMac = normalizeMac(tvMac);
+      const normArpMac = normalizeMac(arpMac);
+      const macMatchesArp = (!normTvMac || !normArpMac) ? 'tidak diketahui' : (normTvMac === normArpMac ? 'cocok' : 'beda');
 
       const masalah = [];
-      if (controlType === 'mock') {
+      if (!hasDevice) {
+        masalah.push('Perangkat TV belum didaftarkan di database POS');
+      } else if (controlType === 'mock') {
         masalah.push('Mode mock aktif (tanpa perangkat nyata)');
       } else {
         if (!tvMac) masalah.push('Alamat MAC belum diisi');
@@ -412,11 +488,12 @@ async function getTvRoomOverview(req, res) {
         }
       }
 
-      return {
+      result.push({
         room_id: r.room_id,
         room_name: r.room_name,
         tv_device_id: tvDeviceId,
-        device_name: dev.device_name || `TV ${r.room_name}`,
+        device_name: deviceName,
+        has_device: hasDevice,
         control_type: controlType,
         status,
         tv_ip: tvIp,
@@ -433,12 +510,12 @@ async function getTvRoomOverview(req, res) {
         wakefulness,
         mac_matches_arp: macMatchesArp,
         arp_mac: arpMac,
-        last_checked_at: dev.last_checked_at ? new Date(dev.last_checked_at).toISOString() : '',
-        last_check_result: dev.last_check_result || '',
-        last_check_message: dev.last_check_message || '',
+        last_checked_at: dev && dev.last_checked_at ? new Date(dev.last_checked_at).toISOString() : '',
+        last_check_result: dev ? (dev.last_check_result || '') : '',
+        last_check_message: dev ? (dev.last_check_message || '') : '',
         masalah
-      };
-    });
+      });
+    }
 
     return res.json({ ok: true, success: true, rooms: result });
   } catch (err) {
