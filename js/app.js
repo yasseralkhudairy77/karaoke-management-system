@@ -25456,8 +25456,8 @@ function tvGuideAddressWarning(room) {
   if (!room || !room.tv_ip) return { text: "", badge: "belum diatur", level: "empty" };
   const match = String(room.mac_matches_arp || "tidak diketahui").toLowerCase();
   if (match === "beda") {
-    const pemakai = room.arp_mac ? ` (sekarang dipakai perangkat lain: ${room.arp_mac})` : " (sekarang dipakai perangkat lain)";
-    return { text: `BENTROK${pemakai}. JANGAN dipakai.`, badge: "BENTROK", level: "conflict" };
+    const pemakai = room.arp_mac ? `Sekarang dipakai perangkat lain: ${room.arp_mac}.` : "Sekarang dipakai perangkat lain.";
+    return { text: `${pemakai} JANGAN dipakai.`, badge: "BENTROK", level: "conflict" };
   }
   if (match === "cocok") return { text: "", badge: "sesuai", level: "ok" };
   return { text: "", badge: "perlu dicek", level: "unknown" };
@@ -25579,6 +25579,114 @@ function createTvStaticIpGuideRoomReferenceList() {
   return wrap;
 }
 
+function tvGuideBlocks() {
+  return [
+    {
+      title: "1. Sebelum mulai — pastikan ini dulu",
+      lines: [
+        "1) TV menyala dan kabel LAN-nya terpasang di TV dan di switch/router.",
+        "2) Lihat lampu di colokan LAN TV: harus menyala atau berkelip. <strong>Kalau lampunya mati, ini masalah kabel atau port — jangan lanjut mengubah setelan IP, tidak akan berhasil.</strong> Pindahkan kabel ke port lain yang sudah terbukti jalan, atau ganti kabelnya.",
+        "3) Kalau TV baru dinyalakan, tunggu 1-2 menit sebelum menilai apa pun.",
+        "4) Catat IP TV yang sekarang. Untuk TV yang baru pertama kali dikerjakan, tanyakan ke admin jaringan.",
+      ],
+    },
+    { type: "table" },
+    {
+      title: "4. Urutan pengisian yang benar",
+      lines: [
+        "Layar 1 — <strong>Alamat IP</strong>: pakai nilai dari tabel ruangan di atas, jangan dikira-kira.",
+        "Layar 2 — <strong>Gerbang</strong>: 192.168.1.1",
+        "Layar 3 — <strong>Panjang awalan jaringan</strong>: 24",
+        "Layar 4 — <strong>DNS 1</strong>: 8.8.8.8",
+        "Layar 5 — <strong>DNS 2</strong>: 192.168.1.1",
+        "Menghapus isi kolom: kursor harus di akhir isian, baru hapus satu per satu. Pastikan kolom benar-benar kosong sebelum mengetik angka baru — kalau tidak, nilai baru akan menempel di nilai lama dan TV menolak menyimpan.",
+      ],
+    },
+    {
+      title: "5. Setelah kolom terakhir — wajib diperiksa",
+      lines: [
+        "1) TV akan menyambung ulang dan memakai alamat baru. Tunggu sampai layar jaringan tenang.",
+        "2) Bukti pertama: di halaman yang sama, baris <strong>Setelan IP</strong> harus sudah tertulis <strong>Statik</strong> (bukan DHCP).",
+        "3) Bukti kedua: dari komputer, buka terminal dan jalankan <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>. Kalau menjawab <code>connected to ...</code>, TV sudah terpakai di alamat yang benar.",
+        "4) Bukti ketiga: dari komputer jalankan <code>arp -a</code>. Baris alamat TV harus menunjuk ke MAC yang berawalan <code>74-81-9a</code> atau <code>9c-53-85</code>. Kalau MAC-nya bukan itu, alamat itu sedang dipakai perangkat lain.",
+        "<strong>Jangan lanjut ke TV berikutnya sebelum tiga bukti ini lolos.</strong>",
+      ],
+    },
+    {
+      title: "6. Kalau gagal — gejala dan tindakan",
+      lines: [
+        "<strong>Muncul pesan \"Setelan IP tidak valid\"</strong>: kabel belum punya sambungan (lihat langkah 1), atau ada salah ketik di Alamat IP / Gerbang / awalan. Periksa tiap angka.",
+        "<strong>TV hilang setelah disimpan</strong>: alamat itu sedang dipakai perangkat lain. Laporkan ke admin jaringan; jangan mengubah-ubah alamat sendiri tanpa dicatat, karena sistem akan menembak alamat yang salah.",
+        "<strong>Angka jadi menempel/aneh</strong> (contoh: 192.16192.168.1.104): kolom tidak kosong saat diketik. Ulangi layar itu dan pastikan kosong dulu.",
+        "<strong>TV melupakan jaringan Wi-Fi</strong>: tersorot ke \"Lupakan jaringan\". Sambungkan kembali ke SSID yang biasa dipakai, lalu ulangi dari langkah 2.",
+        "<strong>Tidak ada baris Ethernet sama sekali</strong>: kabel/port mati. Ini urusan kabel, bukan setelan.",
+      ],
+    },
+    {
+      title: "7. Cara memeriksa dari komputer (untuk yang mengerjakan pakai laptop)",
+      lines: [
+        "1) Hubungkan TV: <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>",
+        "2) Cek statusnya: <code>C:\\platform-tools\\adb.exe devices -l</code> — harus tertulis <code>device</code>. Kalau <code>unauthorized</code>, lihat langkah 8.",
+        "3) Mengemudikan layar TV dari laptop: <code>adb shell input keyevent 19</code> (atas), <code>20</code> (bawah), <code>21</code> (kiri), <code>22</code> (kanan), <code>23</code> (OK), <code>4</code> (kembali).",
+        "4) Mengisi kolom: <code>adb shell input text \"192.168.1.1xx\"</code> lalu <code>adb shell input keyevent 66</code> (ENTER = tombol lanjut).",
+        "5) <strong>Jangan pakai tombol OK (keyevent 23) untuk maju saat keyboard layar terbuka</strong> — fokus sedang ada di keyboard, dan yang terketik justru huruf. Selalu pakai ENTER (66).",
+        "6) Menghapus isi kolom hanya bekerja saat keyboard layar terbuka: kursor ke akhir dulu, baru hapus. Kalau keyboard tertutup, tombol hapus bocor ke halaman dan halaman bisa keluar sendiri.",
+        "7) Keyboard layar tidak pernah muncul di pemeriksaan otomatis layar TV, jadi kalau ragu posisi fokus, ambil tangkapan layar: <code>adb exec-out screencap -p &gt; layar.png</code>",
+      ],
+    },
+    {
+      title: "8. TV baru: mengaktifkan ADB sekali per TV",
+      lines: [
+        "Tanpa langkah ini TV tidak akan pernah bisa dikontrol sistem, seberapa pun benar alamat IP-nya.",
+        "1) Setelan -> <strong>Tentang</strong> -> tekan <strong>Build</strong> 7 kali sampai muncul \"Anda sekarang seorang pengembang\".",
+        "2) Setelan -> <strong>Preferensi perangkat</strong> (atau Sistem) -> <strong>Opsi pengembang</strong>.",
+        "3) Nyalakan <strong>Penelusuran USB / ADB debugging</strong>, dan <strong>Network debugging</strong> kalau ada.",
+        "4) Dari komputer: <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>",
+        "5) Lihat layar TV: akan muncul pertanyaan <strong>\"Izinkan penelusuran USB?\"</strong>. Pilih <strong>OK/Allow</strong>, dan centang \"selalu izinkan dari komputer ini\".",
+        "6) Cek dari komputer: <code>adb devices -l</code> harus berubah dari <code>unauthorized</code> menjadi <code>device</code>.",
+        "Kalau dialog tidak muncul: matikan lalu nyalakan lagi Penelusuran USB di TV, lalu coba sambung ulang dari komputer.",
+      ],
+    },
+    {
+      title: "9. Batas pekerjaan teknisi — kapan harus berhenti dan menghubungi admin/owner",
+      lines: [
+        "Lampu LAN mati setelah ganti kabel dan ganti port.",
+        "Alamat IP yang ditentukan ternyata sudah dipakai perangkat lain (terlihat dari MAC di <code>arp -a</code> yang bukan 74-81-9a / 9c-53-85).",
+        "TV perlu direset pabrik, atau ada permintaan mengubah setelan router/pool DHCP.",
+        "TV menyala normal tapi tetap tidak muncul di jaringan setelah semua langkah di atas dikerjakan.",
+        "<strong>Jangan mengubah pengaturan ruangan atau alamat TV di aplikasi tanpa persetujuan owner</strong>, karena aplikasi dan sistem kontrol memakai alamat yang sama.",
+      ],
+    },
+  ];
+}
+
+function tvGuideIntroText() {
+  return "Panduan ini untuk teknisi di venue: cara memberi alamat IP tetap pada TV kabel. Ikuti urutannya. Kalau TV tidak muncul di jaringan padahal menyala, kerjakan ini sebelum menuduh TV rusak. Alamat IP tetap dipasang di TV; cara lain yang lebih awet adalah meminta admin router memasang reservasi MAC, dan itu bukan pekerjaan teknisi venue.";
+}
+
+function createTvGuideBlockElement(titleText, lines) {
+  const block = document.createElement("div");
+  block.className = "tv-guide-block";
+  const t = document.createElement("p");
+  t.className = "tv-guide-block-title";
+  t.textContent = titleText;
+  block.appendChild(t);
+  lines.forEach((line) => {
+    const p = document.createElement("p");
+    p.className = "tv-guide-line";
+    p.innerHTML = line;
+    block.appendChild(p);
+  });
+  return block;
+}
+
+function createTvGuideBlockWithTableElement() {
+  const block = document.createElement("div");
+  block.className = "tv-guide-block";
+  block.appendChild(createTvStaticIpGuideRoomReferenceList());
+  return block;
+}
+
 function createTvControlGuideSectionElement() {
   const wrap = document.createElement("section");
   wrap.className = "master-section tv-control-guide";
@@ -25597,38 +25705,22 @@ function createTvControlGuideSectionElement() {
     return wrap;
   }
 
+  const printBtn = document.createElement("button");
+  printBtn.className = "master-button secondary tv-guide-print-btn";
+  printBtn.type = "button";
+  printBtn.dataset.action = "print-tv-guide";
+  printBtn.textContent = "Cetak / Simpan PDF Panduan Ini";
+  wrap.appendChild(printBtn);
+
   const body = document.createElement("div");
   body.className = "tv-guide-body";
 
-  const block = (titleText, lines) => {
-    const b = document.createElement("div");
-    b.className = "tv-guide-block";
-    const t = document.createElement("p");
-    t.className = "tv-guide-block-title";
-    t.textContent = titleText;
-    b.appendChild(t);
-    lines.forEach((line) => {
-      const p = document.createElement("p");
-      p.className = "tv-guide-line";
-      p.innerHTML = line;
-      b.appendChild(p);
-    });
-    return b;
-  };
-
   const intro = document.createElement("p");
   intro.className = "tv-guide-intro";
-  intro.textContent = "Panduan ini untuk teknisi di venue: cara memberi alamat IP tetap pada TV kabel. Ikuti urutannya. Kalau TV tidak muncul di jaringan padahal menyala, kerjakan ini sebelum menuduh TV rusak. Alamat IP tetap dipasang di TV; cara lain yang lebih awet adalah meminta admin router memasang reservasi MAC, dan itu bukan pekerjaan teknisi venue.";
+  intro.textContent = tvGuideIntroText();
   body.appendChild(intro);
 
-  body.appendChild(block("1. Sebelum mulai — pastikan ini dulu", [
-    "1) TV menyala dan kabel LAN-nya terpasang di TV dan di switch/router.",
-    "2) Lihat lampu di colokan LAN TV: harus menyala atau berkelip. <strong>Kalau lampunya mati, ini masalah kabel atau port — jangan lanjut mengubah setelan IP, tidak akan berhasil.</strong> Pindahkan kabel ke port lain yang sudah terbukti jalan, atau ganti kabelnya.",
-    "3) Kalau TV baru dinyalakan, tunggu 1-2 menit sebelum menilai apa pun.",
-    "4) Catat IP TV yang sekarang. Untuk TV yang baru pertama kali dikerjakan, tanyakan ke admin jaringan.",
-  ]));
-
-  body.appendChild(block("2. Cara masuk ke layar Setelan IP (pakai REMOTE di ruangan)", [
+  body.appendChild(createTvGuideBlockElement("2. Cara masuk ke layar Setelan IP (pakai REMOTE di ruangan)", [
     "1) Tekan tombol Setelan di remote.",
     "2) Masuk ke <strong>Jaringan &amp; Internet</strong>.",
     "3) Pilih baris <strong>Ethernet</strong>. Baris ini hanya muncul kalau kabel TV punya sambungan. Kalau tidak ada, kembali ke langkah 1 di atas.",
@@ -25636,72 +25728,199 @@ function createTvControlGuideSectionElement() {
     "<strong>AWAS:</strong> di daftar Wi-Fi, baris <em>Lupakan jaringan</em> letaknya TEPAT DI BAWAH baris <em>Setelan IP</em>. Satu tekan kelebihan akan membuat TV melupakan jaringan. Kalau salah tekan dan muncul pertanyaan, pilih <strong>Batal</strong>, jangan OK.",
   ]));
 
-  body.appendChild(block("3. Pilih Statik dan isi nilainya", [
+  body.appendChild(createTvGuideBlockElement("3. Pilih Statik dan isi nilainya", [
     "1) Di halaman <strong>Setelan IP</strong>, pilih <strong>Statik</strong>, lalu tekan OK.",
     "2) Setelah itu TV menampilkan <strong>satu kolom per layar</strong>, urutannya seperti ini. Isi satu per satu, tekan lanjut/OK setelah tiap kolom:",
   ]));
 
-  const orderList = document.createElement("div");
-  orderList.className = "tv-guide-block";
-  orderList.appendChild(createTvStaticIpGuideRoomReferenceList());
-  body.appendChild(orderList);
-
-  body.appendChild(block("4. Urutan pengisian yang benar", [
-    "Layar 1 — <strong>Alamat IP</strong>: pakai nilai dari tabel ruangan di atas, jangan dikira-kira.",
-    "Layar 2 — <strong>Gerbang</strong>: 192.168.1.1",
-    "Layar 3 — <strong>Panjang awalan jaringan</strong>: 24",
-    "Layar 4 — <strong>DNS 1</strong>: 8.8.8.8",
-    "Layar 5 — <strong>DNS 2</strong>: 192.168.1.1",
-    "Menghapus isi kolom: kursor harus di akhir isian, baru hapus satu per satu. Pastikan kolom benar-benar kosong sebelum mengetik angka baru — kalau tidak, nilai baru akan menempel di nilai lama dan TV menolak menyimpan.",
-  ]));
-
-  body.appendChild(block("5. Setelah kolom terakhir — wajib diperiksa", [
-    "1) TV akan menyambung ulang dan memakai alamat baru. Tunggu sampai layar jaringan tenang.",
-    "2) Bukti pertama: di halaman yang sama, baris <strong>Setelan IP</strong> harus sudah tertulis <strong>Statik</strong> (bukan DHCP).",
-    "3) Bukti kedua: dari komputer, buka terminal dan jalankan <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>. Kalau menjawab <code>connected to ...</code>, TV sudah terpakai di alamat yang benar.",
-    "4) Bukti ketiga: dari komputer jalankan <code>arp -a</code>. Baris alamat TV harus menunjuk ke MAC yang berawalan <code>74-81-9a</code> atau <code>9c-53-85</code>. Kalau MAC-nya bukan itu, alamat itu sedang dipakai perangkat lain.",
-    "<strong>Jangan lanjut ke TV berikutnya sebelum tiga bukti ini lolos.</strong>",
-  ]));
-
-  body.appendChild(block("6. Kalau gagal — gejala dan tindakan", [
-    "<strong>Muncul pesan \"Setelan IP tidak valid\"</strong>: kabel belum punya sambungan (lihat langkah 1), atau ada salah ketik di Alamat IP / Gerbang / awalan. Periksa tiap angka.",
-    "<strong>TV hilang setelah disimpan</strong>: alamat itu sedang dipakai perangkat lain. Laporkan ke admin jaringan; jangan mengubah-ubah alamat sendiri tanpa dicatat, karena sistem akan menembak alamat yang salah.",
-    "<strong>Angka jadi menempel/aneh</strong> (contoh: 192.16192.168.1.104): kolom tidak kosong saat diketik. Ulangi layar itu dan pastikan kosong dulu.",
-    "<strong>TV melupakan jaringan Wi-Fi</strong>: tersorot ke \"Lupakan jaringan\". Sambungkan kembali ke SSID yang biasa dipakai, lalu ulangi dari langkah 2.",
-    "<strong>Tidak ada baris Ethernet sama sekali</strong>: kabel/port mati. Ini urusan kabel, bukan setelan.",
-  ]));
-
-  body.appendChild(block("7. Cara memeriksa dari komputer (untuk yang mengerjakan pakai laptop)", [
-    "1) Hubungkan TV: <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>",
-    "2) Cek statusnya: <code>C:\\platform-tools\\adb.exe devices -l</code> — harus tertulis <code>device</code>. Kalau <code>unauthorized</code>, lihat langkah 8.",
-    "3) Mengemudikan layar TV dari laptop: <code>adb shell input keyevent 19</code> (atas), <code>20</code> (bawah), <code>21</code> (kiri), <code>22</code> (kanan), <code>23</code> (OK), <code>4</code> (kembali).",
-    "4) Mengisi kolom: <code>adb shell input text \"192.168.1.1xx\"</code> lalu <code>adb shell input keyevent 66</code> (ENTER = tombol lanjut).",
-    "5) <strong>Jangan pakai tombol OK (keyevent 23) untuk maju saat keyboard layar terbuka</strong> — fokus sedang ada di keyboard, dan yang terketik justru huruf. Selalu pakai ENTER (66).",
-    "6) Menghapus isi kolom hanya bekerja saat keyboard layar terbuka: kursor ke akhir dulu, baru hapus. Kalau keyboard tertutup, tombol hapus bocor ke halaman dan halaman bisa keluar sendiri.",
-    "7) Keyboard layar tidak pernah muncul di pemeriksaan otomatis layar TV, jadi kalau ragu posisi fokus, ambil tangkapan layar: <code>adb exec-out screencap -p &gt; layar.png</code>",
-  ]));
-
-  body.appendChild(block("8. TV baru: mengaktifkan ADB sekali per TV", [
-    "Tanpa langkah ini TV tidak akan pernah bisa dikontrol sistem, seberapa pun benar alamat IP-nya.",
-    "1) Setelan → <strong>Tentang</strong> → tekan <strong>Build</strong> 7 kali sampai muncul \"Anda sekarang seorang pengembang\".",
-    "2) Setelan → <strong>Preferensi perangkat</strong> (atau Sistem) → <strong>Opsi pengembang</strong>.",
-    "3) Nyalakan <strong>Penelusuran USB / ADB debugging</strong>, dan <strong>Network debugging</strong> kalau ada.",
-    "4) Dari komputer: <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>",
-    "5) Lihat layar TV: akan muncul pertanyaan <strong>\"Izinkan penelusuran USB?\"</strong>. Pilih <strong>OK/Allow</strong>, dan centang \"selalu izinkan dari komputer ini\".",
-    "6) Cek dari komputer: <code>adb devices -l</code> harus berubah dari <code>unauthorized</code> menjadi <code>device</code>.",
-    "Kalau dialog tidak muncul: matikan lalu nyalakan lagi Penelusuran USB di TV, lalu coba sambung ulang dari komputer.",
-  ]));
-
-  body.appendChild(block("9. Batas pekerjaan teknisi — kapan harus berhenti dan menghubungi admin/owner", [
-    "Lampu LAN mati setelah ganti kabel dan ganti port.",
-    "Alamat IP yang ditentukan ternyata sudah dipakai perangkat lain (terlihat dari MAC di <code>arp -a</code> yang bukan 74-81-9a / 9c-53-85).",
-    "TV perlu direset pabrik, atau ada permintaan mengubah setelan router/pool DHCP.",
-    "TV menyala normal tapi tetap tidak muncul di jaringan setelah semua langkah di atas dikerjakan.",
-    "<strong>Jangan mengubah pengaturan ruangan atau alamat TV di aplikasi tanpa persetujuan owner</strong>, karena aplikasi dan sistem kontrol memakai alamat yang sama.",
-  ]));
+  tvGuideBlocks().forEach((item) => {
+    if (item.type === "table") {
+      body.appendChild(createTvGuideBlockWithTableElement());
+    } else {
+      body.appendChild(createTvGuideBlockElement(item.title, item.lines));
+    }
+  });
 
   wrap.appendChild(body);
   return wrap;
+}
+
+function buildTvGuidePrintHtml() {
+  // Cetak memakai data yang SAMA dengan yang tampil di layar (tvGuideBlocks()),
+  // supaya modul cetak tidak pernah berbeda dari panduan di aplikasi.
+  const sectionTitle = (text) => `<h2>${text}</h2>`;
+
+  const parts = [];
+  parts.push("<h1>Panduan Pemasangan Alamat IP Tetap pada TV Karaoke</h1>");
+  parts.push('<p class="meta">Untuk teknisi venue. Cetak lembar ini dan dibawa ke ruangan.<br>'
+    + "Nama teknisi: ______________________________&nbsp;&nbsp;&nbsp;Tanggal: ____ / ____ / ________</p>");
+  parts.push(`<p class="intro">${tvGuideIntroText()}</p>`);
+  parts.push("<h2>1. Sebelum mulai &mdash; pastikan ini dulu</h2><p>Kerjakan persis urutan di bawah ini.</p>");
+  parts.push("<h2>2. Cara masuk ke layar Setelan IP (pakai remote di ruangan)</h2>"
+    + "<ol>"
+    + "<li>Tekan tombol <b>Setelan</b> di remote.</li>"
+    + "<li>Masuk ke <b>Jaringan &amp; Internet</b>.</li>"
+    + "<li>Pilih baris <b>Ethernet</b>. Baris ini hanya muncul kalau kabel TV punya sambungan.</li>"
+    + "<li>Di halaman detail Ethernet, cari baris <b>Setelan IP</b> (sekarang isinya DHCP).</li>"
+    + "</ol>"
+    + '<p class="warn"><b>AWAS:</b> di daftar Wi-Fi, baris &ldquo;Lupakan jaringan&rdquo; letaknya TEPAT DI BAWAH baris '
+    + "&ldquo;Setelan IP&rdquo;. Satu tekan kelebihan akan membuat TV melupakan jaringan. Kalau salah tekan dan muncul "
+    + "pertanyaan, pilih <b>Batal</b>, jangan OK.</p>");
+  parts.push("<h2>3. Pilih Statik dan isi nilainya</h2>"
+    + "<p>Di halaman <b>Setelan IP</b>, pilih <b>Statik</b>, lalu tekan OK. Setelah itu TV menampilkan "
+    + "<b>satu kolom per layar</b>. Isi satu per satu, tekan lanjut/OK setelah tiap kolom.</p>");
+
+  // Tabel A: nilai umum + Tabel B: alamat per ruangan (dibangun dari data ruangan yang sama)
+  const baseValues = [
+    ["Kolom di layar TV", "Nilai"],
+    ["Alamat IP", "lihat tabel alamat per ruangan di bawah"],
+    ["Gerbang", "192.168.1.1"],
+    ["Panjang awalan jaringan", "24"],
+    ["DNS 1", "8.8.8.8"],
+    ["DNS 2", "192.168.1.1"],
+  ];
+  parts.push("<h2>A. Tabel nilai yang diisi di TV</h2>");
+  parts.push("<table><thead><tr>" + baseValues[0].map((h) => `<th>${h}</th>`).join("") + "</tr></thead><tbody>"
+    + baseValues.slice(1).map((row) => "<tr>" + row.map((c) => `<td>${c}</td>`).join("") + "</tr>").join("")
+    + "</tbody></table>");
+
+  const activeRoomIds = ["ROOM-001", "ROOM-002", "ROOM-003", "ROOM-004", "ROOM-005", "ROOM-006", "ROOM-007", "ROOM-008", "ROOM-009"];
+  const sourceList = tvRoomOverviewList.length > 0
+    ? tvRoomOverviewList
+    : (Array.isArray(rooms) ? rooms.filter((r) => r.room_id !== "FNB-GENERAL") : []).map((r) => ({
+      room_id: r.room_id,
+      room_name: r.room_name || r.room_id,
+      tv_ip: "",
+      tv_mac: "",
+      has_device: false,
+    }));
+  const roomRows = sourceList
+    .filter((r) => activeRoomIds.includes(r.room_id))
+    .sort((a, b) => a.room_id.localeCompare(b.room_id));
+
+  parts.push("<h2>B. Tabel alamat per ruangan (diisi di kolom &ldquo;Alamat IP&rdquo;)</h2>");
+  parts.push("<table><thead><tr><th>Ruangan</th><th>Alamat IP di TV</th><th>MAC kabel (untuk admin/jaringan)</th><th>Status alamat</th></tr></thead><tbody>"
+    + roomRows.map((r) => {
+      const warn = tvGuideAddressWarning(r);
+      const statusCell = warn.level === "conflict"
+        ? `<b>BENTROK</b> &mdash; ${escapeHtml(warn.text)}`
+        : escapeHtml(warn.badge);
+      return "<tr>"
+        + `<td>${escapeHtml(r.room_name || r.room_id)} (${escapeHtml(r.room_id)})</td>`
+        + `<td>${r.tv_ip ? escapeHtml(r.tv_ip) : "belum diatur"}</td>`
+        + `<td>${r.tv_mac ? escapeHtml(r.tv_mac) : "belum diatur"}</td>`
+        + `<td class="${warn.level === "conflict" ? "conflict" : ""}">${statusCell}</td>`
+        + "</tr>";
+    }).join("")
+    + "</tbody></table>");
+  parts.push('<p class="warn"><b>ATURAN AMAN:</b> hanya ketik alamat yang berstatus <b>sesuai</b>, atau alamat yang diberikan '
+    + "admin/owner kepada Anda. Alamat berstatus <b>BENTROK</b> sudah dipegang perangkat lain &mdash; kalau tetap diketik, "
+    + "dua perangkat berebut satu alamat dan TV itu akan terlihat hilang.</p>");
+
+  // Sisa blok dari sumber data yang sama dengan layar (mulai bagian 4)
+  tvGuideBlocks().forEach((item) => {
+    if (item.type === "table") return;
+    parts.push(sectionTitle(item.title));
+    parts.push("<div class=\"guide-block\">" + item.lines.map((line) => `<p>${line}</p>`).join("") + "</div>");
+  });
+
+  parts.push('<p class="meta">Dikeluarkan dari aplikasi POS: sub-tab Pengaturan &rarr; Kontrol TV &rarr; Panduan Set IP Statis TV.'
+    + " Bawa lembar ini ke ruangan. Jangan menebak alamat IP.</p>");
+  parts.push('<p class="meta">Nama teknisi: ______________________________&nbsp;&nbsp;&nbsp;Tanda tangan: ______________________________</p>'
+    + '<p class="meta">Catatan pekerjaan: ..............................................................................................................</p>');
+
+  const style = `
+    @page { size: A4 portrait; margin: 14mm 15mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; font-size: 11.5pt; line-height: 1.55; }
+    h1 { font-size: 17pt; margin: 0 0 6px 0; border-bottom: 2.5px solid #111; padding-bottom: 6px; }
+    h2 { font-size: 12.5pt; margin: 16px 0 6px 0; padding: 4px 8px; background: #eee; border-left: 4px solid #333;
+         page-break-after: avoid; break-after: avoid; }
+    p { margin: 0 0 5px 0; }
+    .meta { font-size: 10pt; color: #333; margin: 6px 0; }
+    .intro { margin: 8px 0 4px 0; }
+    .warn { border: 1.5px solid #111; background: #f6f6f6; padding: 7px 9px; margin: 8px 0; }
+    ol { margin: 4px 0 8px 18px; padding: 0; }
+    li { margin-bottom: 3px; }
+    code { background: #eee; padding: 0 3px; font-family: Consolas, monospace; font-size: 10.5pt; }
+    .guide-block p { margin: 0 0 4px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 6px 0 4px 0; font-size: 10.5pt; }
+    th, td { border: 1px solid #666; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #e4e4e4; }
+    td.conflict { font-weight: bold; }
+    .guide-block, table, tr { page-break-inside: avoid; break-inside: avoid; }
+  `;
+
+  return "<!DOCTYPE html><html lang=\"id\"><head><meta charset=\"utf-8\">"
+    + "<title>Panduan Pemasangan Alamat IP Tetap TV Karaoke</title>"
+    + `<style>${style}</style></head><body>`
+    + parts.join("")
+    + "</body></html>";
+}
+
+function tvGuidePrintViaIframe(html) {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  document.body.appendChild(frame);
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  frame.contentWindow.focus();
+  frame.contentWindow.print();
+  setTimeout(() => { try { frame.remove(); } catch (_e) {} }, 60000);
+}
+
+function tvGuidePrintViaDownload(html) {
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "panduan-set-ip-statis-tv.html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  showInlineNotice("Jendela cetak diblokir. Berkas panduan diunduh — buka berkas itu lalu tekan Ctrl+P untuk mencetak.", "warning");
+}
+
+function printTvControlGuide() {
+  const html = buildTvGuidePrintHtml();
+  let win = null;
+  try {
+    win = window.open("", "_blank");
+  } catch (_e) {
+    win = null;
+  }
+
+  if (win && win.document) {
+    try {
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => {
+        try { win.print(); } catch (_e) {}
+      }, 350);
+      return true;
+    } catch (_e) {
+      try { win.close(); } catch (_e2) {}
+    }
+  }
+
+  try {
+    tvGuidePrintViaIframe(html);
+    return true;
+  } catch (_e) {
+    tvGuidePrintViaDownload(html);
+    return false;
+  }
 }
 
 function createTvControlSectionElement() {
@@ -35830,6 +36049,11 @@ async function handleRoomAction(event) {
       loadDatabaseBackupStatus();
     }
     renderRooms();
+    return;
+  }
+
+  if (action === "print-tv-guide") {
+    printTvControlGuide();
     return;
   }
 

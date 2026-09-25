@@ -13915,3 +13915,7 @@ select.action-confirmation-input option {
     padding: 14px;
   }
 }
+.tv-guide-print-btn {
+  display: block;
+  margin-top: 10px;
+}
