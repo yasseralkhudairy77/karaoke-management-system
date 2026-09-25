@@ -20,9 +20,14 @@ ngrok.exe
 ngrok.yml
 ngrok-*.tgz
 
-# Hasil build APK overlay (hanya kode sumber yang dicerminkan)
-tv-notify-overlay/build/
-tv-notify-overlay/.gradle/
-tv-notify-overlay/.idea/
-*.apk
+# Hasil build APK overlay (semerintah), dan bahan bangunan yang tidak perlu ikut repo
+build/
+dist/
+assets/build/
+assets/dist/
 *.ap_
+# APK overlay yang DIPAKAI RUNTIME adalah berkas jadi, bukan hasil build: inilah yang dipasang
+# tombol "Pasang Peringatan" di POS. Karena itu di-commit dengan sengaja (dikecualikan di bawah,
+# setelah pola di atas supaya urutannya benar).
+*.apk
+!assets/app-debug.apk

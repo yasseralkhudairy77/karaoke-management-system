@@ -1,4 +1,5 @@
 const { execFile } = require('node:child_process');
+const fs = require('node:fs');
 const { promisify } = require('node:util');
 const wol = require('wake_on_lan');
 require('dotenv').config();
@@ -31,6 +32,13 @@ function adbTimeout(room) {
 const overlayPackageDefault = process.env.TV_NOTIFY_PACKAGE || 'com.happysong.tvnotify';
 const overlayServiceName = 'OverlayService';
 
+// Berkas APK peringatan (bawaan sistem POS). PENTING: path ini DIPATOK di bridge dan TIDAK
+// pernah diterima dari permintaan HTTP - kalau path bisa dikirim dari browser, siapa pun yang
+// dapat membuka halaman POS dapat memerintahkan bridge memasang APK apa saja ke TV.
+const overlayApkPath = String(process.env.TV_OVERLAY_APK || '').trim();
+// `adb install` ke TV 5-20 detik, jadi batas waktunya terpisah dari perintah ADB biasa.
+const overlayInstallTimeoutMs = Math.max(15000, Number(process.env.TV_OVERLAY_INSTALL_TIMEOUT_MS) || 60000);
+
 const runtimeByRoomId = new Map();
 
 function makeRuntimeState() {
@@ -48,6 +56,28 @@ function getRuntimeState(roomId) {
     runtimeByRoomId.set(key, makeRuntimeState());
   }
   return runtimeByRoomId.get(key);
+}
+
+/**
+ * Nilai terakhir yang sudah diketahui untuk keadaan APK peringatan per ruangan.
+ * Dipakai oleh /api/rooms (daftar semua ruangan) supaya endpoint itu TIDAK perlu memanggil
+ * ADB per ruangan setiap kali halaman kasir dibuka: dengan 20 ruangan, cara itu membuat
+ * setiap buka halaman terasa menggantung. Pemeriksaan selalu diperbarui lewat
+ * readOverlayState() pada /status ruangan (yang memang dipanggil tombol "Cek").
+ * null = belum pernah diperiksa; true/false = hasil pemeriksaan terakhir.
+ */
+const overlayStateByRoomId = new Map();
+
+function rememberOverlayState(roomId, state) {
+  overlayStateByRoomId.set(String(roomId).toLowerCase(), {
+    installed: state.overlayInstalled,
+    allowed: state.overlayAllowed,
+    checkedAt: new Date().toISOString(),
+  });
+}
+
+function getRememberedOverlayState(roomId) {
+  return overlayStateByRoomId.get(String(roomId).toLowerCase()) || null;
 }
 
 function setConnected(roomId, connected, error = null, serial = null) {
@@ -188,9 +218,10 @@ async function ensureConnected(roomSelector) {
   return serial;
 }
 
-async function runShell(room, command, label) {
+async function runShell(room, command, label, timeoutMs) {
   const shellArgs = Array.isArray(command) ? command : [String(command)];
-  const output = await runAdb(['-s', serialFromRoom(room), 'shell', ...shellArgs], label, adbTimeout(room));
+  const batas = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : adbTimeout(room);
+  const output = await runAdb(['-s', serialFromRoom(room), 'shell', ...shellArgs], label, batas);
   return output;
 }
 
@@ -544,12 +575,160 @@ async function getTvPowerState(roomSelector) {
   return { reachable: true, wakefulness: await readWakefulness(room), error: null };
 }
 
+/** Membaca status layar dengan batas waktu pendek (dipakai pemeriksaan status overlay). */
+async function readWakefulnessQuick(room) {
+  try {
+    const output = await runShell(room, ['dumpsys', 'power'], `Membaca status daya ${room.name}`, 5000);
+    const match = /mWakefulness=(\w+)/.exec(output || '');
+    return match ? match[1] : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Membaca keadaan APK peringatan di sebuah TV: sudah terpasang? izin overlay sudah diberikan?
+ * Dua perintah baca yang murah (pm list packages + appops get) supaya UI bisa menampilkan
+ * keadaan yang sebenarnya, bukan menebak dari "perintah berhasil dikirim".
+ */
+async function readOverlayState(room, packageNameInput) {
+  const packageName = sanitizeOverlayText(packageNameInput || overlayPackageDefault, overlayPackageDefault);
+  const connected = await verifyConnected(room);
+  if (!connected) {
+    return {
+      overlayInstalled: null,
+      overlayAllowed: null,
+      overlayCheckError: `ADB tidak tersambung ke ${room.name}; keadaan APK peringatan belum bisa dipastikan.`,
+    };
+  }
+
+  let installed = null;
+  let allowed = null;
+  let err = null;
+
+  try {
+    const out = await runShell(room, ['pm', 'list', 'packages', packageName], `Memeriksa APK peringatan di ${room.name}`, 6000);
+    installed = new RegExp(`package:\\s*${packageName.replace(/\./g, '\\.')}\\b`).test(out || '');
+  } catch (error) {
+    err = `Gagal membaca daftar paket ${room.name}: ${error.message}`;
+  }
+
+  if (installed) {
+    try {
+      const ops = await runShell(room, ['appops', 'get', packageName, 'SYSTEM_ALERT_WINDOW'], `Memeriksa izin overlay di ${room.name}`, 6000);
+      allowed = /SYSTEM_ALERT_WINDOW:\s*allow/i.test(ops || '');
+    } catch (error) {
+      err = err || `Gagal membaca izin overlay ${room.name}: ${error.message}`;
+    }
+  }
+
+  const state = {
+    overlayInstalled: installed,
+    overlayAllowed: installed ? allowed : false,
+    overlayCheckError: err,
+  };
+  rememberOverlayState(room.id, state);
+  return state;
+}
+
+/**
+ * Keadaan APK peringatan untuk daftar ruangan: pakai hasil pemeriksaan terakhir, dan
+ * lakukan satu pemeriksaan nyata (dengan batas waktu pendek) hanya bila ruangan itu
+ * belum pernah diperiksa sejak bridge hidup. null berarti belum diketahui - UI tidak boleh
+ * menampilkan tombol yang pasti gagal, jadi null diperlakukan sebagai "pasang".
+ */
+async function getOverlayStateForList(room) {
+  const remembered = getRememberedOverlayState(room.id);
+  if (remembered) {
+    return {
+      overlayInstalled: remembered.installed,
+      overlayAllowed: remembered.allowed,
+      overlayCheckError: null,
+    };
+  }
+
+  if (!getRuntimeState(room.id).connected) {
+    return { overlayInstalled: null, overlayAllowed: null, overlayCheckError: null };
+  }
+
+  try {
+    return await readOverlayState(room, room.notifyPackage || overlayPackageDefault);
+  } catch (error) {
+    return { overlayInstalled: null, overlayAllowed: null, overlayCheckError: error.message };
+  }
+}
+
+/**
+ * Memasang APK peringatan + memberi izin "tampil di atas aplikasi lain" pada satu TV.
+ *
+ * Alasan bentuknya begini:
+ *  - APK diambil dari path tetap di .env bridge (TV_OVERLAY_APK), bukan dari permintaan HTTP.
+ *  - TV dibangunkan dulu: memasang ke TV yang tidur akan gagal, dan jawaban "berhasil" untuk
+ *    TV yang tidak bisa dihubungi adalah kebohongan yang mahal.
+ *  - Batas waktu install 60 detik (`adb install` memang lambat), TIDAK memakai batas ADB bawaan 15 detik.
+ */
+async function installOverlay(roomSelector) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
+  assertRoomHasIp(room);
+
+  const packageName = sanitizeOverlayText(room.notifyPackage || overlayPackageDefault, overlayPackageDefault);
+
+  if (!overlayApkPath) {
+    throw new Error('TV_OVERLAY_APK belum diisi di .env bridge; berkas APK peringatan tidak diketahui.');
+  }
+  if (!fs.existsSync(overlayApkPath)) {
+    throw new Error(`Berkas APK peringatan tidak ditemukan di bridge: ${overlayApkPath}`);
+  }
+
+  const serial = await ensureAwakeAndConnected(room);
+
+  const installOut = await runAdb(
+    ['-s', serial, 'install', '-r', overlayApkPath],
+    `Memasang APK peringatan di ${room.name}`,
+    overlayInstallTimeoutMs,
+  );
+
+  if (!/Success/i.test(installOut || '')) {
+    throw new Error(`Pemasangan APK peringatan di ${room.name} gagal: ${installOut || 'tanpa keluaran'}`);
+  }
+
+  const grantOut = await runShell(
+    room,
+    ['appops', 'set', packageName, 'SYSTEM_ALERT_WINDOW', 'allow'],
+    `Memberi izin tampil di atas aplikasi lain di ${room.name}`,
+    8000,
+  );
+
+  const state = await readOverlayState(room, packageName);
+
+  return {
+    ok: true,
+    roomId: room.id,
+    roomName: room.name,
+    serial,
+    packageName,
+    apkPath: overlayApkPath,
+    installOutput: String(installOut || '').trim(),
+    grantOutput: String(grantOut || '').trim(),
+    overlayInstalled: state.overlayInstalled,
+    overlayAllowed: state.overlayAllowed,
+    overlayCheckError: state.overlayCheckError,
+  };
+}
+
 async function getStatus(roomSelector) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
   assertRoomHasIp(room);
 
   const connected = await verifyConnected(room);
   const runtime = getRuntimeState(room.id);
+
+  // Keadaan APK peringatan ikut dilaporkan supaya UI bisa menyembunyikan tombol pasang
+  // untuk ruangan yang sudah lengkap. Hanya diperiksa bila ADB tersambung.
+  const overlay = connected
+    ? await readOverlayState(room, room.notifyPackage || overlayPackageDefault)
+    : { overlayInstalled: null, overlayAllowed: null, overlayCheckError: 'ADB tidak tersambung.' };
 
   return {
     ok: true,
@@ -560,6 +739,11 @@ async function getStatus(roomSelector) {
     mac: room.mac,
     serial: serialFromRoom(room),
     enabled: room.enabled,
+    overlayPackage: overlayPackageDefault,
+    overlayInstalled: overlay.overlayInstalled,
+    overlayAllowed: overlay.overlayAllowed,
+    overlayCheckError: overlay.overlayCheckError,
+    wakefulness: await readWakefulnessQuick(room),
     lastError: runtime.lastError,
   };
 }
@@ -586,6 +770,7 @@ function getRuntime() {
     rooms: listRooms().map((room) => ({
       ...room,
       serial: room.ip ? serialFromRoom(room) : null,
+      overlayState: getRememberedOverlayState(room.id),
       runtime: {
         ...getRuntimeState(room.id),
       },
@@ -644,7 +829,10 @@ module.exports = {
   ensureAwakeAndConnected,
   ensureConnected,
   getArpTable,
+  getOverlayStateForList,
   getTvPowerState,
+  installOverlay,
+  readOverlayState,
   getDefaultRoomId,
   getRoomRuntime,
   getRuntime,

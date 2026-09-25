@@ -49,6 +49,7 @@ $Daftar = @(
   'tv-notify-overlay/gradle.properties'
   'tv-notify-overlay/settings.gradle'
   'tv-notify-overlay/tv.sh'
+  'assets/app-debug.apk'
 )
 
 # Pola yang HARAM ikut: pengaman kalau daftar di atas keliru diedit.

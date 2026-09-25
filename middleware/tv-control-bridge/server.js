@@ -14,6 +14,9 @@ const {
   sendOverlay,
   sleepRoom,
   wakeRoom,
+  getOverlayStateForList,
+  installOverlay,
+  readOverlayState,
   resolveRoomId,
   resolveTestDeviceId,
 } = require("./src/adbService");
@@ -26,7 +29,7 @@ const {
   restoreSchedules,
   startCountdown,
 } = require("./src/countdownService");
-const { listEvents } = require("./src/tvEventLog");
+const { listEvents, recordEvent } = require("./src/tvEventLog");
 
 const PORT = Number(process.env.PORT) || 3030;
 const apiToken = String(process.env.API_TOKEN || "").trim();
@@ -465,8 +468,22 @@ app.get("/api/runtime", (_req, res) => {
   res.json(successResult({ data: getRuntime() }));
 });
 
-app.get("/api/rooms", (_req, res) => {
-  res.json(successResult({ rooms: listRoomStatuses() }));
+app.get("/api/rooms", async (_req, res) => {
+  try {
+    const payload = getRuntime();
+    // Keadaan APK peringatan: dari hasil pemeriksaan terakhir, atau satu pemeriksaan nyata
+    // bila ruangan itu belum pernah diperiksa sejak bridge hidup (lihat getOverlayStateForList).
+    const rooms = [];
+    for (const room of payload.rooms) {
+      const overlay = room.ip && room.enabled
+        ? await getOverlayStateForList(room)
+        : { overlayInstalled: null, overlayAllowed: null, overlayCheckError: null };
+      rooms.push({ ...room, ...overlay });
+    }
+    res.json(successResult({ ...payload, rooms }));
+  } catch (error) {
+    res.status(500).json({ ok: false, success: false, error: error.message, message: error.message });
+  }
 });
 
 app.get("/api/test-devices", (_req, res) => {
@@ -553,6 +570,40 @@ app.post("/api/rooms/:roomId/app", async (req, res) => {
 
     res.json(await launchApp(req.body ? req.body.packageName : undefined, roomId));
   } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post("/api/rooms/:roomId/overlay/install", async (req, res) => {
+  // Memasang APK peringatan (bawaan sistem POS) ke satu TV, lalu memberi izin overlay.
+  // Path APK TIDAK diterima dari permintaan: hanya dari .env bridge (TV_OVERLAY_APK).
+  try {
+    const roomId = resolveRouteRoom(req, res);
+    if (!roomId || sendDisabledRoom(res, roomId)) {
+      return;
+    }
+
+    const room = getRoomRuntime(roomId);
+    const result = await installOverlay(roomId);
+
+    recordEvent({
+      action: "install_overlay",
+      roomId: result.roomId,
+      roomName: result.roomName,
+      ok: result.overlayInstalled === true && result.overlayAllowed === true,
+      detail: `paket ${result.packageName}; terpasang=${result.overlayInstalled}; izin=${result.overlayAllowed}`,
+    });
+
+    res.json(successResult({ result }));
+  } catch (error) {
+    const roomId = readRoomSelector(req);
+    recordEvent({
+      action: "install_overlay",
+      roomId: roomId || null,
+      roomName: null,
+      ok: false,
+      detail: error.message,
+    });
     sendError(res, error, 400);
   }
 });
