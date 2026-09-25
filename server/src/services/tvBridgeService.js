@@ -457,6 +457,76 @@ async function updateBridgeRoomConfig(roomId, roomConfig) {
   });
 }
 
+/**
+ * Keadaan APK peringatan untuk SEMUA ruangan sekaligus, dari bridge (GET /api/rooms).
+ * Sekali ambil untuk seluruh halaman: memanggil per ruangan berarti 20 panggilan bridge
+ * setiap kali halaman Kontrol TV dibuka.
+ * Balasan: { ok, rooms: [{ roomId, known, connected, installed, allowed, packageName }] }
+ * `known:false` berarti belum pernah diperiksa - UI boleh menawarkan tombol pasang.
+ */
+async function getOverlayStates() {
+  const res = await getBridgeRooms();
+  if (!res.ok || !res.data || !Array.isArray(res.data.rooms)) {
+    return { ok: false, rooms: [], error: res.error || 'bridge tidak menjawab' };
+  }
+
+  const rooms = res.data.rooms.map((room) => {
+    const connected = Boolean(room.runtime && typeof room.runtime.connected === 'boolean'
+      ? room.runtime.connected
+      : room.connected);
+
+    return {
+      roomId: room.id,
+      roomName: room.name,
+      connected,
+      known: typeof room.overlayInstalled === 'boolean',
+      installed: typeof room.overlayInstalled === 'boolean' ? room.overlayInstalled : null,
+      allowed: typeof room.overlayAllowed === 'boolean' ? room.overlayAllowed : null,
+      packageName: room.overlayPackage || null,
+    };
+  });
+
+  return { ok: true, rooms };
+}
+
+/**
+ * Memasang APK peringatan (bawaan sistem POS) ke TV sebuah ruangan.
+ *
+ * Batas waktunya SENGAJA lebih panjang dari panggilan bridge lain: `adb install` ke TV
+ * memakan 5-20 detik. Batas bawaan (8 detik) akan membatalkan pemanggilan sementara bridge
+ * masih memasang, operator melihat "gagal", menekan lagi - dan TV menerima perintah dua kali.
+ * Path APK tidak pernah dikirim dari sini: bridge memakai TV_OVERLAY_APK di .env-nya sendiri.
+ */
+async function installOverlay(roomId, options = {}) {
+  const config = getConfig();
+  const result = await bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/overlay/install`, {
+    method: 'POST',
+    timeoutMs: Number(process.env.TV_BRIDGE_INSTALL_TIMEOUT_MS) || 90000,
+  });
+
+  const payload = result.ok && result.data && result.data.result ? result.data.result : null;
+
+  await recordTvLog({
+    roomId,
+    action: 'install_overlay',
+    triggerSource: options.triggerSource || 'kontrol_tv_ui',
+    cashierName: options.cashierName || 'Sistem',
+    result: result.ok ? (payload && payload.overlayInstalled ? 'installed' : 'sent') : 'failed',
+    success: result.ok,
+    blockReason: result.ok ? null : 'BRIDGE_ERROR',
+    message: result.ok
+      ? `APK peringatan ruangan ${roomId}: terpasang=${payload ? payload.overlayInstalled : '?'}, izin=${payload ? payload.overlayAllowed : '?'}`
+      : `Pemasangan APK peringatan ruangan ${roomId} gagal: ${result.error}`,
+    rawResponse: JSON.stringify(payload || result.error || ''),
+  });
+
+  if (!result.ok) {
+    log(`PASANG PERINGATAN ${roomId} GAGAL: ${result.error}`);
+  }
+
+  return result;
+}
+
 async function reloadBridgeConfig() {
   const config = getConfig();
   return bridgeFetch('/api/config/reload', {
@@ -527,7 +597,9 @@ module.exports = {
   getBridgeRooms,
   getBridgeRoomStatus,
   getConfig,
+  getOverlayStates,
   getTvSweeperStatus,
+  installOverlay,
   notifyRoom,
   recordTvLog,
   reloadBridgeConfig,

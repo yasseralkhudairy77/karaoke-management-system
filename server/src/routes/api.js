@@ -369,6 +369,8 @@ async function handlePostAction(action, req, res, payload) {
       return tvController.checkTvDevice(req, res, payload);
     case 'testTvDevice':
       return tvController.testTvDevice(req, res, payload);
+    case 'installTvOverlay':
+      return tvController.installTvOverlay(req, res, payload);
     case 'wakeTvDevice':
       return tvController.wakeTvDevice(req, res, payload);
     case 'sleepTvDevice':

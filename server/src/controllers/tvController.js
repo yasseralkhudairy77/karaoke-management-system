@@ -400,6 +400,20 @@ async function getTvRoomOverview(req, res) {
 
     const localArpTable = await getLocalArpTable().catch(() => new Map());
 
+    // Keadaan APK peringatan per ruangan, diambil SEKALI dari bridge (bukan per ruangan),
+    // supaya membuka halaman Kontrol TV tidak memanggil ADB berkali-kali.
+    let overlayByRoom = new Map();
+    if (bridgeReachable) {
+      try {
+        const overlayRoomsRes = await tvBridgeService.getOverlayStates();
+        if (overlayRoomsRes.ok && Array.isArray(overlayRoomsRes.rooms)) {
+          overlayRoomsRes.rooms.forEach((entry) => overlayByRoom.set(entry.roomId, entry));
+        }
+      } catch (_e) {
+        overlayByRoom = new Map();
+      }
+    }
+
     const result = [];
     for (const r of roomsRes.rows) {
       const dev = devMap.get(r.room_id) || null;
@@ -508,6 +522,11 @@ async function getTvRoomOverview(req, res) {
         bridge_url: bridgeConfig.url,
         bridge_reachable: bridgeReachable,
         device_connected: deviceConnected,
+        // Keadaan APK peringatan: dipakai UI untuk memutuskan tombol "Pasang Peringatan".
+        overlay_installed: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).installed : null,
+        overlay_allowed: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).allowed : null,
+        overlay_package: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).packageName : null,
+        overlay_known: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).known : false,
         wakefulness,
         mac_matches_arp: macMatchesArp,
         arp_mac: arpMac,
@@ -786,6 +805,44 @@ async function testTvDevice(req, res, payload) {
   }
 }
 
+/**
+ * Memasang APK peringatan (bawaan sistem POS) ke TV satu ruangan lewat bridge.
+ * PIN/role sama dengan tombol Kontrol TV lain (manager). Pesannya harus jujur:
+ * kalau bridge tidak bisa dihubungi atau TV tidak terjangkau, katakan apa adanya.
+ */
+async function installTvOverlay(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const cmdRes = await tvBridgeService.installOverlay(roomId, {
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    const data = cmdRes.ok && cmdRes.data && cmdRes.data.result ? cmdRes.data.result : null;
+    const lengkap = Boolean(data && data.overlayInstalled && data.overlayAllowed);
+
+    let pesan;
+    if (!cmdRes.ok) {
+      pesan = `Pemasangan APK peringatan ruangan ${roomId} gagal: ${cmdRes.error}`;
+    } else if (lengkap) {
+      pesan = `APK peringatan ruangan ${roomId} sudah terpasang dan izin tampil di atas aplikasi lain sudah diberikan.`;
+    } else {
+      pesan = `APK peringatan ruangan ${roomId} terkirim, tetapi keadaan akhir belum lengkap (terpasang=${data ? data.overlayInstalled : '?'}, izin=${data ? data.overlayAllowed : '?'}). Periksa TV-nya.`;
+    }
+
+    return successResponse(res, {
+      message: pesan,
+      success: Boolean(cmdRes.ok && lengkap),
+      data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'INSTALL_OVERLAY_ERROR');
+  }
+}
+
 async function wakeTvDevice(req, res, payload) {
   try {
     const operator = await verifyAdminPinPayload(payload);
@@ -870,6 +927,7 @@ async function reloadTvBridgeConfig(req, res, payload) {
 
 module.exports = {
   checkTvDevice,
+  installTvOverlay,
   getCustomerDisplayState,
   getTvControlLogs,
   getTvDevices,

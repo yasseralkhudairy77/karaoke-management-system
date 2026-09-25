@@ -26257,6 +26257,21 @@ function createTvControlSectionElement() {
         editBtn.textContent = "Edit";
 
         btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+
+        // Tombol "Pasang Peringatan" (APK overlay bawaan sistem POS).
+        // Hanya ditawarkan bila perangkatnya benar-benar terhubung DAN overlay-nya belum lengkap.
+        // Tombol yang pasti gagal lebih buruk daripada tidak ada tombol.
+        const overlayBelumLengkap = r.overlay_installed !== true || r.overlay_allowed !== true;
+        if (r.device_connected === true && overlayBelumLengkap) {
+          const overlayBtn = document.createElement("button");
+          overlayBtn.className = "master-button primary";
+          overlayBtn.type = "button";
+          overlayBtn.dataset.action = "install-tv-overlay";
+          overlayBtn.dataset.roomId = r.room_id;
+          overlayBtn.dataset.roomName = r.room_name || r.room_id;
+          overlayBtn.textContent = "Pasang Peringatan";
+          btnGroup.appendChild(overlayBtn);
+        }
       }
 
       tdActions.appendChild(btnGroup);
@@ -36409,6 +36424,37 @@ async function handleRoomAction(event) {
           }
         } catch (err) {
           showFloatingToast(`Gagal cek TV ${targetRoomId}: ${err.message}`, "error");
+        }
+      }
+    });
+    return;
+  }
+
+  if (action === "install-tv-overlay") {
+    const targetRoomId = button.dataset.roomId;
+    const targetRoomName = button.dataset.roomName || targetRoomId;
+    openAdminPinModal({
+      title: "Otorisasi Pasang Peringatan",
+      message: `Masukkan PIN untuk memasang aplikasi peringatan di TV ${targetRoomName} (${targetRoomId}). Pemasangan berjalan beberapa detik; jangan tekan tombol dua kali.`,
+      requestedAction: "install_tv_overlay",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          showInlineNotice(`Memasang aplikasi peringatan di TV ${targetRoomName}... mohon tunggu.`);
+          const res = await postApiAction({
+            action: "installTvOverlay",
+            room_id: targetRoomId,
+            admin_pin: pin
+          });
+          if (res && (res.ok || res.success)) {
+            showFloatingToast(res.message || `Aplikasi peringatan ${targetRoomName} terpasang.`, "success");
+          } else {
+            showFloatingToast(`Pemasangan gagal: ${res?.message || "Kesalahan bridge"}`, "error");
+          }
+        } catch (err) {
+          showFloatingToast(`Pemasangan gagal: ${err.message}`, "error");
+        } finally {
+          await loadTvControlOverview({ force: true });
         }
       }
     });
