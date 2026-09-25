@@ -778,6 +778,35 @@ async function saveTvDeviceSettings(req, res, payload) {
       rawResponse: JSON.stringify(bridgeSyncResult || {})
     });
 
+    // Kalau bridge MENOLAK pembaruan config, data di database POS sudah tersimpan tetapi
+    // bridge (yang benar-benar mengendalikan TV) masih memakai setelan lama. Melaporkan
+    // "berhasil" di sini membuat operator mengira TV-nya sudah memakai alamat baru,
+    // sementara kartu ruangan tetap membaca alamat yang salah.
+    // Bentuk balasan sesungguhnya beda-beda: /tv-command membalas {success:false}, sedangkan
+    // /api/rooms/:roomId/config membalas {ok:false,...} - jadi keduanya harus diperiksa.
+    let bridgeSyncError = null;
+    if (controlType === 'middleware' && bridgeSyncResult) {
+      const syncOk = bridgeSyncResult.ok === true
+        && !(bridgeSyncResult.data && bridgeSyncResult.data.success === false);
+      if (!syncOk) {
+        bridgeSyncError = bridgeSyncResult.error
+          || (bridgeSyncResult.data && (bridgeSyncResult.data.error || bridgeSyncResult.data.message))
+          || `HTTP ${bridgeSyncResult.status || '?'}`;
+      }
+    }
+
+    if (bridgeSyncError) {
+      return successResponse(res, {
+        message: `Pengaturan tersimpan di data POS, TETAPI bridge TV belum menerimanya (${bridgeSyncError}). `
+          + 'Kartu ruangan masih memakai setelan lama sampai ini berhasil — tekan Simpan sekali lagi, '
+          + 'dan hubungi admin kalau tetap gagal.',
+        partial: true,
+        tv_device_id: tvDeviceId,
+        bridge_sync: bridgeSyncResult,
+        warnings,
+      });
+    }
+
     return successResponse(res, {
       message: warnings.length
         ? `Pengaturan TV disimpan DENGAN PERINGATAN: ${warnings.join(' ')}`

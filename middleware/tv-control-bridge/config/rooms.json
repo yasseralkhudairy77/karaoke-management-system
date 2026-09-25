@@ -8,7 +8,7 @@
                 "ROOM-001",
                 "VIP-1"
             ],
-            "ip": "192.168.1.15",
+            "ip": "192.168.1.101",
             "mac": "9c:53:85:00:b4:dc",
             "adbPort": 5555,
             "adbTimeoutMs": 15000,
@@ -43,7 +43,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "notes": "Pilot room at workplace"
+            "notes": ""
         },
         {
             "id": "room-03",
@@ -179,9 +179,8 @@
         },
         {
             "id": "room-09",
-            "name": "VIP-9",
+            "name": "VIP-9 (tidak dipakai)",
             "aliases": [
-                "ROOM-009",
                 "VIP-9"
             ],
             "ip": "",
@@ -195,7 +194,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": false,
-            "notes": ""
+            "notes": "Ruangan kosong: nomor POS ROOM-009 sebenarnya adalah ruangan EXECUTIVE, yang TV-nya terpasang pada entri room-13. Jangan pakai entri ini; alias ROOM-009 dipindahkan ke room-13 pada 2026-09-25."
         },
         {
             "id": "room-10",
@@ -263,7 +262,8 @@
             "aliases": [
                 "ROOM-013",
                 "EXECUTIVE",
-                "Executive Room"
+                "Executive Room",
+                "ROOM-009"
             ],
             "ip": "192.168.1.12",
             "mac": "74:81:9a:ff:64:3a",

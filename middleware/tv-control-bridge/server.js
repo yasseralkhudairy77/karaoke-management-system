@@ -508,6 +508,18 @@ app.get("/api/rooms/:roomId/status", async (req, res) => {
   }
 });
 
+/**
+ * Menyimpan alamat/MAC/setelan satu ruangan ke config bridge.
+ *
+ * SENGAJA TIDAK memakai penjaga `sendDisabledRoom` di sini. Penjaga itu milik
+ * rute PERINTAH (status/connect/tv-command/notify) - perintah ke ruangan yang
+ * dimatikan memang harus ditolak sebelum menyentuh TV. Rute ini menulis DATA
+ * ruangan, dan justru inilah satu-satunya cara operator memperbaiki ruangan
+ * yang alamatnya salah atau sedang dimatikan: kalau ikut digerbangi, form di
+ * layar kasir menjawab "ROOM ... is disabled" untuk selamanya dan tidak ada
+ * jalan keluar selain mengedit berkas config dengan tangan.
+ * Jangan tambahkan penjaga itu di sini.
+ */
 app.put("/api/rooms/:roomId/config", async (req, res) => {
   try {
     const roomId = resolveRouteRoom(req, res);

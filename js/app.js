@@ -36482,9 +36482,10 @@ async function handleRoomAction(event) {
 
       if (res && (res.ok || res.success)) {
         const adaPeringatan = Array.isArray(res.warnings) && res.warnings.length > 0;
+        const tersimpanSebagian = res.partial === true;
         showFloatingToast(
           res.message || "Pengaturan TV berhasil disimpan.",
-          adaPeringatan ? "warning" : "success"
+          (adaPeringatan || tersimpanSebagian) ? "warning" : "success"
         );
         tvDeviceModalState = null;
         await loadTvControlOverview({ force: true });
