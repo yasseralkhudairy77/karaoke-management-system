@@ -490,6 +490,47 @@ async function getOverlayStates() {
 }
 
 /**
+ * Mengirim PEMICU dialog izin ADB ke TV satu ruangan.
+ *
+ * Kenapa harus lewat server, bukan langsung dari browser: token bridge hanya boleh hidup
+ * di server/.env (repo POS ini publik), dan setiap percobaan harus terlihat di tv_control_logs.
+ *
+ * Kenapa tidak langsung `POST /api/rooms/:id/connect`: /connect melaporkan "unauthorized"
+ * hanya sebagai kegagalan, sehingga tidak bisa dibedakan dari "ADB mati di TV". Endpoint
+ * request-authorization mengembalikan `waitingAuthorization`, dan itulah yang memberi tahu
+ * operator bahwa dialog izin sedang menunggu ditekan di layar TV - bukan TV yang rusak.
+ */
+async function requestRoomAuthorization(roomId, options = {}) {
+  const result = await bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/request-authorization`, {
+    method: 'POST',
+    body: { requested_by: options.cashierName || 'Sistem' },
+    // Pemicu izin menunggu `adb connect` (batas ADB bridge 15 detik) dua kali,
+    // jadi batas waktu di sisi POS harus lebih panjang daripada pekerjaan bridge.
+    timeoutMs: Number(process.env.TV_BRIDGE_AUTH_TIMEOUT_MS) || 45000,
+  });
+
+  const payload = result.ok && result.data ? result.data : null;
+  const connected = Boolean(payload && payload.connected === true);
+  const waiting = Boolean(payload && payload.waitingAuthorization === true);
+
+  await recordTvLog({
+    roomId,
+    action: 'request_authorization',
+    triggerSource: options.triggerSource || 'kontrol_tv_ui',
+    cashierName: options.cashierName || 'Sistem',
+    result: connected ? 'connected' : waiting ? 'waiting_authorization' : 'unreachable',
+    success: connected,
+    blockReason: result.ok ? null : 'BRIDGE_ERROR',
+    message: result.ok
+      ? `Pemicu izin ADB ${roomId}: ${connected ? 'sudah tersambung' : waiting ? 'menunggu izin ditekan di layar TV' : 'TV tidak menjawab'}`
+      : `Pemicu izin ADB ${roomId} gagal: ${result.error}`,
+    rawResponse: JSON.stringify(payload || result.error || ''),
+  });
+
+  return result;
+}
+
+/**
  * Memasang APK peringatan (bawaan sistem POS) ke TV sebuah ruangan.
  *
  * Batas waktunya SENGAJA lebih panjang dari panggilan bridge lain: `adb install` ke TV
@@ -603,6 +644,7 @@ module.exports = {
   notifyRoom,
   recordTvLog,
   reloadBridgeConfig,
+  requestRoomAuthorization,
   sendTvCommand,
   startSchedule,
   startTvSweeperWorker,

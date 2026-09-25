@@ -484,6 +484,11 @@ async function getTvRoomOverview(req, res) {
       const normArpMac = normalizeMac(arpMac);
       const macMatchesArp = (!normTvMac || !normArpMac) ? 'tidak diketahui' : (normTvMac === normArpMac ? 'cocok' : 'beda');
 
+      // Keadaan "TV sudah ditanya dan sedang menunggu tombol izin di layarnya". Dibaca dari
+      // runtime bridge (pendingAuth), bukan dari tebakan: dua keadaan ini tampak sama di layar
+      // kasir padahal tindakannya berbeda (tekan izin di ruangan vs perbaiki ADB di TV).
+      const waitingAuthorization = Boolean(bRoom && bRoom.runtime && bRoom.runtime.pendingAuth === true);
+
       const masalah = [];
       if (!hasDevice) {
         masalah.push('Perangkat TV belum didaftarkan di database POS');
@@ -498,6 +503,8 @@ async function getTvRoomOverview(req, res) {
         }
         if (!bridgeReachable) {
           masalah.push('TV Bridge lokal (127.0.0.1:3030) tidak dapat dihubungi');
+        } else if (waitingAuthorization && !deviceConnected) {
+          masalah.push('TV menunggu izin ADB ditekan di layar TV');
         } else if (!deviceConnected && bRoom && bRoom.enabled) {
           masalah.push('ADB tidak tersambung ke perangkat TV');
         }
@@ -522,6 +529,7 @@ async function getTvRoomOverview(req, res) {
         bridge_url: bridgeConfig.url,
         bridge_reachable: bridgeReachable,
         device_connected: deviceConnected,
+        waiting_authorization: waitingAuthorization,
         // Keadaan APK peringatan: dipakai UI untuk memutuskan tombol "Pasang Peringatan".
         overlay_installed: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).installed : null,
         overlay_allowed: overlayByRoom.has(r.room_id) ? overlayByRoom.get(r.room_id).allowed : null,
@@ -831,6 +839,66 @@ async function testTvDevice(req, res, payload) {
 }
 
 /**
+ * Mengirim PEMICU dialog izin ADB ke TV satu ruangan lewat bridge.
+ *
+ * Yang bisa dilakukan sistem hanya memicu: Android menampilkan dialog "Izinkan penelusuran USB?"
+ * di layar TV dan hanya orang di ruangan yang bisa menekan OK/Allow. Karena itu pesannya harus
+ * memisahkan tiga keadaan yang dari layar kasir tampak sama:
+ *   - sudah tersambung                          -> tidak ada izin yang perlu ditekan
+ *   - TV MENUNGGU IZIN (dialog ada di layar TV) -> minta orang di ruangan menekan OK/Allow
+ *   - TV/ADB tidak menjawab                     -> perbaiki ADB di TV (panduan 8b)
+ * Ini yang membuat tombolnya berguna: sekarang staf bisa mengerjakannya sendiri, bukan
+ * menunggu teknisi dengan laptop.
+ */
+async function requestTvAuthorization(req, res, payload) {
+  try {
+    const operator = await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    if (!roomId) throw new Error('room_id wajib diisi.');
+
+    const resBridge = await tvBridgeService.requestRoomAuthorization(roomId, {
+      triggerSource: 'kontrol_tv_ui',
+      cashierName: operator.employee_name || 'Admin'
+    });
+
+    const data = resBridge.ok && resBridge.data ? resBridge.data : null;
+    const connected = Boolean(data && data.connected === true);
+    const menungguIzin = Boolean(data && data.waitingAuthorization === true);
+    const namaRuangan = (data && data.roomName) || roomId;
+
+    let pesan;
+    if (!resBridge.ok) {
+      pesan = `Permintaan izin ADB untuk ${namaRuangan} gagal: ${resBridge.error}`;
+    } else if (connected) {
+      pesan = `${namaRuangan} sudah tersambung. Tidak ada izin yang perlu ditekan; TV ini siap dikendalikan sistem.`;
+    } else if (menungguIzin) {
+      pesan = [
+        `${namaRuangan} MENUNGGU IZIN DI LAYAR TV.`,
+        'Di layar TV ruangan itu sekarang ada pertanyaan "Izinkan penelusuran USB?", tekan OK/Allow dan centang "selalu izinkan dari komputer ini".',
+        'Sesudah ditekan, tekan Uji ADB lagi di aplikasi — kartu ruangan harus berubah menjadi TERSAMBUNG.',
+        'Kalau pertanyaannya tidak muncul dalam 60 detik: matikan lalu nyalakan lagi "Penelusuran USB / Network debugging" di menu Opsi pengembang TV itu, lalu tekan tombol ini sekali lagi.',
+      ].join(' ');
+    } else {
+      pesan = [
+        `${namaRuangan} belum menjawab sama sekali — TV ini kemungkinan mati, atau ADB di TV tidak aktif.`,
+        'Periksa dulu apakah layar TV menyala. Kalau menyala, kerjakan langkah 8b TROUBLESHOOTING ADB: nyalakan "Penelusuran USB / ADB debugging" dan "Network debugging" di Opsi pengembang TV, lalu tekan tombol ini lagi.',
+      ].join(' ');
+    }
+
+    return successResponse(res, {
+      message: pesan,
+      success: connected,
+      connected,
+      waiting_authorization: menungguIzin,
+      adb_state: data ? data.adbState || null : null,
+      data
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'REQUEST_AUTH_ERROR');
+  }
+}
+
+/**
  * Memasang APK peringatan (bawaan sistem POS) ke TV satu ruangan lewat bridge.
  * PIN/role sama dengan tombol Kontrol TV lain (manager). Pesannya harus jujur:
  * kalau bridge tidak bisa dihubungi atau TV tidak terjangkau, katakan apa adanya.
@@ -958,6 +1026,7 @@ async function reloadTvBridgeConfig(req, res, payload) {
 module.exports = {
   checkTvDevice,
   installTvOverlay,
+  requestTvAuthorization,
   getCustomerDisplayState,
   getTvControlLogs,
   getTvDevices,

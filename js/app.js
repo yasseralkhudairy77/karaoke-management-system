@@ -24878,6 +24878,62 @@ function loadTvControlOverview(options = {}) {
     });
 }
 
+/**
+ * Mengajak TV di satu ruangan memunculkan dialog izin ADB, lalu MENUNGGU sesaat untuk
+ * melihat apakah izinnya benar-benar sudah ditekan di TV. Tidak ada cara lain: dialognya
+ * ada di layar TV dan hanya orang di ruangan yang bisa menekannya. Karena itu tombol ini
+ * bernilai - staf bisa mengerjakannya sendiri tanpa menunggu teknisi dengan laptop.
+ */
+async function mintaIzinAdbRuangan(roomId, roomName, adminPin) {
+  const nama = roomName || roomId;
+  showInlineNotice(`Mengirim pemicu izin ADB ke ${nama}...`);
+
+  const res = await postApiAction({
+    action: "requestTvAuthorization",
+    room_id: roomId,
+    admin_pin: adminPin
+  });
+
+  const sudahTersambung = Boolean(res && res.connected === true);
+  const menunggu = Boolean(res && res.waiting_authorization === true);
+
+  if (sudahTersambung) {
+    return { ok: true, menunggu: false, pesan: res.message || `${nama} sudah tersambung.` };
+  }
+
+  if (!menunggu) {
+    // Tidak ada gunanya menunggu: TV-nya tidak menjawab sama sekali.
+    return { ok: false, menunggu: false, pesan: res?.message || `TV ${nama} tidak menjawab.` };
+  }
+
+  // TV sudah menanyakan izin. Beri waktu orang di ruangan menekan OK/Allow (60 detik),
+  // lalu periksa ulang supaya jawabannya jujur, bukan "perintah terkirim".
+  showInlineNotice(`Menunggu izin ditekan di layar TV ${nama} (maksimal 60 detik)...`);
+  const batas = Date.now() + 60000;
+  while (Date.now() < batas) {
+    await new Promise((r) => setTimeout(r, 5000));
+    try {
+      const cek = await postApiAction({ action: "testTvDevice", room_id: roomId, admin_pin: adminPin });
+      if (cek && cek.connected === true) {
+        return { ok: true, menunggu: false, pesan: `Izin diberikan. ${nama} sudah tersambung dan siap dikendalikan sistem.` };
+      }
+    } catch (_e) {
+      // Jaringan/permintaan gagal sesaat: jangan hentikan penantian karena itu.
+    }
+  }
+
+  return {
+    ok: false,
+    menunggu: true,
+    pesan: [
+      `Izin untuk ${nama} belum ditekan di layar TV sampai batas waktu.`,
+      'Periksa: apakah layar TV menyala dan ada pertanyaan "Izinkan penelusuran USB?" di situ?',
+      'Kalau pertanyaannya tidak muncul, di TV: Setelan -> Sistem -> Opsi pengembang -> matikan lalu nyalakan Penelusuran USB / Network debugging, lalu tekan tombol Minta Izin ADB sekali lagi.',
+      'Selama izin belum diberikan, sistem tidak bisa menyalakan/mematikan TV ini dan peringatan sisa waktu tidak akan muncul di layarnya.'
+    ].join(" ")
+  };
+}
+
 function loadTvControlLogs(options = {}) {
   if (!API_BASE_URL.trim()) return Promise.resolve();
   isLoadingTvControlLogs = true;
@@ -25669,7 +25725,7 @@ function tvGuideBlocks() {
         "4) Dari komputer: <code>C:\\platform-tools\\adb.exe connect &lt;alamat IP&gt;:5555</code>",
         "5) Lihat layar TV: akan muncul pertanyaan <strong>\"Izinkan penelusuran USB?\"</strong>. Pilih <strong>OK/Allow</strong>, dan centang \"selalu izinkan dari komputer ini\".",
         "6) Cek dari komputer: <code>adb devices -l</code> harus berubah dari <code>unauthorized</code> menjadi <code>device</code>.",
-        "Kalau dialog tidak muncul: matikan lalu nyalakan lagi Penelusuran USB di TV, lalu coba sambung ulang dari komputer.",
+        "Kalau dialog tidak muncul: matikan lalu nyalakan lagi Penelusuran USB di TV, lalu coba sambung ulang dari komputer — atau dari aplikasi, tekan tombol Minta Izin ADB pada baris ruangan itu (lihat langkah 8b).",
       ],
     },
     {
@@ -25677,6 +25733,7 @@ function tvGuideBlocks() {
       lines: [
         "Gejalanya begini: TV menyala normal, gambar jalan, bahkan bisa di-ping dari komputer, TETAPI di aplikasi POS tombol <strong>Uji ADB</strong> menjawab <strong>belum tersambung</strong> dan ruangan itu diberi tanda peringatan kuning.",
         "Artinya: yang mati bukan internet TV, melainkan <strong>layanan ADB</strong> di TV (port 5555 tertutup). Selama itu mati, sistem tidak bisa menyalakan/mematikan TV ruangan ini dan peringatan sisa waktu tidak akan muncul di layarnya.",
+        "0) <strong>CARA PALING MUDAH — pakai tombolnya:</strong> di aplikasi, baris ruangan itu tekan <strong>Minta Izin ADB</strong> (PIN sama seperti tombol Kontrol TV lain). Pemicunya dikirim ke TV dan aplikasi menunggu 60 detik. Kalau di layar TV muncul pertanyaan \"Izinkan penelusuran USB?\", tekan OK/Allow dan centang \"selalu izinkan dari komputer ini\". Aplikasi akan memberi tahu begitu izinnya masuk. Kalau setelah 60 detik pertanyaannya tidak muncul juga, lanjutkan langkah 1 di bawah.",
         "Urutan pemeriksaan, dari yang paling sering ke yang jarang:",
         "1) <strong>Periksa dari komputer dulu</strong>, jangan menebak: <code>C:\\platform-tools\\adb.exe devices</code>. Kalau alamat ruangan itu tidak muncul atau tertulis <code>offline</code>, lanjut ke langkah 2 (perangkatnya memang belum menerima).",
         "2) <strong>ADB-nya mungkin belum dinyalakan di TV itu.</strong> Di TV: Setelan -> Sistem -> <strong>Opsi pengembang</strong> -> nyalakan <strong>Penelusuran USB / ADB debugging</strong> dan <strong>Network debugging / ADB melalui jaringan</strong>. Kalau menu Opsi pengembang belum ada, kerjakan langkah 8 (tekan Build 7 kali).",
@@ -26020,7 +26077,18 @@ function createTvControlSectionElement() {
   const ruanganAdbMati = sourceListDini.filter((r) => {
     if (!r || r.has_device === false) return false;
     if (r.bridge_reachable === false) return false;
+    // Ruangan yang sedang menunggu izin ADB BUKAN "ADB mati": dialognya sudah dikirim dan
+    // hanya perlu ditekan di ruangan. Menaruhnya di banner ini akan menyuruh teknisi
+    // mengerjakan setelan ADB yang sebenarnya sudah benar.
+    if (r.waiting_authorization === true) return false;
     return r.device_connected !== true && Boolean(String(r.tv_ip || "").trim());
+  });
+
+  // Ruangan yang TV-nya sudah ditanya dan sekarang menunggu tombol OK/Allow di layarnya.
+  const ruanganMenungguIzin = sourceListDini.filter((r) => {
+    if (!r || r.has_device === false) return false;
+    if (r.bridge_reachable === false) return false;
+    return r.waiting_authorization === true && r.device_connected !== true;
   });
 
   if (ruanganAdbMati.length > 0) {
@@ -26051,6 +26119,33 @@ function createTvControlSectionElement() {
     adbBanner.appendChild(penjelasan);
 
     section.appendChild(adbBanner);
+  }
+
+  if (ruanganMenungguIzin.length > 0) {
+    const izinBanner = document.createElement("div");
+    izinBanner.className = "tv-auth-warning-banner";
+    izinBanner.style.padding = "10px 14px";
+    izinBanner.style.marginBottom = "14px";
+    izinBanner.style.background = "rgba(217,119,6,0.14)";
+    izinBanner.style.border = "1px solid rgba(217,119,6,0.40)";
+    izinBanner.style.borderRadius = "6px";
+    izinBanner.style.fontSize = "12px";
+    izinBanner.style.color = "#fdba74";
+    izinBanner.style.lineHeight = "1.5";
+
+    const judulIzin = document.createElement("strong");
+    judulIzin.textContent = `${ruanganMenungguIzin.length} ruangan menunggu izin ADB ditekan di layar TV: `;
+    izinBanner.appendChild(judulIzin);
+    izinBanner.appendChild(document.createTextNode(
+      ruanganMenungguIzin.map((r) => `${r.room_name || r.room_id} (${r.room_id})`).join(", ")
+    ));
+
+    const penjelasanIzin = document.createElement("p");
+    penjelasanIzin.style.margin = "6px 0 0";
+    penjelasanIzin.textContent = "Pemicu izin sudah dikirim ke TV itu. Yang belum: orang di ruangan menekan OK/Allow pada pertanyaan \"Izinkan penelusuran USB?\" di layar TV. Setelah ditekan, tekan Uji ADB pada baris ruangan itu; kartu harus berubah menjadi TERSAMBUNG.";
+    izinBanner.appendChild(penjelasanIzin);
+
+    section.appendChild(izinBanner);
   }
 
   if (isLoadingTvRoomOverview) {
@@ -26170,6 +26265,12 @@ function createTvControlSectionElement() {
       } else if (r.device_connected) {
         adbBadge.className = "status-badge active";
         adbBadge.textContent = "Tersambung";
+      } else if (r.waiting_authorization === true) {
+        adbBadge.className = "status-badge";
+        adbBadge.style.background = "#d97706";
+        adbBadge.style.color = "#fff";
+        adbBadge.textContent = "Menunggu Izin di TV";
+        adbBadge.title = "Dialog izin sudah dikirim. Tekan OK/Allow di layar TV ruangan itu, lalu Uji ADB.";
       } else {
         adbBadge.className = "status-badge inactive";
         adbBadge.textContent = "Terputus";
@@ -26312,7 +26413,20 @@ function createTvControlSectionElement() {
         editBtn.dataset.roomId = r.room_id;
         editBtn.textContent = "Edit";
 
-        btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+        // Tombol "Minta Izin ADB": pemicu dialog izin di layar TV. Hanya berarti untuk TV yang
+        // BENAR-BENAR menyala tetapi ADB-nya belum menerima perintah dari sistem.
+        const izinBtn = document.createElement("button");
+        izinBtn.className = "master-button secondary";
+        izinBtn.type = "button";
+        izinBtn.dataset.action = "request-tv-authorization";
+        izinBtn.dataset.roomId = r.room_id;
+        izinBtn.dataset.roomName = r.room_name || r.room_id;
+        izinBtn.textContent = r.waiting_authorization === true ? "Izin ADB (menunggu)" : "Minta Izin ADB";
+        if (r.waiting_authorization === true) {
+          izinBtn.title = "Pemicu sudah dikirim dan TV sedang menunggu tombol OK/Allow di layarnya.";
+        }
+
+        btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, izinBtn, notifyBtn, editBtn);
 
         // Tombol "Pasang Peringatan" (APK overlay bawaan sistem POS).
         // Hanya ditawarkan bila perangkatnya benar-benar terhubung DAN overlay-nya belum lengkap.
@@ -36570,6 +36684,28 @@ async function handleRoomAction(event) {
           }
         } catch (err) {
           showFloatingToast(`Gagal mematikan TV ${targetRoomId}: ${err.message}`, "error");
+        }
+      }
+    });
+    return;
+  }
+
+  if (action === "request-tv-authorization") {
+    const targetRoomId = button.dataset.roomId;
+    const targetRoomName = button.dataset.roomName || targetRoomId;
+    openAdminPinModal({
+      title: "Otorisasi Pemicu Izin ADB",
+      message: `Masukkan PIN untuk meminta izin ADB TV ruangan ${targetRoomName}. Pertanyaan izin akan muncul di LAYAR TV ruangan itu dan harus ditekan di sana.`,
+      requestedAction: "request_tv_authorization",
+      requiredRole: "manager",
+      onSuccess: async (_auth, pin) => {
+        try {
+          const hasil = await mintaIzinAdbRuangan(targetRoomId, targetRoomName, pin);
+          showFloatingToast(hasil.pesan, hasil.ok ? "success" : hasil.menunggu ? "warning" : "error");
+        } catch (err) {
+          showFloatingToast(`Permintaan izin ADB ${targetRoomName} gagal: ${err.message}`, "error");
+        } finally {
+          await loadTvControlOverview({ force: true });
         }
       }
     });

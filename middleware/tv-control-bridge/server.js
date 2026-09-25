@@ -17,6 +17,7 @@ const {
   getOverlayStateForList,
   installOverlay,
   readOverlayState,
+  requestRoomAuthorization,
   resolveRoomId,
   resolveTestDeviceId,
 } = require("./src/adbService");
@@ -540,6 +541,45 @@ app.post("/api/rooms/:roomId/connect", async (req, res) => {
     }
 
     res.json(successResult(await connectToRoom(roomId)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+/**
+ * Mengirim PEMICU dialog izin ADB ke TV satu ruangan.
+ * Sama seperti /connect dalam hal menyambung, tetapi sanggup membedakan dan melaporkan
+ * keadaan "TV sudah menanyakan izin di layarnya, tinggal ditekan" - keadaan yang tidak
+ * bisa dibedakan oleh /connect (`unauthorized` hanya dilaporkan sebagai kegagalan).
+ */
+app.post("/api/rooms/:roomId/request-authorization", async (req, res) => {
+  try {
+    const roomId = resolveRouteRoom(req, res);
+    if (!roomId || sendDisabledRoom(res, roomId)) {
+      return;
+    }
+
+    const hasil = await requestRoomAuthorization(roomId);
+    const room = getRoomRuntime(roomId);
+
+    recordEvent({
+      type: hasil.waitingAuthorization
+        ? "adb_authorization_requested"
+        : hasil.authorized
+          ? "adb_authorization_granted"
+          : "adb_authorization_unreachable",
+      roomId: hasil.roomId,
+      roomName: hasil.roomName,
+      adbState: hasil.adbState || null,
+      connected: Boolean(hasil.connected),
+      waitingAuthorization: Boolean(hasil.waitingAuthorization),
+      requestedBy: String((req.body && (req.body.requested_by || req.body.cashier_name)) || "dashboard"),
+    });
+
+    res.json({
+      ...successResult(hasil),
+      room: room || null,
+    });
   } catch (error) {
     sendError(res, error);
   }

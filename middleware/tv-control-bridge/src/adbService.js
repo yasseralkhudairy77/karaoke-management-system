@@ -47,6 +47,10 @@ function makeRuntimeState() {
     lastSerial: null,
     lastConnectAt: null,
     lastError: null,
+    // Keadaan permintaan izin ADB: null = belum pernah diminta, true = TV sudah meminta
+    // persetujuan di layarnya tetapi belum ditekan, false = izin sudah ada/percobaan gagal.
+    // Dipakai agar operator tahu bedanya "TV menunggu izin di layar" dari "ADB mati".
+    pendingAuth: null,
   };
 }
 
@@ -86,6 +90,10 @@ function setConnected(roomId, connected, error = null, serial = null) {
   state.lastSerial = serial || state.lastSerial;
   state.lastConnectAt = connected ? new Date().toISOString() : state.lastConnectAt;
   state.lastError = error ? String(error.message || error) : null;
+  if (connected) {
+    // Begitu TV sudah menerima perintah, tidak ada lagi yang menunggu izin.
+    state.pendingAuth = false;
+  }
 }
 
 function assertRoomHasIp(room) {
@@ -216,6 +224,117 @@ async function ensureConnected(roomSelector) {
 
   await connectToRoom(room);
   return serial;
+}
+
+/**
+ * Daftar perangkat yang dikenal server ADB beserta keadaannya (device / unauthorized / offline).
+ * Dibaca dari `adb devices`, bukan tebakan: hanya daftar ini yang bisa membedakan
+ * "TV menunggu izin di layar" dari "ADB mati di TV".
+ */
+async function readAdbDeviceStates() {
+  const output = await runAdb(['devices'], 'Membaca daftar perangkat ADB', 8000);
+  const lines = String(output || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^List of devices/i.test(line));
+
+  const states = [];
+  for (const line of lines) {
+    const [serial, state] = line.split(/\s+/);
+    if (!serial || !state) {
+      continue;
+    }
+    states.push({ serial, state: String(state).toLowerCase() });
+  }
+  return states;
+}
+
+function findAdbStateForSerial(states, serial) {
+  const list = Array.isArray(states) ? states : [];
+  return list.find((item) => item.serial.toLowerCase() === String(serial).toLowerCase()) || null;
+}
+
+async function disconnectFromRoom(roomSelector) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  try {
+    await runAdb(['disconnect', serialFromRoom(room)], `Memutus sambungan ${room.id}`, 8000);
+  } catch (error) {
+    // Memutus sambungan yang memang tidak ada bukan kegagalan yang perlu dilaporkan.
+  }
+  setConnected(room.id, false, null, serialFromRoom(room));
+  getRuntimeState(room.id).pendingAuth = false;
+}
+
+/**
+ * Mengirim PEMICU dialog izin ADB ke layar TV - bukan memberi izinnya.
+ *
+ * Android hanya membuka dialog "Izinkan penelusuran USB?" di layar TV dan hanya operator
+ * di ruangan yang bisa menekan OK/Allow. Yang bisa dilakukan sistem: memaksa TV menerima
+ * percobaan sambungan dari kunci komputer ini, supaya dialognya muncul SEKARANG, saat ada
+ * orang di depan TV - bukan nanti saat peringatan sisa waktu sudah harus jalan.
+ *
+ * Balasan memisahkan tiga keadaan yang dari luar tampak sama:
+ *   connected=true                          -> sudah tersambung, tidak ada izin yang perlu ditekan
+ *   waitingAuthorization=true               -> TV meminta izin; tunggu ditekan di layar TV
+ *   keduanya false                          -> TV tidak menjawab / ADB mati di TV
+ */
+async function requestRoomAuthorization(roomSelector) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  assertRoomEnabled(room);
+  assertRoomHasIp(room);
+
+  const serial = serialFromRoom(room);
+  const runtime = getRuntimeState(room.id);
+
+  // 1. Sudah tersambung? Tidak ada yang perlu ditekan.
+  if (await verifyConnected(room)) {
+    runtime.pendingAuth = false;
+    return { ...(await getStatus(room)), authorized: true, waitingAuthorization: false };
+  }
+
+  // 2. Putuskan sesi ADB yang masih "unauthorized" lebih dulu. `adb connect` ulang terhadap
+  //    sesi unauthorized yang menggantung sering tidak memunculkan dialog; memutus dulu
+  //    membuat TV menerima sambungan sebagai koneksi baru.
+  const sebelumnya = await readAdbDeviceStates().catch(() => []);
+  const stateSebelum = findAdbStateForSerial(sebelumnya, serial);
+  if (stateSebelum && stateSebelum.state !== 'device') {
+    await disconnectFromRoom(room);
+  }
+
+  // 3. Tembak pemicunya. Dua kali: TV yang belum punya izin sering menjawab
+  //    "failed to authenticate" pada percobaan pertama, lalu dialog muncul pada
+  //    percobaan kedua (perilaku yang sama terlihat pada VIP-6 dan VIP-7).
+  const pemicuPertama = await runAdb(['connect', serial], `Meminta izin ADB ${room.id}`, adbTimeout(room)).catch(
+    (error) => String(error && error.message ? error.message : error)
+  );
+  await sleep(1200);
+
+  try {
+    await runAdb(['connect', serial], `Memicu ulang dialog izin ${room.id}`, adbTimeout(room));
+  } catch (error) {
+    // Percobaan kedua boleh gagal; keadaannya dibaca lagi di bawah.
+  }
+  void pemicuPertama;
+
+  const sesudah = await readAdbDeviceStates().catch(() => []);
+  const stateSesudah = findAdbStateForSerial(sesudah, serial);
+  const state = stateSesudah ? stateSesudah.state : null;
+  const connected = state === 'device';
+
+  setConnected(room.id, connected, state === 'unauthorized' ? new Error('unauthorized') : runtime.lastError, serial);
+
+  const waitingAuthorization = state === 'unauthorized';
+  runtime.pendingAuth = waitingAuthorization;
+
+  const status = await getStatus(room);
+  return {
+    ...status,
+    adbState: state,
+    authorized: connected,
+    waitingAuthorization,
+    pendingAuthorization: waitingAuthorization,
+  };
 }
 
 async function runShell(room, command, label, timeoutMs) {
@@ -803,6 +922,9 @@ async function getStatus(roomSelector) {
     overlayCheckError: overlay.overlayCheckError,
     wakefulness: await readWakefulnessQuick(room),
     lastError: runtime.lastError,
+    // true = pemicu izin sudah dikirim dan TV masih menunggu tombol OK di layarnya.
+    // Ini keadaan yang berbeda dari "ADB mati", dan operator perlu tahu bedanya.
+    waitingAuthorization: runtime.pendingAuth === true,
   };
 }
 
@@ -884,13 +1006,16 @@ function getArpTable() {
 
 module.exports = {
   connectToRoom,
+  disconnectFromRoom,
   ensureAwakeAndConnected,
   ensureConnected,
   getArpTable,
   getOverlayStateForList,
   getTvPowerState,
   installOverlay,
+  readAdbDeviceStates,
   readOverlayState,
+  requestRoomAuthorization,
   getDefaultRoomId,
   getRoomRuntime,
   getRuntime,
