@@ -824,9 +824,14 @@ async function installTvOverlay(req, res, payload) {
     const data = cmdRes.ok && cmdRes.data && cmdRes.data.result ? cmdRes.data.result : null;
     const lengkap = Boolean(data && data.overlayInstalled && data.overlayAllowed);
 
+    const layarTidur = Boolean(data && data.wakefulness && /asleep|dozing/i.test(data.wakefulness));
+
     let pesan;
     if (!cmdRes.ok) {
       pesan = `Pemasangan APK peringatan ruangan ${roomId} gagal: ${cmdRes.error}`;
+    } else if (lengkap && layarTidur) {
+      // Jujur: terpasang, tapi peringatannya belum akan terlihat karena layar TV sedang tidur.
+      pesan = `APK peringatan ruangan ${roomId} terpasang, TETAPI layar TV sedang tidur (${data.wakefulness}). Peringatan hanya terlihat kalau TV menyala; nyalakan TV lalu uji lagi.`;
     } else if (lengkap) {
       pesan = `APK peringatan ruangan ${roomId} sudah terpasang dan izin tampil di atas aplikasi lain sudah diberikan.`;
     } else {

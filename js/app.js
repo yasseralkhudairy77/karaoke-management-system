@@ -36447,6 +36447,7 @@ async function handleRoomAction(event) {
             admin_pin: pin
           });
           if (res && (res.ok || res.success)) {
+            // Pesan server bisa memuat catatan penting (mis. layar TV sedang tidur); jangan diganti.
             showFloatingToast(res.message || `Aplikasi peringatan ${targetRoomName} terpasang.`, "success");
           } else {
             showFloatingToast(`Pemasangan gagal: ${res?.message || "Kesalahan bridge"}`, "error");
