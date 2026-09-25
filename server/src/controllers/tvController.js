@@ -200,7 +200,19 @@ async function sendTvCommand(req, res, payload) {
     if (tv_device_id) {
       deviceRes = await db.query('SELECT * FROM tv_devices WHERE tv_device_id = $1', [tv_device_id]);
     } else {
-      deviceRes = await db.query('SELECT * FROM tv_devices WHERE room_id = $1 AND status = \'active\' LIMIT 1', [room_id]);
+      // Urutannya SENGAJA seperti ini: dulu baris mana saja yang 'active' bisa terpilih, dan untuk
+      // ruangan yang punya dua baris (sisa tunnel lama + baris bridge) perintah bisa dikirim ke
+      // tunnel yang sudah mati - lalu kelihatan seperti "perintah gagal" padahal TV-nya sehat.
+      deviceRes = await db.query(
+        `SELECT * FROM tv_devices WHERE room_id = $1
+          ORDER BY
+            CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END ASC,
+            CASE WHEN middleware_url IS NULL OR middleware_url = $2 THEN 0 ELSE 1 END ASC,
+            CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC,
+            tv_device_id ASC
+          LIMIT 1`,
+        [room_id, tvBridgeService.getConfig().url],
+      );
     }
 
     let controlType = 'mock';
@@ -377,9 +389,10 @@ async function getTvRoomOverview(req, res) {
       SELECT * FROM tv_devices
       ORDER BY
         CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END ASC,
+        CASE WHEN middleware_url IS NULL OR middleware_url = $1 THEN 0 ELSE 1 END ASC,
         CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC,
         tv_device_id ASC
-    `);
+    `, [tvBridgeService.getConfig().url]);
     const devMap = new Map();
     devRes.rows.forEach(d => {
       if (!devMap.has(d.room_id)) {

@@ -117,10 +117,11 @@ async function resolveTvDeviceId(roomId) {
         WHERE room_id = $1
         ORDER BY
           CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END ASC,
+          CASE WHEN middleware_url IS NULL OR middleware_url = $2 THEN 0 ELSE 1 END ASC,
           CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC,
           tv_device_id ASC
         LIMIT 1`,
-      [roomId],
+      [roomId, getConfig().url],
     );
     return result.rowCount > 0 ? result.rows[0].tv_device_id : null;
   } catch (error) {
