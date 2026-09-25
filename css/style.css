@@ -13835,4 +13835,83 @@ select.action-confirmation-input option {
     grid-template-columns: 1fr;
   }
 }
+/* Panduan Set IP Statis TV (sub-tab Kontrol TV) — untuk teknisi venue */
+.tv-control-guide {
+  margin-top: 18px;
+}
 
+.tv-guide-toggle {
+  width: 100%;
+  text-align: left;
+}
+
+.tv-guide-body {
+  margin-top: 14px;
+  padding: 18px 20px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+}
+
+.tv-guide-intro {
+  margin: 0 0 16px 0;
+  color: #cbd5e1;
+  line-height: 1.65;
+  font-size: 13px;
+}
+
+.tv-guide-block {
+  margin-bottom: 18px;
+}
+
+.tv-guide-block-title {
+  margin: 0 0 8px 0;
+  font-weight: 700;
+  font-size: 14px;
+  color: #f1f5f9;
+  border-left: 3px solid #3b82f6;
+  padding-left: 10px;
+}
+
+.tv-guide-line {
+  margin: 0 0 6px 0;
+  padding-left: 13px;
+  color: #d7dee9;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.tv-guide-line strong {
+  color: #fbbf24;
+}
+
+.tv-guide-line sub {
+  color: #94a3b8;
+}
+
+.tv-guide-note {
+  margin: 4px 0 10px 0;
+  font-size: 12px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.tv-guide-table code,
+.tv-guide-line code {
+  background: rgba(148, 163, 184, 0.16);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.tv-guide-table th,
+.tv-guide-table td {
+  font-size: 12.5px;
+}
+
+@media (max-width: 768px) {
+  .tv-guide-body {
+    padding: 14px;
+  }
+}
