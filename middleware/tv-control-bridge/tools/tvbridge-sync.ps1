@@ -50,6 +50,7 @@ $Daftar = @(
   'tv-notify-overlay/settings.gradle'
   'tv-notify-overlay/tv.sh'
   'assets/app-debug.apk'
+  'RENCANA-TOMBOL-INSTALL-APK.md'
 )
 
 # Pola yang HARAM ikut: pengaman kalau daftar di atas keliru diedit.

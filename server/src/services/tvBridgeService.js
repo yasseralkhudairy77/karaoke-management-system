@@ -501,7 +501,7 @@ async function installOverlay(roomId, options = {}) {
   const config = getConfig();
   const result = await bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/overlay/install`, {
     method: 'POST',
-    timeoutMs: Number(process.env.TV_BRIDGE_INSTALL_TIMEOUT_MS) || 90000,
+    timeoutMs: Number(process.env.TV_BRIDGE_INSTALL_TIMEOUT_MS) || 60000,
   });
 
   const payload = result.ok && result.data && result.data.result ? result.data.result : null;

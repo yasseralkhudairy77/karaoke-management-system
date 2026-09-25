@@ -306,7 +306,16 @@ async function sendWakeKeyevent(roomSelector) {
   };
 }
 
-async function wakeRoom(roomSelector) {
+/**
+ * Membangunkan TV.
+ *
+ * Opsi `wakeOptions` (bawaan = perilaku lama, dipakai peringatan otomatis di latar belakang):
+ *   broadcastOnly  - kirim WoL hanya ke satu alamat (percobaan WoL penuh ~60 detik:
+ *                    3 alamat x 3 percobaan x num_packets/interval). Untuk tombol yang ditekan
+ *                    operator, 60 detik itu kegagalan pengalaman - jadi dipakai jalur pendek.
+ *   attemptsPerBroadcast - jumlah percobaan WoL per alamat.
+ */
+async function wakeRoom(roomSelector, wakeOptions = {}) {
   const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
   assertRoomEnabled(room);
   assertRoomHasIp(room);
@@ -319,18 +328,20 @@ async function wakeRoom(roomSelector) {
     log(`ADB wake attempt failed for ${room.id}: ${error.message}`);
   }
 
-  const broadcasts = [
-    room.wolBroadcast,
-    ...room.wolBroadcasts,
-    '255.255.255.255',
-  ]
+  const daftarAlamat = wakeOptions.broadcastOnly
+    ? [room.wolBroadcast || '255.255.255.255']
+    : [room.wolBroadcast, ...room.wolBroadcasts, '255.255.255.255'];
+
+  const broadcasts = daftarAlamat
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
+
+  const attemptsPerBroadcast = Math.max(1, Number(wakeOptions.attemptsPerBroadcast) || 3);
 
   for (const broadcast of broadcasts) {
     log(`Sending WoL magic packet to ${room.mac} via ${broadcast}:${room.wolPort}`);
 
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= attemptsPerBroadcast; attempt += 1) {
       await new Promise((resolve, reject) => {
         wol.wake(
           room.mac,
@@ -659,6 +670,49 @@ async function getOverlayStateForList(room) {
 }
 
 /**
+ * Menyambung ke TV untuk PEMASANGAN dengan anggaran waktu terbatas.
+ *
+ * Kenapa bukan ensureAwakeAndConnected(): ritual bangunkan TV penuh (WoL + beberapa percobaan
+ * ulang + batas waktu ADB 15 detik) memakan ~96 detik untuk TV yang mati - terukur saat uji
+ * 2026-09-25. Untuk peringatan otomatis di latar belakang itu wajar; untuk tombol yang ditekan
+ * operator di depan layar, itu kegagalan pengalaman yang nyata.
+ *
+ * Jadi: percobaan pertama seperti biasa, satu kali bangunkan, satu percobaan ulang dengan batas
+ * pendek, lalu MENYERAH DENGAN JUJUR. Pesannya harus memberi tahu apa yang bisa dilakukan operator.
+ */
+async function ensureReachableForInstall(room, budgetMs = 20000) {
+  const deadline = Date.now() + budgetMs;
+  const sisa = () => Math.max(1500, deadline - Date.now());
+  // Batas per percobaan sengaja pendek. TV yang benar-benar hidup menjawab get-state dalam
+  // sepersekian detik (terukur), jadi menunggu 15 detik hanya menghukum operator.
+  const perPercobaan = (maks) => ({ ...room, adbTimeoutMs: Math.min(maks, sisa()) });
+
+  try {
+    return await ensureConnected(perPercobaan(8000));
+  } catch (error) {
+    log(`Pemasangan: ${room.name} belum menjawab (${error.message}); mencoba membangunkan sekali...`);
+  }
+
+  try {
+    // Jalur pendek: satu alamat, satu percobaan, dan batas ADB yang sama pendeknya.
+    await wakeRoom(perPercobaan(4000), { broadcastOnly: true, attemptsPerBroadcast: 1 });
+  } catch (error) {
+    log(`Percobaan bangunkan ${room.name} gagal: ${error.message}`);
+  }
+
+  await sleep(Math.min(3000, sisa()));
+
+  try {
+    return await ensureConnected(perPercobaan(6000));
+  } catch (error) {
+    throw new Error(
+      `TV ${room.name} tidak terjangkau lewat ADB (${error.message}). ` +
+      `Pastikan TV benar-benar menyala dan ADB di jaringan hidup, lalu coba lagi.`,
+    );
+  }
+}
+
+/**
  * Memasang APK peringatan + memberi izin "tampil di atas aplikasi lain" pada satu TV.
  *
  * Alasan bentuknya begini:
@@ -681,7 +735,7 @@ async function installOverlay(roomSelector) {
     throw new Error(`Berkas APK peringatan tidak ditemukan di bridge: ${overlayApkPath}`);
   }
 
-  const serial = await ensureAwakeAndConnected(room);
+  const serial = await ensureReachableForInstall(room);
 
   const installOut = await runAdb(
     ['-s', serial, 'install', '-r', overlayApkPath],
@@ -701,6 +755,9 @@ async function installOverlay(roomSelector) {
   );
 
   const state = await readOverlayState(room, packageName);
+  // Layar ikut dilaporkan: pemasangan tetap berhasil pada TV yang tidur, TETAPI peringatannya
+  // tidak akan terlihat pelanggan. UI perlu bisa mengatakan itu, bukan menyembunyikannya.
+  const wakefulness = await readWakefulnessQuick(room);
 
   return {
     ok: true,
@@ -711,6 +768,7 @@ async function installOverlay(roomSelector) {
     apkPath: overlayApkPath,
     installOutput: String(installOut || '').trim(),
     grantOutput: String(grantOut || '').trim(),
+    wakefulness,
     overlayInstalled: state.overlayInstalled,
     overlayAllowed: state.overlayAllowed,
     overlayCheckError: state.overlayCheckError,
