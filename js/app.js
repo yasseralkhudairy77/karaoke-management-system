@@ -25673,6 +25673,21 @@ function tvGuideBlocks() {
       ],
     },
     {
+      title: "8b. TROUBLESHOOTING ADB — TV menyala tapi sistem bilang \"belum tersambung\"",
+      lines: [
+        "Gejalanya begini: TV menyala normal, gambar jalan, bahkan bisa di-ping dari komputer, TETAPI di aplikasi POS tombol <strong>Uji ADB</strong> menjawab <strong>belum tersambung</strong> dan ruangan itu diberi tanda peringatan kuning.",
+        "Artinya: yang mati bukan internet TV, melainkan <strong>layanan ADB</strong> di TV (port 5555 tertutup). Selama itu mati, sistem tidak bisa menyalakan/mematikan TV ruangan ini dan peringatan sisa waktu tidak akan muncul di layarnya.",
+        "Urutan pemeriksaan, dari yang paling sering ke yang jarang:",
+        "1) <strong>Periksa dari komputer dulu</strong>, jangan menebak: <code>C:\\platform-tools\\adb.exe devices</code>. Kalau alamat ruangan itu tidak muncul atau tertulis <code>offline</code>, lanjut ke langkah 2 (perangkatnya memang belum menerima).",
+        "2) <strong>ADB-nya mungkin belum dinyalakan di TV itu.</strong> Di TV: Setelan -> Sistem -> <strong>Opsi pengembang</strong> -> nyalakan <strong>Penelusuran USB / ADB debugging</strong> dan <strong>Network debugging / ADB melalui jaringan</strong>. Kalau menu Opsi pengembang belum ada, kerjakan langkah 8 (tekan Build 7 kali).",
+        "3) <strong>TV baru saja dimatikan dari colokan/listrik.</strong> Setelan ADB hilang setiap TV dimatikan total, jadi harus dinyalakan ulang di menu Opsi pengembang. Karena itu TV yang sudah beres sebaiknya tidak dilepas dari listrik, cukup dimatikan pakai remote.",
+        "4) <strong>Coba sambung ulang dari komputer:</strong> <code>adb connect &lt;alamat IP&gt;:5555</code>. Kalau menjawab <code>connected to ...</code>, tekan Uji ADB lagi di aplikasi.",
+        "5) <strong>Muncul pertanyaan \"Izinkan penelusuran USB?\" di layar TV:</strong> pilih OK/Allow dan centang \"selalu izinkan dari komputer ini\". Kalau dialog ini tidak muncul, matikan lalu nyalakan lagi Penelusuran USB di TV, lalu ulangi langkah 4.",
+        "6) <strong>Sudah semua tapi tetap gagal:</strong> TV mungkin perlu di-restart (cabut listrik 1 menit, pasang lagi) lalu ulangi dari langkah 2. Kalau masih gagal, catat nomor ruangan dan laporkan ke admin/owner — jangan mengubah alamat IP TV untuk \"mencoba-coba\", karena alamat itu dipakai sistem.",
+        "<strong>Setelah berhasil, wajib dibuktikan:</strong> kartu ruangan di aplikasi harus berubah menjadi <strong>TERSAMBUNG</strong>, dan barulah tombol Pasang Peringatan muncul untuk ruangan itu.",
+      ],
+    },
+    {
       title: "9. Batas pekerjaan teknisi — kapan harus berhenti dan menghubungi admin/owner",
       lines: [
         "Lampu LAN mati setelah ganti kabel dan ganti port.",
@@ -25962,7 +25977,7 @@ function createTvControlSectionElement() {
 
   const subtitle = document.createElement("p");
   subtitle.className = "master-section-subtitle";
-  subtitle.textContent = "Pantau status sambungan ADB, daya layar, dan konfigurasi TV 9 ruangan aktif.";
+  subtitle.textContent = "Pantau status sambungan ADB, daya layar, dan konfigurasi TV ruangan. Ruangan yang ADB-nya tidak menjawab tidak bisa dikendalikan sistem.";
   titleGroup.append(title, subtitle);
 
   const toolbar = document.createElement("div");
@@ -25992,9 +26007,50 @@ function createTvControlSectionElement() {
   header.append(titleGroup, toolbar);
   section.appendChild(header);
 
+  // Data ruangan yang sudah dimuat, dipakai lebih awal oleh peringatan ADB di bawah.
+  const sourceListDini = Array.isArray(tvRoomOverviewList) ? tvRoomOverviewList : [];
+
   if (tvRoomOverviewList.length === 0 && !isLoadingTvRoomOverview && !tvRoomOverviewError && !hasRequestedTvOverview) {
     hasRequestedTvOverview = true;
     setTimeout(() => { loadTvControlOverview({ silent: true }); }, 50);
+  }
+
+  // Daftar ruangan yang menyala di jaringan tetapi ADB-nya tidak menjawab: ini "tidak akan pernah
+  // menerima perintah" dan biasanya berarti langkah mengaktifkan ADB belum dikerjakan di TV itu.
+  const ruanganAdbMati = sourceListDini.filter((r) => {
+    if (!r || r.has_device === false) return false;
+    if (r.bridge_reachable === false) return false;
+    return r.device_connected !== true && Boolean(String(r.tv_ip || "").trim());
+  });
+
+  if (ruanganAdbMati.length > 0) {
+    const adbBanner = document.createElement("div");
+    adbBanner.className = "tv-adb-warning-banner";
+    adbBanner.style.padding = "10px 14px";
+    adbBanner.style.marginBottom = "14px";
+    adbBanner.style.background = "rgba(245,158,11,0.12)";
+    adbBanner.style.border = "1px solid rgba(245,158,11,0.35)";
+    adbBanner.style.borderRadius = "6px";
+    adbBanner.style.fontSize = "12px";
+    adbBanner.style.color = "#fcd34d";
+    adbBanner.style.lineHeight = "1.5";
+
+    const judul = document.createElement("strong");
+    judul.textContent = `${ruanganAdbMati.length} ruangan belum bisa dikendalikan (ADB mati): `;
+    adbBanner.appendChild(judul);
+    adbBanner.appendChild(document.createTextNode(
+      ruanganAdbMati.map((r) => `${r.room_name || r.room_id} (${r.room_id})`).join(", ")
+    ));
+
+    const penjelasan = document.createElement("p");
+    penjelasan.style.margin = "6px 0 0";
+    // Jujur soal sebabnya: ADB yang tidak menjawab bisa berarti TV-nya memang mati, atau
+    // TV menyala tetapi ADB/port 5555 tidak aktif. Dua keadaan itu tampak sama dari sini,
+    // jadi jangan mengklaim salah satunya.
+    penjelasan.textContent = "Selama keadaan ini, perintah sistem (menyalakan/mematikan TV, peringatan sisa waktu, uji ADB) tidak akan pernah sampai ke ruangan itu. Penyebabnya bisa dua: TV-nya memang sedang mati, atau TV menyala tetapi ADB di TV tidak aktif. Untuk TV yang MENYALA, kerjakan langkah 8b TROUBLESHOOTING ADB di panduan di bawah, lalu tekan Uji ADB lagi.";
+    adbBanner.appendChild(penjelasan);
+
+    section.appendChild(adbBanner);
   }
 
   if (isLoadingTvRoomOverview) {
@@ -36535,11 +36591,15 @@ async function handleRoomAction(event) {
             room_id: targetRoomId,
             admin_pin: pin
           });
-          if (res && (res.ok || res.success)) {
-            showFloatingToast(`Uji ADB TV ${targetRoomId}: ${res.message || "Berhasil terhubung."}`, "success");
+          // Merah kalau TV-nya TIDAK tersambung. Sebelumnya jawaban "perintah terkirim" selalu
+          // hijau, sehingga tombol Uji ADB terlihat berhasil untuk TV yang ADB-nya mati.
+          const tersambung = Boolean(res && (res.connected === true || res.success === true));
+          if (tersambung) {
+            showFloatingToast(res.message || `Uji ADB TV ${targetRoomId}: tersambung.`, "success");
             await loadTvControlOverview({ force: true });
           } else {
-            showFloatingToast(`Uji ADB TV ${targetRoomId} gagal: ${res?.message || "Kesalahan bridge"}`, "error");
+            showFloatingToast(res?.message || `Uji ADB TV ${targetRoomId}: belum tersambung.`, "error");
+            await loadTvControlOverview({ force: true });
           }
         } catch (err) {
           showFloatingToast(`Uji ADB TV ${targetRoomId} gagal: ${err.message}`, "error");

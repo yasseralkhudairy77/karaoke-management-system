@@ -795,10 +795,35 @@ async function testTvDevice(req, res, payload) {
       cashierName: operator.employee_name || 'Admin'
     });
 
+    // PENTING: perintah "uji" selalu terkirim ke bridge dengan baik selama bridge hidup, jadi
+    // "berhasil dikirim" bukan jawaban yang berguna - dan hijau untuk TV yang ADB-nya mati adalah
+    // jawaban yang menyesatkan (operator menunggu notifikasi yang tidak akan pernah muncul).
+    // Yang dinilai adalah keadaan NYATA hasil pemeriksaan bridge.
+    const data = cmdRes.ok && cmdRes.data && cmdRes.data.data ? cmdRes.data.data : null;
+    const connected = Boolean(data && data.connected === true);
+    const namaRuangan = (data && data.roomName) || roomId;
+
+    let pesan;
+    if (!cmdRes.ok) {
+      pesan = `Uji ADB ruangan ${roomId} gagal: ${cmdRes.error}`;
+    } else if (connected) {
+      pesan = `Uji ADB ${namaRuangan}: tersambung. ADB di TV ini hidup dan bisa dikendalikan sistem.`;
+    } else {
+      pesan = [
+        `Uji ADB ${namaRuangan}: BELUM tersambung — ADB di TV ini tidak menjawab.`,
+        'Penyebab paling sering: "ADB debugging / Network debugging" belum aktif di menu Opsi pengembang TV,',
+        'sehingga port 5555 tertutup. Kerjakan langkah "TV baru: mengaktifkan ADB" di panduan set IP statis,',
+        'lalu uji lagi. TV yang tersambung ke jaringan (bisa di-ping) tetap tidak bisa dikendalikan tanpa langkah ini.',
+      ].join(' ');
+    }
+
     return successResponse(res, {
-      message: cmdRes.ok ? `Uji ADB ruangan ${roomId} berhasil dikirim.` : `Uji ADB ruangan ${roomId} gagal: ${cmdRes.error}`,
-      success: cmdRes.ok,
-      data: cmdRes.data
+      message: pesan,
+      success: connected,
+      // `success` di sini sengaja mengikuti keadaan nyata, bukan "perintah terkirim", supaya
+      // kartu/notifikasi di layar kasir memakai warna yang benar.
+      connected,
+      data
     });
   } catch (err) {
     return errorResponse(res, err.message, err.code || 'TEST_ERROR');
