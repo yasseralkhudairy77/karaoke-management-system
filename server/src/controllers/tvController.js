@@ -368,12 +368,23 @@ async function getTvRoomOverview(req, res) {
       ORDER BY room_id ASC
     `);
 
+    // PENTING: satu ruangan bisa punya lebih dari satu baris perangkat — mis. sisa baris lama
+    // ber-tipe 'mock' + baris bridge ber-tipe 'middleware'. Kalau peta ini diisi "yang terakhir
+    // menang", tampilan bisa menunjuk baris lama (mock) sementara perintah sungguhan lewat baris
+    // middleware — persis gejalanya: operator mengubah Tipenya, menyimpan, dan layar tetap "mock".
+    // Urutan: baris middleware lebih dulu, lalu yang ber-status active, lalu id terkecil.
     const devRes = await db.query(`
-      SELECT * FROM tv_devices ORDER BY room_id ASC
+      SELECT * FROM tv_devices
+      ORDER BY
+        CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END ASC,
+        CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC,
+        tv_device_id ASC
     `);
     const devMap = new Map();
     devRes.rows.forEach(d => {
-      devMap.set(d.room_id, d);
+      if (!devMap.has(d.room_id)) {
+        devMap.set(d.room_id, d);
+      }
     });
 
     const bridgeConfig = tvBridgeService.getConfig();
@@ -418,6 +429,10 @@ async function getTvRoomOverview(req, res) {
     for (const r of roomsRes.rows) {
       const dev = devMap.get(r.room_id) || null;
       const hasDevice = Boolean(dev && dev.tv_device_id);
+      // `status` di sini HANYA menggambarkan baris perangkat yang benar-benar dipakai, bukan
+      // "ruangan tidak aktif". Sebelumnya nilai ini diisi `r.status` milik tabel rooms, dan itu
+      // membuat tombol Simpan di aplikasi mengubah kolom status perangkat menjadi `inactive`
+      // hanya karena ruangan sedang kosong - lalu baris itu tersembunyi dari daftar perangkat.
 
       const idKey = String(r.room_id || '').toLowerCase().trim();
       const nameKey = String(r.room_name || '').toLowerCase().trim();
@@ -427,7 +442,7 @@ async function getTvRoomOverview(req, res) {
       const tvDeviceId = dev ? (dev.tv_device_id || `TV-${r.room_id}`) : (bRoom ? `TV-${r.room_id}` : '');
       const deviceName = dev ? (dev.device_name || `TV ${r.room_name}`) : (bRoom ? `TV ${r.room_name}` : `TV ${r.room_name}`);
       const controlType = dev ? (dev.control_type || 'middleware') : (bRoom ? 'middleware' : null);
-      const status = dev ? (dev.status || 'active') : (r.status || 'active');
+      const status = dev ? dev.status || 'active' : 'active';
       const tvIp = (dev && dev.tv_ip) || (bRoom ? bRoom.ip : '') || '';
       const tvMac = (dev && dev.tv_mac) || (dev && dev.device_identifier && dev.device_identifier.includes(':') ? dev.device_identifier : '') || (bRoom ? bRoom.mac : '') || '';
       const adbPort = (dev && dev.adb_port) || (bRoom ? bRoom.adbPort : 5555) || 5555;
@@ -695,6 +710,29 @@ async function saveTvDeviceSettings(req, res, payload) {
       middlewareUrl, tvMac || null, tvIp || null, tvMac || null, adbPort,
       adbTimeoutMs, wolBroadcast, notifyPackage, notes
     ]);
+
+    // Baris lama ber-tipe 'mock' di ruangan yang SAMA harus dibuang begitu ruangan itu punya
+    // baris sungguhan. Kalau tidak, tiap kali diambil "yang mana dipakai", jawabannya berubah-ubah
+    // dan operator melihat Tipenya kembali menjadi mock walau sudah menyimpannya berkali-kali.
+    if (controlType === 'middleware') {
+      try {
+        // Dinonaktifkan, bukan dihapus: tabel tv_control_logs punya foreign key ke tv_devices,
+        // jadi baris yang pernah dipakai tidak bisa dihapus (dan riwayatnya pun sebaiknya tidak
+        // hilang). Isinya dikosongkan supaya baris sisa ini tidak bisa lagi menunjuk alamat palsu.
+        await db.query(
+          `UPDATE tv_devices
+              SET control_type = 'mock',
+                  tv_ip = NULL,
+                  tv_mac = NULL,
+                  device_identifier = NULL,
+                  notes = COALESCE(NULLIF(notes, ''), 'Sisa baris lama; tidak dipakai (ruangan ini sudah memakai baris middleware).')
+            WHERE room_id = $1 AND control_type <> 'middleware' AND tv_device_id <> $2`,
+          [roomId, tvDeviceId],
+        );
+      } catch (_cleanupErr) {
+        // Pembersihan gagal bukan alasan menggagalkan penyimpanan; baris sungguhan sudah ditulis.
+      }
+    }
 
     // Kirim pembaruan ke TV Bridge lokal jika control_type === 'middleware'
     let bridgeSyncResult = null;

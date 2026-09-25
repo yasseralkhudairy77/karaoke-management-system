@@ -115,7 +115,10 @@ async function resolveTvDeviceId(roomId) {
     const result = await db.query(
       `SELECT tv_device_id FROM tv_devices
         WHERE room_id = $1
-        ORDER BY (status = 'active') DESC, tv_device_id ASC
+        ORDER BY
+          CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END ASC,
+          CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC,
+          tv_device_id ASC
         LIMIT 1`,
       [roomId],
     );
