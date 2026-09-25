@@ -524,6 +524,65 @@ async function getTvRoomOverview(req, res) {
   }
 }
 
+// MAC Wi-Fi TV Polytron/HVCL selalu berawalan f0:ed:51. MAC itu TIDAK bisa dipakai
+// untuk Wake-on-LAN (butuh NIC kabel) dan akan selalu terbaca "beda" saat dicocokkan ke ARP.
+const WIFI_MAC_PREFIXES = ['f0:ed:51'];
+
+function isWifiStyleMac(mac) {
+  const normalized = normalizeMac(mac);
+  if (!normalized) return false;
+  return WIFI_MAC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+async function findIpConflict(ip, expectedMac) {
+  // Kembalikan MAC perangkat yang BENAR-BENAR memegang alamat itu, kalau bukan TV kita.
+  if (!ip || !isValidIpv4(ip)) return null;
+  const table = await getLocalArpTable();
+  const holder = table.get(ip);
+  if (!holder) return null;
+  const holderNorm = normalizeMac(holder);
+  const expectedNorm = normalizeMac(expectedMac);
+  if (expectedNorm && holderNorm === expectedNorm) return null;
+  return holderNorm || holder;
+}
+
+async function captureTvDeviceFromNetwork(req, res, payload) {
+  try {
+    await verifyAdminPinPayload(payload);
+    const roomId = String(payload.room_id || '').trim();
+    const ip = String(payload.tv_ip || '').trim();
+    if (!ip) throw new Error('Isi dulu Alamat IP TV, baru tekan Ambil dari Jaringan.');
+    if (!isValidIpv4(ip)) throw new Error('Format IP address tidak valid. Gunakan format IPv4 (contoh: 192.168.1.104).');
+
+    const ads = await getLocalArpTable();
+    const mac = ads.get(ip) || '';
+    const bridge = await tvBridgeService.getBridgeRoomStatus(roomId).catch(() => null);
+    const wakefulness = (bridge && bridge.runtime && bridge.runtime.wakefulness)
+      || (bridge && bridge.wakefulness) || null;
+
+    if (!mac) {
+      return errorResponse(
+        res,
+        `Tidak ada perangkat yang menjawab di ${ip}. Pastikan TV menyala dan kabelnya tersambung, lalu coba lagi.`,
+        'NO_DEVICE'
+      );
+    }
+
+    const wifiStyle = isWifiStyleMac(mac);
+    return successResponse(res, {
+      message: wifiStyle
+        ? `MAC terbaca ${mac}, tapi itu MAC Wi-Fi (bukan MAC kabel). Untuk TV kabel, MAC yang benar berawalan 74:81:9a atau 9c:53:85.`
+        : `MAC terbaca dari jaringan: ${mac}`,
+      tv_mac: mac,
+      tv_ip: ip,
+      is_wifi_mac: wifiStyle,
+      wakefulness,
+    });
+  } catch (err) {
+    return errorResponse(res, err.message, err.code || 'CAPTURE_ERROR');
+  }
+}
+
 async function saveTvDeviceSettings(req, res, payload) {
   try {
     const operator = await verifyAdminPinPayload(payload);
@@ -542,6 +601,35 @@ async function saveTvDeviceSettings(req, res, payload) {
 
     if (tvIp && !isValidIpv4(tvIp)) {
       throw new Error('Format IP address tidak valid. Gunakan format IPv4 (contoh: 192.168.1.104).');
+    }
+
+    // --- Pemeriksaan yang mencegah dua kesalahan yang sudah pernah menggigit venue ini ---
+    const bypass = payload.force === true || payload.force === 'true';
+    const warnings = [];
+
+    if (tvMac && isWifiStyleMac(tvMac)) {
+      const pesan = `MAC ${tvMac} adalah MAC Wi-Fi, bukan MAC kabel. Wake-on-LAN tidak akan bekerja dan pencocokan ARP akan selalu membaca "beda". `
+        + 'Pakai MAC kabel (berawalan 74:81:9a atau 9c:53:85) — tekan "Ambil dari Jaringan" untuk membacanya otomatis.';
+      if (!bypass) {
+        throw Object.assign(new Error(pesan), { code: 'MAC_WIFI' });
+      }
+      warnings.push(pesan);
+    }
+
+    // Pemeriksaan bentrok hanya masuk akal kalau MAC yang diisi kredibel (MAC kabel).
+    // Kalau isinya MAC Wi-Fi, sudah ditolak/diperingatkan di atas — membandingkannya
+    // justru memunculkan pesan "dipakai perangkat lain" padahal itu TV-nya sendiri.
+    if (tvIp && !isWifiStyleMac(tvMac)) {
+      const holder = await findIpConflict(tvIp, tvMac || payload.tv_mac);
+      if (holder) {
+        const pesan = `Alamat ${tvIp} sedang dipakai perangkat lain (MAC ${holder}). `
+          + 'Kalau tetap dipakai, TV dan perangkat itu akan berebut satu alamat dan TV-nya akan terlihat hilang di jaringan. '
+          + 'Pilih alamat lain, atau perbaiki dulu alamat yang bentrok.';
+        if (!bypass) {
+          throw Object.assign(new Error(pesan), { code: 'IP_CONFLICT', holder_mac: holder });
+        }
+        warnings.push(pesan);
+      }
     }
 
     const tvDeviceId = `TV-${roomId}`;
@@ -613,9 +701,12 @@ async function saveTvDeviceSettings(req, res, payload) {
     });
 
     return successResponse(res, {
-      message: 'Pengaturan TV berhasil disimpan.',
+      message: warnings.length
+        ? `Pengaturan TV disimpan DENGAN PERINGATAN: ${warnings.join(' ')}`
+        : 'Pengaturan TV berhasil disimpan.',
       tv_device_id: tvDeviceId,
-      bridge_sync: bridgeSyncResult
+      bridge_sync: bridgeSyncResult,
+      warnings,
     });
   } catch (err) {
     return errorResponse(res, err.message, err.code || 'SAVE_ERROR');
@@ -790,6 +881,7 @@ module.exports = {
   reloadTvBridgeConfig,
   rotateTvDisplayToken,
   saveTvDevice,
+  captureTvDeviceFromNetwork,
   saveTvDeviceSettings,
   seedPilotTvDisplay,
   seedTvDisplaysForAllRooms,

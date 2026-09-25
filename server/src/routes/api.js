@@ -361,6 +361,8 @@ async function handlePostAction(action, req, res, payload) {
       return successResponse(res, { message: 'Fondasi stok lokal siap; inisialisasi massal produksi tidak dijalankan otomatis.', initialized: false });
     case 'sendTvCommand':
       return tvController.sendTvCommand(req, res, payload);
+    case 'captureTvDeviceFromNetwork':
+      return tvController.captureTvDeviceFromNetwork(req, res, payload);
     case 'saveTvDeviceSettings':
       return tvController.saveTvDeviceSettings(req, res, payload);
     case 'checkTvDevice':

@@ -395,7 +395,7 @@ async function launchApp(packageName, roomSelector) {
 /** Membaca status layar TV: Awake / Asleep / Dozing / Dream (screensaver). */
 async function readWakefulness(room) {
   try {
-    const output = await runAdb(['-s', serialFromRoom(room), 'shell', 'dumpsys', 'power'], `Membaca status daya ${room.name}`, 2500);
+    const output = await runShell(room, ['dumpsys', 'power'], `Membaca status daya ${room.name}`);
     const match = /mWakefulness=(\w+)/.exec(output || '');
     return match ? match[1] : null;
   } catch (error) {
@@ -550,27 +550,12 @@ async function getStatus(roomSelector) {
 
   const connected = await verifyConnected(room);
   const runtime = getRuntimeState(room.id);
-  let wakefulness = null;
-  if (connected && room.ip) {
-    try {
-      wakefulness = await readWakefulness(room);
-    } catch (_err) {
-      wakefulness = null;
-    }
-  }
-  let arpMac = '';
-  try {
-    const arpTable = await getArpTable();
-    arpMac = (room.ip && arpTable.get(room.ip)) || '';
-  } catch (_e) {}
 
   return {
     ok: true,
     roomId: room.id,
     roomName: room.name,
     connected,
-    wakefulness,
-    arpMac,
     ip: room.ip,
     mac: room.mac,
     serial: serialFromRoom(room),
@@ -633,9 +618,11 @@ function listTestDeviceStatuses() {
 }
 
 function getArpTable() {
-  const { exec } = require('node:child_process');
+  // Tabel ARP PC ini: sumber yang bisa membuktikan sebuah IP benar-benar dipegang
+  // perangkat yang kita kira. Dipakai untuk memeriksa alamat TV sebelum disimpan.
+  const { exec } = require("node:child_process");
   return new Promise((resolve) => {
-    exec('arp -a', { timeout: 3000 }, (error, stdout) => {
+    exec("arp -a", { timeout: 3000 }, (error, stdout) => {
       const map = new Map();
       if (error || !stdout) {
         return resolve(map);
@@ -644,9 +631,7 @@ function getArpTable() {
       for (const line of lines) {
         const match = /(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2})/i.exec(line);
         if (match) {
-          const ip = match[1].trim();
-          const mac = match[2].trim().toLowerCase().replace(/-/g, ':');
-          map.set(ip, mac);
+          map.set(match[1].trim(), match[2].trim().toLowerCase().replace(/-/g, ":"));
         }
       }
       resolve(map);
@@ -654,63 +639,23 @@ function getArpTable() {
   });
 }
 
-async function getConnectedSerials() {
-  try {
-    const stdout = await runAdb(['devices'], 'Listing adb devices', 2000);
-    const set = new Set();
-    const lines = String(stdout || '').split(/\r?\n/);
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 2 && parts[1] === 'device') {
-        set.add(parts[0].toLowerCase());
-      }
-    }
-    return set;
-  } catch (_e) {
-    return new Set();
-  }
-}
-
-async function syncConnectedStatesFromAdb() {
-  const connectedSerials = await getConnectedSerials();
-  const rooms = listRooms();
-  for (const r of rooms) {
-    if (r.ip && r.enabled) {
-      const serial = serialFromRoom(r).toLowerCase();
-      const isDev = connectedSerials.has(serial);
-      if (isDev) {
-        setConnected(r.id, true, null, serial);
-      } else {
-        const current = getRuntimeState(r.id);
-        if (current.connected) {
-          setConnected(r.id, false, null, serial);
-        }
-      }
-    }
-  }
-  return connectedSerials;
-}
-
 module.exports = {
   connectToRoom,
   ensureAwakeAndConnected,
   ensureConnected,
   getArpTable,
-  getConnectedSerials,
+  getTvPowerState,
   getDefaultRoomId,
   getRoomRuntime,
   getRuntime,
   getStatus,
   getTestDeviceRuntime,
-  getTvPowerState,
   launchApp,
   listRoomStatuses,
   listTestDeviceStatuses,
-  readWakefulness,
   resolveRoomId: getRoomIdOrNull,
   resolveTestDeviceId: getTestDeviceIdOrNull,
   sendOverlay,
   sleepRoom: sendSleepKeyevent,
-  syncConnectedStatesFromAdb,
   wakeRoom,
 };

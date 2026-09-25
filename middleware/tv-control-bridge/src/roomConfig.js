@@ -251,12 +251,16 @@ function updateRoomConfig(roomId, updates = {}) {
   }
 
   const current = rooms[index];
-  const updated = normalizeRoom({
-    ...current,
-    ...updates,
-    id: current.id,
-    aliases: current.aliases,
-  }, index);
+  const updated = normalizeRoom(
+    {
+      ...current,
+      ...updates,
+      id: current.id,
+      name: current.name,
+      aliases: current.aliases,
+    },
+    index,
+  );
 
   rooms[index] = updated;
   roomsById.set(updated.id.toLowerCase(), updated);
@@ -293,6 +297,10 @@ function reloadRoomConfig() {
     });
   });
   return { ok: true, roomCount: rooms.length };
+}
+
+function getConfigPath() {
+  return DEFAULT_CONFIG_PATH;
 }
 
 module.exports = {

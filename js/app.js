@@ -25283,6 +25283,31 @@ function createTvDeviceModalElement() {
   testBtn.textContent = modal.isChecking ? "Menguji Koneksi..." : "Uji Sambungan Sekarang";
   testSection.appendChild(testBtn);
 
+  const captureBtn = document.createElement("button");
+  captureBtn.type = "button";
+  captureBtn.className = "master-button secondary";
+  captureBtn.dataset.action = "capture-tv-device-network";
+  captureBtn.style.marginLeft = "8px";
+  captureBtn.disabled = modal.isCapturing || modal.isChecking || modal.isSaving;
+  captureBtn.textContent = modal.isCapturing ? "Membaca Jaringan..." : "Ambil dari Jaringan";
+  testSection.appendChild(captureBtn);
+
+  const captureHint = document.createElement("div");
+  captureHint.style.marginTop = "6px";
+  captureHint.style.fontSize = "11.5px";
+  captureHint.style.color = "#9ca3af";
+  captureHint.textContent = "Isi Alamat IP TV dulu, lalu tekan tombol ini: MAC kabel TV dibaca otomatis dari jaringan. Tidak perlu menghafal MAC.";
+  testSection.appendChild(captureHint);
+
+  if (modal.captureResult) {
+    const capDiv = document.createElement("div");
+    capDiv.style.marginTop = "8px";
+    capDiv.style.fontSize = "12px";
+    capDiv.style.color = modal.captureResult.ok ? "#10b981" : "#f59e0b";
+    capDiv.textContent = modal.captureResult.message || "";
+    testSection.appendChild(capDiv);
+  }
+
   if (modal.checkResult) {
     const resDiv = document.createElement("div");
     resDiv.style.marginTop = "8px";
@@ -36123,6 +36148,8 @@ async function handleRoomAction(event) {
       controlType: item?.control_type || "middleware",
       tvIp: item?.tv_ip || "",
       tvMac: item?.tv_mac || "",
+      captureResult: null,
+      isCapturing: false,
       adbPort: item?.adb_port || 5555,
       wolBroadcast: item?.wol_broadcast || "192.168.1.255",
       notes: item?.notes || "",
@@ -36142,6 +36169,49 @@ async function handleRoomAction(event) {
       tvDeviceModalState = null;
       renderRooms();
     }
+    return;
+  }
+
+  if (action === "capture-tv-device-network") {
+    if (!tvDeviceModalState || tvDeviceModalState.isCapturing) return;
+    const m = tvDeviceModalState;
+    if (!m.tvIp || !m.tvIp.trim()) {
+      m.error = "Isi Alamat IP TV dulu, baru tekan Ambil dari Jaringan.";
+      renderRooms();
+      return;
+    }
+    if (!m.adminPin || !m.adminPin.trim()) {
+      m.error = "PIN Otorisasi Admin/Owner wajib diisi.";
+      renderRooms();
+      return;
+    }
+    m.isCapturing = true;
+    m.captureResult = null;
+    m.error = null;
+    renderRooms();
+
+    try {
+      const res = await postApiAction({
+        action: "captureTvDeviceFromNetwork",
+        room_id: m.roomId.trim(),
+        admin_pin: m.adminPin,
+        tv_ip: m.tvIp.trim()
+      });
+      m.isCapturing = false;
+      if (res && (res.ok || res.success) && res.tv_mac) {
+        m.tvMac = res.tv_mac;
+        m.captureResult = {
+          ok: !res.is_wifi_mac,
+          message: res.message || `MAC terbaca: ${res.tv_mac}`
+        };
+      } else {
+        m.captureResult = { ok: false, message: res?.message || "Tidak ada perangkat yang menjawab di alamat itu." };
+      }
+    } catch (err) {
+      m.isCapturing = false;
+      m.captureResult = { ok: false, message: err.message };
+    }
+    renderRooms();
     return;
   }
 
@@ -36226,7 +36296,11 @@ async function handleRoomAction(event) {
       });
 
       if (res && (res.ok || res.success)) {
-        showFloatingToast(res.message || "Pengaturan TV berhasil disimpan.", "success");
+        const adaPeringatan = Array.isArray(res.warnings) && res.warnings.length > 0;
+        showFloatingToast(
+          res.message || "Pengaturan TV berhasil disimpan.",
+          adaPeringatan ? "warning" : "success"
+        );
         tvDeviceModalState = null;
         await loadTvControlOverview({ force: true });
       } else {
