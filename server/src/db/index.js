@@ -1,6 +1,9 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+
+// Kembalikan tipe data DATE (OID 1082) sebagai raw string 'YYYY-MM-DD' untuk mencegah pergeseran timezone dan bug pemotongan hari
+types.setTypeParser(1082, (val) => val);
 
 function shouldUseSsl() {
   const sslMode = String(process.env.PGSSLMODE || process.env.PGSSL || '').toLowerCase();

@@ -103,6 +103,20 @@ function iso(value) {
   return value ? new Date(value).toISOString() : '';
 }
 
+function formatOperationalDateKey(dateInput) {
+  if (!dateInput) return '';
+  if (dateInput instanceof Date) {
+    const y = dateInput.getFullYear();
+    const m = String(dateInput.getMonth() + 1).padStart(2, '0');
+    const d = String(dateInput.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(dateInput).trim();
+  const match = str.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (match) return match[1];
+  return str.split('T')[0];
+}
+
 function money(value) {
   return Number(value || 0);
 }
@@ -1450,7 +1464,7 @@ function filterOwnerMirrorPayloadByDateRange(payload, range) {
   }
 
   for (const c of (payload.cashier_closings || [])) {
-    const cd = c.closing_date ? String(c.closing_date).split('T')[0] : '';
+    const cd = formatOperationalDateKey(c.closing_date);
     if (cd && cd >= range.startDate && cd <= range.endDate) {
       allClosings.push(c);
     }
@@ -1566,7 +1580,7 @@ async function getLatestOwnerMirrorSnapshot(sourceId = 'happy-song-local', optio
     if (multiSnapshots.rowCount > 0) {
       const dateMap = new Map();
       for (const row of multiSnapshots.rows) {
-        const dKey = row.operational_date_start ? String(row.operational_date_start).split('T')[0] : String(row.snapshot_id);
+        const dKey = formatOperationalDateKey(row.operational_date_start) || String(row.snapshot_id);
         if (!dateMap.has(dKey)) {
           dateMap.set(dKey, row);
         }
