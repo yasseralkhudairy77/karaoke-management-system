@@ -267,6 +267,63 @@ async function runOwnerMirrorRolloverTests() {
     assert.strictEqual(customMerged.lc_performance.items[0].total_fee, 900000);
     console.log('  PASS multi-day custom range seamlessly aggregates daily snapshots when PC is offline');
 
+    // Test custom date: Multi-day range with Tuesday and Thursday Date objects (regression test for split('T')[0] bug)
+    db.query = async (sql) => {
+      const text = String(sql);
+      if (/WHERE source_id = \$1\s+AND operational_date_start = \$3::date/i.test(text)) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (/WHERE source_id = \$1\s+AND operational_date_start = operational_date_end/i.test(text)) {
+        return {
+          rowCount: 2,
+          rows: [
+            {
+              snapshot_id: 201,
+              source_id: 'happy-song-local',
+              period: 'today',
+              operational_date_start: new Date('2026-09-15T00:00:00Z'), // Tuesday (Tue...)
+              operational_date_end: new Date('2026-09-15T00:00:00Z'),
+              received_at: new Date('2026-09-16T05:00:00+07:00'),
+              payload_json: {
+                operational_date_start: '2026-09-15',
+                operational_date_end: '2026-09-15',
+                summary: { paid_revenue: 3000000, total_transactions: 2 },
+                transactions: [{ transaction_id: 'T-TUE', grand_total: 3000000, payment_status: 'paid', room_total: 1500000, fnb_total: 1500000 }],
+                lc_performance: { items: [{ lc_id: 'LC-TUE', lc_name: 'Eka', session_count: 2, total_duration_minutes: 120, total_fee: 240000 }] }
+              }
+            },
+            {
+              snapshot_id: 202,
+              source_id: 'happy-song-local',
+              period: 'today',
+              operational_date_start: new Date('2026-09-17T00:00:00Z'), // Thursday (Thu...)
+              operational_date_end: new Date('2026-09-17T00:00:00Z'),
+              received_at: new Date('2026-09-18T05:00:00+07:00'),
+              payload_json: {
+                operational_date_start: '2026-09-17',
+                operational_date_end: '2026-09-17',
+                summary: { paid_revenue: 4000000, total_transactions: 2 },
+                transactions: [{ transaction_id: 'T-THU', grand_total: 4000000, payment_status: 'paid', room_total: 2000000, fnb_total: 2000000 }],
+                lc_performance: { items: [{ lc_id: 'LC-THU', lc_name: 'Nadia', session_count: 2, total_duration_minutes: 120, total_fee: 240000 }] }
+              }
+            }
+          ]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+
+    const tuesdayThursdayMerged = await getLatestOwnerMirrorSnapshot('happy-song-local', {
+      period: 'custom',
+      start_date: '2026-09-15',
+      end_date: '2026-09-17'
+    });
+    assert.strictEqual(tuesdayThursdayMerged.has_snapshot, true);
+    assert.strictEqual(tuesdayThursdayMerged.lc_performance.items.length, 2, 'Both Tuesday and Thursday LC items must be preserved');
+    assert.strictEqual(tuesdayThursdayMerged.lc_performance.total_sessions, 4, 'Total sessions must be 4');
+    assert.strictEqual(tuesdayThursdayMerged.lc_performance.total_duration_minutes, 240, 'Total duration must be 240 min');
+    console.log('  PASS multi-day custom range preserves Tuesday and Thursday snapshots with Date objects');
+
     console.log('Owner Mirror Cutoff Rollover Tests passed.');
   } finally {
     db.query = originalQuery;
