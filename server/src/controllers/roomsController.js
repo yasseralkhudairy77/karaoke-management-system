@@ -2779,8 +2779,8 @@ async function getExpiredRoomRecoveryList(req, res) {
     const rooms = result.rows.map(row => ({
       ...row,
       expired_minutes: row.scheduled_end_time ? Math.max(0, Math.floor((now - row.scheduled_end_time) / 60000)) : 0,
-      start_time: row.start_time ? row.start_time.toISOString() : '',
-      scheduled_end_time: row.scheduled_end_time ? row.scheduled_end_time.toISOString() : ''
+      start_time: row.start_time ? (row.start_time.toISOString ? row.start_time.toISOString() : new Date(row.start_time).toISOString()) : '',
+      scheduled_end_time: row.scheduled_end_time ? (row.scheduled_end_time.toISOString ? row.scheduled_end_time.toISOString() : new Date(row.scheduled_end_time).toISOString()) : ''
     }));
 
     const totalRes = await db.query(`

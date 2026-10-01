@@ -180,8 +180,8 @@ async function getCustomerDisplayState(req, res) {
         room_id: room.room_id,
         room_name: room.room_name,
         status: room.status,
-        start_time: room.start_time ? room.start_time.toISOString() : '',
-        scheduled_end_time: room.scheduled_end_time ? room.scheduled_end_time.toISOString() : '',
+        start_time: room.start_time ? (room.start_time.toISOString ? room.start_time.toISOString() : new Date(room.start_time).toISOString()) : '',
+        scheduled_end_time: room.scheduled_end_time ? (room.scheduled_end_time.toISOString ? room.scheduled_end_time.toISOString() : new Date(room.scheduled_end_time).toISOString()) : '',
         booked_duration_minutes: Number(room.booked_duration_minutes || 0)
       }
     });

@@ -180,7 +180,7 @@ async function getTodayStockMovements(req, res) {
       qty_change: Number(row.qty_change || 0),
       stock_before: Number(row.stock_before || 0),
       stock_after: Number(row.stock_after || 0),
-      created_at: row.created_at ? row.created_at.toISOString() : ''
+      created_at: row.created_at ? (row.created_at.toISOString ? row.created_at.toISOString() : new Date(row.created_at).toISOString()) : ''
     }));
 
     return res.json({ ok: true, success: true, movements, stock_movements: movements });

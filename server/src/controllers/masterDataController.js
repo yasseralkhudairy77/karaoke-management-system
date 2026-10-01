@@ -1080,8 +1080,8 @@ async function validatePromoCode(req, res) {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const validFrom = promo.valid_from ? promo.valid_from.toISOString().slice(0, 10) : '';
-    const validUntil = promo.valid_until ? promo.valid_until.toISOString().slice(0, 10) : '';
+    const validFrom = promo.valid_from ? (promo.valid_from.toISOString ? promo.valid_from.toISOString().slice(0, 10) : String(promo.valid_from).slice(0, 10)) : '';
+    const validUntil = promo.valid_until ? (promo.valid_until.toISOString ? promo.valid_until.toISOString().slice(0, 10) : String(promo.valid_until).slice(0, 10)) : '';
 
     if (validFrom && today < validFrom) {
       return errorResponse(res, 'Kode promo belum berlaku.', 'PROMO_NOT_STARTED');

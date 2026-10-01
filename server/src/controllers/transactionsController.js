@@ -219,6 +219,18 @@ function adjustPaymentBreakdownForCorrection(paymentMethod, newGrandTotal, curre
   return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
 }
 
+function formatOperationalDate(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.split('T')[0];
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? '' : val.toISOString().split('T')[0];
+  }
+  if (typeof val.toISOString === 'function') {
+    return val.toISOString().split('T')[0];
+  }
+  return String(val).split('T')[0];
+}
+
 function serializeTransaction(row) {
   if (!row) return null;
   let roomJourney = row.room_journey_json || [];
@@ -244,7 +256,7 @@ function serializeTransaction(row) {
     cash_amount: paymentBreakdown.cash_amount,
     transfer_amount: paymentBreakdown.transfer_amount,
     cashier_name: row.cashier_name,
-    operational_date: row.operational_date ? row.operational_date.toISOString().split('T')[0] : '',
+    operational_date: formatOperationalDate(row.operational_date),
     booking_mode: row.booking_mode || '',
     package_id: row.package_id || '',
     package_name: row.package_name || '',
@@ -278,7 +290,7 @@ function serializeSalesCommission(row) {
   return {
     commission_id: row.commission_id,
     transaction_id: row.transaction_id,
-    operational_date: row.operational_date ? new Date(row.operational_date).toISOString().split('T')[0] : '',
+    operational_date: formatOperationalDate(row.operational_date),
     basis_type: row.basis_type || 'grand_total',
     basis_amount: Number(row.basis_amount || 0),
     commission_percent: Number(row.commission_percent || 0),

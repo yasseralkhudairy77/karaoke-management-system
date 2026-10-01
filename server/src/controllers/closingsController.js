@@ -62,7 +62,7 @@ async function getTodayCashierClosings(req, res) {
 
     const closings = result.rows.map(c => ({
       closing_id: c.closing_id,
-      closing_date: c.closing_date ? c.closing_date.toISOString().split('T')[0] : '',
+      closing_date: c.closing_date ? (c.closing_date.toISOString ? c.closing_date.toISOString().split('T')[0] : String(c.closing_date).split('T')[0]) : '',
       cashier_name: c.cashier_name,
       total_transactions: c.total_transactions,
       paid_transactions: c.paid_transactions,

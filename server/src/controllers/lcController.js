@@ -62,7 +62,7 @@ async function getLcMasterList(req, res) {
       rate_per_room: Number(row.rate_per_hour || 0),
       status: row.status,
       phone: row.phone || '',
-      joined_date: row.joined_date ? row.joined_date.toISOString().split('T')[0] : ''
+      joined_date: row.joined_date ? (row.joined_date.toISOString ? row.joined_date.toISOString().split('T')[0] : String(row.joined_date).split('T')[0]) : ''
     }));
 
     return res.json({ ok: true, success: true, lcs });
