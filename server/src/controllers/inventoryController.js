@@ -20,16 +20,24 @@ async function getInventoryItems(req, res) {
     if (statusParam === 'all') {
       whereClause = '';
     } else if (statusParam === 'inactive') {
-      whereClause = "WHERE status = 'inactive'";
+      whereClause = "WHERE i.status = 'inactive'";
     } else {
-      whereClause = "WHERE (status = 'active' OR status IS NULL OR status = '')";
+      whereClause = "WHERE (i.status = 'active' OR i.status IS NULL OR i.status = '')";
     }
 
     const result = await db.query(`
-      SELECT stock_item_id, stock_item_name, category, unit, stock_qty, min_stock, status, updated_at
-      FROM inventory
+      SELECT i.stock_item_id, i.stock_item_name, i.category, i.unit, i.stock_qty, i.min_stock, i.status, i.updated_at,
+             m.menu_id, m.price AS selling_price
+      FROM inventory i
+      LEFT JOIN LATERAL (
+        SELECT menu_id, price
+        FROM menu
+        WHERE stock_item_id = i.stock_item_id
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT 1
+      ) m ON true
       ${whereClause}
-      ORDER BY category ASC, stock_item_name ASC
+      ORDER BY i.category ASC, i.stock_item_name ASC
     `, params);
 
     const items = result.rows.map(row => {
@@ -44,6 +52,8 @@ async function getInventoryItems(req, res) {
         min_stock: minStock,
         status: row.status,
         stock_status: getInventoryStatus(stockQty, minStock),
+        selling_price: row.selling_price !== null && row.selling_price !== undefined ? Number(row.selling_price) : null,
+        menu_id: row.menu_id || '',
         updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : ""
       };
     });

@@ -22582,6 +22582,13 @@ function createPaginationControlsElement(key, totalItems) {
 }
 
 function openMasterDataForm(type, mode, item = null) {
+  const linkedMenuForInv = (type === "inventory" && item?.stock_item_id)
+    ? (menuItems || []).find((m) => String(m.stock_item_id).trim() === String(item.stock_item_id).trim())
+    : null;
+  const initialSellingPrice = item?.selling_price !== undefined && item?.selling_price !== "" && item?.selling_price !== null
+    ? item.selling_price
+    : (linkedMenuForInv ? linkedMenuForInv.price : "");
+
   const defaults = {
     room: {
       room_id: "",
@@ -22610,6 +22617,7 @@ function openMasterDataForm(type, mode, item = null) {
       category: "",
       unit: "",
       min_stock: "",
+      selling_price: initialSellingPrice,
       status: "active",
     },
     package: {
@@ -22631,11 +22639,13 @@ function openMasterDataForm(type, mode, item = null) {
     mode,
     originalValues: {
       ...(item || {}),
+      selling_price: item?.selling_price ?? initialSellingPrice,
       qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
     },
     values: {
       ...defaults[type],
       ...(item || {}),
+      selling_price: item?.selling_price ?? initialSellingPrice,
       qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
     },
   };
@@ -22992,6 +23002,12 @@ function createMasterDataFormElement() {
       createMasterField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Unit", field: "unit" }),
       createMasterField({ label: "Min Stok", field: "min_stock", type: "number" }),
+      createMasterField({
+        label: "Harga Jual POS (Rp)",
+        field: "selling_price",
+        type: "number",
+        helper: "Harga jual yang tampil di kasir POS F&B. Biarkan kosong jika barang bahan baku mentah (bukan untuk dijual langsung)."
+      }),
       createMasterField({
         label: "Status",
         field: "status",
@@ -23439,6 +23455,30 @@ function getMenuBundleSummary(menuItem, { includeMode = true } = {}) {
   }).join(", ");
 }
 
+function createMenuIdCell(menuItem) {
+  const container = document.createElement("div");
+  container.className = "master-id-container";
+
+  const menuIdElem = document.createElement("span");
+  menuIdElem.className = "master-id-primary";
+  menuIdElem.textContent = menuItem.menu_id || "-";
+  container.appendChild(menuIdElem);
+
+  if (menuItem.stock_item_id) {
+    const stockIdElem = document.createElement("span");
+    stockIdElem.className = "master-id-stock-tag";
+    stockIdElem.textContent = menuItem.stock_item_id;
+    container.appendChild(stockIdElem);
+  } else {
+    const noStockElem = document.createElement("span");
+    noStockElem.className = "master-id-stock-tag unlinked";
+    noStockElem.textContent = "Tanpa Stok";
+    container.appendChild(noStockElem);
+  }
+
+  return container;
+}
+
 function createMenuSettingsSection() {
   const query = settingsMenuSearchQuery.trim().toLowerCase();
   const filteredMenuItems = menuItems.filter((menuItem) => {
@@ -23449,11 +23489,14 @@ function createMenuSettingsSection() {
     }
 
     if (query) {
+      const linkedInv = (inventoryItems || []).find((inv) => String(inv.stock_item_id).trim() === String(menuItem.stock_item_id).trim());
+      const linkedInvName = linkedInv ? linkedInv.stock_item_name : "";
       const haystack = [
         menuItem.menu_id,
         menuItem.menu_name,
         menuItem.category,
         menuItem.stock_item_id,
+        linkedInvName,
       ].join(" ").toLowerCase();
 
       return haystack.includes(query);
@@ -23490,7 +23533,7 @@ function createMenuSettingsSection() {
     const profit = getMenuProfitAnalysis(menuItem);
 
     return [
-      menuItem.menu_id || "-",
+      createMenuIdCell(menuItem),
       menuItem.menu_name || "-",
       menuItem.category || "-",
       menuItem.menu_type === "fnb_bundle" ? "Paket F&B" : "Menu Biasa",
@@ -23510,7 +23553,7 @@ function createMenuSettingsSection() {
     "Pengaturan Menu F&B",
     "Kelola menu aktif/inaktif dan mapping stok.",
     "menu",
-    createMasterTable(["ID", "Menu", "Kategori", "Jenis", "Isi Paket", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
+    createMasterTable(["ID Menu / Stok", "Menu", "Kategori", "Jenis", "Isi Paket", "Harga", "HPP", "Var Cost", "Bonus LC", "Margin", "Margin %", "Status", "Aksi"], rows, "Menu tidak ditemukan.", "settingsMenu"),
     controls
   );
 }
@@ -23526,22 +23569,29 @@ function createInventorySettingsSection() {
       item.status,
     ].join(" ").toLowerCase().includes(query))
     : inventoryItems;
-  const rows = filteredInventoryItems.map((item) => [
-    item.stock_item_id || "-",
-    item.stock_item_name || "-",
-    item.category || "-",
-    item.unit || "-",
-    `${Number(item.stock_qty) || 0}`,
-    `${Number(item.min_stock) || 0}`,
-    getMasterStatusBadge(item.status),
-    createMasterActionButton("inventory", item),
-  ]);
+  const rows = filteredInventoryItems.map((item) => {
+    const linkedMenu = (menuItems || []).find((m) => String(m.stock_item_id).trim() === String(item.stock_item_id).trim());
+    const displayPrice = linkedMenu ? Number(linkedMenu.price || 0) : (item.selling_price !== null && item.selling_price !== undefined ? Number(item.selling_price) : null);
+    const priceText = displayPrice !== null ? formatCurrency(displayPrice) : "-";
+
+    return [
+      item.stock_item_id || "-",
+      item.stock_item_name || "-",
+      item.category || "-",
+      item.unit || "-",
+      `${Number(item.stock_qty) || 0}`,
+      `${Number(item.min_stock) || 0}`,
+      priceText,
+      getMasterStatusBadge(item.status),
+      createMasterActionButton("inventory", { ...item, selling_price: displayPrice ?? "" }),
+    ];
+  });
 
   return createSettingsSection(
     "Pengaturan Inventory",
     "Kelola master item dan min stok. Restock tetap melalui fitur Stok.",
     "inventory",
-    createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Status", "Aksi"], rows, "Inventory tidak ditemukan.", "settingsInventory"),
+    createMasterTable(["ID", "Item", "Kategori", "Unit", "Stok", "Min", "Harga Jual (POS)", "Status", "Aksi"], rows, "Inventory tidak ditemukan.", "settingsInventory"),
     createSettingsSearchControl("Cari Inventory", settingsInventorySearchQuery, "filter-settings-inventory", "Cari item, kategori, unit, ID, atau status")
   );
 }
@@ -27184,6 +27234,9 @@ function buildMasterPayload(authData = null, adminPin = "") {
     category: values.category || "",
     unit: values.unit || "",
     min_stock: Number(values.min_stock),
+    selling_price: values.selling_price !== undefined && values.selling_price !== "" && values.selling_price !== null
+      ? Number(values.selling_price)
+      : null,
     status: values.status || "active",
   };
 }
@@ -27273,6 +27326,16 @@ function isSensitiveMasterDataChange() {
       || originalComponents !== nextComponents;
   }
 
+  if (masterDataForm.type === "inventory") {
+    const originalPrice = original.selling_price !== undefined && original.selling_price !== "" && original.selling_price !== null
+      ? Number(original.selling_price)
+      : null;
+    const nextPrice = values.selling_price !== undefined && values.selling_price !== "" && values.selling_price !== null
+      ? Number(values.selling_price)
+      : null;
+    return originalPrice !== nextPrice;
+  }
+
   if (masterDataForm.type === "package") {
     return false;
   }
@@ -27301,6 +27364,10 @@ function getSensitiveMasterDataAction() {
 
   if (masterDataForm.type === "menu") {
     return "edit_menu_price";
+  }
+
+  if (masterDataForm.type === "inventory") {
+    return "edit_inventory_price";
   }
 
   if (masterDataForm.type === "package") {
@@ -27341,6 +27408,7 @@ function getSensitiveMasterDataMessage() {
     edit_room_price: "mengubah tarif room",
     set_room_maintenance: "mengubah status maintenance room",
     edit_menu_price: "mengubah harga menu",
+    edit_inventory_price: "mengubah harga jual item stok",
     edit_package_price: "mengubah harga paket",
     edit_package_duration: "mengubah durasi paket",
     deactivate_package: "menonaktifkan paket",

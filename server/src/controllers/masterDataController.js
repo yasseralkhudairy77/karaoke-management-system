@@ -232,6 +232,39 @@ async function saveInventoryMaster(req, res, payload) {
       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'active'))
       ON CONFLICT (stock_item_id) DO UPDATE SET stock_item_name = EXCLUDED.stock_item_name, category = EXCLUDED.category, unit = EXCLUDED.unit, stock_qty = EXCLUDED.stock_qty, min_stock = EXCLUDED.min_stock, status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP
     `, [stockItemId, stockItemName || stockItemId, category, payload.unit || 'pcs', stockQty, Number(payload.min_stock || 0), payload.status || 'active']);
+
+    const hasSellingPrice = payload.selling_price !== undefined && payload.selling_price !== null && payload.selling_price !== '';
+    if (hasSellingPrice) {
+      const sellingPrice = Number(payload.selling_price);
+      if (Number.isFinite(sellingPrice) && sellingPrice >= 0) {
+        const existingMenuRes = await db.query(`
+          SELECT menu_id FROM menu 
+          WHERE stock_item_id = $1 OR LOWER(TRIM(menu_name)) = LOWER(TRIM($2))
+          ORDER BY CASE WHEN stock_item_id = $1 THEN 0 ELSE 1 END
+          LIMIT 1
+        `, [stockItemId, stockItemName]);
+
+        if (existingMenuRes.rows.length > 0) {
+          const targetMenuId = existingMenuRes.rows[0].menu_id;
+          await db.query(`
+            UPDATE menu 
+            SET price = $1, stock_item_id = $2, stock_tracking = 'yes',
+                menu_name = COALESCE(NULLIF($3, ''), menu_name),
+                category = COALESCE(NULLIF($4, ''), category),
+                status = COALESCE(NULLIF($5, ''), status),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE menu_id = $6
+          `, [sellingPrice, stockItemId, stockItemName, category, payload.status || 'active', targetMenuId]);
+        } else {
+          const newMenuId = `MENU-${Date.now()}`;
+          await db.query(`
+            INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit)
+            VALUES ($1, $2, $3, $4, $5, 'yes', $6, 1)
+          `, [newMenuId, stockItemName || stockItemId, category || 'F&B', sellingPrice, payload.status || 'active', stockItemId]);
+        }
+      }
+    }
+
     await logMasterAudit('inventory', stockItemId, payload.stock_item_name || stockItemId, 'save', null, payload, payload.changed_by || payload.cashier_name);
     return successResponse(res, { message: 'Master stok berhasil disimpan.', stock_item_id: stockItemId });
   } catch (err) {

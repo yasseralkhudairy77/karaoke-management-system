@@ -82,9 +82,44 @@ function normalizeCategoryName(rawCategory) {
   return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
 }
 
+async function ensureInventoryMenuItemsSync(executor = db) {
+  try {
+    await executor.query(`
+      UPDATE menu m
+      SET stock_item_id = i.stock_item_id, stock_tracking = 'yes', updated_at = CURRENT_TIMESTAMP
+      FROM inventory i
+      WHERE (m.stock_item_id IS NULL OR m.stock_item_id = '')
+        AND LOWER(TRIM(m.menu_name)) = LOWER(TRIM(i.stock_item_name))
+        AND i.stock_item_id IS NOT NULL AND i.stock_item_id <> ''
+    `);
+
+    await executor.query(`
+      INSERT INTO menu (menu_id, menu_name, category, price, status, stock_tracking, stock_item_id, stock_qty_per_unit)
+      SELECT 
+        'MENU-' || COALESCE(NULLIF(SUBSTRING(i.stock_item_id FROM 'STOCK-(.*)'), ''), EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT::TEXT),
+        i.stock_item_name,
+        COALESCE(NULLIF(i.category, ''), 'F&B'),
+        0,
+        COALESCE(NULLIF(i.status, ''), 'active'),
+        'yes',
+        i.stock_item_id,
+        1
+      FROM inventory i
+      WHERE NOT EXISTS (
+        SELECT 1 FROM menu m WHERE m.stock_item_id = i.stock_item_id
+      )
+      AND i.stock_item_id IS NOT NULL AND i.stock_item_id <> ''
+      AND (i.category IS NULL OR LOWER(i.category) NOT IN ('operasional', 'aset', 'peralatan'))
+    `);
+  } catch (_e) {
+    // Best-effort sinkronisasi saat database online
+  }
+}
+
 async function getMenuItems(req, res) {
   try {
     await ensureFnbBundleSchema();
+    await ensureInventoryMenuItemsSync();
     const result = await db.query(`
       SELECT 
         menu_id, menu_name, category, price, status, 
