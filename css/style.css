@@ -11389,6 +11389,17 @@ select.action-confirmation-input option {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: var(--panel-padding, 24px);
+  border-radius: var(--radius-md, 12px);
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .lc-panel {
+    padding: 16px;
+  }
 }
 
 .lc-sub-nav button.active {
@@ -11434,6 +11445,58 @@ select.action-confirmation-input option {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+
+/* ERP Table & Container */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid rgba(226, 184, 92, 0.2);
+  border-radius: var(--radius-md, 8px);
+  background: rgba(10, 8, 6, 0.6);
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+
+.erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.erp-table th {
+  padding: 12px 14px;
+  background: rgba(226, 184, 92, 0.12);
+  color: var(--gold-strong, #ffd77a);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-bottom: 2px solid rgba(226, 184, 92, 0.25);
+  white-space: nowrap;
+}
+
+.erp-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text, #f6ead2);
+  vertical-align: middle;
+}
+
+.erp-table th:first-child,
+.erp-table td:first-child {
+  padding-left: 18px;
+}
+
+.erp-table th:last-child,
+.erp-table td:last-child {
+  padding-right: 18px;
+}
+
+.erp-table tbody tr:hover td {
+  background: rgba(226, 184, 92, 0.05);
 }
 
 /* Clean cashier closing table styling */
@@ -13969,7 +14032,7 @@ select.action-confirmation-input option {
     grid-template-columns: 1fr;
   }
 }
-/* Panduan Set IP Statis TV (sub-tab Kontrol TV) — untuk teknisi venue */
+/* Panduan Set IP Statis TV (sub-tab Kontrol TV): untuk teknisi venue */
 .tv-control-guide {
   margin-top: 18px;
 }
