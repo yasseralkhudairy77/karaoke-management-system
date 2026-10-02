@@ -11,7 +11,7 @@ function testOwnerUnpaidTransactionsModal() {
   const styleCssContent = fs.readFileSync(styleCssPath, 'utf8');
   const indexHtmlContent = fs.readFileSync(indexHtmlPath, 'utf8');
 
-  console.log('🧪 Running Owner Unpaid Transactions Modal Tests (antislop)...');
+  console.log('🧪 Running Owner Unpaid Transactions Modal & Receipt Tests (antislop)...');
 
   // 1. Validasi deklarasi state untuk transaksi laporan owner & modal unpaid
   assert(
@@ -22,7 +22,11 @@ function testOwnerUnpaidTransactionsModal() {
     appJsContent.includes('let ownerUnpaidTransactionsModalVisible = false;'),
     'js/app.js wajib mendeklarasikan let ownerUnpaidTransactionsModalVisible = false;'
   );
-  console.log('  ✓ State ownerReportTransactions dan ownerUnpaidTransactionsModalVisible terdefinisi');
+  assert(
+    appJsContent.includes('let selectedUnpaidSlipTransaction = null;'),
+    'js/app.js wajib mendeklarasikan let selectedUnpaidSlipTransaction = null;'
+  );
+  console.log('  ✓ State ownerReportTransactions, ownerUnpaidTransactionsModalVisible, dan selectedUnpaidSlipTransaction terdefinisi');
 
   // 2. Validasi penyimpanan transaksi di loadOwnerPeriodReport
   assert(
@@ -54,18 +58,34 @@ function testOwnerUnpaidTransactionsModal() {
   );
   console.log('  ✓ Komponen modal createOwnerUnpaidTransactionsModalOverlay lengkap dengan tombol aksi struk');
 
-  // 5. Validasi pemicu klik pada card Belum Dibayar dan checklist Tagihan belum dibayar
+  // 5. Validasi modal popup struk khusus createUnpaidReceiptModalOverlay
+  assert(
+    appJsContent.includes('function createUnpaidReceiptModalOverlay(transaction)'),
+    'js/app.js wajib mendefinisikan createUnpaidReceiptModalOverlay'
+  );
+  assert(
+    appJsContent.includes('unpaid-receipt-modal-overlay') &&
+    appJsContent.includes('unpaid-receipt-modal-card'),
+    'Modal struk wajib memiliki kelas modal dan overlay yang teridentifikasi'
+  );
+  assert(
+    appJsContent.includes('zIndex = "16000"') || appJsContent.includes('z-index: 16000'),
+    'Modal struk wajib memiliki zIndex 16000 agar tampil di atas modal daftar (15000)'
+  );
+  console.log('  ✓ Komponen popup modal createUnpaidReceiptModalOverlay terverifikasi dengan z-index 16000');
+
+  // 6. Validasi pemicu klik pada card Belum Dibayar dan checklist Tagihan belum dibayar
   assert(
     appJsContent.includes('ownerUnpaidTransactionsModalVisible = true;'),
     'Pemicu klik wajib mengubah ownerUnpaidTransactionsModalVisible menjadi true'
   );
   assert(
-    appJsContent.includes('Klik untuk rincian data.'),
-    'Checklist Tagihan belum dibayar wajib memiliki petunjuk klik'
+    appJsContent.includes('selectedUnpaidSlipTransaction = trx;'),
+    'Tombol aksi struk wajib mengeset selectedUnpaidSlipTransaction = trx'
   );
-  console.log('  ✓ Trigger interaktif pada card Belum Dibayar dan checklist berfungsi');
+  console.log('  ✓ Trigger interaktif pada card Belum Dibayar dan tombol struk berfungsi');
 
-  // 6. Validasi CSS styling clickable dan action hint
+  // 7. Validasi CSS styling clickable dan action hint
   assert(
     styleCssContent.includes('.finance-overview-card.clickable') &&
     styleCssContent.includes('.finance-checklist-row.clickable'),
@@ -77,20 +97,20 @@ function testOwnerUnpaidTransactionsModal() {
   );
   console.log('  ✓ CSS interaksi klik dan hover state terdefinisi');
 
-  // 7. Validasi cache buster index.html
+  // 8. Validasi cache buster index.html
   assert(
-    indexHtmlContent.includes('v=owner-unpaid-modal-v1'),
-    'index.html wajib diperbarui ke cache buster owner-unpaid-modal-v1'
+    /style\.css\?v=owner-unpaid-modal-v2/.test(indexHtmlContent),
+    'index.html wajib diperbarui ke cache buster owner-unpaid-modal-v2'
   );
-  console.log('  ✓ Cache buster index.html diperbarui ke v=owner-unpaid-modal-v1');
+  console.log('  ✓ Cache buster index.html diperbarui ke v=owner-unpaid-modal-v2');
 
-  // 8. Aturan antislop: larangan karakter em dash (\u2014)
+  // 9. Aturan antislop: larangan karakter em dash (\u2014)
   const fnMatch = appJsContent.match(/function createOwnerUnpaidTransactionsModalOverlay\(\)\s*\{([\s\S]*?)\nfunction createOwnerDashboardElement/);
   assert(fnMatch, 'createOwnerUnpaidTransactionsModalOverlay harus ditemukan');
   assert(!fnMatch[1].includes('\u2014'), 'Modal tagihan belum dibayar dilarang memuat em dash');
   console.log('  ✓ antislop: copy UI modal bebas em dash');
 
-  console.log('✅ ALL Owner Unpaid Transactions Modal tests PASSED SUCCESSFULLY!\n');
+  console.log('✅ ALL Owner Unpaid Transactions & Receipt Modal tests PASSED SUCCESSFULLY!\n');
 }
 
 testOwnerUnpaidTransactionsModal();

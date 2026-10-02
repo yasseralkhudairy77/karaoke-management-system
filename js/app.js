@@ -510,6 +510,7 @@ let ownerReportPeriodNotice = "";
 let ownerReportTransactionSummary = null;
 let ownerReportTransactions = [];
 let ownerUnpaidTransactionsModalVisible = false;
+let selectedUnpaidSlipTransaction = null;
 let ownerReportRoomUsageSummary = null;
 let ownerReportFnbSalesSummary = null;
 let ownerReportCashierClosings = [];
@@ -4250,6 +4251,7 @@ function showReceiptPrint(transaction) {
 function hideReceiptPrint() {
   selectedReceiptTransaction = null;
   receiptPrintVisible = false;
+  selectedUnpaidSlipTransaction = null;
   renderRooms();
 }
 
@@ -17635,8 +17637,9 @@ function createOwnerUnpaidTransactionsModalOverlay() {
       `;
 
       tr.querySelector(".btn-view-trx-slip").onclick = async () => {
+        selectedUnpaidSlipTransaction = trx;
         selectedReceiptTransaction = trx;
-        receiptPrintVisible = true;
+        renderRooms();
         await loadReceiptDetailsForTransaction(trx);
         renderRooms();
       };
@@ -17687,6 +17690,119 @@ function createOwnerUnpaidTransactionsModalOverlay() {
   const onKeyDown = (e) => {
     if (e.key === "Escape") {
       ownerUnpaidTransactionsModalVisible = false;
+      window.removeEventListener("keydown", onKeyDown);
+      renderRooms();
+    }
+  };
+  window.addEventListener("keydown", onKeyDown);
+
+  overlay.appendChild(modal);
+  return overlay;
+}
+
+function createUnpaidReceiptModalOverlay(transaction) {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay unpaid-receipt-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.85)";
+  overlay.style.backdropFilter = "blur(8px)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "16000";
+  overlay.style.padding = "16px";
+  overlay.style.boxSizing = "border-box";
+
+  const modal = document.createElement("div");
+  modal.className = "admin-pin-modal erp-card unpaid-receipt-modal-card";
+  modal.style.backgroundColor = "#1c150e";
+  modal.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  modal.style.border = "1px solid rgba(226, 184, 92, 0.45)";
+  modal.style.borderRadius = "12px";
+  modal.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.98), 0 0 1px rgba(255, 215, 122, 0.35)";
+  modal.style.width = "100%";
+  modal.style.maxWidth = "760px";
+  modal.style.maxHeight = "92vh";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+  modal.style.overflow = "hidden";
+  modal.style.color = "var(--text, #f6ead2)";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.padding = "14px 20px";
+  header.style.borderBottom = "1px solid rgba(226, 184, 92, 0.25)";
+  header.style.backgroundColor = "rgba(0, 0, 0, 0.3)";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "17px";
+  title.style.color = "var(--gold-strong, #ffd77a)";
+  title.textContent = `Struk Tagihan: ${transaction.room_name || transaction.room_id || "-"}`;
+
+  const subtitle = document.createElement("p");
+  subtitle.style.margin = "2px 0 0 0";
+  subtitle.style.fontSize = "12px";
+  subtitle.style.color = "var(--muted, #a8a29e)";
+  subtitle.textContent = `ID Transaksi: ${transaction.transaction_id || "-"} • Status: Belum Lunas (Unpaid)`;
+
+  titleGroup.append(title, subtitle);
+
+  const closeIconBtn = document.createElement("button");
+  closeIconBtn.type = "button";
+  closeIconBtn.className = "erp-btn erp-btn-secondary";
+  closeIconBtn.style.padding = "4px 10px";
+  closeIconBtn.style.fontSize = "16px";
+  closeIconBtn.style.lineHeight = "1";
+  closeIconBtn.innerHTML = "&times;";
+  closeIconBtn.title = "Tutup Struk (Esc)";
+  closeIconBtn.onclick = () => {
+    selectedUnpaidSlipTransaction = null;
+    renderRooms();
+  };
+
+  header.append(titleGroup, closeIconBtn);
+  modal.appendChild(header);
+
+  const body = document.createElement("div");
+  body.style.padding = "16px";
+  body.style.overflowY = "auto";
+  body.style.display = "flex";
+  body.style.flexDirection = "column";
+  body.style.gap = "14px";
+
+  const receiptEl = createReceiptPrintElement(transaction);
+  receiptEl.style.marginTop = "0";
+  receiptEl.style.boxShadow = "none";
+  receiptEl.style.background = "rgba(10, 8, 6, 0.75)";
+  receiptEl.style.border = "1px solid rgba(226, 184, 92, 0.2)";
+
+  const closeReceiptBtn = receiptEl.querySelector('[data-action="hide-receipt-print"]');
+  if (closeReceiptBtn) {
+    closeReceiptBtn.onclick = (e) => {
+      e.preventDefault();
+      selectedUnpaidSlipTransaction = null;
+      renderRooms();
+    };
+  }
+
+  body.appendChild(receiptEl);
+  modal.appendChild(body);
+
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      selectedUnpaidSlipTransaction = null;
+      renderRooms();
+    }
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") {
+      selectedUnpaidSlipTransaction = null;
       window.removeEventListener("keydown", onKeyDown);
       renderRooms();
     }
@@ -32876,7 +32992,9 @@ function renderDashboardGlobal() {
     fragment.appendChild(createOwnerUnpaidTransactionsModalOverlay());
   }
 
-  if (receiptPrintVisible && selectedReceiptTransaction) {
+  if (selectedUnpaidSlipTransaction) {
+    fragment.appendChild(createUnpaidReceiptModalOverlay(selectedUnpaidSlipTransaction));
+  } else if (receiptPrintVisible && selectedReceiptTransaction) {
     fragment.appendChild(createReceiptPrintElement(selectedReceiptTransaction));
   }
 
