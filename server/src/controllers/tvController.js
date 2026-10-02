@@ -534,8 +534,19 @@ async function getTvRoomOverview(req, res) {
         } else if (waitingAuthorization && !deviceConnected) {
           masalah.push('TV menunggu izin ADB ditekan di layar TV');
         } else if (!deviceConnected && bRoom && bRoom.enabled) {
-          masalah.push('ADB tidak tersambung ke perangkat TV');
-        }
+                  // Dibedakan memakai status hidup dari bridge, bukan disamaratakan "ADB tidak tersambung":
+                  // TV yang hidup tetapi port ADB-nya tertutup butuh pekerjaan di LAYAR TV (Opsi pengembang),
+                  // sedangkan TV yang tidak menjawab butuh pemeriksaan daya/kabel. Menyamakan keduanya
+                  // membuat teknisi memperbaiki hal yang salah.
+                  const tvState = (bRoom.runtime && bRoom.runtime.tvState) || null;
+                  if (tvState === 'perlu-adb') {
+                    masalah.push('TV hidup, tetapi ADB belum aktif di TV (port 5555 tertutup)');
+                  } else if (tvState === 'tidak-ada') {
+                    masalah.push('TV tidak menjawab di jaringan (mati / kabel / alamat salah)');
+                  } else {
+                    masalah.push('Status TV belum diperiksa dari jaringan');
+                  }
+                }
       }
 
       result.push({
@@ -569,6 +580,11 @@ async function getTvRoomOverview(req, res) {
         last_checked_at: dev && dev.last_checked_at ? new Date(dev.last_checked_at).toISOString() : '',
         last_check_result: dev ? (dev.last_check_result || '') : '',
         last_check_message: dev ? (dev.last_check_message || '') : '',
+        // Status HIDUP dari bridge (bukan catatan uji terakhir). Dipakai badge + kolom "Masalah"
+        // supaya panel ini berhenti melaporkan "ADB tidak tersambung" untuk TV yang sebenarnya
+        // cuma perlu port ADB dibuka di layarnya.
+        tv_state: (bRoom && bRoom.runtime && bRoom.runtime.tvState) || null,
+        tv_state_checked_at: (bRoom && bRoom.runtime && bRoom.runtime.tvCheckedAt) || '',
         masalah
       });
     }

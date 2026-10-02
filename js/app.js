@@ -26366,13 +26366,48 @@ function createTvControlSectionElement() {
         adbBadge.style.color = "#fff";
         adbBadge.textContent = "Menunggu Izin di TV";
         adbBadge.title = "Dialog izin sudah dikirim. Tekan OK/Allow di layar TV ruangan itu, lalu Uji ADB.";
-      } else {
+      } else if (r.tv_state === "perlu-adb") {
+        // DULU baris ini menulis "Terputus" untuk SETIAP ruangan yang belum tersambung, dan itulah
+        // laporan palsu yang berulang: TV yang cuma perlu port ADB dibuka di layarnya terlihat
+        // sama dengan TV yang benar-benar mati. Sekarang dibedakan memakai status hidup dari
+        // bridge (tv_state), yang dihitung dari pemeriksaan port, bukan dari catatan uji kemarin.
+        adbBadge.className = "status-badge";
+        adbBadge.style.background = "#d97706";
+        adbBadge.style.color = "#fff";
+        adbBadge.textContent = "TV perlu diaktifkan";
+        adbBadge.title = "TV menjawab di jaringan, tetapi port ADB (5555) belum terbuka. Aktifkan Opsi pengembang -> Penelusuran USB / Network debugging di TV itu.";
+      } else if (r.tv_state === "tidak-ada") {
         adbBadge.className = "status-badge inactive";
-        adbBadge.textContent = "Terputus";
+        adbBadge.textContent = "TV tidak tersambung";
+        adbBadge.title = "TV tidak menjawab di jaringan. Periksa daya/listrik TV dan kabel jaringannya.";
+      } else {
+        adbBadge.className = "status-badge";
+        adbBadge.textContent = "Belum diperiksa";
       }
       tdAdb.appendChild(adbBadge);
 
-      // Tampilkan catatan riwayat pemeriksaan terakhir agar layar tidak berbohong sepihak
+      // Status hidup (bukan catatan uji kemarin): inilah yang dipakai untuk lampu warna.
+      if (r.has_device !== false && r.control_type !== "mock" && r.tv_state) {
+        const hidupDiv = document.createElement("div");
+        hidupDiv.style.fontSize = "10px";
+        hidupDiv.style.marginTop = "3px";
+        hidupDiv.style.lineHeight = "1.2";
+        const peta = { siap: "#34d399", "perlu-adb": "#fbbf24", "tidak-ada": "#f87171" };
+        hidupDiv.style.color = peta[r.tv_state] || "#9ca3af";
+        const label = r.tv_state === "siap" ? "TV siap" : r.tv_state === "perlu-adb" ? "TV perlu diaktifkan" : "TV tidak tersambung";
+        let waktu = "";
+        if (r.tv_state_checked_at) {
+          try {
+            waktu = new Date(r.tv_state_checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          } catch (_e) {}
+        }
+        hidupDiv.textContent = waktu ? `${label} - diperiksa ${waktu}` : label;
+        hidupDiv.title = "Diperiksa langsung dari bridge, bukan dari catatan uji terakhir.";
+        tdAdb.appendChild(hidupDiv);
+      }
+
+      // Catatan riwayat pemeriksaan terakhir: diberi label "uji terakhir" supaya tidak tertukar
+      // dengan status hidup di atasnya.
       if (r.last_check_result || r.last_check_message) {
         const lastCheckDiv = document.createElement("div");
         lastCheckDiv.style.fontSize = "10px";
@@ -26387,7 +26422,7 @@ function createTvControlSectionElement() {
           } catch (_e) {}
         }
         const msg = r.last_check_message || (r.last_check_result === "connected" ? "Terhubung ke ADB" : r.last_check_result);
-        lastCheckDiv.textContent = timeText ? `${msg} (${timeText})` : msg;
+        lastCheckDiv.textContent = timeText ? `Uji terakhir ${timeText}: ${msg}` : `Uji terakhir: ${msg}`;
         lastCheckDiv.title = `Pemeriksaan terakhir: ${r.last_checked_at || "-"}`;
         tdAdb.appendChild(lastCheckDiv);
       }
@@ -26549,6 +26584,24 @@ function createTvControlSectionElement() {
   table.appendChild(tbody);
   tableWrapper.appendChild(table);
   section.appendChild(tableWrapper);
+
+  // Legenda lampu: supaya warna di kartu kasir tidak perlu ditebak artinya.
+  const legenda = document.createElement("div");
+  legenda.style.marginTop = "10px";
+  legenda.style.padding = "8px 10px";
+  legenda.style.borderRadius = "6px";
+  legenda.style.background = "rgba(148, 163, 184, 0.08)";
+  legenda.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+  legenda.style.fontSize = "12px";
+  legenda.style.lineHeight = "1.6";
+  legenda.innerHTML = [
+    '<strong>Arti lampu status TV di kartu ruangan (halaman utama kasir):</strong><br>',
+    '<span class="tv-indicator tv-indicator-hijau" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV siap</span></span> = ADB di TV sudah tersambung, perintah TV bisa jalan.<br>',
+    '<span class="tv-indicator tv-indicator-kuning" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV perlu diaktifkan</span></span> = TV hidup dan tersambung jaringan, tetapi port ADB (5555) belum terbuka. Aktifkan Opsi pengembang &rarr; Penelusuran USB / Network debugging di TV itu.<br>',
+    '<span class="tv-indicator tv-indicator-merah" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV tidak tersambung</span></span> = TV tidak menjawab di jaringan (mati / kabel / alamat salah).<br>',
+    '<span class="tv-indicator tv-indicator-abu" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV belum diperiksa</span></span> = status belum tersedia dari bridge (bukan berarti TV mati).',
+  ].join("");
+  section.appendChild(legenda);
 
   section.appendChild(createTvControlGuideSectionElement());
 
