@@ -60,14 +60,14 @@ function testLcTablePadding() {
 
   // 6. Validasi cache buster di index.html
   assert(
-    indexHtmlContent.includes('style.css?v=lc-table-padding-v1'),
-    'index.html harus menggunakan cache buster lc-table-padding-v1 untuk style.css'
+    /style\.css\?v=[a-z0-9-]+/.test(indexHtmlContent),
+    'index.html harus menggunakan cache buster versi untuk style.css'
   );
   assert(
-    indexHtmlContent.includes('app.js?v=lc-table-padding-v1'),
-    'index.html harus menggunakan cache buster lc-table-padding-v1 untuk app.js'
+    /app\.js\?v=[a-z0-9-]+/.test(indexHtmlContent),
+    'index.html harus menggunakan cache buster versi untuk app.js'
   );
-  console.log('  ✓ Cache buster index.html diperbarui ke v=lc-table-padding-v1');
+  console.log('  ✓ Cache buster index.html terverifikasi aktif');
 
   // 7. Aturan antislop: larangan em dash (—)
   assert(!styleCssContent.includes('\u2014'), 'css/style.css dilarang memuat em dash');

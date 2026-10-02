@@ -508,6 +508,8 @@ let ownerReportCustomStartDate = "";
 let ownerReportCustomEndDate = "";
 let ownerReportPeriodNotice = "";
 let ownerReportTransactionSummary = null;
+let ownerReportTransactions = [];
+let ownerUnpaidTransactionsModalVisible = false;
 let ownerReportRoomUsageSummary = null;
 let ownerReportFnbSalesSummary = null;
 let ownerReportCashierClosings = [];
@@ -1619,13 +1621,15 @@ async function loadOwnerPeriodReport() {
       fetchOwnerReportEndpoint("getTodayCashierClosings"),
     ]);
 
-    ownerReportTransactionSummary = transactionData.summary || null;
-    ownerReportRoomUsageSummary = roomUsageData.summary || null;
-    ownerReportFnbSalesSummary = fnbSalesData.summary || null;
-    ownerReportCashierClosings = Array.isArray(closingData.closings) ? closingData.closings : [];
+    ownerReportTransactions = Array.isArray(transactionData?.transactions) ? transactionData.transactions : [];
+    ownerReportTransactionSummary = transactionData?.summary || null;
+    ownerReportRoomUsageSummary = roomUsageData?.summary || null;
+    ownerReportFnbSalesSummary = fnbSalesData?.summary || null;
+    ownerReportCashierClosings = Array.isArray(closingData?.closings) ? closingData.closings : [];
   } catch (error) {
     console.warn("Gagal memuat laporan owner periode.", error);
     showInlineNotice(error.message || "Gagal memuat laporan owner periode.", "error");
+    ownerReportTransactions = [];
     ownerReportTransactionSummary = null;
     ownerReportRoomUsageSummary = null;
     ownerReportFnbSalesSummary = null;
@@ -4535,7 +4539,11 @@ function getFilteredTodayTransactions() {
 }
 
 function findTodayTransactionById(transactionId) {
-  return todayTransactions.find((transaction) => transaction.transaction_id === transactionId) || null;
+  return (
+    todayTransactions.find((transaction) => transaction.transaction_id === transactionId) ||
+    ownerReportTransactions.find((transaction) => transaction.transaction_id === transactionId) ||
+    null
+  );
 }
 
 function getTransactionTimeValue(transaction) {
@@ -17011,7 +17019,12 @@ function buildFinanceChecklist(summary) {
       label: "Tagihan belum dibayar",
       value: formatCurrency(summary.belumDibayar),
       tone: "warning",
-      detail: `${summary.transaksiBelumDibayar} transaksi perlu dicek.`,
+      detail: `${summary.transaksiBelumDibayar} transaksi perlu dicek. Klik untuk rincian data.`,
+      clickable: true,
+      onClick: () => {
+        ownerUnpaidTransactionsModalVisible = true;
+        renderRooms();
+      },
     });
   }
 
@@ -17046,9 +17059,9 @@ function buildFinanceChecklist(summary) {
   return checklist;
 }
 
-function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral" }) {
+function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral", clickable = false, onClick = null }) {
   const card = document.createElement("article");
-  card.className = `finance-overview-card finance-overview-card--${tone}`;
+  card.className = `finance-overview-card finance-overview-card--${tone}${clickable ? " clickable" : ""}`;
 
   const labelElement = document.createElement("p");
   labelElement.className = "finance-overview-label";
@@ -17065,6 +17078,25 @@ function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral
     detailElement.className = "finance-overview-detail";
     detailElement.textContent = detail;
     card.appendChild(detailElement);
+  }
+
+  if (clickable && typeof onClick === "function") {
+    card.style.cursor = "pointer";
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
+    card.title = "Klik untuk melihat rincian data";
+    card.onclick = onClick;
+    card.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onClick();
+      }
+    };
+
+    const hint = document.createElement("span");
+    hint.className = "finance-card-action-hint";
+    hint.textContent = "🔍 Lihat Rincian";
+    card.appendChild(hint);
   }
 
   return card;
@@ -17091,7 +17123,7 @@ function createFinanceChecklistElement(items) {
   } else {
     items.forEach((item) => {
       const row = document.createElement("article");
-      row.className = "finance-checklist-row";
+      row.className = item.clickable ? "finance-checklist-row clickable" : "finance-checklist-row";
 
       const info = document.createElement("div");
 
@@ -17110,6 +17142,35 @@ function createFinanceChecklistElement(items) {
       badge.textContent = item.value;
 
       row.append(info, badge);
+
+      if (item.clickable && typeof item.onClick === "function") {
+        row.style.cursor = "pointer";
+        row.setAttribute("role", "button");
+        row.setAttribute("tabindex", "0");
+        row.title = "Klik untuk melihat rincian data";
+        row.onclick = item.onClick;
+        row.onkeydown = (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            item.onClick();
+          }
+        };
+
+        const actionBtn = document.createElement("button");
+        actionBtn.type = "button";
+        actionBtn.className = "erp-btn erp-btn-secondary";
+        actionBtn.style.padding = "4px 10px";
+        actionBtn.style.fontSize = "12px";
+        actionBtn.style.marginLeft = "8px";
+        actionBtn.style.fontWeight = "bold";
+        actionBtn.textContent = "🔍 Rincian";
+        actionBtn.onclick = (e) => {
+          e.stopPropagation();
+          item.onClick();
+        };
+        row.appendChild(actionBtn);
+      }
+
       list.appendChild(row);
     });
   }
@@ -17382,6 +17443,11 @@ function createFinanceOverviewElement() {
       value: formatCurrency(summary.belumDibayar),
       detail: `${summary.transaksiBelumDibayar} transaksi belum lunas`,
       tone: summary.belumDibayar > 0 ? "warning" : "success",
+      clickable: summary.belumDibayar > 0 || summary.transaksiBelumDibayar > 0,
+      onClick: () => {
+        ownerUnpaidTransactionsModalVisible = true;
+        renderRooms();
+      },
     },
     {
       label: "Penjualan Room",
@@ -17418,6 +17484,217 @@ function createFinanceOverviewElement() {
   }
 
   return section;
+}
+
+function getOwnerUnpaidTransactions() {
+  const source = ownerReportTransactions.length > 0 ? ownerReportTransactions : (todayTransactions || []);
+  return source.filter((t) => t && String(t.payment_status || "").toLowerCase() === "unpaid");
+}
+
+function createOwnerUnpaidTransactionsModalOverlay() {
+  const unpaidList = getOwnerUnpaidTransactions();
+  const totalUnpaid = unpaidList.reduce((acc, t) => acc + (Number(t.grand_total) || 0), 0);
+
+  const overlay = document.createElement("div");
+  overlay.className = "admin-pin-modal-overlay owner-unpaid-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.backgroundColor = "rgba(0, 0, 0, 0.78)";
+  overlay.style.backdropFilter = "blur(6px)";
+  overlay.style.display = "flex";
+  overlay.style.justifyContent = "center";
+  overlay.style.alignItems = "center";
+  overlay.style.zIndex = "15000";
+  overlay.style.padding = "16px";
+  overlay.style.boxSizing = "border-box";
+
+  const modal = document.createElement("div");
+  modal.className = "admin-pin-modal erp-card owner-unpaid-modal-card";
+  modal.style.backgroundColor = "#1c150e";
+  modal.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  modal.style.border = "1px solid rgba(226, 184, 92, 0.4)";
+  modal.style.borderRadius = "12px";
+  modal.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25)";
+  modal.style.width = "100%";
+  modal.style.maxWidth = "1050px";
+  modal.style.maxHeight = "90vh";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+  modal.style.overflow = "hidden";
+  modal.style.color = "var(--text, #f6ead2)";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "flex-start";
+  header.style.padding = "16px 20px";
+  header.style.borderBottom = "1px solid rgba(226, 184, 92, 0.25)";
+  header.style.gap = "12px";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.style.margin = "0";
+  title.style.fontSize = "18px";
+  title.style.color = "var(--gold-strong, #ffd77a)";
+  title.textContent = "Daftar Tagihan Belum Dibayar (Unpaid)";
+
+  const subtitle = document.createElement("p");
+  subtitle.style.margin = "4px 0 0 0";
+  subtitle.style.fontSize = "13px";
+  subtitle.style.color = "var(--muted, #a8a29e)";
+  subtitle.textContent = `Periode: ${getOwnerReportPeriodTitleSuffix()} • ${unpaidList.length} transaksi belum lunas • Total: ${formatCurrency(totalUnpaid)}`;
+
+  titleGroup.append(title, subtitle);
+
+  const closeIconBtn = document.createElement("button");
+  closeIconBtn.type = "button";
+  closeIconBtn.className = "erp-btn erp-btn-secondary";
+  closeIconBtn.style.padding = "4px 10px";
+  closeIconBtn.style.fontSize = "16px";
+  closeIconBtn.style.lineHeight = "1";
+  closeIconBtn.innerHTML = "&times;";
+  closeIconBtn.title = "Tutup Modal (Esc)";
+  closeIconBtn.onclick = () => {
+    ownerUnpaidTransactionsModalVisible = false;
+    renderRooms();
+  };
+
+  header.append(titleGroup, closeIconBtn);
+  modal.appendChild(header);
+
+  const body = document.createElement("div");
+  body.style.padding = "20px";
+  body.style.overflowY = "auto";
+  body.style.display = "flex";
+  body.style.flexDirection = "column";
+  body.style.gap = "16px";
+
+  if (unpaidList.length === 0) {
+    const emptyMsg = document.createElement("div");
+    emptyMsg.className = "state-message info";
+    emptyMsg.textContent = "Tidak ada tagihan yang belum dibayar pada periode ini.";
+    body.appendChild(emptyMsg);
+  } else {
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "table-responsive";
+    tableWrapper.style.background = "rgba(10, 8, 6, 0.85)";
+
+    const table = document.createElement("table");
+    table.className = "erp-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+
+    const thead = document.createElement("thead");
+    thead.innerHTML = `
+      <tr>
+        <th style="width: 40px; text-align: center;">No</th>
+        <th>Waktu / Tanggal</th>
+        <th>ID Transaksi</th>
+        <th>Ruangan & Tamu</th>
+        <th>Kasir</th>
+        <th style="text-align: right;">Biaya Room</th>
+        <th style="text-align: right;">F&B</th>
+        <th style="text-align: right;">Jasa LC</th>
+        <th style="text-align: right;">Total Tagihan</th>
+        <th style="text-align: center;">Aksi</th>
+      </tr>
+    `;
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    unpaidList.forEach((trx, index) => {
+      const tr = document.createElement("tr");
+      const roomTotal = Number(trx.room_total) || 0;
+      const fnbTotal = Number(trx.fnb_total) || 0;
+      const lcTotal = Number(trx.lc_total) || 0;
+      const grandTotal = Number(trx.grand_total) || (roomTotal + fnbTotal + lcTotal);
+
+      tr.innerHTML = `
+        <td style="text-align: center; color: var(--muted);">${index + 1}</td>
+        <td>
+          <div style="font-size: 12px; font-weight: 600;">${formatDateTimeLabel(trx.created_at || trx.operational_date)}</div>
+          <small style="color: var(--muted);">${escapeHtml(trx.operational_date || "-")}</small>
+        </td>
+        <td><strong>${escapeHtml(trx.transaction_id || "-")}</strong></td>
+        <td>
+          <div style="font-weight: bold; color: var(--gold, #d4af37);">${escapeHtml(trx.room_name || trx.room_id || "-")}</div>
+          <small style="color: var(--muted);">${escapeHtml(trx.customer_name || "Tamu Reguler")}</small>
+        </td>
+        <td>${escapeHtml(trx.cashier_name || trx.operator_name || "Kasir")}</td>
+        <td style="text-align: right;">${formatCurrency(roomTotal)}</td>
+        <td style="text-align: right;">${formatCurrency(fnbTotal)}</td>
+        <td style="text-align: right;">${formatCurrency(lcTotal)}</td>
+        <td style="text-align: right;">
+          <strong style="color: var(--gold-strong, #ffd77a); font-size: 13px;">${formatCurrency(grandTotal)}</strong>
+        </td>
+        <td style="text-align: center;">
+          <button type="button" class="erp-btn erp-btn-secondary btn-view-trx-slip" style="padding: 4px 8px; font-size: 12px;" title="Lihat Struk Tagihan">
+            🔍 Struk
+          </button>
+        </td>
+      `;
+
+      tr.querySelector(".btn-view-trx-slip").onclick = async () => {
+        selectedReceiptTransaction = trx;
+        receiptPrintVisible = true;
+        await loadReceiptDetailsForTransaction(trx);
+        renderRooms();
+      };
+
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+    body.appendChild(tableWrapper);
+  }
+
+  modal.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "space-between";
+  footer.style.alignItems = "center";
+  footer.style.padding = "14px 20px";
+  footer.style.borderTop = "1px solid rgba(226, 184, 92, 0.25)";
+  footer.style.backgroundColor = "rgba(0, 0, 0, 0.25)";
+
+  const summaryInfo = document.createElement("div");
+  summaryInfo.style.fontSize = "13px";
+  summaryInfo.innerHTML = `Akumulasi: <strong style="color: var(--gold-strong, #ffd77a);">${formatCurrency(totalUnpaid)}</strong> (${unpaidList.length} transaksi)`;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "erp-btn erp-btn-secondary";
+  closeBtn.style.padding = "6px 16px";
+  closeBtn.style.fontWeight = "bold";
+  closeBtn.textContent = "Tutup";
+  closeBtn.onclick = () => {
+    ownerUnpaidTransactionsModalVisible = false;
+    renderRooms();
+  };
+
+  footer.append(summaryInfo, closeBtn);
+  modal.appendChild(footer);
+
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      ownerUnpaidTransactionsModalVisible = false;
+      renderRooms();
+    }
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") {
+      ownerUnpaidTransactionsModalVisible = false;
+      window.removeEventListener("keydown", onKeyDown);
+      renderRooms();
+    }
+  };
+  window.addEventListener("keydown", onKeyDown);
+
+  overlay.appendChild(modal);
+  return overlay;
 }
 
 function createOwnerDashboardElement() {
@@ -32593,6 +32870,10 @@ function renderDashboardGlobal() {
 
   if (lastTransaction) {
     fragment.appendChild(createBillingSummaryElement(lastTransaction));
+  }
+
+  if (ownerUnpaidTransactionsModalVisible) {
+    fragment.appendChild(createOwnerUnpaidTransactionsModalOverlay());
   }
 
   if (receiptPrintVisible && selectedReceiptTransaction) {

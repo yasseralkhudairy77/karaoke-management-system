@@ -1581,6 +1581,42 @@ body::after {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.finance-overview-card.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+
+.finance-overview-card.clickable:hover,
+.finance-overview-card.clickable:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--gold-strong, #ffd77a);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 12px rgba(255, 215, 122, 0.2);
+  outline: none;
+}
+
+.finance-card-action-hint {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold, #d4af37);
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.finance-checklist-row.clickable {
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.finance-checklist-row.clickable:hover,
+.finance-checklist-row.clickable:focus-visible {
+  background: rgba(226, 184, 92, 0.08);
+  border-color: rgba(226, 184, 92, 0.45);
+  outline: none;
+}
+
 .finance-checklist-badge {
   flex: 0 0 auto;
 }
