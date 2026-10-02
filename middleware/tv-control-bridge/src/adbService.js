@@ -17,6 +17,7 @@ const {
 } = require('./roomConfig');
 
 const execFileAsync = promisify(execFile);
+const { probeTcpPort } = require('./tvProbe');
 const adbBin = process.env.ADB_BIN || 'adb';
 
 // Batas waktu perintah ADB. PENTING: config/rooms.json tidak memuat adbTimeoutMs, dan tanpa
@@ -51,6 +52,12 @@ function makeRuntimeState() {
     // persetujuan di layarnya tetapi belum ditekan, false = izin sudah ada/percobaan gagal.
     // Dipakai agar operator tahu bedanya "TV menunggu izin di layar" dari "ADB mati".
     pendingAuth: null,
+    // Keadaan "lampu" TV, diisi refreshTvPortStates() dengan SATU sambungan TCP ke port ADB
+    // (bukan perintah adb, supaya murah). null = belum pernah diperiksa.
+    //   tvState: 'siap' (ADB tersambung) | 'perlu-adb' (TV menyala, ADB belum siap) | 'tidak-ada'
+    adbPortOpen: null,
+    tvState: null,
+    tvCheckedAt: null,
   };
 }
 
@@ -224,6 +231,132 @@ async function ensureConnected(roomSelector) {
 
   await connectToRoom(room);
   return serial;
+}
+
+/**
+ * Memastikan TV satu ruangan siap menerima perintah, dengan anggaran waktu tertentu.
+ *
+ * Dipakai oleh "pemicu saat sesi mulai": saat sesi dimulai, TV mungkin baru saja dinyalakan
+ * dari saklar listrik, jadi urutannya memang harus connect -> (bila perlu) bangunkan -> connect
+ * lagi -> tunggu sampai `device`. Bedanya dengan ensureConnected/ensureAwakeAndConnected biasa:
+ * fungsi ini TIDAK melempar bila gagal, tetapi mengembalikan keadaan apa adanya beserta
+ * alasannya, supaya pemanggil bisa memutuskan untuk tetap melanjutkan atau tidak. Tanpa itu,
+ * satu TV yang belum siap akan menghentikan seluruh perintah.
+ *
+ * @returns {Promise<{ready:boolean, stage:string, attempts:number, tookMs:number, message:string}>}
+ */
+async function ensureReadyForCommand(roomSelector, options = {}) {
+  const room = typeof roomSelector === 'object' && roomSelector ? roomSelector : resolveRoom(roomSelector);
+  const budgetMs = Math.max(1000, Number(options.budgetMs) || 20000);
+  const startedAt = Date.now();
+  const remaining = () => budgetMs - (Date.now() - startedAt);
+  let attempts = 0;
+
+  if (await verifyConnected(room)) {
+    return { ready: true, stage: 'sudah-siap', attempts: 0, tookMs: Date.now() - startedAt, message: 'ADB sudah tersambung.' };
+  }
+
+  // Percobaan 1: TV sudah di jaringan dan ADB-nya hidup (kasus umum setelah listrik menyala,
+  // terbukti pada VIP-7 pada 2026-10-02: 5555 sudah terbuka sendiri dalam hitungan detik).
+  attempts += 1;
+  try {
+    await runAdb(['connect', serialFromRoom(room)], `Pemicu sesi: menyambung ${room.id}`, Math.min(adbTimeout(room), Math.max(2000, remaining())));
+    if (await verifyConnected(room)) {
+      return { ready: true, stage: 'connect', attempts, tookMs: Date.now() - startedAt, message: 'ADB tersambung.' };
+    }
+  } catch (error) {
+    // Dilanjutkan: kegagalan connect di sini memang keadaan normal untuk TV yang belum siap.
+  }
+
+  // Percobaan 2: TV menjawab di jaringan tetapi ADB belum mendengarkan. Bangunkan dulu.
+  if (remaining() > 4000) {
+    attempts += 1;
+    log(`Pemicu sesi: ${room.id} belum siap, mengirim WoL + keyevent bangun.`);
+    try {
+      await wakeRoom(room, { wakeOnly: true });
+    } catch (error) {
+      // WoL hanya usaha; kegagalannya tidak menghalangi percobaan connect berikutnya.
+    }
+    await sleep(4000);
+
+    attempts += 1;
+    try {
+      await runAdb(['connect', serialFromRoom(room)], `Pemicu sesi: menyambung ulang ${room.id}`, Math.min(adbTimeout(room), Math.max(2000, remaining())));
+      if (await verifyConnected(room)) {
+        return { ready: true, stage: 'wake+connect', attempts, tookMs: Date.now() - startedAt, message: 'ADB tersambung setelah dibangunkan.' };
+      }
+    } catch (error) {
+      // Jatuh ke hasil akhir di bawah.
+    }
+  }
+
+  // Terakhir: bila masih ada waktu, tunggu sedikit - TV yang baru boot kadang membuka adbd
+  // beberapa detik setelah jaringan siap.
+  while (remaining() > 2500) {
+    await sleep(1000);
+    if (await verifyConnected(room)) {
+      return { ready: true, stage: 'tunggu', attempts, tookMs: Date.now() - startedAt, message: 'ADB tersambung setelah menunggu.' };
+    }
+  }
+
+  const runtime = getRuntimeState(room.id);
+  const terakhir = runtime && runtime.lastError ? ` (${runtime.lastError})` : '';
+  return {
+    ready: false,
+    stage: 'gagal',
+    attempts,
+    tookMs: Date.now() - startedAt,
+    message: `TV ${room.name || room.id} belum siap menerima perintah: ADB belum tersambung${terakhir}.`,
+  };
+}
+
+/**
+ * Memeriksa seluruh ruangan dengan SATU sambungan TCP per ruangan (bukan adb), supaya daftar
+ * ruangan bisa menyajikan keadaan yang SEGAR tanpa membuat halaman kasir menunggu.
+ *
+ * Hasilnya disimpan di runtime tiap ruangan (tvState/tvCheckedAt) dan dibaca getRuntime().
+ * Pemeriksaan yang menentukan (adb get-state) tetap dilakukan saat benar-benar diperlukan,
+ * mis. pada /status satu ruangan atau saat sesi dimulai.
+ */
+async function refreshTvPortStates(options = {}) {
+  const timeoutMs = Math.max(200, Number(options.timeoutMs) || 700);
+  const rooms = listRooms().filter((room) => room.enabled && room.ip);
+  const checkedAt = new Date().toISOString();
+  let portTerbuka = 0;
+  let tersambung = 0;
+
+  await Promise.all(rooms.map(async (room) => {
+    const state = getRuntimeState(room.id);
+    const adbPortOpen = await probeTcpPort(room.ip, room.adbPort || 5555, timeoutMs);
+    if (adbPortOpen) {
+      portTerbuka += 1;
+    }
+    state.adbPortOpen = adbPortOpen;
+    state.tvCheckedAt = checkedAt;
+
+    // Penyembuh otomatis: TV yang port ADB-nya terbuka tetapi belum tersambung ke server ADB
+    // langsung disambungkan di sini. Ini yang membuat "TV dinyalakan dari saklar listrik" tidak
+    // lagi menunggu ada orang menekan tombol: cukup port 5555 terbuka, sisanya otomatis.
+    // Hanya ruangan yang portnya TERBUKA yang disentuh, jadi TV yang benar-benar mati tidak
+    // pernah dikirimi perintah dan tidak memperlambat putaran ini.
+    if (adbPortOpen && !state.connected && options.autoConnect !== false) {
+      try {
+        await connectToRoom(room);
+      } catch (error) {
+        // Gagal menyambung itu keadaan normal (mis. izin ADB belum ditekan di layar TV).
+        // Keadaannya sudah tercatat di runtime lewat verifyConnected/connectToRoom.
+      }
+    }
+
+    if (getRuntimeState(room.id).connected) {
+      tersambung += 1;
+    }
+    // "hijau" hanya bila ADB benar-benar sudah tersambung (dibuktikan perintah adb pada jalur
+    // lain) - jika tidak, ruangan hanya boleh mengaku "TV menyala, ADB belum siap".
+    state.tvState = state.connected ? 'siap' : adbPortOpen ? 'perlu-adb' : 'tidak-ada';
+  }));
+
+  return { checkedAt, total: rooms.length, portTerbuka, tersambung };
 }
 
 /**
@@ -454,6 +587,38 @@ async function wakeRoom(roomSelector, wakeOptions = {}) {
   const broadcasts = daftarAlamat
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
+
+  // `wakeOnly`: dipakai oleh pemicu sesi, yang hanya ingin TV hidup lalu menyambung ADB lagi.
+  // Tanpa opsi ini, pemanggil akan menunggu seluruh gelembung WoL (3 alamat x 3 percobaan
+  // x num_packets/interval) selesai lebih dulu - pada pengujian 2026-10-02 itu berarti TV yang
+  // sebenarnya sudah hidup tetap tidak tersambung sampai lebih dari satu menit.
+  if (wakeOptions.wakeOnly) {
+    const target = broadcasts[0] || '255.255.255.255';
+    log(`WoL singkat (wakeOnly) ke ${room.mac} via ${target}:${room.wolPort}`);
+    await new Promise((resolve) => {
+      wol.wake(
+        room.mac,
+        {
+          address: target,
+          port: room.wolPort,
+          num_packets: Math.min(3, Math.max(1, Number(room.wolPackets) || 3)),
+          interval: room.wolIntervalMs,
+        },
+        () => resolve()
+      );
+    });
+
+    return {
+      ok: true,
+      roomId: room.id,
+      roomName: room.name,
+      mac: room.mac,
+      broadcast: target,
+      broadcasts: [target],
+      adbWake,
+      wakeOnly: true,
+    };
+  }
 
   const attemptsPerBroadcast = Math.max(1, Number(wakeOptions.attemptsPerBroadcast) || 3);
 
@@ -1009,6 +1174,8 @@ module.exports = {
   disconnectFromRoom,
   ensureAwakeAndConnected,
   ensureConnected,
+  ensureReadyForCommand,
+  refreshTvPortStates,
   getArpTable,
   getOverlayStateForList,
   getTvPowerState,

@@ -3,6 +3,55 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { getOperationalDate } = require('../utils/operationalDate');
 const { writeOperationalAudit } = require('../services/operationalAuditService');
 const { resolvePackageComponentStockItem } = require('../utils/packageStockResolver');
+const tvBridgeService = require('../services/tvBridgeService');
+
+// Diisi ulang setiap kali getRooms() dijalankan (satu panggilan bridge, sudah ber-cache di
+// tvBridgeService). Map: "room-04" -> { tvState, connected, checkedAt }.
+let tvStatusMap = new Map();
+
+/**
+ * Status "lampu" TV per ruangan untuk kartu kasir.
+ *
+ * Sumbernya SATU panggilan ke bridge (tvBridgeService.getTvRoomStatusMap, sudah ber-cache),
+ * bukan pemeriksaan ADB per ruangan: memeriksa tiap ruangan di sini akan membuat halaman kasir
+ * menunggu. Nama ruangan POS dan id ruangan di bridge berbeda ("ROOM-004" vs "room-04"), jadi
+ * dipetakan lewat nomor ruangannya (004 -> room-04).
+ * Mengembalikan null bila bridge tidak memberi kabar: pemanggil wajib membacanya sebagai
+ * "belum diperiksa", bukan sebagai "TV mati".
+ */
+function tvRoomKeyFromPosRoomId(roomId) {
+  const match = /^ROOM-0*(\d+)$/i.exec(String(roomId || '').trim());
+  if (!match) {
+    return String(roomId || '').trim().toLowerCase();
+  }
+  return `room-${String(Number(match[1])).padStart(2, '0')}`;
+}
+
+function tvStateForRoom(roomId) {
+  const status = cariStatusTv(roomId);
+  return status ? status.tvState : null;
+}
+
+function tvCheckedAtForRoom(roomId) {
+  const status = cariStatusTv(roomId);
+  return status ? status.checkedAt : null;
+}
+
+/**
+ * Mencari status TV sebuah ruangan POS.
+ *
+ * URUTANNYA PENTING: alias dulu ("ROOM-009" -> room-13, ruangan Executive), baru terka-terkaan
+ * nomor ("ROOM-009" -> room-09, entri placeholder yang disabled). Kalau urutannya dibalik,
+ * kartu EXECUTIVE membaca ruangan kosong dan lampunya tidak pernah benar.
+ */
+function cariStatusTv(roomId) {
+  const asli = String(roomId || '').trim().toLowerCase();
+  if (tvStatusMap.has(asli)) {
+    return tvStatusMap.get(asli);
+  }
+  const terkaan = tvRoomKeyFromPosRoomId(roomId);
+  return tvStatusMap.get(terkaan) || null;
+}
 
 function parseSessionPackageMeta(session) {
   const note = String(session?.note || '');
@@ -310,6 +359,16 @@ async function finalizeAndPriceRoomSegments(client, session, room, endTime) {
 
 async function getRooms(req, res) {
   try {
+    // Status TV diambil LEBIH DULU, satu panggilan ke bridge untuk semua ruangan, supaya kartu
+    // kasir mendapat "lampu" yang jujur. Kalau bridge tidak menjawab, peta ini tetap kosong dan
+    // kartu menampilkan "belum diperiksa" - bukan berpura-pura semua TV mati.
+    try {
+      tvStatusMap = await tvBridgeService.getTvRoomStatusMap();
+    } catch (tvError) {
+      console.warn('Status TV tidak bisa diambil:', tvError.message);
+      tvStatusMap = new Map();
+    }
+
     await ensurePackageLcBillingSchema(db);
     const result = await db.query(`
       SELECT 
@@ -464,8 +523,10 @@ async function getRooms(req, res) {
       }
 
       return {
-        room_id: r.room_id,
-        room_name: r.room_name,
+              room_id: r.room_id,
+              tv_state: tvStateForRoom(r.room_id),
+              tv_state_checked_at: tvCheckedAtForRoom(r.room_id),
+              room_name: r.room_name,
         status: r.status,
         booking_mode: bookingMode,
         package_id: packageId,

@@ -57,6 +57,11 @@ function log(message) {
   console.log(`[TV bridge] ${message}`);
 }
 
+// Umur cache status TV (ms). Harus LEBIH PENDEK daripada interval periksa port di bridge
+// (TV_PORT_POLL_INTERVAL_MS, bawaan 15 detik) supaya lampu di kartu tidak pernah menampilkan
+// keadaan yang lebih tua daripada itu.
+const TV_ROOM_STATUS_CACHE_MS = Math.max(2000, Number(process.env.TV_ROOM_STATUS_CACHE_MS || 10000));
+
 async function bridgeFetch(pathname, options = {}) {
   const config = getConfig();
   if (!config.enabled) {
@@ -447,6 +452,64 @@ async function getBridgeRooms() {
   return bridgeFetch('/api/rooms', { timeoutMs: Math.min(config.timeoutMs, 4000) });
 }
 
+/**
+ * Status "lampu" TV untuk SEMUA ruangan, dari satu panggilan ke bridge.
+ *
+ * Kenapa perlu cache: halaman kasir memuat ulang data ruangan setiap 10 detik, dan tiap kali
+ * memuat ulang ia menanyakan status TV. Tanpa cache, bridge diperiksa dua kali lebih sering
+ * daripada yang diperlukan. Umur cache dibuat lebih pendek daripada interval periksa bridge
+ * (TV_PORT_POLL_INTERVAL_MS, 15 detik), jadi nilainya tetap segar.
+ *
+ * Bentuk hasil: Map key = room_id POS dalam huruf kecil ("room-004") -> { tvState, connected }.
+ * Mengembalikan Map kosong bila bridge tidak terjangkau: pemanggil harus memperlakukan
+ * "tidak ada kabar" sebagai "belum diperiksa", BUKAN sebagai "TV mati".
+ */
+let tvRoomStatusCache = { at: 0, map: new Map() };
+
+async function getTvRoomStatusMap() {
+  const now = Date.now();
+  if (now - tvRoomStatusCache.at < TV_ROOM_STATUS_CACHE_MS && tvRoomStatusCache.map.size > 0) {
+    return tvRoomStatusCache.map;
+  }
+
+  const result = await getBridgeRooms();
+  if (!result || !result.ok || !result.data) {
+    return tvRoomStatusCache.map;
+  }
+
+  const daftar = result.data.rooms || result.data.data?.rooms || [];
+    const map = new Map();
+    for (const ruangan of daftar) {
+      // Ruangan yang dimatikan/belum punya alamat dilewati. Ini WAJIB: entri placeholder
+      // `room-09` (kosong, disabled) pernah "mencuri" POS ROOM-009 dari ruangan Executive yang
+      // sebenarnya ada di `room-13` - kalau entri mati itu ikut dipetakan, kartu EXECUTIVE akan
+      // membaca status ruangan kosong dan lampunya tidak pernah benar.
+      if (!ruangan.enabled || !ruangan.ip) {
+        continue;
+      }
+
+      const runtime = ruangan.runtime || {};
+      const status = {
+        tvState: runtime.tvState || null,
+        connected: runtime.connected === true,
+        checkedAt: runtime.tvCheckedAt || null,
+      };
+
+      // Kunci ganda: id bridge ("room-04") DAN semua alias-nya ("ROOM-004", "VIP-4", "ROOM-009").
+      // Alias inilah yang membuat POS dan bridge bertemu walau penomorannya berbeda.
+      const kunci = [ruangan.id, ...(Array.isArray(ruangan.aliases) ? ruangan.aliases : [])]
+        .map((nilai) => String(nilai || '').trim().toLowerCase())
+        .filter(Boolean);
+
+      for (const satuKunci of kunci) {
+        map.set(satuKunci, status);
+      }
+    }
+
+  tvRoomStatusCache = { at: now, map };
+  return map;
+}
+
 async function getBridgeRoomStatus(roomId) {
   const config = getConfig();
   return bridgeFetch(`/api/rooms/${encodeURIComponent(roomId)}/status`, { timeoutMs: Math.min(config.timeoutMs, 3000) });
@@ -643,7 +706,8 @@ module.exports = {
   getBridgeRoomStatus,
   getConfig,
   getOverlayStates,
-  getTvSweeperStatus,
+    getTvRoomStatusMap,
+    getTvSweeperStatus,
   installOverlay,
   notifyRoom,
   recordTvLog,

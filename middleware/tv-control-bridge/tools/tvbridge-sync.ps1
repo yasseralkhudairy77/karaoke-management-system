@@ -45,6 +45,7 @@ $Tabel = @(
   @{ Rel = 'src/countdownService.js';       Terkunci = $false }
   @{ Rel = 'src/roomConfig.js';             Terkunci = $false }
   @{ Rel = 'src/tvEventLog.js';             Terkunci = $false }
+  @{ Rel = 'src/tvProbe.js';               Terkunci = $false }
   @{ Rel = 'HANDOVER-2026-09-24.md';        Terkunci = $true }
   @{ Rel = 'HANDOVER-2026-09-25.md';        Terkunci = $true }
   @{ Rel = 'HASIL-UJI-OVERLAY-TV.md';       Terkunci = $false }

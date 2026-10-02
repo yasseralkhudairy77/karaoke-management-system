@@ -4,6 +4,8 @@ require("dotenv").config();
 
 const {
   connectToRoom,
+  ensureReadyForCommand,
+  refreshTvPortStates,
   getRuntime,
   getStatus,
   getRoomRuntime,
@@ -43,6 +45,10 @@ const autoConnectRetries = Math.max(1, Number(process.env.AUTO_CONNECT_RETRIES) 
 // LAN venue supaya halaman kasir yang belum dimuat ulang tidak langsung mati.
 // Setelah POS versi baru dipakai, set TV_COMMAND_ALLOW_LAN_FALLBACK=false lalu restart bridge.
 const allowLanFallback = String(process.env.TV_COMMAND_ALLOW_LAN_FALLBACK || "false").toLowerCase() === "true";
+
+// Lampu status TV: interval pemeriksaan TCP port ADB seluruh ruangan. 15 detik cukup segar untuk
+// petugas kasir, dan satu putaran hanya butuh puluhan milidetik (satu sambungan TCP per ruangan).
+const tvPortPollIntervalMs = Math.max(5000, Number(process.env.TV_PORT_POLL_INTERVAL_MS) || 15000);
 
 const app = express();
 
@@ -445,12 +451,22 @@ app.post("/tv-command", requireTvCommandToken, async (req, res) => {
       });
     }
 
+    // power_on = awal sesi. Di sinilah "pemicu saat sesi mulai" bekerja: TV mungkin baru
+    // dinyalakan dari saklar listrik beberapa detik lalu, jadi bridge menyambungkannya dulu
+    // (dan mengirim WoL bila perlu) SEBELUM perintah dinyalakan dikirim. Kegagalan langkah ini
+    // TIDAK menghentikan perintah: TV yang belum siap dilaporkan apa adanya lewat
+    // `readyForCommand: false` supaya pemanggilnya (dan audit POS) tidak membaca "berhasil"
+    // untuk TV yang sebenarnya belum bisa dikendalikan.
+    const kesiapan = await ensureReadyForCommand(normalizedRoomId, { budgetMs: 20000 });
     const result = await wakeRoom(normalizedRoomId);
     return res.json({
       success: true,
       result: "sent",
-      message: `TV ${result.roomName} berhasil dinyalakan.`,
-      data: result,
+      readyForCommand: kesiapan.ready,
+      message: kesiapan.ready
+        ? `TV ${result.roomName} berhasil dinyalakan.`
+        : `${kesiapan.message} Perintah dinyalakan tetap dikirim, tetapi sambungan belum siap.`,
+      data: { ...result, readiness: kesiapan },
     });
   } catch (error) {
     log(`TV command failed: room=${roomId} action=${tvAction} error=${error.message}`);
@@ -471,6 +487,15 @@ app.get("/api/runtime", (_req, res) => {
 
 app.get("/api/rooms", async (_req, res) => {
   try {
+    // Periksa DULU port ADB seluruh ruangan dengan satu sambungan TCP per ruangan (murah), supaya
+    // daftar ini menyajikan keadaan SEGAR - bukan catatan pemeriksaan terakhir yang bisa berumur
+    // berhari-hari. Pemeriksaan berat (adb get-state) tetap milik /status satu ruangan.
+    try {
+      await refreshTvPortStates({ timeoutMs: 700 });
+    } catch (error) {
+      log(`Pemeriksaan port TV gagal: ${error.message}`);
+    }
+
     const payload = getRuntime();
     // Keadaan APK peringatan: dari hasil pemeriksaan terakhir, atau satu pemeriksaan nyata
     // bila ruangan itu belum pernah diperiksa sejak bridge hidup (lihat getOverlayStateForList).
@@ -728,6 +753,19 @@ app.post("/api/rooms/:roomId/countdown/start", (req, res) => {
 
     const body = req.body || {};
     const durationSeconds = readDurationSeconds(body);
+
+    // Pemicu sesi lewat jalur jadwal (T-15/T-5/T-0): TV yang baru dinyalakan dari listrik harus
+    // disambungkan lebih dulu supaya peringatan tidak hilang ke TV yang belum siap. Dijalankan
+    // di latar belakang: jalur jadwal tidak boleh ikut menunggu, dan balasan HTTP-nya tidak
+    // dipakai untuk memutuskan apa pun oleh penyapu POS.
+    ensureReadyForCommand(roomId, { budgetMs: 20000 })
+      .then((hasil) => {
+        if (!hasil.ready) {
+          log(`Pemicu sesi (jadwal) ${roomId}: ${hasil.message}`);
+        }
+      })
+      .catch((error) => log(`Pemicu sesi (jadwal) ${roomId} gagal: ${error.message}`));
+
     const countdown = startCountdown({
       targetType: "room",
       target: getRoomRuntime(roomId),
@@ -860,6 +898,18 @@ app.listen(PORT, async () => {
   console.log(`Token API: ${apiToken ? "hidup" : "mati"} | /tv-command terima LAN tanpa token: ${allowLanFallback ? "ya (mode peralihan)" : "tidak"}`);
 
   restoreSchedules();
+
+  // Lampu status TV diperiksa berkala, bukan hanya saat halaman kasir dibuka: dengan begitu
+  // pemeriksaan sudah selesai SEBELUM tombol/kartu ditekan, dan statusnya berumur paling lama
+  // satu interval. Kesalahan tidak boleh mematikan layanan.
+  setTimeout(() => {
+    refreshTvPortStates({ timeoutMs: 700 })
+      .then((hasil) => log(`Periksa port TV: ${hasil.portTerbuka}/${hasil.total} ruangan menjawab di port ADB.`))
+      .catch((error) => log(`Periksa port TV gagal: ${error.message}`));
+  }, 3000);
+  setInterval(() => {
+    refreshTvPortStates({ timeoutMs: 700 }).catch((error) => log(`Periksa port TV gagal: ${error.message}`));
+  }, tvPortPollIntervalMs).unref();
 
   if (autoConnectAll) {
     setTimeout(() => autoConnectConfiguredRooms().catch((error) => {

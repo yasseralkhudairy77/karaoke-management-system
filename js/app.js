@@ -4870,8 +4870,13 @@ function normalizeRooms(rawRooms) {
         0
       ),
       lc_ids: String(room.lc_ids || "").trim(),
-      lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
-      _debug_lc_info: room._debug_lc_info || null,
+            lc_companion_ids: String(room.lc_companion_ids || room.lc_ids || "").trim(),
+            // Status TV (lampu di kartu). Dihitung server dari satu panggilan ke bridge, dan bisa
+            // bernilai null = belum diperiksa - itu BUKAN "TV mati", jadi jangan pernah menampilkan
+            // warna aman untuk nilai null.
+            tv_state: room.tv_state || null,
+            tv_state_checked_at: room.tv_state_checked_at || null,
+            _debug_lc_info: room._debug_lc_info || null,
     };
   });
 }
@@ -10358,6 +10363,39 @@ function createRoomLiveEstimatedBillingElement(room) {
 }
 
 
+function createRoomTvIndicatorElement(room) {
+  // Hanya tampil untuk ruangan yang memang punya TV: `tv_state` diisi server dari daftar
+  // ruangan bridge, jadi ruangan tanpa TV tidak akan punya kolom ini.
+  if (!room || !Object.prototype.hasOwnProperty.call(room, "tv_state") || room.tv_state === undefined) {
+    return null;
+  }
+
+  // Empat keadaan. Yang penting: null TIDAK boleh tampil sebagai "aman" - itu berarti belum
+  // diperiksa, dan hijau palsu adalah hal yang paling menyesatkan bagi kasir.
+  const definisi = {
+    siap: { warna: "hijau", label: "TV siap" },
+    "perlu-adb": { warna: "kuning", label: "TV perlu diaktifkan" },
+    "tidak-ada": { warna: "merah", label: "TV tidak tersambung" },
+  };
+  const data = definisi[room.tv_state] || { warna: "abu", label: "TV belum diperiksa" };
+
+  const pembungkus = document.createElement("span");
+  pembungkus.className = `tv-indicator tv-indicator-${data.warna}`;
+  pembungkus.dataset.tvState = room.tv_state || "belum-diperiksa";
+  pembungkus.title = data.label;
+  pembungkus.setAttribute("aria-label", data.label);
+
+  const lampu = document.createElement("span");
+  lampu.className = "tv-indicator-dot";
+
+  const teks = document.createElement("span");
+  teks.className = "tv-indicator-label";
+  teks.textContent = data.label;
+
+  pembungkus.append(lampu, teks);
+  return pembungkus;
+}
+
 function createRoomCard(room) {
   const card = document.createElement("article");
   card.className = `room-card ${getStatusClass(room.status)}`;
@@ -10388,11 +10426,18 @@ function createRoomCard(room) {
   name.textContent = room.room_name;
 
   const status = document.createElement("span");
-  status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
-  status.textContent = statusLabel;
+    status.className = withStatusBadge("room-status", getRoomStatusTone(room.status));
+    status.textContent = statusLabel;
 
-  mainRow.append(name, status);
-  topLine.appendChild(mainRow);
+    mainRow.append(name, status);
+
+    // Lampu indikator TV: hanya ditambahkan bila ruangan ini memang punya TV terdaftar.
+    const tvIndicator = createRoomTvIndicatorElement(room);
+    if (tvIndicator) {
+      mainRow.appendChild(tvIndicator);
+    }
+
+    topLine.appendChild(mainRow);
 
   if (room.status === "occupied") {
     const subRow = document.createElement("div");
