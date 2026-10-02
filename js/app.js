@@ -10379,25 +10379,29 @@ function createRoomTvIndicatorElement(room) {
 
   // Empat keadaan. Yang penting: null TIDAK boleh tampil sebagai "aman" - itu berarti belum
   // diperiksa, dan hijau palsu adalah hal yang paling menyesatkan bagi kasir.
+  //
+  // TAMPILAN DI KARTU SENGAJA MINIMAL: hanya titik lampu + tulisan "TV". Arti warnanya dijelaskan
+  // lewat tooltip (muncul saat kursor diarahkan), bukan sebagai tulisan di kartu yang menambah
+  // keramaian layar kasir.
   const definisi = {
-    siap: { warna: "hijau", label: "TV siap" },
-    "perlu-adb": { warna: "kuning", label: "TV perlu diaktifkan" },
-    "tidak-ada": { warna: "merah", label: "TV tidak tersambung" },
+    siap: { warna: "hijau", arti: "TV siap dikendalikan" },
+    "perlu-adb": { warna: "kuning", arti: "TV menyala, tetapi ADB belum aktif di TV" },
+    "tidak-ada": { warna: "merah", arti: "TV tidak tersambung ke jaringan" },
   };
-  const data = definisi[room.tv_state] || { warna: "abu", label: "TV belum diperiksa" };
+  const data = definisi[room.tv_state] || { warna: "abu", arti: "Status TV belum diperiksa" };
 
   const pembungkus = document.createElement("span");
   pembungkus.className = `tv-indicator tv-indicator-${data.warna}`;
   pembungkus.dataset.tvState = room.tv_state || "belum-diperiksa";
-  pembungkus.title = data.label;
-  pembungkus.setAttribute("aria-label", data.label);
+  pembungkus.title = "TV: " + data.arti;
+  pembungkus.setAttribute("aria-label", "TV: " + data.arti);
 
   const lampu = document.createElement("span");
   lampu.className = "tv-indicator-dot";
 
   const teks = document.createElement("span");
   teks.className = "tv-indicator-label";
-  teks.textContent = data.label;
+  teks.textContent = "TV";
 
   pembungkus.append(lampu, teks);
   return pembungkus;
@@ -26393,26 +26397,6 @@ function createTvControlSectionElement() {
       }
       tdAdb.appendChild(adbBadge);
 
-      // Status hidup (bukan catatan uji kemarin): inilah yang dipakai untuk lampu warna.
-      if (r.has_device !== false && r.control_type !== "mock" && r.tv_state) {
-        const hidupDiv = document.createElement("div");
-        hidupDiv.style.fontSize = "10px";
-        hidupDiv.style.marginTop = "3px";
-        hidupDiv.style.lineHeight = "1.2";
-        const peta = { siap: "#34d399", "perlu-adb": "#fbbf24", "tidak-ada": "#f87171" };
-        hidupDiv.style.color = peta[r.tv_state] || "#9ca3af";
-        const label = r.tv_state === "siap" ? "TV siap" : r.tv_state === "perlu-adb" ? "TV perlu diaktifkan" : "TV tidak tersambung";
-        let waktu = "";
-        if (r.tv_state_checked_at) {
-          try {
-            waktu = new Date(r.tv_state_checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-          } catch (_e) {}
-        }
-        hidupDiv.textContent = waktu ? `${label} - diperiksa ${waktu}` : label;
-        hidupDiv.title = "Diperiksa langsung dari bridge, bukan dari catatan uji terakhir.";
-        tdAdb.appendChild(hidupDiv);
-      }
-
       // Catatan riwayat pemeriksaan terakhir: diberi label "uji terakhir" supaya tidak tertukar
       // dengan status hidup di atasnya.
       if (r.last_check_result || r.last_check_message) {
@@ -26591,24 +26575,6 @@ function createTvControlSectionElement() {
   table.appendChild(tbody);
   tableWrapper.appendChild(table);
   section.appendChild(tableWrapper);
-
-  // Legenda lampu: supaya warna di kartu kasir tidak perlu ditebak artinya.
-  const legenda = document.createElement("div");
-  legenda.style.marginTop = "10px";
-  legenda.style.padding = "8px 10px";
-  legenda.style.borderRadius = "6px";
-  legenda.style.background = "rgba(148, 163, 184, 0.08)";
-  legenda.style.border = "1px solid rgba(148, 163, 184, 0.2)";
-  legenda.style.fontSize = "12px";
-  legenda.style.lineHeight = "1.6";
-  legenda.innerHTML = [
-    '<strong>Arti lampu status TV di kartu ruangan (halaman utama kasir):</strong><br>',
-    '<span class="tv-indicator tv-indicator-hijau" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV siap</span></span> = ADB di TV sudah tersambung, perintah TV bisa jalan.<br>',
-    '<span class="tv-indicator tv-indicator-kuning" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV perlu diaktifkan</span></span> = TV hidup dan tersambung jaringan, tetapi port ADB (5555) belum terbuka. Aktifkan Opsi pengembang &rarr; Penelusuran USB / Network debugging di TV itu.<br>',
-    '<span class="tv-indicator tv-indicator-merah" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV tidak tersambung</span></span> = TV tidak menjawab di jaringan (mati / kabel / alamat salah).<br>',
-    '<span class="tv-indicator tv-indicator-abu" style="margin-left:0;"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV belum diperiksa</span></span> = status belum tersedia dari bridge (bukan berarti TV mati).',
-  ].join("");
-  section.appendChild(legenda);
 
   section.appendChild(createTvControlGuideSectionElement());
 
