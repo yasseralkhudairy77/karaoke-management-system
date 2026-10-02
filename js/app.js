@@ -2281,10 +2281,54 @@ async function handleRenameInventoryItem(stockItemId, newName) {
   return res;
 }
 
+function getSortedFnbCategories() {
+  const categoryMap = new Map();
+
+  (inventoryItems || []).forEach((item) => {
+    const cat = String(item.category || "").trim();
+    if (cat && !categoryMap.has(cat.toLowerCase())) {
+      categoryMap.set(cat.toLowerCase(), cat);
+    }
+  });
+
+  (menuItems || []).forEach((item) => {
+    const cat = String(item.category || "").trim();
+    if (cat && !categoryMap.has(cat.toLowerCase())) {
+      categoryMap.set(cat.toLowerCase(), cat);
+    }
+  });
+
+  const baseDefaults = ["Beer", "Beverage", "Cigarette", "Food", "Snack", "Spirit"];
+  baseDefaults.forEach((cat) => {
+    if (!categoryMap.has(cat.toLowerCase())) {
+      categoryMap.set(cat.toLowerCase(), cat);
+    }
+  });
+
+  return Array.from(categoryMap.values()).sort((a, b) =>
+    a.localeCompare(b, "id", { sensitivity: "base" })
+  );
+}
+
+function normalizeCategoryToExisting(category) {
+  const cat = String(category || "").trim();
+  if (!cat) return "";
+  const existing = getSortedFnbCategories();
+  const matched = existing.find((c) => c.toLowerCase() === cat.toLowerCase());
+  return matched || cat;
+}
+
 function openAddInventoryItemModal() {
+  const availableCats = getSortedFnbCategories();
+  const defaultCategory = availableCats.includes("Snack")
+    ? "Snack"
+    : (availableCats[0] || "Snack");
+
   addInventoryItemForm = {
     name: "",
-    category: "Snack",
+    category_select: defaultCategory,
+    custom_category: "",
+    category: defaultCategory,
     price: "",
     unit: "pcs",
     min_stock: "5",
@@ -2306,6 +2350,9 @@ function updateAddInventoryItemForm(field, value) {
     ...addInventoryItemForm,
     [field]: value
   };
+  if (field === "custom_category" && addInventoryItemForm.category_select === "__custom__") {
+    addInventoryItemForm.category = String(value || "").trim();
+  }
 }
 
 function submitAddInventoryItem() {
@@ -2315,7 +2362,12 @@ function submitAddInventoryItem() {
   }
 
   const name = String(addInventoryItemForm?.name || "").trim();
-  const category = String(addInventoryItemForm?.category || "").trim();
+  const isCustomCategory = addInventoryItemForm?.category_select === "__custom__";
+  let rawCategory = isCustomCategory
+    ? String(addInventoryItemForm?.custom_category || "").trim()
+    : String(addInventoryItemForm?.category_select || addInventoryItemForm?.category || "").trim();
+  const category = normalizeCategoryToExisting(rawCategory);
+
   const price = Number(addInventoryItemForm?.price);
   const unit = String(addInventoryItemForm?.unit || "").trim();
   const minStock = Number(addInventoryItemForm?.min_stock);
@@ -2326,7 +2378,7 @@ function submitAddInventoryItem() {
     return;
   }
   if (!category) {
-    showInlineNotice("Kategori wajib diisi.", "error");
+    showInlineNotice(isCustomCategory ? "Ketikkan nama kategori baru." : "Kategori wajib dipilih atau diisi.", "error");
     return;
   }
   if (!Number.isFinite(price) || price < 0) {
@@ -2502,7 +2554,66 @@ function createAddInventoryItemModalElement() {
   };
 
   grid.appendChild(createField("Nama Item F&B", "name", "text", "Contoh: Keripik Pisang"));
-  grid.appendChild(createField("Kategori", "category", "text", "Contoh: Cigarette, Minuman, Snack, Makanan"));
+
+  const categoryFieldContainer = document.createElement("div");
+  categoryFieldContainer.className = "master-form-field add-inventory-category-field";
+
+  const categoryLabel = document.createElement("span");
+  categoryLabel.className = "master-form-label";
+  categoryLabel.textContent = "Kategori";
+
+  const categories = getSortedFnbCategories();
+  const isCustomCategory = addInventoryItemForm.category_select === "__custom__";
+
+  const categorySelect = document.createElement("select");
+  categorySelect.className = "master-form-input add-inventory-category-select";
+  categorySelect.dataset.action = "update-add-inventory-item-category-select";
+  categorySelect.disabled = isSavingAddInventoryItem;
+
+  categories.forEach((cat) => {
+    const opt = document.createElement("option");
+    opt.value = cat;
+    opt.textContent = cat;
+    if (cat === addInventoryItemForm.category_select) {
+      opt.selected = true;
+    }
+    categorySelect.appendChild(opt);
+  });
+
+  const customOption = document.createElement("option");
+  customOption.value = "__custom__";
+  customOption.textContent = "+ Tambah Kategori Baru (Ketik Manual)...";
+  if (isCustomCategory) {
+    customOption.selected = true;
+  }
+  categorySelect.appendChild(customOption);
+
+  const customCategoryInput = document.createElement("input");
+  customCategoryInput.type = "text";
+  customCategoryInput.className = "master-form-input add-inventory-custom-category-input";
+  customCategoryInput.placeholder = "Ketik nama kategori baru...";
+  customCategoryInput.dataset.action = "update-add-inventory-item-form";
+  customCategoryInput.dataset.field = "custom_category";
+  customCategoryInput.value = addInventoryItemForm.custom_category || "";
+  customCategoryInput.disabled = isSavingAddInventoryItem;
+  customCategoryInput.style.marginTop = "6px";
+  customCategoryInput.style.display = isCustomCategory ? "block" : "none";
+
+  categorySelect.addEventListener("change", (e) => {
+    const val = e.target.value;
+    addInventoryItemForm.category_select = val;
+    if (val === "__custom__") {
+      customCategoryInput.style.display = "block";
+      customCategoryInput.focus();
+      addInventoryItemForm.category = (addInventoryItemForm.custom_category || "").trim();
+    } else {
+      customCategoryInput.style.display = "none";
+      addInventoryItemForm.category = val;
+    }
+  });
+
+  categoryFieldContainer.append(categoryLabel, categorySelect, customCategoryInput);
+  grid.appendChild(categoryFieldContainer);
   grid.appendChild(createField("Harga Jual (Rp)", "price", "number", "Contoh: 15000"));
   grid.appendChild(createField("Satuan (Unit)", "unit", "text", "Contoh: pcs, porsi, botol"));
   grid.appendChild(createField("Minimum Stok", "min_stock", "number", "Contoh: 5"));
@@ -22844,6 +22955,72 @@ function createMasterField({ label, field, type = "text", options = null, disabl
   return wrapper;
 }
 
+function createMasterCategoryField({ label = "Kategori", field = "category", helper = "" }) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "master-form-field add-inventory-category-field";
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "master-form-label";
+  labelElement.textContent = label;
+
+  const categories = getSortedFnbCategories();
+  const currentVal = String(masterDataForm?.values?.[field] || "").trim();
+  const isExisting = categories.includes(currentVal);
+  const selectVal = isExisting ? currentVal : (currentVal ? "__custom__" : (categories[0] || ""));
+
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+
+  categories.forEach((cat) => {
+    const opt = document.createElement("option");
+    opt.value = cat;
+    opt.textContent = cat;
+    if (cat === selectVal) opt.selected = true;
+    select.appendChild(opt);
+  });
+
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "+ Tambah Kategori Baru (Ketik Manual)...";
+  if (selectVal === "__custom__") customOpt.selected = true;
+  select.appendChild(customOpt);
+
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.className = "master-form-input add-inventory-custom-category-input";
+  customInput.placeholder = "Ketik nama kategori baru...";
+  customInput.style.marginTop = "6px";
+  customInput.style.display = selectVal === "__custom__" ? "block" : "none";
+  customInput.value = isExisting ? "" : currentVal;
+
+  select.addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (val === "__custom__") {
+      customInput.style.display = "block";
+      customInput.focus();
+      updateMasterDataForm(field, customInput.value.trim());
+    } else {
+      customInput.style.display = "none";
+      updateMasterDataForm(field, val);
+    }
+  });
+
+  customInput.addEventListener("input", (e) => {
+    updateMasterDataForm(field, e.target.value.trim());
+  });
+
+  wrapper.append(labelElement, select, customInput);
+
+  if (helper) {
+    const helperElement = document.createElement("span");
+    helperElement.className = "master-form-helper";
+    helperElement.textContent = helper;
+    wrapper.appendChild(helperElement);
+  }
+
+  return wrapper;
+}
+
 function createMenuBundleComponentsEditor() {
   const section = document.createElement("section");
   section.className = "menu-bundle-editor";
@@ -23018,7 +23195,7 @@ function createMasterDataFormElement() {
         ],
       }),
       createMasterField({ label: "Nama Menu", field: "menu_name" }),
-      createMasterField({ label: "Kategori", field: "category" }),
+      createMasterCategoryField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Harga", field: "price", type: "number" }),
       createMasterField({ label: "HPP", field: "hpp", type: "number" }),
       createMasterField({ label: "Var Cost %", field: "variable_cost_rate", type: "number" }),
@@ -23055,7 +23232,7 @@ function createMasterDataFormElement() {
 
     grid.append(
       createMasterField({ label: "Nama Item", field: "stock_item_name" }),
-      createMasterField({ label: "Kategori", field: "category" }),
+      createMasterCategoryField({ label: "Kategori", field: "category" }),
       createMasterField({ label: "Unit", field: "unit" }),
       createMasterField({ label: "Min Stok", field: "min_stock", type: "number" }),
       createMasterField({
@@ -27253,7 +27430,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
       action: isEdit ? "updateMenuMaster" : "saveMenuMaster",
       menu_id: values.menu_id || "",
       menu_name: values.menu_name || "",
-      category: values.category || "",
+      category: normalizeCategoryToExisting(values.category),
       menu_type: values.menu_type || "regular",
       bundle_components: Array.isArray(values.bundle_components)
         ? values.bundle_components.map((component) => ({
@@ -27302,7 +27479,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
     action: isEdit ? "updateInventoryMaster" : "saveInventoryMaster",
     stock_item_id: values.stock_item_id || "",
     stock_item_name: values.stock_item_name || "",
-    category: values.category || "",
+    category: normalizeCategoryToExisting(values.category),
     unit: values.unit || "",
     min_stock: Number(values.min_stock),
     selling_price: values.selling_price !== undefined && values.selling_price !== "" && values.selling_price !== null
@@ -38240,6 +38417,17 @@ function handleDashboardInput(event) {
 }
 
 function handleDashboardChange(event) {
+  const categorySelect = event.target.closest("[data-action='update-add-inventory-item-category-select']");
+  if (categorySelect && addInventoryItemForm) {
+    addInventoryItemForm.category_select = categorySelect.value;
+    if (categorySelect.value === "__custom__") {
+      addInventoryItemForm.category = (addInventoryItemForm.custom_category || "").trim();
+    } else {
+      addInventoryItemForm.category = categorySelect.value;
+    }
+    return;
+  }
+
   const restoreFileInput = event.target.closest("[data-action='select-restore-backup-file']");
   if (restoreFileInput) {
     const file = restoreFileInput.files && restoreFileInput.files[0];
