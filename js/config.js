@@ -40,7 +40,9 @@ export const API_BASE_URL = (
   Keep empty to disable physical TV control from the dashboard.
 */
 /*
-  Alamat bridge TV = PC bridge (192.168.1.3, port 3030).
+  Alamat bridge TV dulu = PC bridge (port 3030). JANGAN ditulis di berkas ini: alamat PC
+  karaoke berubah (pernah .3, sekarang .9) dan angka yang salah membuat tiap perintah TV
+  dari halaman dilaporkan gagal. Semua perintah TV sekarang lewat server POS.
   Sebelumnya tertulis 192.168.1.4 yang tidak ada perangkatnya, sehingga setiap perintah TV
   dari dashboard kasir (nyalakan saat mulai, matikan saat waktu habis) tidak pernah sampai.
 */
@@ -54,9 +56,16 @@ export const API_BASE_URL = (
 */
 const injectedTvBridge = (typeof window !== "undefined" && window.__TV_BRIDGE__) || {};
 
-export const LOCAL_TV_BRIDGE_URL = String(
-  injectedTvBridge.url || "http://192.168.1.3:3030/tv-command"
-).trim();
+/*
+  JALUR LANGSUNG DARI BROWSER SUDAH DIMATIKAN (2026-10-02).
+  Alamat bawaan di sini masih menunjuk 192.168.1.3, alamat PC karaoke di jaringan LAMA. Setiap
+  percobaan dari halaman karena itu selalu gagal dan memunculkan peringatan "TV gagal dimatikan"
+  padahal SERVER sudah mengirim perintahnya (dan hasilnya benar).
+  Sekarang alamat/token hanya dipakai kalau diisi sengaja lewat window.__TV_BRIDGE__, dan server
+  mengirim berkas itu dalam keadaan kosong. Perintah TV seluruhnya lewat server POS.
+  JANGAN mengisi alamat yang di-hardcode di sini: begitu salah, semua ruangan berbunyi "gagal".
+*/
+export const LOCAL_TV_BRIDGE_URL = String(injectedTvBridge.url || "").trim();
 export const LOCAL_TV_BRIDGE_ENABLED = true;
 
 export const LOCAL_TV_BRIDGE_TOKEN = String(injectedTvBridge.token || "").trim();

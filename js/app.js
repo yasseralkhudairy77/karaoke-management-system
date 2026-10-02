@@ -409,6 +409,13 @@ function getRoomPriceLabel(room) {
 }
 
 async function sendLocalTvCommand(roomId, tvAction, triggerSource) {
+  // Alamat bridge kosong = jalur langsung dari browser memang dimatikan (lihat js/config.js).
+  // Perintah TV dikerjakan SERVER POS; halaman sudah memanggil aksi server yang sama. Kalau baris
+  // ini dilewati tanpa melempar galat, halaman berhenti menampilkan "TV gagal dimatikan" palsu.
+  if (!String(LOCAL_TV_BRIDGE_URL || "").trim()) {
+    return { skipped: true, reason: "jalur bridge dari browser dimatikan; perintah dikirim server" };
+  }
+
   if (!isLocalTvBridgeEnabled()) {
     return {
       skipped: true,

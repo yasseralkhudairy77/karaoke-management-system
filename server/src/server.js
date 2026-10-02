@@ -56,16 +56,24 @@ app.use((req, res, next) => {
 });
 /*
   Konfigurasi bridge TV untuk dashboard kasir.
-  Token disuntikkan dari .env server di sini supaya tidak pernah tersimpan di git
-  (repositori ini publik; js/config.js hanya memuat alamat bridge).
+  SENGAJA KOSONG (sejak 2026-10-02).
+
+  Sebelumnya endpoint ini menyuntikkan ALAMAT dan TOKEN bridge ke halaman kasir. Dua masalahnya:
+    1. Alamatnya dari TV_BRIDGE_PUBLIC_URL yang bisa basi (pernah menunjuk 192.168.1.3, alamat PC
+       ini di jaringan lama) sehingga jalur browser SELALU gagal dan kartu ruangan menampilkan
+       peringatan "TV gagal dimatikan" padahal server sudah mengerjakan bagiannya.
+    2. Token ikut terbaca oleh siapa pun yang bisa membuka halaman kasir.
+
+  Kenapa kosong ini tidak menghilangkan fitur apa pun: SEMUA perintah TV sudah dikirim SERVER
+  (lihat routes/api.js -> planTvSync -> tvBridgeService yang memakai TV_BRIDGE_URL dari .env),
+  dan server yang mengirimnya adalah proses yang sama dengan yang menyajikan halaman ini, jadi
+  alamat itu selalu benar. Server juga mengembalikan hasil nyata (mis. "TV ... tidak menjawab")
+  lewat balasan aksinya, sehingga pesan di kartu ruangan tetap jujur.
 */
 app.get('/tv-bridge-config.js', (req, res) => {
   res.type('application/javascript');
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.send(`window.__TV_BRIDGE__ = ${JSON.stringify({
-    url: String(process.env.TV_BRIDGE_PUBLIC_URL || 'http://192.168.1.3:3030/tv-command').trim(),
-    token: String(process.env.TV_BRIDGE_TOKEN || '').trim(),
-  })};`);
+  res.send('window.__TV_BRIDGE__ = { url: "", token: "" };');
 });
 
 app.use(express.static(frontendRoot, {
