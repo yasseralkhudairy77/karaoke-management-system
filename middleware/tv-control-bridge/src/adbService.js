@@ -29,6 +29,30 @@ function adbTimeout(room) {
   return Number.isFinite(value) && value > 0 ? value : defaultAdbTimeoutMs;
 }
 
+// Batas waktu untuk SAMBUNGAN YANG DIPICU PEMERIKSAAN PORT BERKALA. Pemeriksaan itu berjalan
+// tiap 15 detik dan menyentuh seluruh ruangan; kalau ia memakai batas per-ruangan (15 detik),
+// satu TV yang izinnya belum ditekan akan MENAHAN SELURUH putaran - dan `GET /api/rooms`, yang
+// dipakai kartu kasir untuk lampu status TV, ikut menggantung sampai batas waktu 4 detik di sisi
+// POS terlewati. Akibatnya semua kartu tampil ABU-ABU walau sebagian TV benar-benar tersambung.
+// TERUKUR 2026-10-02: putaran memakan 15,8 detik karena VIP-1 (unauthorized) menunggu penuh.
+// TV yang sehat menjawab dalam puluhan milidetik, jadi batas pendek ini hanya "menyerah lebih
+// cepat" pada TV yang memang bermasalah.
+const portProbeConnectTimeoutMs = Math.max(1000, Number(process.env.TV_POLL_CONNECT_TIMEOUT_MS) || 2500);
+// Batas waktu membaca `adb devices` (dilakukan SEKALI per putaran, bukan sekali per ruangan).
+const portProbeDeviceListTimeoutMs = Math.max(1000, Number(process.env.TV_POLL_DEVICE_LIST_TIMEOUT_MS) || 3000);
+
+/**
+ * Menyalin ruangan dengan batas waktu ADB yang diperpendek (tanpa mengubah config aslinya).
+ * Dipakai jalur otomatis/latar belakang saja; rute yang ditekan operator tidak dibatasi di sini.
+ */
+function batasiAdbTimeout(room, maksMs) {
+  const batas = Number(maksMs);
+  if (!Number.isFinite(batas) || batas <= 0) {
+    return room;
+  }
+  return { ...room, adbTimeoutMs: Math.max(1000, Math.min(adbTimeout(room), batas)) };
+}
+
 // Paket APK overlay di layar TV (dipasang 2026-09-23, terbukti lolos uji T1-T7).
 const overlayPackageDefault = process.env.TV_NOTIFY_PACKAGE || 'com.happysong.tvnotify';
 const overlayServiceName = 'OverlayService';
@@ -325,8 +349,13 @@ async function refreshTvPortStates(options = {}) {
   let portTerbuka = 0;
   let tersambung = 0;
 
+  // Daftar keadaan ADB dibaca SEKALI di awal putaran (murah, ~0,1 detik). Ini yang membuat
+  // putaran tidak perlu menebak: TV yang menunggu izin bisa dikenali dari kata `unauthorized`.
+  const states = await readAdbDeviceStateMap();
+
   await Promise.all(rooms.map(async (room) => {
     const state = getRuntimeState(room.id);
+    const serialKey = serialFromRoom(room).toLowerCase();
     const adbPortOpen = await probeTcpPort(room.ip, room.adbPort || 5555, timeoutMs);
     if (adbPortOpen) {
       portTerbuka += 1;
@@ -334,26 +363,50 @@ async function refreshTvPortStates(options = {}) {
     state.adbPortOpen = adbPortOpen;
     state.tvCheckedAt = checkedAt;
 
-    // Penyembuh otomatis: TV yang port ADB-nya terbuka tetapi belum tersambung ke server ADB
-    // langsung disambungkan di sini. Ini yang membuat "TV dinyalakan dari saklar listrik" tidak
-    // lagi menunggu ada orang menekan tombol: cukup port 5555 terbuka, sisanya otomatis.
-    // Hanya ruangan yang portnya TERBUKA yang disentuh, jadi TV yang benar-benar mati tidak
-    // pernah dikirimi perintah dan tidak memperlambat putaran ini.
-    if (adbPortOpen && !state.connected && options.autoConnect !== false) {
+    // Keadaan lampu dinilai dari BUKTI, bukan dari niat menyambung:
+    //   siap      = ADB benar-benar `device` (perintah bisa dikirim)
+    //   perlu-adb = TV menjawab di jaringan, tetapi ADB belum menerima perintah. Dua sebab:
+    //               izin belum ditekan (`unauthorized`) atau ADB mati di TV.
+    //   tidak-ada = tidak menjawab sama sekali di jaringan.
+    const tandaiLampu = () => {
+      const stateAdb = states.get(serialKey) || null;
+      const sudahDevice = stateAdb === 'device';
+      const runtime = getRuntimeState(room.id);
+      if (sudahDevice) {
+        runtime.connected = true;
+        runtime.pendingAuth = false;
+        runtime.lastError = null;
+      } else if (stateAdb === 'unauthorized') {
+        runtime.pendingAuth = true;
+      }
+      runtime.tvState = sudahDevice ? 'siap' : adbPortOpen ? 'perlu-adb' : 'tidak-ada';
+      if (runtime.connected) {
+        tersambung += 1;
+      }
+    };
+
+    // Penyembuh otomatis: TV yang port ADB-nya terbuka tetapi belum tersambung langsung
+    // disambungkan di sini. Ini yang membuat "TV dinyalakan dari saklar listrik" tidak lagi
+    // menunggu ada orang menekan tombol.
+    //
+    // Dua pengaman, keduanya lahir dari kejadian nyata 2026-10-02 (semua kartu kasir abu-abu):
+    //  1. Batas waktu PENDEK. Dengan batas per-ruangan (15 detik), satu TV bermasalah menahan
+    //     SELURUH putaran, dan `GET /api/rooms` - sumber lampu kartu kasir - menggantung sampai
+    //     batas 4 detik di sisi POS terlewati. TERUKUR: putaran lama 15,8 detik.
+    //  2. Ruangan yang sudah `unauthorized` TIDAK disambungkan lagi. Sambungannya mustahil
+    //     berhasil sebelum tombol OK ditekan di layar TV, dan mengulanginya tiap putaran hanya
+    //     memicu dialog izin berulang di layar ruangan.
+    const stateAdb = states.get(serialKey) || null;
+    if (adbPortOpen && !state.connected && options.autoConnect !== false && stateAdb !== 'unauthorized') {
       try {
-        await connectToRoom(room);
+        await connectToRoom(batasiAdbTimeout(room, portProbeConnectTimeoutMs));
       } catch (error) {
         // Gagal menyambung itu keadaan normal (mis. izin ADB belum ditekan di layar TV).
         // Keadaannya sudah tercatat di runtime lewat verifyConnected/connectToRoom.
       }
     }
 
-    if (getRuntimeState(room.id).connected) {
-      tersambung += 1;
-    }
-    // "hijau" hanya bila ADB benar-benar sudah tersambung (dibuktikan perintah adb pada jalur
-    // lain) - jika tidak, ruangan hanya boleh mengaku "TV menyala, ADB belum siap".
-    state.tvState = state.connected ? 'siap' : adbPortOpen ? 'perlu-adb' : 'tidak-ada';
+    tandaiLampu();
   }));
 
   return { checkedAt, total: rooms.length, portTerbuka, tersambung };
@@ -364,8 +417,8 @@ async function refreshTvPortStates(options = {}) {
  * Dibaca dari `adb devices`, bukan tebakan: hanya daftar ini yang bisa membedakan
  * "TV menunggu izin di layar" dari "ADB mati di TV".
  */
-async function readAdbDeviceStates() {
-  const output = await runAdb(['devices'], 'Membaca daftar perangkat ADB', 8000);
+async function readAdbDeviceStates(timeoutMs = 8000) {
+  const output = await runAdb(['devices'], 'Membaca daftar perangkat ADB', Math.max(1000, Number(timeoutMs) || 8000));
   const lines = String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1132,6 +1185,29 @@ function getRuntime() {
 
 function listRoomStatuses() {
   return listRooms().map((room) => getRoomRuntime(room.id));
+}
+
+/**
+ * Peta keadaan ADB (`device` / `unauthorized` / `offline`) untuk seluruh serial ruangan,
+ * dibaca dari SATU perintah `adb devices` - bukan satu perintah per ruangan.
+ *
+ * Dipakai jalur otomatis (pemeriksaan port berkala) supaya bisa memisahkan:
+ *   - TV menunggu izin di layar (`unauthorized`)  -> kuning, alasannya jelas bagi operator;
+ *   - sambungan gagal karena alasan lain         -> jangan mengaku tersambung.
+ * Kegagalan membaca daftar TIDAK boleh membatalkan penandaan lampu: hasilnya Map kosong dan
+ * pemanggil memperlakukan "tidak ada kabar" sebagai "belum tersambung".
+ */
+async function readAdbDeviceStateMap() {
+  const map = new Map();
+  try {
+    const states = await readAdbDeviceStates(portProbeDeviceListTimeoutMs);
+    for (const item of states) {
+      map.set(String(item.serial || '').toLowerCase(), String(item.state || '').toLowerCase());
+    }
+  } catch (error) {
+    // Biarkan kosong: pemanggil tetap menandai lampu berdasarkan hasil sambungan nyata.
+  }
+  return map;
 }
 
 function getTestDeviceRuntime(deviceSelector) {

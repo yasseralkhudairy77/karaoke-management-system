@@ -31,6 +31,13 @@ function getConfig() {
     warnMinutes: warnMinutes.length > 0 ? warnMinutes : [15, 5],
     graceSeconds: Number(process.env.TV_BRIDGE_GRACE_SECONDS || 60),
     timeoutMs: Number(process.env.TV_BRIDGE_TIMEOUT_MS || 8000),
+    // Batas waktu khusus MEMBACA daftar ruangan dari bridge (GET /api/rooms). Bridge memeriksa
+    // port ADB seluruh ruangan lebih dulu supaya datanya segar, dan pada armada yang sebagian
+    // TV-nya bermasalah itu bisa memakan beberapa detik. Dengan batas 4 detik yang lama, POS
+    // selalu kehabisan waktu -> peta status kosong -> SEMUA kartu tampil abu-abu walau sebagian
+    // TV benar-benar tersambung (kejadian 2026-10-02). Nilai bawaan 8 detik masih lebih kecil
+    // daripada TV_PORT_POLL_INTERVAL_MS (15 detik) di bridge, jadi datanya tetap segar.
+    roomsTimeoutMs: Number(process.env.TV_BRIDGE_ROOMS_TIMEOUT_MS || 8000),
     sweepEnabled: String(process.env.DISABLE_TV_SWEEPER || '') !== '1',
     sweepIntervalMs: Number(process.env.TV_BRIDGE_SWEEP_INTERVAL_MS || 60000),
     sweepMaxLateMinutes: Number(process.env.TV_BRIDGE_SWEEP_MAX_LATE_MINUTES || 360),
@@ -449,7 +456,7 @@ async function getBridgeHealth() {
 
 async function getBridgeRooms() {
   const config = getConfig();
-  return bridgeFetch('/api/rooms', { timeoutMs: Math.min(config.timeoutMs, 4000) });
+  return bridgeFetch('/api/rooms', { timeoutMs: config.roomsTimeoutMs });
 }
 
 /**

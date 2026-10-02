@@ -902,13 +902,27 @@ app.listen(PORT, async () => {
   // Lampu status TV diperiksa berkala, bukan hanya saat halaman kasir dibuka: dengan begitu
   // pemeriksaan sudah selesai SEBELUM tombol/kartu ditekan, dan statusnya berumur paling lama
   // satu interval. Kesalahan tidak boleh mematikan layanan.
+  //
+  // Ditulis juga ke berkas log (bukan hanya ke stdout), karena stdout bisa mengalir ke log
+  // peluncur yang berbeda dari `windows-bridge.log` - dan saat kartu kasir bermasalah,
+  // ketiadaan baris ini di log pernah menyamarkan sebabnya (2026-10-02).
   setTimeout(() => {
+    const mulai = Date.now();
     refreshTvPortStates({ timeoutMs: 700 })
-      .then((hasil) => log(`Periksa port TV: ${hasil.portTerbuka}/${hasil.total} ruangan menjawab di port ADB.`))
+      .then((hasil) => log(
+        `Periksa port TV: ${hasil.portTerbuka}/${hasil.total} ruangan menjawab di port ADB, `
+        + `${hasil.tersambung} tersambung (${Date.now() - mulai} ms).`
+      ))
       .catch((error) => log(`Periksa port TV gagal: ${error.message}`));
   }, 3000);
   setInterval(() => {
-    refreshTvPortStates({ timeoutMs: 700 }).catch((error) => log(`Periksa port TV gagal: ${error.message}`));
+    const mulai = Date.now();
+    refreshTvPortStates({ timeoutMs: 700 })
+      .then((hasil) => log(
+        `Periksa port TV: ${hasil.portTerbuka}/${hasil.total} ruangan menjawab di port ADB, `
+        + `${hasil.tersambung} tersambung (${Date.now() - mulai} ms).`
+      ))
+      .catch((error) => log(`Periksa port TV gagal: ${error.message}`));
   }, tvPortPollIntervalMs).unref();
 
   if (autoConnectAll) {
