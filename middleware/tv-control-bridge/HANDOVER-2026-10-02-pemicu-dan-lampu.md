@@ -132,3 +132,36 @@ Status jadwal di akhir: state=completed, tvWasPoweredOff=true, kedua peringatan 
 3. Sisa dari daftar sebelumnya: tidak ada lagi yang wajib. Yang belum pernah diuji hanya peringatan
    pada durasi panjang T-15/T-5 sesungguhnya - namun mekanismenya sama dan sudah terbukti di T-40/T-20
    (VIP-4) maupun T-15/T-5 (VIP-5).
+
+## SINKRONISASI CLOUD — jalur outbox lama dipensiunkan (2026-10-02)
+
+Temuan: `sync_outbox` menumpuk 3.015 baris (sejak 13 Agustus) karena worker-nya SENGAJA dimatikan
+(`DISABLE_SYNC_WORKER=1` di `server/.env`; `railwaySyncWorker.js` butuh `RAILWAY_PG_URL` yang tidak diisi).
+Yang dipakai sekarang adalah jalur LAIN: `ownerMirrorPushWorker.js` mengirim SNAPSHOT lengkap ke cloud
+lewat HTTP tiap 60 detik (today, yesterday, last7days, thismonth). Jalur itu SEHAT dan sudah terbukti:
+snapshot dibaca balik dari cloud berisi rooms 9, transactions 76 (periode last7days), fnb_sold_items 41,
+inventory_items 80, lc_performance_items 27, fnb_physical_consumption 38, summary/analytics.
+
+Jadi 3.015 baris itu bukan tunggakan, melainkan sisa jalur yang sudah tidak dipakai — dan payload
+`room_sessions` di dalamnya memang cacat (hanya berisi 3-4 kolom), sehingga menghidupkan kembali
+worker itu apa adanya justru akan menulis baris sesi yang tidak lengkap ke cloud.
+
+Tindakan (RENCANA B, atas persetujuan pemilik; tidak ada baris yang dihapus):
+
+    3.015 baris : status pending -> synced, error_message diisi alasan (riwayat tetap tersimpan)
+    penulisan baru : DIHENTIKAN lewat trigger `sync_outbox_pensiun_jalur_lama` + fungsi
+                     `sync_outbox_blokir_penulisan_baru`. Tiga kode yang masih menulis ke tabel ini
+                     (closingsController, expensesController) tetap berjalan tanpa error.
+    Comment tabel diisi penjelasannya.
+
+Bukti: /sync/status sekarang pending 0 / synced 3015 (sebelumnya 3015/0); cloud melaporkan angka yang
+sama sehingga dashboard pemilik berhenti berbunyi "belum sinkron"; percobaan menulis baris baru
+TIDAK masuk; transaksi 648, room_sessions 522, segments 524, fnb_orders 1594, rooms 10 tidak berubah.
+
+Cadangan + cara membatalkan (DROP TRIGGER / DROP FUNCTION / UPDATE balik ke pending):
+`C:/karaoke-tv-bridge/bukti-pensiun-outbox-20261002.json`
+
+Catatan untuk sesi berikutnya: kalau suatu saat jalur outbox mau dihidupkan lagi, JANGAN hanya
+mengisi RAILWAY_PG_URL — payload `room_sessions` harus dilengkapi lebih dulu, dan trigger di atas
+harus dihapus. Pertimbangkan juga apakah PostgreSQL cloud masih dipakai atau sudah digantikan
+snapshot sepenuhnya.
