@@ -1,0 +1,3369 @@
+const db = require('../db');
+const { successResponse, errorResponse } = require('../utils/response');
+const { getOperationalDate, getOperationalDateRange } = require('../utils/operationalDate');
+const { verifyAndUpgradePin } = require('../middleware/auth');
+const { writeOperationalAudit } = require('../services/operationalAuditService');
+const { resolvePackageComponentStockItem } = require('../utils/packageStockResolver');
+
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function money(value) {
+  return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
+}
+
+function calculateLcCharge(durationMinutes, ratePerHour) {
+  const duration = Math.max(0, Math.round(Number(durationMinutes) || 0));
+  const rate = Math.max(0, Number(ratePerHour) || 0);
+  if (duration <= 0 || rate <= 0) return 0;
+  return Math.ceil(duration / 60) * rate;
+}
+
+let packageLcBillingSchemaChecked = false;
+async function ensurePackageLcBillingSchema(executor = db) {
+  if (packageLcBillingSchemaChecked) return;
+  await executor.query(`
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_count INT NOT NULL DEFAULT 0;
+    ALTER TABLE package_master ADD COLUMN IF NOT EXISTS included_lc_duration_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS customer_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS included_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
+    ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+  `);
+  packageLcBillingSchemaChecked = true;
+}
+
+async function getPackageLcRule(executor, packageId) {
+  if (!packageId) {
+    return { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+  }
+  const pkgRes = await executor.query(`
+    SELECT package_id, included_lc_count, included_lc_duration_minutes
+    FROM package_master
+    WHERE package_id = $1
+    LIMIT 1
+  `, [packageId]);
+  const pkg = pkgRes.rows[0] || {};
+  return {
+    package_id: pkg.package_id || packageId,
+    included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
+    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+  };
+}
+
+function allocatePackageLcBilling(lcRows, packageRule) {
+  const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
+  const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+
+  return lcRows.map((row, index) => {
+    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || 0)));
+    const ratePerHour = Math.max(0, Number(row.rate_per_hour || 0));
+    const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
+    const hasPackageRule = Boolean(packageRule?.package_id);
+    const includedMinutes = index < includedCount ? Math.min(durationMinutes, includedDuration) : 0;
+    const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
+    const customerChargeAmount = calculateLcCharge(extraMinutes, ratePerHour);
+    const billingSource = includedMinutes > 0
+      ? (extraMinutes > 0 ? 'package_partial' : 'package_included')
+      : hasPackageRule
+        ? 'extra_charge'
+        : 'regular';
+
+    return {
+      ...row,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      rate_per_room: ratePerHour,
+      rate: payableAmount,
+      payable_amount: payableAmount,
+      customer_charge_amount: customerChargeAmount,
+      included_minutes: includedMinutes,
+      extra_minutes: extraMinutes,
+      billing_source: billingSource,
+      package_id: packageRule?.package_id || null
+    };
+  });
+}
+
+function normalizeLcBillingRow(row, transactionIsPackage = false) {
+  const payableAmount = Number(row.rate || 0);
+  const storedCustomerCharge = Number(row.customer_charge_amount || 0);
+  const billingSource = String(row.billing_source || '').trim();
+  const customerChargeAmount = storedCustomerCharge > 0 || billingSource.startsWith('package')
+    ? storedCustomerCharge
+    : transactionIsPackage
+      ? 0
+      : payableAmount;
+
+  return {
+    ...row,
+    duration_minutes: Number(row.duration_minutes || 0),
+    rate_per_hour: Number(row.rate_per_hour || 0),
+    rate_per_room: Number(row.rate_per_hour || 0),
+    rate: payableAmount,
+    payable_amount: payableAmount,
+    customer_charge_amount: customerChargeAmount,
+    included_minutes: Number(row.included_minutes || 0),
+    extra_minutes: Number(row.extra_minutes || row.duration_minutes || 0),
+    billing_source: billingSource || (customerChargeAmount < payableAmount ? 'package_included' : 'regular')
+  };
+}
+
+function getPaymentBreakdown(row) {
+  const paymentStatus = String(row?.payment_status || '').toLowerCase();
+  const paymentMethod = String(row?.payment_method || '').toLowerCase();
+  const grandTotal = money(row?.grand_total || 0);
+  const storedCash = money(row?.cash_amount || 0);
+  const storedTransfer = money(row?.transfer_amount || 0);
+
+  if (paymentStatus !== 'paid') {
+    return { cash_amount: 0, transfer_amount: 0 };
+  }
+
+  if (paymentMethod === 'split') {
+    if (storedCash + storedTransfer === grandTotal) {
+      return {
+        cash_amount: storedCash,
+        transfer_amount: storedTransfer
+      };
+    }
+    const safeCash = Math.min(grandTotal, Math.max(0, storedCash));
+    const safeTransfer = Math.max(0, money(grandTotal - safeCash));
+    return {
+      cash_amount: safeCash,
+      transfer_amount: safeTransfer
+    };
+  }
+
+  if (paymentMethod === 'cash') {
+    return {
+      cash_amount: grandTotal,
+      transfer_amount: 0
+    };
+  }
+
+  if (paymentMethod === 'transfer' || paymentMethod === 'qris') {
+    return {
+      cash_amount: 0,
+      transfer_amount: grandTotal
+    };
+  }
+
+  return { cash_amount: 0, transfer_amount: 0 };
+}
+
+function normalizePaymentMethod(value) {
+  const method = String(value || 'cash').toLowerCase().trim();
+  if (method === 'qris') return 'transfer';
+  if (['cash', 'transfer', 'split'].includes(method)) return method;
+  throw new Error('Metode pembayaran wajib cash, transfer, atau split.');
+}
+
+function normalizePaymentBreakdown(paymentMethod, grandTotal, payload = {}) {
+  const total = money(grandTotal);
+  const method = normalizePaymentMethod(paymentMethod);
+
+  if (method === 'cash') {
+    return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
+  }
+
+  if (method === 'transfer') {
+    return { payment_method: 'transfer', cash_amount: 0, transfer_amount: total };
+  }
+
+  const rawCash = payload.cash_amount ?? payload.cashAmount ?? payload.cash_payment ?? payload.cashPayment ?? 0;
+  const rawTransfer = payload.transfer_amount ?? payload.transferAmount ?? payload.transfer_payment ?? payload.transferPayment ?? 0;
+  let cashAmount = money(rawCash);
+  let transferAmount = money(rawTransfer);
+
+  if (cashAmount > 0 && transferAmount <= 0) {
+    transferAmount = money(total - cashAmount);
+  } else if (transferAmount > 0 && cashAmount <= 0) {
+    cashAmount = money(total - transferAmount);
+  }
+
+  if (cashAmount <= 0 || transferAmount <= 0) {
+    throw new Error('Split bill wajib memiliki nominal cash dan transfer lebih dari 0.');
+  }
+
+  if (money(cashAmount + transferAmount) !== total) {
+    throw new Error(`Total split bill harus sama dengan total tagihan (${total}).`);
+  }
+
+  return {
+    payment_method: 'split',
+    cash_amount: cashAmount,
+    transfer_amount: transferAmount
+  };
+}
+
+function adjustPaymentBreakdownForCorrection(paymentMethod, newGrandTotal, currentCash = 0, currentTransfer = 0) {
+  const total = money(newGrandTotal);
+  const method = String(paymentMethod || 'cash').toLowerCase().trim();
+
+  if (method === 'cash') {
+    return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
+  }
+  if (method === 'transfer' || method === 'qris') {
+    return { payment_method: 'transfer', cash_amount: 0, transfer_amount: total };
+  }
+  if (method === 'split') {
+    const cash = money(currentCash);
+    const safeCash = Math.min(total, Math.max(0, cash));
+    const safeTransfer = Math.max(0, money(total - safeCash));
+    return { payment_method: 'split', cash_amount: safeCash, transfer_amount: safeTransfer };
+  }
+  return { payment_method: 'cash', cash_amount: total, transfer_amount: 0 };
+}
+
+function formatOperationalDate(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.split('T')[0];
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? '' : val.toISOString().split('T')[0];
+  }
+  if (typeof val.toISOString === 'function') {
+    return val.toISOString().split('T')[0];
+  }
+  return String(val).split('T')[0];
+}
+
+function serializeTransaction(row) {
+  if (!row) return null;
+  let roomJourney = row.room_journey_json || [];
+  if (typeof roomJourney === 'string') {
+    try { roomJourney = JSON.parse(roomJourney); } catch (_) { roomJourney = []; }
+  }
+  const paymentBreakdown = getPaymentBreakdown(row);
+  return {
+    transaction_id: row.transaction_id,
+    room_id: row.room_id,
+    room_name: row.room_name,
+    start_time: row.start_time ? new Date(row.start_time).toISOString() : '',
+    end_time: row.end_time ? new Date(row.end_time).toISOString() : '',
+    duration_minutes: Number(row.duration_minutes || 0),
+    rate_per_hour: Number(row.rate_per_hour || 0),
+    room_total: Number(row.room_total || 0),
+    fnb_total: Number(row.fnb_total || 0),
+    lc_total: Number(row.lc_total || 0),
+    grand_total: Number(row.grand_total || 0),
+    fnb_order_ids: row.fnb_order_ids || '',
+    payment_method: row.payment_method,
+    payment_status: row.payment_status,
+    cash_amount: paymentBreakdown.cash_amount,
+    transfer_amount: paymentBreakdown.transfer_amount,
+    cashier_name: row.cashier_name,
+    operational_date: formatOperationalDate(row.operational_date),
+    booking_mode: row.booking_mode || '',
+    package_id: row.package_id || '',
+    package_name: row.package_name || '',
+    package_total: Number(row.package_total || 0),
+    promo_code: row.promo_code || '',
+    promo_discount: Number(row.promo_discount || 0),
+    manual_discount: Number(row.manual_discount || 0),
+    manual_discount_room: Number(row.manual_discount_room || 0),
+    manual_discount_fnb: Number(row.manual_discount_fnb || 0),
+    manual_discount_reason: row.manual_discount_reason || '',
+    manual_discount_by: row.manual_discount_by || '',
+    manual_discount_at: row.manual_discount_at ? new Date(row.manual_discount_at).toISOString() : '',
+    corrected_at: row.corrected_at ? new Date(row.corrected_at).toISOString() : '',
+    corrected_by: row.corrected_by || '',
+    correction_note: row.correction_note || '',
+    billable_room_minutes: row.billable_room_minutes === null || row.billable_room_minutes === undefined ? null : Number(row.billable_room_minutes || 0),
+    free_room_minutes: Number(row.free_room_minutes || 0),
+    room_discount_amount: Number(row.room_discount_amount || 0),
+    room_upgrade_total: Number(row.room_upgrade_total || 0),
+    room_journey: Array.isArray(roomJourney) ? roomJourney : [],
+    lc_summary: row.lc_summary || '',
+    lc_duration_minutes: Number(row.lc_duration_minutes || 0),
+    lc_count: Number(row.lc_count || 0),
+    lc_logs: Array.isArray(row.lc_logs) ? row.lc_logs : [],
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+  };
+}
+
+function serializeSalesCommission(row) {
+  if (!row) return null;
+  return {
+    commission_id: row.commission_id,
+    transaction_id: row.transaction_id,
+    operational_date: formatOperationalDate(row.operational_date),
+    basis_type: row.basis_type || 'grand_total',
+    basis_amount: Number(row.basis_amount || 0),
+    commission_percent: Number(row.commission_percent || 0),
+    commission_amount: Number(row.commission_amount || 0),
+    recipient_name: row.recipient_name || '',
+    cashier_name: row.cashier_name || '',
+    note: row.note || '',
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : ''
+  };
+}
+
+async function validateOwnerPin(pin) {
+  if (!pin) throw new Error('PIN owner wajib diisi.');
+
+  const result = await db.query(`
+    SELECT employee_id, employee_name, role, pin, pin_hash
+    FROM employees
+    WHERE role = 'owner' AND is_active = TRUE
+    ORDER BY employee_name ASC
+  `);
+
+  for (const emp of result.rows) {
+    const isValid = await verifyAndUpgradePin(emp.employee_id, pin, emp.pin, emp.pin_hash);
+    if (isValid) {
+      return {
+        employee_id: emp.employee_id,
+        employee_name: emp.employee_name,
+        role: emp.role
+      };
+    }
+  }
+
+  throw new Error('PIN Owner tidak valid.');
+}
+
+async function validateOwnerOrManagerPin(pin) {
+  if (!pin) throw new Error('PIN owner/manager wajib diisi.');
+
+  const result = await db.query(`
+    SELECT employee_id, employee_name, role, pin, pin_hash
+    FROM employees
+    WHERE role IN ('owner', 'manager') AND is_active = TRUE
+    ORDER BY CASE role WHEN 'owner' THEN 1 ELSE 2 END, employee_name ASC
+  `);
+
+  for (const emp of result.rows) {
+    const isValid = await verifyAndUpgradePin(emp.employee_id, pin, emp.pin, emp.pin_hash);
+    if (isValid) {
+      return {
+        employee_id: emp.employee_id,
+        employee_name: emp.employee_name,
+        role: emp.role
+      };
+    }
+  }
+
+  throw new Error('PIN Owner/Manager tidak valid.');
+}
+
+async function ensureTransactionCorrectionSchema(client) {
+  await client.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS booking_mode VARCHAR(30) DEFAULT 'regular';
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_name VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS package_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS corrected_by VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_note TEXT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS billable_room_minutes INT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS free_room_minutes INT NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_reason TEXT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_by VARCHAR(100);
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS manual_discount_at TIMESTAMPTZ;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_upgrade_total NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS room_journey_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_method_check;
+    ALTER TABLE transactions ADD CONSTRAINT transactions_payment_method_check
+    CHECK (payment_method IN ('cash', 'qris', 'transfer', 'split', ''));
+
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS voided_by VARCHAR(100);
+    ALTER TABLE fnb_order_items ADD COLUMN IF NOT EXISTS menu_type_snapshot VARCHAR(30) NOT NULL DEFAULT 'regular';
+    CREATE TABLE IF NOT EXISTS fnb_order_item_components (
+      component_snapshot_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      order_item_id UUID NOT NULL REFERENCES fnb_order_items(order_item_id) ON DELETE CASCADE,
+      order_id VARCHAR(50) NOT NULL REFERENCES fnb_orders(order_id) ON DELETE CASCADE,
+      menu_id VARCHAR(50),
+      item_id VARCHAR(50),
+      component_name VARCHAR(100) NOT NULL,
+      qty_per_menu NUMERIC(12,4) NOT NULL,
+      order_quantity INT NOT NULL,
+      total_qty NUMERIC(12,4) NOT NULL,
+      unit VARCHAR(20) NOT NULL,
+      component_mode VARCHAR(20) NOT NULL DEFAULT 'included',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE stock_movements ALTER COLUMN movement_id TYPE VARCHAR(120);
+    ALTER TABLE stock_movements ALTER COLUMN reference_id TYPE VARCHAR(100);
+    ALTER TABLE stock_movements ALTER COLUMN idempotency_key TYPE VARCHAR(150);
+
+    CREATE TABLE IF NOT EXISTS transaction_correction_logs (
+      correction_id VARCHAR(80) PRIMARY KEY,
+      transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+      correction_type VARCHAR(50) NOT NULL,
+      old_value_json JSONB,
+      new_value_json JSONB,
+      reason TEXT NOT NULL,
+      corrected_by VARCHAR(100) NOT NULL,
+      corrected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sales_commission_logs (
+      commission_id VARCHAR(80) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL UNIQUE REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+      operational_date DATE NOT NULL,
+      basis_type VARCHAR(30) NOT NULL DEFAULT 'grand_total',
+      basis_amount NUMERIC(12,2) NOT NULL,
+      commission_percent NUMERIC(7,4) NOT NULL,
+      commission_amount NUMERIC(12,2) NOT NULL,
+      recipient_name VARCHAR(100) NOT NULL,
+      cashier_name VARCHAR(100) NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'sales_commission_logs_basis_type_check'
+      ) THEN
+        ALTER TABLE sales_commission_logs ADD CONSTRAINT sales_commission_logs_basis_type_check
+        CHECK (basis_type IN ('grand_total', 'room_total', 'fnb_total'));
+      END IF;
+    END $$;
+
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS promo_discount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_room NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS manual_discount_fnb NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closing_transactions ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS sales_commission_total NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE cashier_closings ADD COLUMN IF NOT EXISTS net_revenue_after_commission NUMERIC(12,2) DEFAULT 0;
+  `);
+}
+
+async function refreshClosingSnapshotForTransaction(client, transaction) {
+  const closingRows = await client.query(
+    'SELECT DISTINCT closing_id FROM cashier_closing_transactions WHERE transaction_id = $1',
+    [transaction.transaction_id]
+  );
+
+  for (const row of closingRows.rows) {
+    const closingId = row.closing_id;
+    await client.query(`
+      UPDATE cashier_closing_transactions
+      SET room_id = $1,
+          room_name = $2,
+          duration_minutes = $3,
+          room_total = $4,
+          fnb_total = $5,
+          lc_total = $6,
+          grand_total = $7,
+          payment_method = $8,
+          payment_status = $9,
+          cash_amount = $10,
+          transfer_amount = $11,
+          promo_discount = $12,
+          manual_discount = $13,
+          manual_discount_room = $14,
+          manual_discount_fnb = $15
+      WHERE closing_id = $16 AND transaction_id = $17
+    `, [
+      transaction.room_id,
+      transaction.room_name,
+      transaction.duration_minutes,
+      transaction.room_total,
+      transaction.fnb_total,
+      transaction.lc_total,
+      transaction.grand_total,
+      transaction.payment_method,
+      transaction.payment_status,
+      transaction.cash_amount || 0,
+      transaction.transfer_amount || 0,
+      transaction.promo_discount || 0,
+      transaction.manual_discount || 0,
+      transaction.manual_discount_room || 0,
+      transaction.manual_discount_fnb || 0,
+      closingId,
+      transaction.transaction_id
+    ]);
+
+    const summary = await client.query(`
+      WITH payment_rows AS (
+        SELECT *,
+          CASE
+            WHEN payment_status <> 'paid' THEN 0
+            WHEN payment_method = 'split' THEN COALESCE(cash_amount, 0)
+            WHEN payment_method = 'cash' THEN grand_total
+            ELSE 0
+          END AS cash_component,
+          CASE
+            WHEN payment_status <> 'paid' THEN 0
+            WHEN payment_method = 'split' THEN COALESCE(transfer_amount, 0)
+            WHEN payment_method <> 'cash' THEN grand_total
+            ELSE 0
+          END AS transfer_component
+        FROM cashier_closing_transactions
+        WHERE closing_id = $1
+      )
+      SELECT
+        COUNT(*)::int AS total_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'paid')::int AS paid_transactions,
+        COUNT(*) FILTER (WHERE payment_status = 'unpaid')::int AS unpaid_transactions,
+        COUNT(*) FILTER (WHERE cash_component > 0)::int AS cash_transactions,
+        COUNT(*) FILTER (WHERE transfer_component > 0)::int AS transfer_transactions,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'paid'), 0) AS paid_revenue,
+        COALESCE(SUM(cash_component), 0) AS cash_expected,
+        COALESCE(SUM(transfer_component), 0) AS transfer_revenue,
+        COALESCE(SUM(grand_total) FILTER (WHERE payment_status = 'unpaid'), 0) AS unpaid_revenue,
+        COALESCE(SUM(grand_total), 0) AS total_revenue
+      FROM payment_rows
+    `, [closingId]);
+    const s = summary.rows[0] || {};
+
+    await client.query(`
+      UPDATE cashier_closings
+      SET total_transactions = $1,
+          paid_transactions = $2,
+          unpaid_transactions = $3,
+          cash_transactions = $4,
+          transfer_transactions = $5,
+          paid_revenue = $6,
+          cash_expected = $7,
+          transfer_revenue = $8,
+          unpaid_revenue = $9,
+          total_revenue = $10
+      WHERE closing_id = $11
+    `, [
+      s.total_transactions || 0,
+      s.paid_transactions || 0,
+      s.unpaid_transactions || 0,
+      s.cash_transactions || 0,
+      s.transfer_transactions || 0,
+      s.paid_revenue || 0,
+      s.cash_expected || 0,
+      s.transfer_revenue || 0,
+      s.unpaid_revenue || 0,
+      s.total_revenue || 0,
+      closingId
+    ]);
+  }
+}
+
+async function autoSyncUnpaidPackageOvertime(client) {
+  try {
+    await client.query(`
+      WITH target_pkg_tx AS (
+        SELECT 
+          t.transaction_id,
+          COALESCE(NULLIF(t.package_total, 0), CASE WHEN t.room_total > 0 THEN t.room_total ELSE 650000 END) AS effective_pkg_total,
+          COALESCE(NULLIF(t.rate_per_hour, 0), 135000) AS effective_rate,
+          CASE 
+            WHEN t.package_name ILIKE '%3 jam%' OR t.package_name ILIKE '%3jam%' THEN 180
+            WHEN t.package_name ILIKE '%4 jam%' OR t.package_name ILIKE '%4jam%' THEN 240
+            WHEN t.package_name ILIKE '%1 jam%' OR t.package_name ILIKE '%1jam%' THEN 60
+            ELSE 120
+          END AS pkg_included_mins,
+          t.duration_minutes,
+          COALESCE(t.fnb_total, 0) AS fnb_tot,
+          COALESCE(t.lc_total, 0) AS lc_tot,
+          COALESCE(t.promo_discount, 0) AS p_disc,
+          COALESCE(t.manual_discount_room, 0) AS mr_disc,
+          COALESCE(t.manual_discount_fnb, 0) AS mf_disc,
+          t.payment_method
+        FROM transactions t
+        WHERE t.payment_status = 'unpaid'
+          AND (
+            t.booking_mode IN ('package', 'package_correction')
+            OR (t.package_id IS NOT NULL AND t.package_id <> '')
+            OR (t.package_name IS NOT NULL AND (t.package_name ILIKE '%paket%' OR t.package_name ILIKE '%morgan%'))
+            OR (t.package_total IS NOT NULL AND t.package_total > 0)
+          )
+      )
+      UPDATE transactions t
+      SET 
+        package_total = sub.effective_pkg_total,
+        room_total = sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate),
+        grand_total = (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) 
+                      + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc,
+        billable_room_minutes = sub.duration_minutes - sub.pkg_included_mins,
+        free_room_minutes = sub.pkg_included_mins,
+        room_discount_amount = (sub.pkg_included_mins / 60.0) * sub.effective_rate,
+        cash_amount = CASE 
+          WHEN t.payment_method = 'cash' 
+          THEN (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc 
+          ELSE t.cash_amount 
+        END,
+        transfer_amount = CASE 
+          WHEN t.payment_method = 'transfer' 
+          THEN (sub.effective_pkg_total + (CEIL((sub.duration_minutes - sub.pkg_included_mins) / 60.0) * sub.effective_rate)) + sub.fnb_tot + sub.lc_tot - sub.p_disc - sub.mr_disc - sub.mf_disc 
+          ELSE t.transfer_amount 
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      FROM target_pkg_tx sub
+      WHERE t.transaction_id = sub.transaction_id
+        AND sub.duration_minutes > sub.pkg_included_mins
+        AND t.room_total <= sub.effective_pkg_total;
+    `);
+  } catch (err) {
+    console.error('autoSyncUnpaidPackageOvertime non-blocking error:', err?.message || err);
+  }
+}
+
+async function getTodayTransactions(req, res) {
+  try {
+    const { period, start_date, end_date } = req.query;
+    const { startDate, endDate } = getOperationalDateRange(period, start_date, end_date);
+    await ensureTransactionCorrectionSchema(db);
+    await autoSyncUnpaidPackageOvertime(db);
+
+    const result = await db.query(`
+      SELECT * FROM transactions
+      WHERE operational_date >= $1 AND operational_date <= $2
+        AND payment_status <> 'cancelled'
+      ORDER BY created_at DESC
+    `, [startDate, endDate]);
+
+    const commissionRes = await db.query(`
+      SELECT *
+      FROM sales_commission_logs
+      WHERE operational_date >= $1 AND operational_date <= $2
+      ORDER BY created_at DESC
+    `, [startDate, endDate]);
+    const commissionsByTransactionId = new Map(
+      commissionRes.rows.map((row) => [row.transaction_id, row])
+    );
+
+    const txIds = result.rows.map(r => r.transaction_id);
+    const lcLogsByTxId = new Map();
+    if (txIds.length > 0) {
+      const lcRes = await db.query(`
+        SELECT closed_transaction_id, lc_id, lc_name, duration_minutes, upfront_transaction_id, rate_per_hour, rate, customer_charge_amount
+        FROM lc_work_logs
+        WHERE (closed_transaction_id = ANY($1) OR upfront_transaction_id = ANY($1)) AND status != 'cancelled'
+        ORDER BY created_at DESC, log_id DESC
+      `, [txIds]);
+      lcRes.rows.forEach(r => {
+        const txId = r.closed_transaction_id || r.upfront_transaction_id;
+        if (!lcLogsByTxId.has(txId)) lcLogsByTxId.set(txId, []);
+        const existingLogs = lcLogsByTxId.get(txId);
+        if (!existingLogs.some(l => l.lc_id === r.lc_id)) {
+          existingLogs.push(r);
+        }
+      });
+    }
+
+    const transactions = result.rows.map((row) => {
+      const serialized = serializeTransaction(row);
+      const commission = commissionsByTransactionId.get(row.transaction_id);
+      if (commission) {
+        serialized.sales_commission = serializeSalesCommission(commission);
+        serialized.sales_commission_amount = Number(commission.commission_amount || 0);
+      } else {
+        serialized.sales_commission = null;
+        serialized.sales_commission_amount = 0;
+      }
+
+      const lcLogs = lcLogsByTxId.get(row.transaction_id) || [];
+      const totalLcMinutes = lcLogs.reduce((sum, l) => sum + Number(l.duration_minutes || 0), 0);
+      let lcSummaryText = '';
+      if (lcLogs.length === 1) {
+        const l = lcLogs[0];
+        const hours = Number(l.duration_minutes || 0) / 60;
+        const hoursStr = Number.isInteger(hours) ? `${hours} jam` : `${hours.toFixed(1)} jam`;
+        lcSummaryText = `${hoursStr} • ${l.lc_name || l.lc_id}`;
+      } else if (lcLogs.length > 1) {
+        const totalHours = totalLcMinutes / 60;
+        const totalHoursStr = Number.isInteger(totalHours) ? `${totalHours} jam` : `${totalHours.toFixed(1)} jam`;
+        const names = lcLogs.map(l => {
+          const h = Number(l.duration_minutes || 0) / 60;
+          return `${l.lc_name || l.lc_id} (${Number.isInteger(h) ? h : h.toFixed(1)}j)`;
+        }).join(', ');
+        lcSummaryText = `${totalHoursStr} • ${names}`;
+      } else if (Number(row.lc_total || 0) > 0) {
+        const hours = Math.round(Number(row.lc_total) / 135000);
+        lcSummaryText = hours > 0 ? `${hours} jam` : 'Ada LC';
+      }
+
+      serialized.lc_summary = lcSummaryText;
+      serialized.lc_duration_minutes = totalLcMinutes;
+      serialized.lc_count = lcLogs.length;
+      serialized.lc_logs = lcLogs;
+      if (lcLogs.length > 0) {
+        serialized.lc_details = {
+          detail_available: true,
+          lc_logs: lcLogs,
+          items: lcLogs,
+          customer_items: lcLogs.filter(l => Number(l.customer_charge_amount || 0) > 0),
+          total: Number(row.lc_total || 0)
+        };
+      }
+
+      return serialized;
+    });
+
+    let cashRevenue = 0;
+    let transferRevenue = 0;
+    let totalRevenuePaid = 0;
+    let totalRevenueAll = 0;
+    let unpaidRevenue = 0;
+    let paidTransactions = 0;
+    let unpaidTransactions = 0;
+    let cashTransactions = 0;
+    let transferTransactions = 0;
+    let salesCommissionTotal = 0;
+
+    transactions.forEach(t => {
+      const transactionTotal = Number(t.grand_total) || 0;
+
+      if (t.payment_status === 'paid') {
+        paidTransactions += 1;
+        totalRevenuePaid += transactionTotal;
+        totalRevenueAll += transactionTotal;
+        salesCommissionTotal += Number(t.sales_commission_amount || 0);
+
+        const breakdown = getPaymentBreakdown(t);
+        if (breakdown.cash_amount > 0) {
+          cashTransactions += 1;
+          cashRevenue += breakdown.cash_amount;
+        }
+        if (breakdown.transfer_amount > 0) {
+          transferTransactions += 1;
+          transferRevenue += breakdown.transfer_amount;
+        }
+      } else if (t.payment_status === 'unpaid') {
+        unpaidTransactions += 1;
+        unpaidRevenue += transactionTotal;
+        totalRevenueAll += transactionTotal;
+      }
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      transactions,
+      summary: {
+        total_transactions: transactions.length,
+        paid_transactions: paidTransactions,
+        unpaid_transactions: unpaidTransactions,
+        cash_transactions: cashTransactions,
+        transfer_transactions: transferTransactions,
+        cash_revenue: cashRevenue,
+        transfer_revenue: transferRevenue,
+        unpaid_revenue: unpaidRevenue,
+        paid_revenue: totalRevenuePaid,
+        total_revenue_paid: totalRevenuePaid,
+        total_revenue_unpaid: unpaidRevenue,
+        total_revenue_all: totalRevenueAll,
+        total_revenue: totalRevenuePaid,
+        sales_commission_total: salesCommissionTotal,
+        net_revenue_after_commission: totalRevenuePaid - salesCommissionTotal
+      },
+      operational_date_start: startDate,
+      operational_date_end: endDate
+    });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function markTransactionPaid(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const { transaction_id, payment_method = 'cash', promo_code = '' } = payload;
+    if (!transaction_id) throw new Error('transaction_id wajib diisi.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transaction_id]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const transaction = trxRes.rows[0];
+
+    const prCode = String(promo_code || payload.promoCode || '').trim().toUpperCase();
+    let roomTotal = Number(transaction.room_total || 0);
+    let fnbTotal = Number(transaction.fnb_total || 0);
+    let lcTotal = Number(transaction.lc_total || 0);
+    let existingDiscount = Number(transaction.promo_discount || 0);
+    let promoDiscount = existingDiscount;
+    let appliedPromoCode = transaction.promo_code || '';
+
+    const isPackageTrx = Boolean(
+      String(transaction.package_id || '').trim() ||
+      String(transaction.booking_mode || '').toLowerCase() === 'package' ||
+      Number(transaction.package_total || 0) > 0 ||
+      String(transaction.package_name || '').toLowerCase().includes('paket') ||
+      String(transaction.package_name || '').toLowerCase().includes('morgan')
+    );
+    let packageOvertimeExtra = 0;
+    let pkgIncludedMinutes = 120;
+    if (isPackageTrx) {
+      const pkgName = String(transaction.package_name || '').toLowerCase();
+      pkgIncludedMinutes = (pkgName.includes('3 jam') || pkgName.includes('3jam')) ? 180 : 120;
+      const durMins = Number(transaction.duration_minutes || 0);
+      const pkgTotal = Number(transaction.package_total || 0) || (roomTotal > 0 ? roomTotal : 650000);
+      if (durMins > pkgIncludedMinutes && roomTotal <= pkgTotal) {
+        const extraHours = Math.ceil((durMins - pkgIncludedMinutes) / 60.0);
+        const ratePerHour = Number(transaction.rate_per_hour) || 135000;
+        packageOvertimeExtra = extraHours * ratePerHour;
+        roomTotal = pkgTotal + packageOvertimeExtra;
+      }
+    }
+
+    if (prCode) {
+      const grossRoomTotal = Math.max(0, roomTotal + existingDiscount);
+      const promoRes = await client.query('SELECT * FROM promos WHERE UPPER(promo_code) = $1 LIMIT 1', [prCode]);
+      let promo = promoRes.rowCount > 0 ? promoRes.rows[0] : null;
+
+      if (!promo) {
+        if (prCode === 'FREEROOM100' || prCode === 'GOHS') {
+          promo = { promo_code: prCode, promo_name: 'Free Room 100%', type: 'promo', discount_type: 'percentage', discount_value: 100, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Free Room 100% (Gratis Sewa Room)', 'promo', 'percentage', 100, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'FREEROOM50' || prCode === 'MERDEKA50') {
+          promo = { promo_code: prCode, promo_name: 'Diskon Room 50%', type: 'promo', discount_type: 'percentage', discount_value: 50, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Diskon Sewa Room 50%', 'promo', 'percentage', 50, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'FREEROOM25') {
+          promo = { promo_code: prCode, promo_name: 'Diskon Room 25%', type: 'promo', discount_type: 'percentage', discount_value: 25, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Diskon Sewa Room 25%', 'promo', 'percentage', 25, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        } else if (prCode === 'KAPTEN1') {
+          promo = { promo_code: prCode, promo_name: 'Potongan Kapten Rp 250.000', type: 'promo', discount_type: 'fixed', discount_value: 250000, is_active: true };
+          await client.query(`
+            INSERT INTO promos (promo_code, promo_name, type, discount_type, discount_value, is_active)
+            VALUES ($1, 'Potongan Kapten Rp 250.000', 'promo', 'fixed', 250000, TRUE)
+            ON CONFLICT (promo_code) DO NOTHING
+          `, [prCode]).catch(() => {});
+        }
+      }
+
+      if (promo) {
+        const promoType = String(promo.type || 'promo').trim().toLowerCase();
+
+        if (promoType === 'voucher' && promo.used_in_transaction_id && promo.used_in_transaction_id !== transaction_id) {
+          throw new Error(`Voucher "${prCode}" sudah digunakan di transaksi ${promo.used_in_transaction_id}.`);
+        }
+
+        if (promo.is_active === false && promo.used_in_transaction_id !== transaction_id) {
+          throw new Error(`Voucher "${prCode}" sedang tidak aktif.`);
+        }
+
+        if (promo.discount_type === 'percentage') {
+          promoDiscount = Math.floor(grossRoomTotal * (Number(promo.discount_value || 0) / 100));
+          if (promo.max_discount !== null && promo.max_discount !== undefined) {
+            promoDiscount = Math.min(promoDiscount, Number(promo.max_discount || promoDiscount));
+          }
+        } else {
+          promoDiscount = Number(promo.discount_value || 0);
+        }
+        promoDiscount = Math.max(0, Math.min(promoDiscount, grossRoomTotal));
+        roomTotal = Math.max(0, grossRoomTotal - promoDiscount);
+        appliedPromoCode = promo.promo_code;
+
+        if (promoType === 'voucher') {
+          await client.query(`
+            UPDATE promos
+            SET used_in_transaction_id = $1, used_at = CURRENT_TIMESTAMP, is_active = FALSE
+            WHERE UPPER(promo_code) = $2
+          `, [transaction_id, prCode]);
+        }
+      }
+    }
+
+    const grandTotal = roomTotal + fnbTotal + lcTotal;
+    const paymentBreakdown = normalizePaymentBreakdown(payment_method, grandTotal, payload);
+
+    const hasOvertimeAdjustment = packageOvertimeExtra > 0;
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET payment_status = 'paid',
+          payment_method = $1,
+          room_total = $2,
+          promo_code = $3,
+          promo_discount = $4,
+          grand_total = $5,
+          cash_amount = $6,
+          transfer_amount = $7,
+          billable_room_minutes = CASE WHEN $9::boolean THEN duration_minutes - $10::int ELSE billable_room_minutes END,
+          free_room_minutes = CASE WHEN $9::boolean THEN $10::int ELSE free_room_minutes END,
+          room_discount_amount = CASE WHEN $9::boolean THEN ($10::numeric / 60.0) * COALESCE(rate_per_hour, 135000) ELSE room_discount_amount END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [
+      paymentBreakdown.payment_method,
+      roomTotal,
+      appliedPromoCode,
+      promoDiscount,
+      grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      transaction_id,
+      hasOvertimeAdjustment,
+      pkgIncludedMinutes
+    ]);
+
+    const updatedTransaction = updatedRes.rows[0];
+    if (appliedPromoCode || promoDiscount > 0) {
+      await writeOperationalAudit(client, {
+        risk_level: 'high', domain: 'transaction', event_type: 'promo_applied',
+        source_action: 'markTransactionPaid',
+        initiated_by: String(payload.changed_by || payload.cashier_name || transaction.cashier_name || 'Kasir'),
+        target_type: 'transaction', target_id: transaction_id, transaction_id,
+        room_id: transaction.room_id, room_name: transaction.room_name,
+        reason: `Promo/Voucher ${appliedPromoCode || prCode}`,
+        amount_before: toNumber(transaction.grand_total),
+        amount_after: grandTotal,
+        old_value: transaction, new_value: updatedTransaction,
+        metadata: { promo_code: appliedPromoCode || prCode, promo_discount: promoDiscount, payment_breakdown: paymentBreakdown },
+        idempotency_key: `audit:promo:${transaction_id}:${appliedPromoCode || prCode}`
+      });
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Transaksi ${transaction_id} berhasil ditandai Lunas.`,
+      transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK');
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function logReceiptPrint(req, res, payload) {
+  try {
+    const { transaction_id, print_type = 'thermal', cashier_name = 'Kasir', note = '' } = payload;
+    if (!transaction_id) throw new Error('transaction_id wajib diisi.');
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS receipt_print_logs (
+        print_log_id VARCHAR(50) PRIMARY KEY,
+        transaction_id VARCHAR(50) REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+        print_sequence INT NOT NULL DEFAULT 1,
+        is_reprint BOOLEAN DEFAULT FALSE,
+        print_type VARCHAR(20),
+        cashier_name VARCHAR(100) NOT NULL,
+        printed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        note TEXT
+      )
+    `);
+
+    const logRes = await db.query('SELECT COUNT(*) FROM receipt_print_logs WHERE transaction_id = $1', [transaction_id]);
+    const printSeq = parseInt(logRes.rows[0]?.count || 0, 10) + 1;
+    const isReprint = printSeq > 1;
+
+    const logId = `RPL-${Date.now()}`;
+    const printedAt = new Date();
+    await db.query(`
+      INSERT INTO receipt_print_logs (
+        print_log_id, transaction_id, print_sequence, is_reprint, print_type, cashier_name, printed_at, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [logId, transaction_id, printSeq, isReprint, print_type, cashier_name, printedAt, note]);
+
+    return successResponse(res, {
+      message: 'Audit cetak struk dicatat.',
+      print_sequence: printSeq,
+      is_reprint: isReprint,
+      log: {
+        print_log_id: logId,
+        transaction_id,
+        print_sequence: printSeq,
+        is_reprint: isReprint,
+        reprint_number: Math.max(0, printSeq - 1),
+        print_type,
+        cashier_name,
+        printed_at: printedAt.toISOString()
+      }
+    });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function updateTransactionDetails(req, res, payload) {
+  let client;
+  try {
+    const transactionId = payload.transaction_id;
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const trxCheck = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxCheck.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxCheck.rows[0];
+
+    const fields = [];
+    const changedFields = [];
+    const params = [];
+    const allowed = {
+      payment_status: value => String(value || '').toLowerCase(),
+      room_total: value => Number(value || 0),
+      fnb_total: value => Number(value || 0),
+      lc_total: value => Number(value || 0),
+      grand_total: value => Number(value || 0),
+      cashier_name: value => String(value || 'Kasir')
+    };
+
+    for (const [field, normalizer] of Object.entries(allowed)) {
+      if (payload[field] !== undefined) {
+        params.push(normalizer(payload[field]));
+        fields.push(`${field} = $${params.length}`);
+        changedFields.push(field);
+      }
+    }
+
+    const nextGrandTotal = payload.grand_total !== undefined
+      ? Number(payload.grand_total || 0)
+      : Number(oldTransaction.grand_total || 0);
+    const nextPaymentStatus = payload.payment_status !== undefined
+      ? String(payload.payment_status || '').toLowerCase()
+      : String(oldTransaction.payment_status || '').toLowerCase();
+    if (payload.payment_method !== undefined || payload.cash_amount !== undefined || payload.transfer_amount !== undefined) {
+      const breakdown = nextPaymentStatus === 'paid'
+        ? normalizePaymentBreakdown(payload.payment_method || oldTransaction.payment_method || 'cash', nextGrandTotal, payload)
+        : { payment_method: normalizePaymentMethod(payload.payment_method || oldTransaction.payment_method || 'cash'), cash_amount: 0, transfer_amount: 0 };
+      params.push(breakdown.payment_method);
+      fields.push(`payment_method = $${params.length}`);
+      if (!changedFields.includes('payment_method')) changedFields.push('payment_method');
+      params.push(breakdown.cash_amount);
+      fields.push(`cash_amount = $${params.length}`);
+      if (!changedFields.includes('cash_amount')) changedFields.push('cash_amount');
+      params.push(breakdown.transfer_amount);
+      fields.push(`transfer_amount = $${params.length}`);
+      if (!changedFields.includes('transfer_amount')) changedFields.push('transfer_amount');
+    }
+
+    if (fields.length === 0) throw new Error('Tidak ada field transaksi yang diperbarui.');
+    params.push(transactionId);
+    await client.query(`UPDATE transactions SET ${fields.join(', ')} WHERE transaction_id = $${params.length}`, params);
+
+    const updatedTrx = await client.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
+    if (updatedTrx.rowCount > 0) {
+      await refreshClosingSnapshotForTransaction(client, updatedTrx.rows[0]);
+    }
+
+    const updatedTransaction = updatedTrx.rows[0];
+    const initiatedBy = String(payload.changed_by || payload.cashier_name || oldTransaction.cashier_name || 'Operator').trim();
+    const reason = String(payload.reason || `Perubahan detail transaksi: ${changedFields.join(', ')}`).trim();
+    await writeOperationalAudit(client, {
+      risk_level: changedFields.some(field => ['payment_status', 'room_total', 'fnb_total', 'lc_total', 'grand_total', 'cashier_name'].includes(field)) ? 'critical' : 'medium',
+      domain: 'transaction', event_type: 'transaction_details_updated', source_action: 'updateTransactionDetails',
+      initiated_by: initiatedBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: toNumber(updatedTransaction.grand_total),
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: { changed_fields: changedFields }
+    });
+
+    await client.query('COMMIT');
+
+    const serialized = serializeTransaction(updatedTransaction);
+    return successResponse(res, {
+      message: `Metode pembayaran transaksi ${transactionId} berhasil diperbarui ke ${serialized.payment_method ? serialized.payment_method.toUpperCase() : ''}.`,
+      transaction: serialized,
+      transaction_id: transactionId
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK');
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function correctTransactionPackage(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const packageId = String(payload.package_id || '').trim();
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Owner').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (!packageId) throw new Error('package_id wajib diisi.');
+    if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
+
+    const authorizationActor = await validateOwnerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
+    }
+
+    const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [packageId, 'active']);
+    if (pkgRes.rowCount === 0) throw new Error('Paket tidak ditemukan atau tidak aktif.');
+    const pkg = pkgRes.rows[0];
+
+    const packageTotal = toNumber(pkg.selling_price);
+    const fnbTotal = toNumber(oldTransaction.fnb_total);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const grandTotal = packageTotal + fnbTotal + lcTotal;
+    const durationMinutes = toNumber(pkg.duration_minutes, oldTransaction.duration_minutes);
+    const ratePerHour = durationMinutes > 0 ? Math.ceil(packageTotal / Math.ceil(durationMinutes / 60 || 1)) : 0;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET booking_mode = 'package_correction',
+          package_id = $1,
+          package_name = $2,
+          package_total = $3,
+          duration_minutes = $4,
+          rate_per_hour = $5,
+          room_total = $3,
+          grand_total = $6,
+          cash_amount = $7,
+          transfer_amount = $8,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $9,
+          correction_note = $10
+      WHERE transaction_id = $11
+      RETURNING *
+    `, [
+      packageId,
+      pkg.package_name || packageId,
+      packageTotal,
+      Math.floor(durationMinutes || oldTransaction.duration_minutes || 0),
+      ratePerHour,
+      grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      correctedBy,
+      reason,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'package_correction', $3, $4, $5, $6)
+    `, [
+      correctionId,
+      transactionId,
+      JSON.stringify({
+        booking_mode: oldTransaction.booking_mode || '',
+        package_id: oldTransaction.package_id || '',
+        package_name: oldTransaction.package_name || '',
+        package_total: toNumber(oldTransaction.package_total),
+        duration_minutes: toNumber(oldTransaction.duration_minutes),
+        rate_per_hour: toNumber(oldTransaction.rate_per_hour),
+        room_total: toNumber(oldTransaction.room_total),
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount)
+      }),
+      JSON.stringify({
+        booking_mode: 'package_correction',
+        package_id: packageId,
+        package_name: pkg.package_name || packageId,
+        package_total: packageTotal,
+        duration_minutes: Math.floor(durationMinutes || oldTransaction.duration_minutes || 0),
+        rate_per_hour: ratePerHour,
+        room_total: packageTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'package_correction',
+      source_action: 'correctTransactionPackage', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction
+    });
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Koreksi paket transaksi berhasil disimpan.',
+      transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function correctTransactionFreeRoom(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const freeRoomMinutes = Math.max(0, Math.floor(toNumber(payload.free_room_minutes)));
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Owner').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (freeRoomMinutes < 0) throw new Error('Durasi free room tidak valid.');
+    if (reason.length < 5) throw new Error('Alasan koreksi minimal 5 karakter.');
+
+    const authorizationActor = await validateOwnerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
+    }
+
+    const isPackage = Boolean(String(oldTransaction.package_id || '').trim()) || oldTransaction.booking_mode === 'package';
+
+    const actualDurationMinutes = Math.max(0, Math.floor(toNumber(oldTransaction.duration_minutes)));
+    if (actualDurationMinutes <= 0 && !isPackage) throw new Error('Durasi aktual transaksi tidak valid.');
+    if (actualDurationMinutes > 0 && freeRoomMinutes > actualDurationMinutes) {
+      throw new Error('Free room tidak boleh lebih besar dari durasi aktual.');
+    }
+
+    const promoDiscount = toNumber(oldTransaction.promo_discount);
+    const manualDiscountRoom = toNumber(oldTransaction.manual_discount_room);
+    const manualDiscountFnb = toNumber(oldTransaction.manual_discount_fnb);
+
+    let ratePerHour = toNumber(oldTransaction.rate_per_hour);
+    if (ratePerHour <= 0) {
+      const roomRow = await client.query('SELECT rate_per_hour FROM rooms WHERE room_id = $1', [oldTransaction.room_id]);
+      if (roomRow.rowCount > 0) {
+        ratePerHour = toNumber(roomRow.rows[0].rate_per_hour);
+      }
+    }
+    if (ratePerHour <= 0 && actualDurationMinutes > 0 && !isPackage) {
+      const existingGross = toNumber(oldTransaction.room_total) + toNumber(oldTransaction.room_discount_amount) + promoDiscount + manualDiscountRoom;
+      ratePerHour = Math.round(existingGross / (actualDurationMinutes / 60));
+    }
+    if (ratePerHour <= 0) {
+      ratePerHour = 135000;
+    }
+
+    const grossRoomTotal = isPackage
+      ? (toNumber(oldTransaction.package_total) || (toNumber(oldTransaction.room_total) + toNumber(oldTransaction.room_discount_amount)) || 650000)
+      : Math.ceil((actualDurationMinutes / 60) * ratePerHour);
+
+    const billableRoomMinutes = Math.max(0, actualDurationMinutes - freeRoomMinutes);
+    const discountAmount = Math.min(grossRoomTotal, Math.max(0, Math.ceil((freeRoomMinutes / 60) * ratePerHour)));
+    const baseBilledRoomTotal = Math.max(0, grossRoomTotal - discountAmount);
+    const nextRoomTotal = Math.max(0, baseBilledRoomTotal - promoDiscount - manualDiscountRoom);
+    const fnbTotal = toNumber(oldTransaction.fnb_total);
+    const nextFnbTotal = Math.max(0, fnbTotal - manualDiscountFnb);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const grandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
+
+    const nextBookingMode = isPackage ? (oldTransaction.booking_mode || 'package') : 'free_room_correction';
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET booking_mode = $1,
+          billable_room_minutes = $2,
+          free_room_minutes = $3,
+          room_discount_amount = $4,
+          room_total = $5,
+          grand_total = $6,
+          cash_amount = $7,
+          transfer_amount = $8,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $9,
+          correction_note = $10
+      WHERE transaction_id = $11
+      RETURNING *
+    `, [
+      nextBookingMode,
+      billableRoomMinutes,
+      freeRoomMinutes,
+      discountAmount,
+      nextRoomTotal,
+      grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      correctedBy,
+      reason,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'free_room_correction', $3, $4, $5, $6)
+    `, [
+      correctionId,
+      transactionId,
+      JSON.stringify({
+        booking_mode: oldTransaction.booking_mode || '',
+        duration_minutes: actualDurationMinutes,
+        billable_room_minutes: oldTransaction.billable_room_minutes === null || oldTransaction.billable_room_minutes === undefined ? null : toNumber(oldTransaction.billable_room_minutes),
+        free_room_minutes: toNumber(oldTransaction.free_room_minutes),
+        room_discount_amount: toNumber(oldTransaction.room_discount_amount),
+        rate_per_hour: ratePerHour,
+        room_total: toNumber(oldTransaction.room_total),
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount)
+      }),
+      JSON.stringify({
+        booking_mode: 'free_room_correction',
+        duration_minutes: actualDurationMinutes,
+        billable_room_minutes: billableRoomMinutes,
+        free_room_minutes: freeRoomMinutes,
+        room_discount_amount: discountAmount,
+        rate_per_hour: ratePerHour,
+        room_total: nextRoomTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'free_room_correction',
+      source_action: 'correctTransactionFreeRoom', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction
+    });
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Koreksi free room transaksi berhasil disimpan.',
+      transaction: serializeTransaction(updatedTransaction)
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function applyTransactionManualDiscount(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const discountAmount = Math.max(0, Math.floor(toNumber(payload.discount_amount || payload.manual_discount)));
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.manager_pin || payload.owner_pin || '').trim();
+    const correctedBy = String(payload.changed_by || payload.corrected_by || 'Manager').trim();
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (discountAmount <= 0) throw new Error('Nilai diskon wajib lebih dari Rp 0.');
+    if (reason.length < 5) throw new Error('Alasan diskon minimal 5 karakter.');
+
+    const authorizationActor = await validateOwnerOrManagerPin(adminPin);
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa diberi diskon.');
+    }
+
+    const oldRoomTotal = toNumber(oldTransaction.room_total);
+    const oldFnbTotal = toNumber(oldTransaction.fnb_total);
+    const lcTotal = toNumber(oldTransaction.lc_total);
+    const oldManualDiscount = toNumber(oldTransaction.manual_discount);
+    const oldManualDiscountRoom = toNumber(oldTransaction.manual_discount_room);
+    const oldManualDiscountFnb = toNumber(oldTransaction.manual_discount_fnb);
+    const maxDiscount = oldRoomTotal + oldFnbTotal;
+    if (maxDiscount <= 0) {
+      throw new Error('Tidak ada nilai Room/F&B yang bisa dipotong. LC tidak ikut terkena diskon.');
+    }
+    if (discountAmount > maxDiscount) {
+      throw new Error(`Diskon maksimal ${maxDiscount.toLocaleString('id-ID')} karena LC tidak ikut dipotong.`);
+    }
+
+    const roomDiscountApplied = Math.min(oldRoomTotal, discountAmount);
+    const fnbDiscountApplied = Math.min(oldFnbTotal, discountAmount - roomDiscountApplied);
+    const nextRoomTotal = Math.max(0, oldRoomTotal - roomDiscountApplied);
+    const nextFnbTotal = Math.max(0, oldFnbTotal - fnbDiscountApplied);
+    const nextManualDiscount = oldManualDiscount + roomDiscountApplied + fnbDiscountApplied;
+    const nextManualDiscountRoom = oldManualDiscountRoom + roomDiscountApplied;
+    const nextManualDiscountFnb = oldManualDiscountFnb + fnbDiscountApplied;
+    const grandTotal = nextRoomTotal + nextFnbTotal + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      grandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET room_total = $1,
+          fnb_total = $2,
+          grand_total = $3,
+          cash_amount = $4,
+          transfer_amount = $5,
+          manual_discount = $6,
+          manual_discount_room = $7,
+          manual_discount_fnb = $8,
+          manual_discount_reason = $9,
+          manual_discount_by = $10,
+          manual_discount_at = CURRENT_TIMESTAMP,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $10,
+          correction_note = $9
+      WHERE transaction_id = $11
+      RETURNING *
+    `, [
+      nextRoomTotal,
+      nextFnbTotal,
+      grandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      nextManualDiscount,
+      nextManualDiscountRoom,
+      nextManualDiscountFnb,
+      reason,
+      correctedBy,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'manual_discount_correction', $3, $4, $5, $6)
+    `, [
+      correctionId,
+      transactionId,
+      JSON.stringify({
+        room_total: oldRoomTotal,
+        fnb_total: oldFnbTotal,
+        lc_total: lcTotal,
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount),
+        manual_discount: oldManualDiscount,
+        manual_discount_room: oldManualDiscountRoom,
+        manual_discount_fnb: oldManualDiscountFnb,
+        payment_status: oldTransaction.payment_status || ''
+      }),
+      JSON.stringify({
+        room_total: nextRoomTotal,
+        fnb_total: nextFnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount,
+        manual_discount: nextManualDiscount,
+        manual_discount_room: nextManualDiscountRoom,
+        manual_discount_fnb: nextManualDiscountFnb,
+        discount_amount: roomDiscountApplied + fnbDiscountApplied,
+        room_discount_applied: roomDiscountApplied,
+        fnb_discount_applied: fnbDiscountApplied,
+        payment_status: updatedTransaction.payment_status || ''
+      }),
+      reason,
+      correctedBy
+    ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'manual_discount_correction',
+      source_action: 'applyTransactionManualDiscount', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: correctedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: grandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: { discount_amount: roomDiscountApplied + fnbDiscountApplied }
+    });
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Diskon management berhasil ditambahkan.',
+      transaction: serializeTransaction(updatedTransaction),
+      discount_amount: roomDiscountApplied + fnbDiscountApplied,
+      room_discount_applied: roomDiscountApplied,
+      fnb_discount_applied: fnbDiscountApplied
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function voidTransactionFnbOrder(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const orderId = String(payload.order_id || '').trim();
+    const reason = String(payload.reason || payload.note || '').trim();
+    const adminPin = String(payload.admin_pin || payload.owner_pin || '').trim();
+    const voidedBy = String(payload.changed_by || payload.voided_by || 'Owner').trim();
+
+    let targetOrderItemIds = [];
+    if (Array.isArray(payload.order_item_ids)) {
+      targetOrderItemIds = payload.order_item_ids.map(id => String(id).trim()).filter(Boolean);
+    } else if (payload.order_item_id) {
+      targetOrderItemIds = [String(payload.order_item_id).trim()];
+    }
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
+
+    // 1. Validate Owner or Manager PIN
+    const authorizationActor = await validateOwnerOrManagerPin(adminPin);
+
+    // 2. Fetch Transaction
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = trxRes.rows[0];
+
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang sudah dibatalkan tidak bisa dikoreksi.');
+    }
+
+    // Determine target orders from transaction
+    const transactionOrderIds = String(oldTransaction.fnb_order_ids || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean);
+
+    // 3. Find items to void
+    let itemsToVoid = [];
+    if (targetOrderItemIds.length > 0) {
+      const itemsRes = await client.query(`
+        SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name AS m_name
+        FROM fnb_order_items foi
+        LEFT JOIN menu m ON foi.menu_id = m.menu_id
+        WHERE foi.order_item_id = ANY($1) AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+      `, [targetOrderItemIds]);
+      itemsToVoid = itemsRes.rows;
+    } else if (orderId) {
+      const itemsRes = await client.query(`
+        SELECT foi.*, m.stock_tracking, m.stock_item_id, m.stock_qty_per_unit, m.menu_name AS m_name
+        FROM fnb_order_items foi
+        LEFT JOIN menu m ON foi.menu_id = m.menu_id
+        WHERE foi.order_id = $1 AND (foi.is_voided IS FALSE OR foi.is_voided IS NULL)
+      `, [orderId]);
+      itemsToVoid = itemsRes.rows;
+    } else {
+      throw new Error('order_id atau order_item_ids wajib diisi.');
+    }
+
+    if (itemsToVoid.length === 0) {
+      throw new Error('Tidak ada item F&B aktif yang ditemukan untuk dibatalkan.');
+    }
+
+    let totalVoidedAmount = 0;
+    const restoredMovements = [];
+    const affectedOrderIds = new Set();
+
+    // 4. Restore Inventory Stock for each item to void
+    for (const item of itemsToVoid) {
+      affectedOrderIds.add(item.order_id);
+      const itemSubtotal = toNumber(item.subtotal, toNumber(item.price, 0) * toNumber(item.quantity, 1));
+      totalVoidedAmount += itemSubtotal;
+      const orderQty = toNumber(item.quantity, 1);
+
+      // Direct menu stock tracking
+      if (item.stock_tracking === 'yes' && item.stock_item_id) {
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [item.stock_item_id]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const qtyReturn = orderQty * toNumber(item.stock_qty_per_unit, 1);
+          const stockBefore = toNumber(inv.stock_qty, 0);
+          const stockAfter = stockBefore + qtyReturn;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, item.stock_item_id]);
+
+          const movementId = `MOV-V-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [movementId, item.stock_item_id, inv.stock_item_name, transactionId, qtyReturn, stockBefore, stockAfter, `Void Item: ${item.menu_name} (${orderQty}x) | ${reason}`, voidedBy]);
+
+          restoredMovements.push({
+            order_item_id: item.order_item_id,
+            menu_name: item.menu_name,
+            stock_item_id: item.stock_item_id,
+            stock_item_name: inv.stock_item_name,
+            qty_restored: qtyReturn,
+            stock_after: stockAfter,
+            subtotal: itemSubtotal
+          });
+        }
+      }
+
+      // Komponen paket memakai snapshot transaksi agar perubahan resep master
+      // tidak mengubah jumlah stok yang dikembalikan pada void/refund.
+      if (item.menu_id) {
+        const snapshotRes = await client.query(`
+          SELECT item_id, component_name, total_qty, component_mode
+          FROM fnb_order_item_components
+          WHERE order_item_id = $1
+          ORDER BY created_at ASC, component_snapshot_id ASC
+        `, [item.order_item_id]);
+        const componentRows = snapshotRes.rowCount > 0
+          ? snapshotRes.rows.map(component => ({
+              item_id: component.item_id,
+              component_name: component.component_name,
+              component_mode: component.component_mode,
+              qty_to_restore: toNumber(component.total_qty, 0)
+            }))
+          : (await client.query('SELECT * FROM recipe WHERE menu_id = $1', [item.menu_id])).rows.map(recipe => ({
+              item_id: recipe.item_id,
+              component_name: recipe.item_id,
+              component_mode: recipe.component_mode || 'included',
+              qty_to_restore: orderQty * toNumber(recipe.qty_used, 1)
+            }));
+
+        for (const component of componentRows) {
+          const recipeInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [component.item_id]);
+          if (recipeInvRes.rowCount > 0) {
+            const rInv = recipeInvRes.rows[0];
+            const recipeReturn = toNumber(component.qty_to_restore, 0);
+            const rStockBefore = toNumber(rInv.stock_qty, 0);
+            const rStockAfter = rStockBefore + recipeReturn;
+
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, component.item_id]);
+
+            const rMovementId = `MOV-VR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after, note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [rMovementId, component.item_id, rInv.stock_item_name, transactionId, recipeReturn, rStockBefore, rStockAfter, `Void komponen ${component.component_mode === 'bonus' ? 'bonus' : 'paket'}: ${item.menu_name} | ${reason}`, voidedBy]);
+
+            restoredMovements.push({
+              order_item_id: item.order_item_id,
+              menu_name: item.menu_name,
+              stock_item_id: component.item_id,
+              stock_item_name: rInv.stock_item_name,
+              qty_restored: recipeReturn,
+              stock_after: rStockAfter,
+              subtotal: 0
+            });
+          }
+        }
+      }
+
+      // Mark this order item as voided
+      await client.query(`
+        UPDATE fnb_order_items
+        SET is_voided = TRUE,
+            void_reason = $1,
+            voided_at = CURRENT_TIMESTAMP,
+            voided_by = $2
+        WHERE order_item_id = $3
+      `, [reason, voidedBy, item.order_item_id]);
+    }
+
+    // 5. Update fnb_orders for all affected orders
+    const allRelevantOrderIds = Array.from(new Set([...transactionOrderIds, ...affectedOrderIds]));
+
+    for (const ordId of allRelevantOrderIds) {
+      const activeItemsRes = await client.query(`
+        SELECT COALESCE(SUM(subtotal), 0) AS remaining_total, COUNT(*)::int AS active_count
+        FROM fnb_order_items
+        WHERE order_id = $1 AND (is_voided IS FALSE OR is_voided IS NULL)
+      `, [ordId]);
+
+      const remainingTotal = toNumber(activeItemsRes.rows[0]?.remaining_total, 0);
+      const activeCount = activeItemsRes.rows[0]?.active_count || 0;
+
+      if (activeCount === 0) {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_status = 'cancelled',
+              order_total = 0,
+              cancel_reason = $1,
+              cancelled_by = $2,
+              cancelled_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $3
+        `, [reason, voidedBy, ordId]);
+      } else {
+        await client.query(`
+          UPDATE fnb_orders
+          SET order_total = $1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE order_id = $2
+        `, [remainingTotal, ordId]);
+      }
+    }
+
+    // 6. Recalculate Transaction fnb_total and grand_total
+    let newFnbTotal = 0;
+    if (allRelevantOrderIds.length > 0) {
+      const fnbTotalsRes = await client.query(`
+        SELECT COALESCE(SUM(order_total), 0) AS new_total
+        FROM fnb_orders
+        WHERE order_id = ANY($1) AND order_status != 'cancelled'
+      `, [allRelevantOrderIds]);
+      newFnbTotal = toNumber(fnbTotalsRes.rows[0]?.new_total, 0);
+    }
+
+    // Filter active order IDs that are not cancelled
+    const activeOrderIdsRes = await client.query(`
+      SELECT order_id FROM fnb_orders
+      WHERE order_id = ANY($1) AND order_status != 'cancelled'
+    `, [allRelevantOrderIds]);
+    const remainingActiveOrderIds = activeOrderIdsRes.rows.map(r => r.order_id);
+
+    const roomTotal = toNumber(oldTransaction.room_total, 0);
+    const lcTotal = toNumber(oldTransaction.lc_total, 0);
+    const newGrandTotal = roomTotal + newFnbTotal + lcTotal;
+
+    const isGeneralFnbOnly = String(oldTransaction.room_id || '').toUpperCase() === 'FNB-GENERAL';
+    const nextPaymentStatus = (isGeneralFnbOnly && newGrandTotal === 0) ? 'cancelled' : oldTransaction.payment_status;
+
+    const voidedNames = itemsToVoid.map(it => `${it.menu_name} (${it.quantity}x)`).join(', ');
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      oldTransaction.payment_method,
+      newGrandTotal,
+      oldTransaction.cash_amount,
+      oldTransaction.transfer_amount
+    );
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET fnb_total = $1,
+          grand_total = $2,
+          cash_amount = $3,
+          transfer_amount = $4,
+          fnb_order_ids = $5,
+          payment_status = $6,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $7,
+          correction_note = $8
+      WHERE transaction_id = $9
+      RETURNING *
+    `, [
+      newFnbTotal,
+      newGrandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      remainingActiveOrderIds.join(','),
+      nextPaymentStatus,
+      voidedBy,
+      `Void Item F&B: ${voidedNames} (-Rp ${totalVoidedAmount.toLocaleString('id-ID')}) | ${reason}`,
+      transactionId
+    ]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    // 7. Audit log in transaction_correction_logs
+    const correctionId = `TCOR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'fnb_item_void_correction', $3, $4, $5, $6)
+    `, [
+      correctionId,
+      transactionId,
+      JSON.stringify({
+        fnb_total: toNumber(oldTransaction.fnb_total),
+        grand_total: toNumber(oldTransaction.grand_total),
+        cash_amount: toNumber(oldTransaction.cash_amount),
+        transfer_amount: toNumber(oldTransaction.transfer_amount),
+        fnb_order_ids: oldTransaction.fnb_order_ids || '',
+        voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal }))
+      }),
+      JSON.stringify({
+        fnb_total: newFnbTotal,
+        grand_total: newGrandTotal,
+        cash_amount: paymentBreakdown.cash_amount,
+        transfer_amount: paymentBreakdown.transfer_amount,
+        fnb_order_ids: remainingActiveOrderIds.join(','),
+        voided_items: itemsToVoid.map(it => ({ order_item_id: it.order_item_id, menu_name: it.menu_name, quantity: it.quantity, subtotal: it.subtotal })),
+        restored_stock: restoredMovements
+      }),
+      reason,
+      voidedBy
+    ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'fnb', event_type: 'fnb_item_void_correction',
+      source_action: 'voidTransactionFnbOrder', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: voidedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: newGrandTotal,
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: {
+        voided_amount: totalVoidedAmount,
+        voided_items: itemsToVoid.map(item => ({ order_item_id: item.order_item_id, menu_name: item.menu_name, quantity: item.quantity })),
+        restored_stock: restoredMovements
+      }
+    });
+
+    // 8. Refresh closing snapshot
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    // 9. Sync outbox
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json,
+          status = 'pending',
+          attempts = 0,
+          last_attempt_at = NULL,
+          error_message = NULL
+    `, [transactionId, JSON.stringify(serializeTransaction(updatedTransaction))]);
+
+    for (const ordId of affectedOrderIds) {
+      await client.query(`
+        INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+        VALUES ('fnb_orders', $1, 'UPDATE', $2)
+        ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+        SET payload_json = EXCLUDED.payload_json,
+            status = 'pending',
+            attempts = 0,
+            last_attempt_at = NULL,
+            error_message = NULL
+      `, [ordId, JSON.stringify({ order_id: ordId, note: `Item void: ${voidedNames}` })]);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Item F&B (${voidedNames}) berhasil divoid. Total tagihan berkurang Rp ${totalVoidedAmount.toLocaleString('id-ID')} dan stok telah dikembalikan.`,
+      transaction: serializeTransaction(updatedTransaction),
+      voided_amount: totalVoidedAmount,
+      voided_items: itemsToVoid,
+      restored_stock: restoredMovements
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function deleteTransaction(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+    const transactionId = String(payload.transaction_id || '').trim();
+    const reason = String(payload.reason || '').trim();
+    const initiatedBy = String(payload.changed_by || 'Operator').trim();
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (reason.length < 5) throw new Error('Alasan pembatalan minimal 5 karakter.');
+    if (String(payload.confirmation || '').trim().toUpperCase() !== 'HAPUS') throw new Error('Konfirmasi HAPUS wajib diisi.');
+    const authorizationActor = await validateOwnerPin(String(payload.owner_pin || payload.admin_pin || ''));
+
+    const oldRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (oldRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const oldTransaction = oldRes.rows[0];
+    if (String(oldTransaction.payment_status || '').toLowerCase() === 'cancelled') throw new Error('Transaksi sudah dibatalkan.');
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET payment_status = 'cancelled', corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $1, correction_note = $2
+      WHERE transaction_id = $3
+      RETURNING *
+    `, [initiatedBy, reason, transactionId]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    // 1. Pulihkan stok item F&B yang terkait dengan transaksi ini
+    const rawOrderIds = String(oldTransaction.fnb_order_ids || '').trim();
+    const orderIds = rawOrderIds
+      ? rawOrderIds.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    let restoredMovements = [];
+    if (orderIds.length > 0) {
+      const { restoreStockForFnbOrders } = require('./fnbController');
+      const restoreResult = await restoreStockForFnbOrders(
+        client,
+        orderIds,
+        initiatedBy,
+        `Pembatalan transaksi ${transactionId} | ${reason}`
+      );
+      restoredMovements = restoreResult.movements || [];
+
+      // Update status order F&B terkait menjadi cancelled
+      await client.query(`
+        UPDATE fnb_orders
+        SET order_status = 'cancelled',
+            cancel_reason = $1,
+            cancelled_by = $2,
+            cancelled_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE order_id = ANY($3) AND order_status != 'cancelled'
+      `, [reason, initiatedBy, orderIds]);
+    }
+
+    // 2. Pulihkan stok komponen paket room jika transaksi adalah transaksi paket
+    if (oldTransaction.package_id) {
+      const pkgDetailsRes = await client.query(`
+        SELECT component_ref_id, component_name, qty, unit, component_type
+        FROM package_details
+        WHERE package_id = $1
+          AND component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `, [oldTransaction.package_id]);
+
+      for (const comp of pkgDetailsRes.rows) {
+        const qtyReturn = Number(comp.qty || 1);
+        if (qtyReturn <= 0) continue;
+
+        const stockItemId = await resolvePackageComponentStockItem(client, comp, oldTransaction.package_id, oldTransaction.package_name);
+        if (!stockItemId) continue;
+
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore + qtyReturn;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+          const movementId = `SM-RESTORE-PKG-${Date.now()}-${stockItemId}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'in', 'transaction', $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [
+            movementId,
+            stockItemId,
+            inv.stock_item_name,
+            transactionId,
+            qtyReturn,
+            stockBefore,
+            stockAfter,
+            `Pengembalian komponen paket ${oldTransaction.package_name || oldTransaction.package_id} (batal transaksi ${transactionId}) | ${reason}`,
+            initiatedBy,
+            `cancel:pkg:${transactionId}:${stockItemId}`
+          ]);
+
+          restoredMovements.push({
+            stock_item_id: stockItemId,
+            stock_item_name: inv.stock_item_name,
+            qty_restored: qtyReturn,
+            stock_before: stockBefore,
+            stock_after: stockAfter
+          });
+        }
+      }
+    }
+
+    // 3. Batalkan log kerja LC dan bonus penjualan LC agar tidak masuk perhitungan payroll
+    await client.query(`
+      UPDATE lc_work_logs
+      SET status = 'cancelled', note = COALESCE(note, '') || ' [Dibatalkan transaksi ' || $1 || ': ' || $2 || ']'
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1) AND status != 'cancelled'
+    `, [transactionId, reason]);
+
+    await client.query(`
+      UPDATE lc_sales_bonus_logs
+      SET source_status = 'voided', voided_at = CURRENT_TIMESTAMP, void_reason = $1
+      WHERE transaction_id = $2 AND source_status != 'voided'
+    `, [reason, transactionId]);
+
+    // 4. Batalkan komisi sales jika ada pada transaksi ini
+    await client.query(`DELETE FROM sales_commission_logs WHERE transaction_id = $1`, [transactionId]);
+
+    // 5. Bebaskan promo/voucher jika digunakan pada transaksi ini
+    if (oldTransaction.promo_code) {
+      await client.query(`
+        UPDATE promos
+        SET used_in_transaction_id = NULL, used_at = NULL
+        WHERE used_in_transaction_id = $1
+      `, [transactionId]);
+    }
+
+    const correctionId = `TCOR-CANCEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'transaction_cancelled', $3, $4, $5, $6)
+    `, [correctionId, transactionId, oldTransaction, updatedTransaction, reason, initiatedBy]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'critical', domain: 'transaction', event_type: 'transaction_cancelled',
+      source_action: 'deleteTransaction', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: initiatedBy, authorized_by: authorizationActor,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: oldTransaction.room_id, room_name: oldTransaction.room_name, reason,
+      amount_before: toNumber(oldTransaction.grand_total), amount_after: 0,
+      old_value: oldTransaction, new_value: updatedTransaction,
+      metadata: {
+        restored_stock_movement_count: restoredMovements.length,
+        cancelled_order_ids: orderIds
+      }
+    });
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0
+    `, [transactionId, JSON.stringify({ transaction_id: transactionId, payment_status: 'cancelled', reason })]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Transaksi berhasil dibatalkan, stok F&B telah dikembalikan, dan log kerja/bonus telah dibatalkan.',
+      transaction_id: transactionId,
+      transaction: serializeTransaction(updatedTransaction),
+      restored_movements: restoredMovements,
+      cancelled_order_ids: orderIds
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function getTransactionLcDetails(req, res) {
+  try {
+    await ensurePackageLcBillingSchema();
+    const transactionId = req.query.transaction_id || '';
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    const trxRes = await db.query('SELECT * FROM transactions WHERE transaction_id = $1', [transactionId]);
+    if (trxRes.rowCount === 0) return errorResponse(res, 'Transaksi tidak ditemukan.', 'TRANSACTION_NOT_FOUND');
+    const trx = trxRes.rows[0];
+    let logsRes = await db.query(`
+      SELECT * FROM lc_work_logs
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1) AND status != 'cancelled'
+      ORDER BY created_at DESC, log_id DESC
+    `, [transactionId]);
+
+    // Fallback read-only untuk transaksi lama sebelum kolom relasi langsung tersedia.
+    if (logsRes.rowCount === 0) {
+      logsRes = await db.query(`
+        SELECT * FROM lc_work_logs
+        WHERE room_id = $1
+          AND created_at >= $2::timestamptz
+          AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
+          AND status != 'cancelled'
+        ORDER BY created_at DESC, log_id DESC
+        LIMIT 20
+      `, [trx.room_id, trx.start_time, trx.end_time]);
+    }
+
+    const uniqueRows = Array.from(logsRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, row);
+      return map;
+    }, new Map()).values());
+    const lcTotal = Number(trx.lc_total || 0);
+    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    let logs = uniqueRows.map(row => ({
+      ...normalizeLcBillingRow(row, transactionIsPackage),
+      created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
+      closed_at: row.closed_at ? new Date(row.closed_at).toISOString() : ''
+    }));
+    const hasStoredPackageBilling = logs.some(row => String(row.billing_source || '').startsWith('package') || Number(row.customer_charge_amount || 0) > 0);
+    if (lcTotal > 0 && !hasStoredPackageBilling) {
+      logs = logs.map(row => ({
+        ...row,
+        customer_charge_amount: Number(row.rate || 0),
+        extra_minutes: Number(row.duration_minutes || 0),
+        included_minutes: 0,
+        billing_source: 'regular'
+      }));
+    }
+    const itemTotal = logs.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0);
+    const payableTotal = logs.reduce((total, row) => total + Number(row.payable_amount || row.rate || 0), 0);
+    const payrollLocked = uniqueRows.some(row => Boolean(row.payroll_id));
+    const cancelled = String(trx.payment_status || '').toLowerCase() === 'cancelled';
+    const canEdit = uniqueRows.length > 0 && !payrollLocked && !cancelled;
+    const blockedReason = cancelled
+      ? 'Transaksi yang dibatalkan tidak dapat direvisi.'
+      : payrollLocked
+        ? 'Durasi LC tidak dapat direvisi karena honor LC sudah masuk payroll.'
+        : uniqueRows.length === 0
+          ? 'Detail LC transaksi tidak ditemukan.'
+          : '';
+    const lcDetails = {
+      detail_available: logs.length > 0,
+      lc_logs: logs,
+      items: logs,
+      customer_items: logs.filter(row => Number(row.customer_charge_amount || 0) > 0),
+      item_total: itemTotal,
+      payable_total: payableTotal,
+      included_total: payableTotal - itemTotal,
+      billing_adjustment: lcTotal - itemTotal,
+      total: lcTotal
+    };
+    return res.json({
+      ok: true,
+      success: true,
+      transaction: trx,
+      transaction_id: transactionId,
+      room_id: trx.room_id,
+      room_name: trx.room_name,
+      current_lc_total: lcTotal,
+      current_grand_total: Number(trx.grand_total || 0),
+      can_edit: canEdit,
+      requires_admin_pin: false,
+      blocked_reason: blockedReason,
+      ...lcDetails,
+      lc_details: lcDetails,
+      details: logs
+    });
+  } catch (err) {
+    return errorResponse(res, err.message);
+  }
+}
+
+async function updateTransactionLcDurations(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensurePackageLcBillingSchema(client);
+    const transactionId = String(payload.transaction_id || '').trim();
+    const updates = Array.isArray(payload.assignments)
+      ? payload.assignments
+      : Array.isArray(payload.lc_assignments)
+        ? payload.lc_assignments
+        : [];
+    const reason = String(payload.reason || '').trim();
+    const changedBy = String(payload.changed_by || payload.cashier_name || 'Kasir').trim();
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (updates.length === 0) throw new Error('Daftar perubahan durasi LC wajib diisi.');
+    if (reason.length < 3) throw new Error('Alasan perubahan minimal 3 karakter.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const trx = trxRes.rows[0];
+    if (String(trx.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi yang dibatalkan tidak dapat direvisi.');
+    }
+
+    let logsRes = await client.query(`
+      SELECT * FROM lc_work_logs
+      WHERE (closed_transaction_id = $1 OR upfront_transaction_id = $1)
+        AND status != 'cancelled'
+      ORDER BY created_at DESC, log_id DESC
+      FOR UPDATE
+    `, [transactionId]);
+
+    // Migrasi aman untuk transaksi lama: ikat dahulu log yang berada tepat di
+    // rentang transaksi, kemudian seluruh perubahan berikutnya memakai log_id.
+    if (logsRes.rowCount === 0) {
+      logsRes = await client.query(`
+        SELECT * FROM lc_work_logs
+        WHERE room_id = $1
+          AND created_at >= $2::timestamptz
+          AND created_at <= COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
+          AND status != 'cancelled'
+        ORDER BY created_at DESC, log_id DESC
+        FOR UPDATE
+      `, [trx.room_id, trx.start_time, trx.end_time]);
+      if (logsRes.rowCount > 0) {
+        await client.query(`
+          UPDATE lc_work_logs SET closed_transaction_id = $1
+          WHERE log_id = ANY($2)
+        `, [transactionId, logsRes.rows.map(row => row.log_id)]);
+      }
+    }
+
+    const uniqueLogs = Array.from(logsRes.rows.reduce((map, row) => {
+      if (!row.lc_id || map.has(row.lc_id)) return map;
+      map.set(row.lc_id, row);
+      return map;
+    }, new Map()).values());
+    if (uniqueLogs.length === 0) throw new Error('Detail LC transaksi tidak ditemukan.');
+    if (uniqueLogs.some(row => Boolean(row.payroll_id))) {
+      throw new Error('Durasi LC tidak dapat direvisi karena honor LC sudah masuk payroll.');
+    }
+
+    const oldLcTotal = Number(trx.lc_total || 0);
+    const oldGrandTotal = Number(trx.grand_total || 0);
+    const oldItems = uniqueLogs.map(row => ({
+      log_id: row.log_id,
+      lc_id: row.lc_id,
+      lc_name: row.lc_name,
+      duration_minutes: Number(row.duration_minutes || 0),
+      rate_per_hour: Number(row.rate_per_hour || 0),
+      rate: Number(row.rate || 0)
+    }));
+
+    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    const packageRule = transactionIsPackage
+      ? await getPackageLcRule(client, trx.package_id || '')
+      : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+    const editedLogs = [];
+    const newItems = [];
+    for (const log of uniqueLogs) {
+      const item = updates.find(update => (update.log_id && String(update.log_id) === String(log.log_id)))
+        || updates.find(update => (update.lc_id && String(update.lc_id) === String(log.lc_id)));
+      const duration = Math.round(Number(item?.duration_minutes ?? log.duration_minutes));
+      if (!Number.isFinite(duration) || duration < 30 || duration > 720 || duration % 30 !== 0) {
+        throw new Error(`Durasi ${log.lc_name || log.lc_id} harus kelipatan 30 menit antara 30 menit sampai 12 jam.`);
+      }
+
+      let currentLcId = log.lc_id;
+      let currentLcName = log.lc_name;
+      let hourlyRate = Number(log.rate_per_hour || 0);
+
+      const targetLcId = String(item?.new_lc_id || item?.target_lc_id || '').trim();
+      if (targetLcId && targetLcId !== log.lc_id) {
+        const masterRes = await client.query('SELECT lc_id, lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1', [targetLcId]);
+        if (masterRes.rowCount === 0) {
+          throw new Error(`LC pengganti dengan ID ${targetLcId} tidak ditemukan.`);
+        }
+        currentLcId = masterRes.rows[0].lc_id;
+        currentLcName = masterRes.rows[0].lc_name;
+        if (Number(masterRes.rows[0].rate_per_hour) > 0) {
+          hourlyRate = Number(masterRes.rows[0].rate_per_hour);
+        }
+      }
+
+      if (hourlyRate <= 0) throw new Error(`Tarif historis ${currentLcName || currentLcId} tidak valid.`);
+      editedLogs.push({
+        ...log,
+        lc_id: currentLcId,
+        lc_name: currentLcName,
+        duration_minutes: duration,
+        rate_per_hour: hourlyRate
+      });
+    }
+
+    const allocatedItems = allocatePackageLcBilling(editedLogs, packageRule);
+    let lcTotal = 0;
+    for (const item of allocatedItems) {
+      lcTotal += Number(item.customer_charge_amount || 0);
+      await client.query(`
+        UPDATE lc_work_logs
+        SET lc_id = $1,
+            lc_name = $2,
+            duration_minutes = $3,
+            rate_per_hour = $4,
+            rate = $5,
+            customer_charge_amount = $6,
+            included_minutes = $7,
+            extra_minutes = $8,
+            billing_source = $9,
+            package_id = $10,
+            closed_transaction_id = COALESCE(closed_transaction_id, $12)
+        WHERE log_id = $11 AND status <> 'cancelled'
+      `, [
+        item.lc_id,
+        item.lc_name,
+        item.duration_minutes,
+        item.rate_per_hour,
+        item.payable_amount,
+        item.customer_charge_amount,
+        item.included_minutes,
+        item.extra_minutes,
+        item.billing_source,
+        item.package_id,
+        item.log_id,
+        transactionId
+      ]);
+      newItems.push({
+        log_id: item.log_id,
+        lc_id: item.lc_id,
+        lc_name: item.lc_name,
+        duration_minutes: item.duration_minutes,
+        rate_per_hour: item.rate_per_hour,
+        rate: item.payable_amount,
+        payable_amount: item.payable_amount,
+        customer_charge_amount: item.customer_charge_amount,
+        included_minutes: item.included_minutes,
+        extra_minutes: item.extra_minutes,
+        billing_source: item.billing_source
+      });
+    }
+
+    const grandTotal = Number(trx.room_total || 0) + Number(trx.fnb_total || 0) + lcTotal;
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      trx.payment_method,
+      grandTotal,
+      trx.cash_amount,
+      trx.transfer_amount
+    );
+
+    const updatedRes = await client.query(`
+      UPDATE transactions
+      SET lc_total = $1,
+          grand_total = $2,
+          cash_amount = $3,
+          transfer_amount = $4,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $5,
+          correction_note = $6
+      WHERE transaction_id = $7
+      RETURNING *
+    `, [lcTotal, grandTotal, paymentBreakdown.cash_amount, paymentBreakdown.transfer_amount, changedBy, reason, transactionId]);
+    const updatedTransaction = updatedRes.rows[0];
+
+    const correctionId = `TCOR-LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await client.query(`
+      INSERT INTO transaction_correction_logs (
+        correction_id, transaction_id, correction_type, old_value_json,
+        new_value_json, reason, corrected_by
+      ) VALUES ($1, $2, 'lc_duration_correction', $3, $4, $5, $6)
+    `, [
+      correctionId,
+      transactionId,
+      JSON.stringify({ lc_total: oldLcTotal, grand_total: oldGrandTotal, cash_amount: Number(trx.cash_amount || 0), transfer_amount: Number(trx.transfer_amount || 0), items: oldItems }),
+      JSON.stringify({ lc_total: lcTotal, grand_total: grandTotal, cash_amount: paymentBreakdown.cash_amount, transfer_amount: paymentBreakdown.transfer_amount, items: newItems }),
+      reason,
+      changedBy
+    ]);
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'lc', event_type: 'lc_duration_correction',
+      source_action: 'updateTransactionLcDurations', source_table: 'transaction_correction_logs', source_record_id: correctionId,
+      initiated_by: changedBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: trx.room_id, room_name: trx.room_name, reason,
+      amount_before: oldGrandTotal, amount_after: grandTotal,
+      old_value: { lc_total: oldLcTotal, grand_total: oldGrandTotal, items: oldItems },
+      new_value: { lc_total: lcTotal, grand_total: grandTotal, items: newItems }
+    });
+
+    const normalizedLogs = allocatedItems.map(row => normalizeLcBillingRow(row, transactionIsPackage));
+    const itemTotal = normalizedLogs.reduce((total, row) => total + Number(row.customer_charge_amount || 0), 0);
+    const payableTotal = normalizedLogs.reduce((total, row) => total + Number(row.payable_amount || row.rate || 0), 0);
+    const lcDetails = {
+      detail_available: normalizedLogs.length > 0,
+      lc_logs: normalizedLogs,
+      items: normalizedLogs,
+      customer_items: normalizedLogs.filter(row => Number(row.customer_charge_amount || 0) > 0),
+      item_total: itemTotal,
+      payable_total: payableTotal,
+      included_total: payableTotal - itemTotal,
+      billing_adjustment: lcTotal - itemTotal,
+      total: lcTotal
+    };
+
+    const serializedTransaction = {
+      ...serializeTransaction(updatedTransaction),
+      lc_details: lcDetails,
+      lc_logs: normalizedLogs
+    };
+
+    await refreshClosingSnapshotForTransaction(client, updatedTransaction);
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'UPDATE', $2)
+      ON CONFLICT (entity_type, entity_id, action) DO UPDATE
+      SET payload_json = EXCLUDED.payload_json, status = 'pending', attempts = 0,
+          last_attempt_at = NULL, error_message = NULL
+    `, [transactionId, JSON.stringify(serializedTransaction)]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Durasi LC dan total tagihan berhasil diperbarui.',
+      transaction: serializedTransaction,
+      transaction_id: transactionId,
+      old_lc_total: oldLcTotal,
+      lc_total: lcTotal,
+      difference: lcTotal - oldLcTotal,
+      grand_total: grandTotal,
+      lc_logs: normalizedLogs,
+      lc_details: lcDetails,
+      can_edit: true,
+      requires_admin_pin: false
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function createSalesCommission(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+    await ensureTransactionCorrectionSchema(client);
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const recipientName = String(payload.recipient_name || payload.marketing_name || '').trim();
+    const cashierName = String(payload.cashier_name || payload.created_by || 'Kasir').trim();
+    const basisType = String(payload.basis_type || 'grand_total').trim();
+    const note = String(payload.note || '').trim();
+    const commissionPercent = money(payload.commission_percent ?? payload.percent ?? 0);
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (!recipientName) throw new Error('Nama sales/marketing penerima komisi wajib diisi.');
+    if (!['grand_total', 'room_total', 'fnb_total'].includes(basisType)) {
+      throw new Error('Dasar komisi wajib total akhir, room, atau F&B.');
+    }
+    if (commissionPercent <= 0 || commissionPercent > 100) {
+      throw new Error('Persentase komisi wajib lebih dari 0 dan maksimal 100.');
+    }
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const trx = trxRes.rows[0];
+
+    if (String(trx.payment_status || '').toLowerCase() !== 'paid') {
+      throw new Error('Komisi sales/marketing hanya bisa dibuat untuk transaksi lunas.');
+    }
+
+    const existingRes = await client.query(
+      'SELECT * FROM sales_commission_logs WHERE transaction_id = $1',
+      [transactionId]
+    );
+    if (existingRes.rowCount > 0) {
+      throw new Error('Komisi untuk transaksi ini sudah pernah dicatat.');
+    }
+
+    const basisAmount = basisType === 'room_total'
+      ? money(trx.room_total)
+      : basisType === 'fnb_total'
+        ? money(trx.fnb_total)
+        : money(trx.grand_total);
+    if (basisAmount <= 0) {
+      throw new Error('Dasar nominal komisi harus lebih dari 0.');
+    }
+
+    const commissionAmount = money(basisAmount * commissionPercent / 100);
+    const commissionId = `COMM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const insertRes = await client.query(`
+      INSERT INTO sales_commission_logs (
+        commission_id, transaction_id, operational_date, basis_type, basis_amount,
+        commission_percent, commission_amount, recipient_name, cashier_name, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+    `, [
+      commissionId,
+      transactionId,
+      trx.operational_date || getOperationalDate(),
+      basisType,
+      basisAmount,
+      commissionPercent,
+      commissionAmount,
+      recipientName,
+      cashierName,
+      note,
+    ]);
+    const commission = insertRes.rows[0];
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high',
+      domain: 'finance',
+      event_type: 'sales_commission_paid',
+      source_action: 'createSalesCommission',
+      source_table: 'sales_commission_logs',
+      source_record_id: commissionId,
+      initiated_by: cashierName,
+      target_type: 'transaction',
+      target_id: transactionId,
+      transaction_id: transactionId,
+      room_id: trx.room_id,
+      room_name: trx.room_name,
+      reason: note || `Komisi sales/marketing ${commissionPercent}% untuk ${recipientName}`,
+      amount_before: money(trx.grand_total),
+      amount_after: money(trx.grand_total - commissionAmount),
+      old_value: { transaction_total: money(trx.grand_total) },
+      new_value: serializeSalesCommission(commission),
+      metadata: { basis_type: basisType, commission_percent: commissionPercent }
+    });
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('sales_commission_logs', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [commissionId, JSON.stringify(serializeSalesCommission(commission))]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Komisi sales/marketing berhasil dicatat.',
+      commission: serializeSalesCommission(commission),
+      transaction: serializeTransaction(trx),
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function createManualOutageTransaction(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const idempotencyKey = payload.idempotency_key;
+    if (!idempotencyKey) throw new Error('idempotency_key wajib diisi.');
+
+    const existing = await client.query('SELECT * FROM transactions WHERE idempotency_key = $1', [idempotencyKey]);
+    if (existing.rowCount > 0) {
+      await client.query('COMMIT');
+      return successResponse(res, { message: 'Transaksi manual sudah pernah disimpan.', transaction: existing.rows[0], idempotent_replay: true });
+    }
+
+    const mode = String(payload.mode || 'room').toLowerCase();
+    const roomId = payload.room_id || null;
+    const cashierName = payload.cashier_name || 'Kasir Manual';
+    const enteredBy = String(payload.entered_by || cashierName).trim();
+    const sourceReason = String(payload.source_note || payload.reason || payload.note || 'Transaksi manual saat gangguan sistem').trim();
+    const paymentMethod = String(payload.payment_method || 'cash').toLowerCase();
+    const paymentStatus = String(payload.payment_status || 'paid').toLowerCase();
+    const durationMinutes = mode === 'room' ? Number(payload.duration_minutes || 0) : 0;
+    const startTime = payload.start_time ? new Date(payload.start_time) : new Date();
+    const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+    const opDate = payload.operational_date || getOperationalDate(startTime);
+
+    if (!['room', 'general_fnb'].includes(mode)) throw new Error('Mode transaksi manual tidak valid.');
+    if (!['cash', 'qris', 'transfer', ''].includes(paymentMethod)) throw new Error('Metode pembayaran tidak valid.');
+    if (!['paid', 'unpaid'].includes(paymentStatus)) throw new Error('Status pembayaran tidak valid.');
+
+    let roomName = mode === 'general_fnb' ? 'F&B Umum' : roomId;
+    let ratePerHour = 0;
+    let roomTotal = 0;
+    let bookingMode = mode === 'room' ? 'regular' : mode;
+    let transactionPackageId = '';
+    let transactionPackageName = '';
+    let transactionPackageTotal = 0;
+
+    if (mode === 'room') {
+      if (!roomId) throw new Error('room_id wajib diisi untuk transaksi room.');
+      const roomRes = await client.query('SELECT * FROM rooms WHERE room_id = $1', [roomId]);
+      if (roomRes.rowCount === 0) throw new Error('Ruangan tidak ditemukan.');
+      const room = roomRes.rows[0];
+      roomName = room.room_name;
+      ratePerHour = Number(room.rate_per_hour || 0);
+      roomTotal = Math.ceil((durationMinutes / 60) * ratePerHour);
+
+      if (payload.package_id) {
+        const pkgRes = await client.query('SELECT * FROM package_master WHERE package_id = $1 AND status = $2', [payload.package_id, 'active']);
+        if (pkgRes.rowCount === 0) throw new Error('Paket tidak ditemukan atau tidak aktif.');
+        const pkg = pkgRes.rows[0];
+        roomTotal = Number(pkg.selling_price || 0);
+        bookingMode = 'package';
+        transactionPackageId = pkg.package_id;
+        transactionPackageName = pkg.package_name;
+        transactionPackageTotal = roomTotal;
+      }
+    }
+
+    const fnbItems = Array.isArray(payload.fnb_items) ? payload.fnb_items : [];
+    let fnbTotal = 0;
+    const processedFnbItems = [];
+    for (const item of fnbItems) {
+      const menuRes = await client.query('SELECT * FROM menu WHERE menu_id = $1 AND status = $2', [item.menu_id, 'active']);
+      if (menuRes.rowCount === 0) throw new Error(`Menu ${item.menu_id} tidak ditemukan atau tidak aktif.`);
+      const menu = menuRes.rows[0];
+      const qty = Math.max(1, Math.floor(toNumber(item.quantity || 1)));
+      const price = Number(menu.price || 0);
+      const subtotal = price * qty;
+      fnbTotal += subtotal;
+      processedFnbItems.push({
+        menu,
+        quantity: qty,
+        price,
+        subtotal
+      });
+    }
+
+    const lcAssignments = Array.isArray(payload.lc_assignments) ? payload.lc_assignments : [];
+    let lcTotal = 0;
+    const processedLcs = [];
+    for (const lc of lcAssignments) {
+      if (!lc.lc_id) continue;
+      const lcRes = await client.query('SELECT lc_id, lc_name, rate_per_hour FROM lc_master WHERE lc_id = $1 AND status = $2', [lc.lc_id, 'active']);
+      if (lcRes.rowCount === 0) continue;
+      const lcRow = lcRes.rows[0];
+      const lcName = lcRow.lc_name || lc.lc_id;
+      const lcRatePerHour = Number(lcRow.rate_per_hour || 0);
+      const lcDuration = Number(lc.duration_minutes || durationMinutes || 60);
+      const lcRate = Math.ceil(lcDuration / 60) * lcRatePerHour;
+      lcTotal += lcRate;
+      processedLcs.push({
+        lc_id: lcRow.lc_id,
+        lc_name: lcName,
+        duration_minutes: lcDuration,
+        rate_per_hour: lcRatePerHour,
+        rate: lcRate
+      });
+    }
+
+    const transactionId = `TRX-${Date.now()}`;
+    const grandTotal = roomTotal + fnbTotal + lcTotal;
+    const orderId = processedFnbItems.length > 0
+      ? `FNB-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`
+      : '';
+    const createdOrders = [];
+
+    let cashAmount = 0;
+    let transferAmount = 0;
+    if (paymentStatus === 'paid') {
+      if (paymentMethod === 'cash') cashAmount = grandTotal;
+      else if (paymentMethod === 'transfer' || paymentMethod === 'qris') transferAmount = grandTotal;
+    }
+
+    // 1. Simpan data transaksi induk (transactions) terlebih dahulu
+    // Ini mutlak diperlukan agar foreign key constraint pada lc_sales_bonus_logs (transaction_id)
+    // dan lc_work_logs (closed_transaction_id) tidak melanggar referensial integritas PostgreSQL.
+    await client.query(`
+      INSERT INTO transactions (
+        transaction_id, room_id, room_name, start_time, end_time, duration_minutes,
+        rate_per_hour, room_total, fnb_total, lc_total, grand_total, fnb_order_ids,
+        payment_method, payment_status, cashier_name, operational_date, idempotency_key,
+        booking_mode, package_id, package_name, package_total, cash_amount, transfer_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+    `, [
+      transactionId,
+      mode === 'room' ? roomId : 'FNB-GENERAL',
+      roomName,
+      startTime,
+      endTime,
+      durationMinutes,
+      ratePerHour,
+      roomTotal,
+      fnbTotal,
+      lcTotal,
+      grandTotal,
+      orderId,
+      paymentMethod,
+      paymentStatus,
+      cashierName,
+      opDate,
+      idempotencyKey,
+      bookingMode,
+      transactionPackageId || null,
+      transactionPackageName || null,
+      transactionPackageTotal,
+      cashAmount,
+      transferAmount
+    ]);
+
+    // 2. Jika ada F&B items, buat fnb_orders dan fnb_order_items, potong stok inventory, catat stock_movements
+    if (processedFnbItems.length > 0) {
+      await client.query(`
+        INSERT INTO fnb_orders (
+          order_id, room_id, room_name, order_status, order_total, cashier_name,
+          note, idempotency_key, customer_name, general_bill_id, created_at, updated_at
+        ) VALUES ($1, $2, $3, 'billed', $4, $5, $6, $7, $8, $9, $10, $11)
+      `, [
+        orderId,
+        mode === 'room' ? roomId : 'FNB-GENERAL',
+        roomName,
+        fnbTotal,
+        cashierName,
+        `Nota manual: ${sourceReason}`,
+        `${idempotencyKey}:fnb`,
+        payload.customer_name || null,
+        mode === 'general_fnb' ? `GBILL-${Date.now()}` : null,
+        startTime,
+        endTime
+      ]);
+
+      const orderItemsList = [];
+      for (const pItem of processedFnbItems) {
+        const { menu, quantity, price, subtotal } = pItem;
+        const orderItemId = require('crypto').randomUUID();
+        await client.query(`
+          INSERT INTO fnb_order_items (
+            order_item_id, order_id, menu_id, menu_name, category,
+            price, quantity, subtotal, is_voided, stock_deducted, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, TRUE, $9)
+        `, [
+          orderItemId,
+          orderId,
+          menu.menu_id,
+          menu.menu_name,
+          menu.category || 'F&B',
+          price,
+          quantity,
+          subtotal,
+          startTime
+        ]);
+
+        orderItemsList.push({
+          order_item_id: orderItemId,
+          order_id: orderId,
+          menu_id: menu.menu_id,
+          menu_name: menu.menu_name,
+          category: menu.category,
+          price,
+          quantity,
+          subtotal
+        });
+
+        // Potong stok fisik jika stock_tracking === 'yes'
+        if (menu.stock_tracking === 'yes' && menu.stock_item_id) {
+          const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [menu.stock_item_id]);
+          if (invRes.rowCount > 0) {
+            const inv = invRes.rows[0];
+            const qtyPerUnit = Number(menu.stock_qty_per_unit || 1);
+            const totalStockDeduct = quantity * qtyPerUnit;
+            const stockBefore = Number(inv.stock_qty || 0);
+            const stockAfter = stockBefore - totalStockDeduct;
+
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, menu.stock_item_id]);
+
+            const movementId = `SM-M-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after,
+                note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [
+              movementId,
+              menu.stock_item_id,
+              inv.stock_item_name || menu.menu_name,
+              'out',
+              'transaction',
+              transactionId,
+              -totalStockDeduct,
+              stockBefore,
+              stockAfter,
+              `Penjualan manual ${transactionId} (${quantity}x ${menu.menu_name})`,
+              cashierName,
+              `${idempotencyKey}:stock:${menu.stock_item_id}`
+            ]);
+          }
+        }
+
+        // Potong stok komponen resep jika menu bertipe bundle / recipe
+        const recipeRes = await client.query('SELECT r.*, i.stock_item_name FROM recipe r JOIN inventory i ON r.item_id = i.stock_item_id WHERE r.menu_id = $1', [menu.menu_id]);
+        for (const r of recipeRes.rows) {
+          const rInvRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [r.item_id]);
+          if (rInvRes.rowCount > 0) {
+            const rInv = rInvRes.rows[0];
+            const rDeduct = quantity * Number(r.qty_used || 1);
+            const rStockBefore = Number(rInv.stock_qty || 0);
+            const rStockAfter = rStockBefore - rDeduct;
+
+            await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [rStockAfter, r.item_id]);
+
+            const rMovementId = `SM-MR-${Date.now()}-${r.item_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO stock_movements (
+                movement_id, stock_item_id, stock_item_name, movement_type,
+                reference_type, reference_id, qty_change, stock_before, stock_after,
+                note, cashier_name, idempotency_key
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              ON CONFLICT (idempotency_key) DO NOTHING
+            `, [
+              rMovementId,
+              r.item_id,
+              rInv.stock_item_name,
+              'out',
+              'transaction',
+              transactionId,
+              -rDeduct,
+              rStockBefore,
+              rStockAfter,
+              `Komponen menu manual ${transactionId}: ${quantity}x ${menu.menu_name} (${rInv.stock_item_name})`,
+              cashierName,
+              `${idempotencyKey}:recipe:${r.item_id}`
+            ]);
+          }
+        }
+
+        // Bonus penjualan LC
+        const bonusSalesLc = Number(menu.bonus_sales_lc || 0);
+        if (bonusSalesLc > 0 && processedLcs.length > 0) {
+          const totalBonus = bonusSalesLc * quantity;
+          const baseShare = Math.floor(totalBonus / processedLcs.length);
+          const remainder = totalBonus - (baseShare * processedLcs.length);
+          for (let lcIdx = 0; lcIdx < processedLcs.length; lcIdx++) {
+            const lcTarget = processedLcs[lcIdx];
+            const bonusTotal = baseShare + (lcIdx < remainder ? 1 : 0);
+            if (bonusTotal <= 0) continue;
+            const bonusId = `LSB-M-${Date.now()}-${lcTarget.lc_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+            await client.query(`
+              INSERT INTO lc_sales_bonus_logs (
+                bonus_log_id, operational_date, transaction_id, order_id, menu_id, menu_name,
+                category, lc_id, lc_name, quantity, bonus_per_item, bonus_total, source_status, created_by
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'earned', $13)
+            `, [
+              bonusId,
+              opDate,
+              transactionId,
+              orderId,
+              menu.menu_id,
+              menu.menu_name,
+              menu.category || 'F&B',
+              lcTarget.lc_id,
+              lcTarget.lc_name,
+              quantity,
+              bonusSalesLc,
+              bonusTotal,
+              cashierName
+            ]);
+          }
+        }
+      }
+
+      createdOrders.push({
+        order_id: orderId,
+        order_total: fnbTotal,
+        items: orderItemsList
+      });
+    }
+
+    // 3. Potong stok paket room jika mode room dan ada package_id
+    if (mode === 'room' && payload.package_id) {
+      const detailsRes = await client.query(`
+        SELECT component_ref_id, component_name, qty, unit, component_type
+        FROM package_details
+        WHERE package_id = $1
+          AND component_ref_id IS NOT NULL AND component_ref_id <> ''
+      `, [payload.package_id]);
+
+      for (const comp of detailsRes.rows) {
+        const qtyDeduct = Number(comp.qty || 1);
+        if (qtyDeduct <= 0) continue;
+
+        const stockItemId = await resolvePackageComponentStockItem(client, comp, payload.package_id, transactionPackageName);
+        if (!stockItemId) continue;
+
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [stockItemId]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore - qtyDeduct;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, stockItemId]);
+
+          const movementId = `SM-MPKG-${Date.now()}-${stockItemId}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [
+            movementId,
+            stockItemId,
+            inv.stock_item_name,
+            'out',
+            'transaction',
+            transactionId,
+            -qtyDeduct,
+            stockBefore,
+            stockAfter,
+            `Komponen paket manual ${transactionPackageName || payload.package_id} (${inv.stock_item_name})`,
+            cashierName,
+            `${idempotencyKey}:pkg:${stockItemId}`
+          ]);
+        }
+      }
+    }
+
+    // 4. Catat log kerja LC ke lc_work_logs
+    for (const lcItem of processedLcs) {
+      const logId = `LCW-M-${Date.now()}-${lcItem.lc_id}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await client.query(`
+        INSERT INTO lc_work_logs (
+          log_id, session_id, room_id, room_name, lc_id, lc_name,
+          duration_minutes, rate_per_hour, rate, customer_charge_amount,
+          status, cashier_name, closed_transaction_id, created_at, closed_at, note
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `, [
+        logId,
+        null,
+        mode === 'room' ? roomId : 'FNB-GENERAL',
+        roomName,
+        lcItem.lc_id,
+        lcItem.lc_name,
+        lcItem.duration_minutes,
+        lcItem.rate_per_hour,
+        lcItem.rate,
+        lcItem.rate,
+        'closed',
+        cashierName,
+        transactionId,
+        startTime,
+        endTime,
+        `Nota manual: ${sourceReason}`
+      ]);
+    }
+
+    await writeOperationalAudit(client, {
+      risk_level: 'high', domain: 'transaction', event_type: 'manual_outage_transaction',
+      source_action: 'createManualOutageTransaction',
+      initiated_by: enteredBy,
+      target_type: 'transaction', target_id: transactionId, transaction_id: transactionId,
+      room_id: mode === 'room' ? roomId : 'FNB-GENERAL', room_name: roomName,
+      reason: sourceReason,
+      amount_before: 0, amount_after: grandTotal,
+      new_value: {
+        mode, room_id: mode === 'room' ? roomId : 'FNB-GENERAL', room_name: roomName,
+        duration_minutes: durationMinutes, room_total: roomTotal, fnb_total: fnbTotal,
+        lc_total: lcTotal, grand_total: grandTotal, payment_method: paymentMethod,
+        payment_status: paymentStatus, package_id: transactionPackageId,
+        package_name: transactionPackageName
+      },
+      metadata: {
+        backdated_start_time: startTime.toISOString(),
+        recorded_cashier_name: cashierName,
+        fnb_item_count: fnbItems.length,
+        lc_count: lcAssignments.length
+      },
+      idempotency_key: `audit:${idempotencyKey}`
+    });
+
+    await client.query(`
+      INSERT INTO sync_outbox (entity_type, entity_id, action, payload_json)
+      VALUES ('transactions', $1, 'INSERT', $2)
+      ON CONFLICT DO NOTHING
+    `, [transactionId, JSON.stringify({ transaction_id: transactionId, room_id: roomId, grand_total: grandTotal, payment_status: paymentStatus, operational_date: opDate })]);
+
+    await client.query('COMMIT');
+    return successResponse(res, {
+      message: 'Transaksi manual berhasil disimpan.',
+      transaction: {
+        transaction_id: transactionId,
+        room_id: mode === 'room' ? roomId : 'FNB-GENERAL',
+        room_name: roomName,
+        duration_minutes: durationMinutes,
+        room_total: roomTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcTotal,
+        grand_total: grandTotal,
+        fnb_order_ids: orderId,
+        payment_method: paymentMethod,
+        payment_status: paymentStatus,
+        operational_date: opDate,
+        booking_mode: bookingMode,
+        package_id: transactionPackageId,
+        package_name: transactionPackageName,
+        package_total: transactionPackageTotal
+      },
+      fnb_orders: createdOrders,
+      lc_details: processedLcs.map(l => ({
+        lc_id: l.lc_id,
+        lc_name: l.lc_name,
+        duration_minutes: l.duration_minutes,
+        rate_per_hour: l.rate_per_hour,
+        rate: l.rate
+      }))
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function appendFnbToUnpaidTransaction(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    const cashierName = String(payload.cashier_name || payload.operator_name || 'Kasir').trim();
+    const note = String(payload.note || 'Susulan pesanan F&B').trim();
+    const items = Array.isArray(payload.items) ? payload.items : [];
+
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+    if (items.length === 0) throw new Error('Item F&B susulan wajib diisi minimal 1.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const transaction = trxRes.rows[0];
+
+    if (String(transaction.payment_status || '').toLowerCase() === 'paid') {
+      throw new Error('Transaksi sudah lunas. Pesanan susulan hanya bisa ditambahkan ke transaksi yang belum dibayar.');
+    }
+    if (String(transaction.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi sudah dibatalkan.');
+    }
+
+    const roomId = transaction.room_id;
+    const roomName = transaction.room_name || roomId;
+    const orderId = `FNB-EXTRA-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    let extraOrderTotal = 0;
+
+    // Insert new order header
+    await client.query(`
+      INSERT INTO fnb_orders (
+        order_id, room_id, room_name, order_status, order_total, cashier_name, note, created_at, updated_at
+      ) VALUES ($1, $2, $3, 'billed', 0, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [orderId, roomId, roomName, cashierName, note]);
+
+    // Insert items & deduct stock
+    for (const entry of items) {
+      const menuId = String(entry.menu_id || '').trim();
+      const qty = Math.max(1, Math.floor(toNumber(entry.quantity || 1)));
+
+      const menuRes = await client.query('SELECT * FROM menu WHERE menu_id = $1', [menuId]);
+      if (menuRes.rowCount === 0) throw new Error(`Menu ID ${menuId} tidak ditemukan.`);
+      const menu = menuRes.rows[0];
+
+      const price = Number(menu.price || 0);
+      const subtotal = price * qty;
+      extraOrderTotal += subtotal;
+
+      const orderItemId = require('crypto').randomUUID();
+      await client.query(`
+        INSERT INTO fnb_order_items (
+          order_item_id, order_id, menu_id, menu_name, category, price, quantity, subtotal, is_voided, stock_deducted, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, TRUE, CURRENT_TIMESTAMP)
+      `, [orderItemId, orderId, menuId, menu.menu_name, menu.category, price, qty, subtotal]);
+
+      // Potong stok fisik jika stock_tracking === 'yes'
+      if (menu.stock_tracking === 'yes' && menu.stock_item_id) {
+        const invRes = await client.query('SELECT * FROM inventory WHERE stock_item_id = $1 FOR UPDATE', [menu.stock_item_id]);
+        if (invRes.rowCount > 0) {
+          const inv = invRes.rows[0];
+          const qtyPerUnit = Number(menu.stock_qty_per_unit || 1);
+          const totalStockDeduct = qty * qtyPerUnit;
+          const stockBefore = Number(inv.stock_qty || 0);
+          const stockAfter = stockBefore - totalStockDeduct;
+
+          await client.query('UPDATE inventory SET stock_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE stock_item_id = $2', [stockAfter, menu.stock_item_id]);
+
+          const movementId = `SM-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          await client.query(`
+            INSERT INTO stock_movements (
+              movement_id, stock_item_id, stock_item_name, movement_type,
+              reference_type, reference_id, qty_change, stock_before, stock_after,
+              note, cashier_name, idempotency_key
+            ) VALUES ($1, $2, $3, 'out', 'transaction', $4, $5, $6, $7, $8, $9, $1)
+            ON CONFLICT (idempotency_key) DO NOTHING
+          `, [
+            movementId,
+            menu.stock_item_id,
+            inv.stock_item_name || menu.menu_name,
+            transactionId,
+            -totalStockDeduct,
+            stockBefore,
+            stockAfter,
+            `Susulan F&B transaksi ${transactionId} (${qty}x ${menu.menu_name})`,
+            cashierName
+          ]);
+        }
+      }
+    }
+
+    // Update order header total
+    await client.query('UPDATE fnb_orders SET order_total = $1 WHERE order_id = $2', [extraOrderTotal, orderId]);
+
+    // Update transaction
+    const existingOrderIds = String(transaction.fnb_order_ids || '').trim();
+    const updatedOrderIds = existingOrderIds ? `${existingOrderIds},${orderId}` : orderId;
+    const newFnbTotal = Number(transaction.fnb_total || 0) + extraOrderTotal;
+    const newGrandTotal = Number(transaction.grand_total || 0) + extraOrderTotal;
+
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      transaction.payment_method,
+      newGrandTotal,
+      transaction.cash_amount,
+      transaction.transfer_amount
+    );
+
+    const extraTotalFormatted = `Rp ${Number(extraOrderTotal).toLocaleString('id-ID')}`;
+
+    const updateTxRes = await client.query(`
+      UPDATE transactions
+      SET fnb_order_ids = $1,
+          fnb_total = $2,
+          grand_total = $3,
+          cash_amount = $4,
+          transfer_amount = $5,
+          corrected_at = CURRENT_TIMESTAMP,
+          corrected_by = $6,
+          correction_note = COALESCE(correction_note, '') || ' [Susulan F&B +' || $7::varchar || ']'
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [
+      updatedOrderIds,
+      newFnbTotal,
+      newGrandTotal,
+      paymentBreakdown.cash_amount,
+      paymentBreakdown.transfer_amount,
+      cashierName,
+      extraTotalFormatted,
+      transactionId
+    ]);
+
+    // Audit log
+    try {
+      const { writeOperationalAudit } = require('../services/operationalAuditService');
+      await writeOperationalAudit(client, {
+        domain: 'transaction',
+        event_type: 'append_fnb_order',
+        transaction_id: transactionId,
+        room_id: roomId,
+        room_name: roomName,
+        initiated_by: { name: cashierName },
+        amount_before: Number(transaction.grand_total || 0),
+        amount_after: newGrandTotal,
+        amount_delta: extraOrderTotal,
+        reason: note,
+        metadata: {
+          added_order_id: orderId,
+          added_fnb_total: extraOrderTotal,
+          items_count: items.length
+        }
+      });
+    } catch (auditErr) {
+      console.warn('Audit append F&B error:', auditErr.message);
+    }
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Berhasil menambahkan pesanan F&B susulan sebesar ${extraTotalFormatted} ke transaksi ${transactionId}.`,
+      transaction: updateTxRes.rows[0],
+      order_id: orderId,
+      added_total: extraOrderTotal
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function recalculatePackageOvertime(req, res, payload) {
+  let client;
+  try {
+    client = await db.pool.connect();
+    await client.query('BEGIN');
+
+    const transactionId = String(payload.transaction_id || '').trim();
+    if (!transactionId) throw new Error('transaction_id wajib diisi.');
+
+    const trxRes = await client.query('SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE', [transactionId]);
+    if (trxRes.rowCount === 0) throw new Error('Transaksi tidak ditemukan.');
+    const trx = trxRes.rows[0];
+
+    if (String(trx.payment_status || '').toLowerCase() === 'paid') {
+      throw new Error('Transaksi sudah lunas. Hanya transaksi belum dibayar yang dapat direkalkulasi.');
+    }
+    if (String(trx.payment_status || '').toLowerCase() === 'cancelled') {
+      throw new Error('Transaksi sudah dibatalkan.');
+    }
+
+    const totalMinutes = Number(trx.duration_minutes || 0);
+    const ratePerHour = Number(trx.rate_per_hour || 135000);
+    const packageTotal = Number(trx.package_total || 650000);
+
+    let packageIncludedMinutes = 120;
+    if (trx.package_id) {
+      const pkgRes = await client.query('SELECT duration_minutes, selling_price FROM package_master WHERE package_id = $1', [trx.package_id]);
+      if (pkgRes.rowCount > 0) {
+        packageIncludedMinutes = Number(pkgRes.rows[0].duration_minutes || 120);
+      }
+    }
+
+    const extraMinutes = Math.max(0, totalMinutes - packageIncludedMinutes);
+    const extraRoomCharge = extraMinutes > 0 ? Math.ceil((extraMinutes / 60) * ratePerHour) : 0;
+    const newRoomTotal = packageTotal + extraRoomCharge;
+    const freeRoomMinutes = Math.min(totalMinutes, packageIncludedMinutes);
+    const roomDiscountAmount = freeRoomMinutes > 0 ? Math.ceil((freeRoomMinutes / 60) * ratePerHour) : 0;
+    const billableRoomMinutes = extraMinutes;
+
+    const fnbTotal = Number(trx.fnb_total || 0);
+    const lcTotal = Number(trx.lc_total || 0);
+    const promoDiscount = Number(trx.promo_discount || 0);
+    const manualDiscountRoom = Number(trx.manual_discount_room || 0);
+    const manualDiscountFnb = Number(trx.manual_discount_fnb || 0);
+
+    const newGrandTotal = Math.max(0, newRoomTotal - promoDiscount - manualDiscountRoom) +
+                          Math.max(0, fnbTotal - manualDiscountFnb) +
+                          lcTotal;
+
+    const paymentBreakdown = adjustPaymentBreakdownForCorrection(
+      trx.payment_method,
+      newGrandTotal,
+      trx.cash_amount,
+      trx.transfer_amount
+    );
+
+    const updatedTrxRes = await client.query(`
+      UPDATE transactions
+      SET room_total = $1,
+          grand_total = $2,
+          billable_room_minutes = $3,
+          free_room_minutes = $4,
+          room_discount_amount = $5,
+          cash_amount = $6,
+          transfer_amount = $7,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE transaction_id = $8
+      RETURNING *
+    `, [newRoomTotal, newGrandTotal, billableRoomMinutes, freeRoomMinutes, roomDiscountAmount, paymentBreakdown.cash_amount, paymentBreakdown.transfer_amount, transactionId]);
+
+    try {
+      const { writeOperationalAudit } = require('../services/operationalAuditService');
+      await writeOperationalAudit(client, {
+        domain: 'transaction',
+        event_type: 'recalculate_package_overtime',
+        transaction_id: transactionId,
+        room_id: trx.room_id,
+        room_name: trx.room_name,
+        initiated_by: { name: payload.cashier_name || 'Owner' },
+        amount_before: Number(trx.grand_total || 0),
+        amount_after: newGrandTotal,
+        reason: `Hitung ulang overtime sewa room: paket ${packageIncludedMinutes} menit, total ${totalMinutes} menit, room extra ${extraMinutes} menit (+Rp ${extraRoomCharge.toLocaleString('id-ID')})`
+      });
+    } catch (e) {}
+
+    await client.query('COMMIT');
+
+    return successResponse(res, {
+      message: `Transaksi ${transactionId} berhasil direkalkulasi. Room tambahan: ${extraMinutes} menit (Rp ${extraRoomCharge.toLocaleString('id-ID')}). Total baru: Rp ${newGrandTotal.toLocaleString('id-ID')}.`,
+      transaction: updatedTrxRes.rows[0]
+    });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    return errorResponse(res, err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+module.exports = {
+  getTodayTransactions,
+  markTransactionPaid,
+  logReceiptPrint,
+  updateTransactionDetails,
+  correctTransactionPackage,
+  correctTransactionFreeRoom,
+  appendFnbToUnpaidTransaction,
+  recalculatePackageOvertime,
+  applyTransactionManualDiscount,
+  createSalesCommission,
+  deleteTransaction,
+  getTransactionLcEditDetails: getTransactionLcDetails,
+  getTransactionLcReceiptDetails: getTransactionLcDetails,
+  updateTransactionLcDurations,
+  createManualOutageTransaction,
+  voidTransactionFnbOrder,
+};

@@ -1,0 +1,2633 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happy Song Management Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080604;
+      --panel: rgba(35, 27, 19, 0.92);
+      --panel-soft: rgba(255, 255, 255, 0.055);
+      --border: rgba(242, 196, 91, 0.25);
+      --gold: #f2c45b;
+      --green: #34d399;
+      --red: #fb7185;
+      --amber: #f59e0b;
+      --purple: #a78bfa;
+      --text: #fff7df;
+      --muted: rgba(255, 247, 223, 0.68);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(242, 196, 91, 0.12), transparent 32rem),
+        radial-gradient(circle at bottom left, rgba(139, 92, 246, 0.11), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .page {
+      width: min(1220px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 28px 0 42px;
+    }
+
+    .header, .toolbar, .tabs, .periods {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .header {
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+
+    .brand-heading {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand-logo {
+      width: 92px;
+      height: 92px;
+      object-fit: cover;
+      border-radius: 22px;
+      border: 1px solid rgba(242, 196, 91, 0.45);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+      background: #0d0b08;
+    }
+
+    .eyebrow {
+      color: var(--gold);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 0 0 6px;
+    }
+
+    h1 {
+      font-size: clamp(1.8rem, 4vw, 3.2rem);
+      line-height: 1;
+      margin: 0;
+    }
+
+    .status-card, .metric, .panel, .room-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+    }
+
+    .status-card {
+      padding: 14px 16px;
+      min-width: 270px;
+      text-align: right;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      color: var(--green);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 18px currentColor;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.86rem;
+      margin-top: 5px;
+    }
+
+    .toolbar {
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin: 18px 0;
+    }
+
+    button {
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      background: rgba(242, 196, 91, 0.14);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    button:hover { background: rgba(242, 196, 91, 0.22); }
+    button.active { background: var(--gold); color: #1f1408; border-color: var(--gold); }
+
+    .custom-date-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(30, 22, 14, 0.96);
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      border-radius: 16px;
+      padding: 12px 16px;
+      margin-top: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      animation: fadeInDateBar 0.2s ease;
+    }
+
+    @keyframes fadeInDateBar {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .custom-date-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .custom-date-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .date-input {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(242, 196, 91, 0.3);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      color-scheme: dark;
+    }
+
+    .date-input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 10px rgba(242, 196, 91, 0.25);
+    }
+
+    .custom-date-apply-btn {
+      background: var(--gold);
+      color: #1f1408;
+      border: 1px solid var(--gold);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-weight: 800;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: transform 0.15s ease, filter 0.15s ease;
+    }
+
+    .custom-date-apply-btn:hover {
+      filter: brightness(1.1);
+      transform: translateY(-1px);
+    }
+
+    .custom-date-quick-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      padding-top: 4px;
+      border-top: 1px solid rgba(242, 196, 91, 0.12);
+    }
+
+    .quick-chips-label {
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-right: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .chip-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .chip-btn:hover {
+      background: rgba(242, 196, 91, 0.18);
+      color: var(--gold);
+      border-color: var(--gold);
+    }
+
+    .tabs {
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin: 12px 0 16px;
+    }
+
+    .tab-button {
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.045);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .metric {
+      padding: 14px 16px;
+      min-width: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: border-color 0.2s ease, transform 0.15s ease;
+    }
+
+    .metric:hover {
+      border-color: rgba(242, 196, 91, 0.45);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin: 0 0 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric-value {
+      font-size: clamp(1.1rem, 1.35vw, 1.55rem);
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      margin: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-note {
+      color: var(--muted);
+      font-size: 0.76rem;
+      line-height: 1.35;
+      margin: 8px 0 0;
+      word-break: break-word;
+    }
+
+    .text-amber { color: var(--amber); }
+    .text-gold { color: var(--gold); }
+    .text-red { color: var(--red); }
+    .text-green { color: var(--green); }
+
+    .deduction-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      border-radius: 6px;
+      padding: 2px 7px;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fcd34d;
+      margin-top: 4px;
+      line-height: 1.3;
+    }
+
+    .deduction-badge.discount {
+      background: rgba(251, 113, 133, 0.15);
+      border-color: rgba(251, 113, 133, 0.35);
+      color: #fda4af;
+    }
+
+    .accounting-summary-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      border-radius: 12px;
+      padding: 10px 16px;
+      margin-bottom: 14px;
+      font-size: 0.88rem;
+    }
+
+    .accounting-summary-bar .item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .accounting-summary-bar .label {
+      color: var(--muted);
+    }
+
+    .accounting-summary-bar .val {
+      font-weight: 800;
+    }
+
+    .accounting-summary-bar .divider {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .panel {
+      padding: 18px;
+      min-width: 0;
+      margin-top: 16px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1.1rem;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .rooms {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .room-card {
+      padding: 14px;
+      background: var(--panel-soft);
+    }
+
+    .room-name {
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .available, .safe { color: var(--green); }
+    .occupied, .negative { color: var(--red); }
+    .cleaning, .low { color: var(--amber); }
+    .info { color: var(--purple); }
+
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .search-input, .select-filter {
+      background: var(--panel-soft);
+      border: 1px solid rgba(242, 196, 91, 0.28);
+      color: var(--text);
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-input:focus, .select-filter:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 10px rgba(242, 196, 91, 0.2);
+    }
+
+    .search-input {
+      flex: 1 1 200px;
+      min-width: 160px;
+    }
+
+    .select-filter {
+      cursor: pointer;
+    }
+
+    .select-filter option {
+      background: #18120b;
+      color: #fff7df;
+    }
+
+    .stock-qty-val {
+      font-weight: 800;
+      font-size: 1.05rem;
+    }
+
+    .room-meta {
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--gold);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* Analytics Styles */
+    .analytics-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(242, 196, 91, 0.2);
+      border-radius: 14px;
+      padding: 12px 16px;
+    }
+
+    .analytics-toolbar-title h2 {
+      margin: 0;
+      font-size: 1.15rem;
+      color: var(--gold);
+    }
+
+    .analytics-toolbar-title p {
+      margin: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .analytics-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .analytics-select {
+      background: rgba(0, 0, 0, 0.4);
+      color: var(--text);
+      border: 1px solid rgba(242, 196, 91, 0.35);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .analytics-select:focus {
+      border-color: var(--gold);
+    }
+
+    .analytics-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .analytics-kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s ease, border-color 0.2s ease;
+      min-width: 0;
+    }
+
+    .analytics-kpi-card:hover {
+      border-color: rgba(242, 196, 91, 0.45);
+      transform: translateY(-2px);
+    }
+
+    .analytics-kpi-card.featured {
+      border-color: rgba(242, 196, 91, 0.55);
+      background: linear-gradient(145deg, rgba(45, 33, 20, 0.95), rgba(28, 21, 14, 0.95));
+      box-shadow: 0 8px 24px rgba(242, 196, 91, 0.12);
+    }
+
+    .analytics-kpi-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .analytics-kpi-label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      line-height: 1.25;
+    }
+
+    .analytics-kpi-value {
+      font-size: clamp(1.2rem, 1.4vw, 1.65rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 4px 0 6px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .analytics-kpi-sub {
+      font-size: 0.74rem;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+
+    .delta-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .delta-badge.positive {
+      background: rgba(52, 211, 153, 0.16);
+      border: 1px solid rgba(52, 211, 153, 0.38);
+      color: #34d399;
+    }
+
+    .delta-badge.negative {
+      background: rgba(251, 113, 133, 0.16);
+      border: 1px solid rgba(251, 113, 133, 0.38);
+      color: #fb7185;
+    }
+
+    .delta-badge.neutral {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: var(--muted);
+    }
+
+    .analytics-chart-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      margin: 16px 0;
+    }
+
+    .analytics-chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .analytics-chart-titles h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: var(--text);
+    }
+
+    .analytics-chart-titles p {
+      margin: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .analytics-chart-modes {
+      display: inline-flex;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .analytics-chart-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .analytics-chart-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .analytics-chart-btn.active {
+      background: var(--gold);
+      color: #1a1208;
+      box-shadow: 0 2px 8px rgba(242, 196, 91, 0.35);
+    }
+
+    .analytics-chart-scroll-wrapper {
+      overflow-x: auto;
+      padding-bottom: 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .analytics-bar-chart {
+      display: flex;
+      align-items: flex-end;
+      height: 215px;
+      gap: 6px;
+      padding-top: 36px;
+      min-width: 780px;
+      position: relative;
+    }
+
+    .analytics-bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .analytics-bar-track {
+      width: 100%;
+      max-width: 32px;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 6px;
+      position: relative;
+      transition: background 0.2s ease;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-track,
+    .analytics-bar-track.has-data {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .analytics-bar-fill {
+      width: 100%;
+      background: linear-gradient(180deg, var(--gold), rgba(242, 196, 91, 0.45));
+      border-radius: 6px 6px 2px 2px;
+      transition: height 0.4s ease, filter 0.2s ease, box-shadow 0.2s ease;
+      min-height: 2px;
+      position: relative;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-fill {
+      filter: brightness(1.25);
+      box-shadow: 0 0 12px rgba(242, 196, 91, 0.5);
+    }
+
+    .analytics-bar-fill.peak {
+      background: linear-gradient(180deg, #f59e0b, #ef4444);
+      box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+    }
+
+    .analytics-bar-fill.slowest {
+      background: linear-gradient(180deg, #34d399, #059669);
+    }
+
+    .analytics-bar-value-tip {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--gold);
+      white-space: nowrap;
+      pointer-events: none;
+      background: rgba(20, 15, 10, 0.88);
+      border: 1px solid rgba(242, 196, 91, 0.3);
+      border-radius: 4px;
+      padding: 1px 4px;
+      line-height: 1.2;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      letter-spacing: -0.2px;
+    }
+
+    .analytics-bar-label {
+      font-size: 0.70rem;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: center;
+      white-space: nowrap;
+      transition: color 0.2s ease;
+    }
+
+    .analytics-bar-col:hover .analytics-bar-label {
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    /* Floating Interactive Tooltip Popover */
+    .analytics-floating-popover {
+      position: fixed;
+      z-index: 99999;
+      pointer-events: none;
+      background: rgba(22, 17, 12, 0.96);
+      border: 1px solid rgba(242, 196, 91, 0.45);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85), 0 0 14px rgba(242, 196, 91, 0.25);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #f3f4f6;
+      min-width: 175px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translate(-50%, -100%) scale(0.95);
+      transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .analytics-floating-popover.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translate(-50%, -100%) scale(1);
+    }
+
+    .analytics-floating-popover-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--gold);
+      margin-bottom: 6px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      letter-spacing: 0.3px;
+    }
+
+    .analytics-floating-popover-rev {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+
+    .analytics-floating-popover-meta {
+      font-size: 0.73rem;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .analytics-floating-popover-meta span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .analytics-stacked-bar {
+      height: 18px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+      margin: 12px 0;
+    }
+
+    .analytics-stacked-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .analytics-stacked-segment.room { background: var(--gold); }
+    .analytics-stacked-segment.fnb { background: var(--green); }
+    .analytics-stacked-segment.lc { background: var(--purple); }
+    .analytics-stacked-segment.cash { background: #fcd34d; }
+    .analytics-stacked-segment.transfer { background: #60a5fa; }
+
+    .analytics-legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .analytics-legend-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.84rem;
+    }
+
+    .analytics-legend-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .analytics-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+    }
+
+    .analytics-leaderboard-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .analytics-leaderboard-row:last-child {
+      border-bottom: none;
+    }
+
+    .analytics-leaderboard-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.86rem;
+    }
+
+    .analytics-progress-track {
+      width: 100%;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .analytics-progress-fill {
+      height: 100%;
+      background: var(--gold);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    @media (max-width: 1080px) {
+      .metrics {
+        grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+        gap: 10px;
+      }
+      .metric {
+        padding: 12px 14px;
+      }
+      .metric-value {
+        font-size: clamp(1.05rem, 1.3vw, 1.4rem);
+      }
+    }
+
+    @media (max-width: 920px) {
+      .header, .toolbar { flex-direction: column; align-items: stretch; }
+      .brand-heading { align-items: flex-start; }
+      .status-card { text-align: left; }
+      .metrics { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+      .two-col { grid-template-columns: 1fr; }
+      .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 560px) {
+      .brand-logo { width: 70px; height: 70px; border-radius: 18px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .metric { padding: 12px 10px; }
+      .metric-value { font-size: 1.05rem; }
+      .rooms { grid-template-columns: 1fr; }
+      table { font-size: 0.82rem; }
+    }
+
+    @media (max-width: 380px) {
+      .metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="brand-heading">
+        <img class="brand-logo" src="/assets/brand/happy-song-logo-bg.jpg" alt="Happy Song Karaoke">
+        <div>
+          <p class="eyebrow">Happy Song Karaoke</p>
+          <h1>Management Monitor</h1>
+        </div>
+      </div>
+      <section class="status-card">
+        <div class="status" id="connectionStatus"><span class="dot"></span><span>Memuat snapshot...</span></div>
+        <div class="small" id="lastUpdate">-</div>
+      </section>
+    </header>
+
+    <div class="toolbar">
+      <div>
+        <div class="periods" id="periodButtons"></div>
+        <div class="small" id="periodInfo">Periode: -</div>
+        <div class="custom-date-bar" id="customDateBar" style="display: none;">
+          <div class="custom-date-fields">
+            <div class="custom-date-group">
+              <label for="customStartDate">Mulai:</label>
+              <input type="date" id="customStartDate" class="date-input">
+            </div>
+            <div class="custom-date-group">
+              <label for="customEndDate">Sampai:</label>
+              <input type="date" id="customEndDate" class="date-input">
+            </div>
+            <button type="button" class="custom-date-apply-btn" id="customDateApplyBtn">Terapkan</button>
+          </div>
+          <div class="custom-date-quick-chips">
+            <span class="quick-chips-label">Pintasan:</span>
+            <button type="button" class="chip-btn" data-preset="today">Hari Ini</button>
+            <button type="button" class="chip-btn" data-preset="yesterday">Kemarin</button>
+            <button type="button" class="chip-btn" data-preset="last7days">7 Hari</button>
+            <button type="button" class="chip-btn" data-preset="thismonth">Bulan Ini</button>
+          </div>
+        </div>
+      </div>
+      <button type="button" id="refreshButton">Refresh Sekarang</button>
+    </div>
+
+    <nav class="tabs" id="monitorTabs" aria-label="Management Monitor Tabs"></nav>
+
+    <section id="content"></section>
+  </main>
+
+  <script>
+    const API_URL = "/exec?action=getOwnerMirrorSnapshot";
+    const REFRESH_MS = 60000;
+    const PERIODS = [
+      { key: "today", label: "Hari Ini" },
+      { key: "yesterday", label: "Kemarin" },
+      { key: "last7days", label: "7 Hari" },
+      { key: "thismonth", label: "Bulan Ini" },
+      { key: "custom", label: "Pilih Tanggal" },
+    ];
+    const TABS = [
+      { key: "overview", label: "Overview" },
+      { key: "analytics", label: "Analisa" },
+      { key: "rooms", label: "Room" },
+      { key: "transactions", label: "Transaksi" },
+      { key: "inventory", label: "Stok" },
+      { key: "fnb", label: "F&B Terjual" },
+      { key: "lc", label: "LC Performance" },
+      { key: "closing", label: "Closing" },
+    ];
+
+    function getTodayOperationalDateStr() {
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const wib = new Date(utc + (7 * 3600000));
+      if (wib.getHours() < 10) {
+        wib.setDate(wib.getDate() - 1);
+      }
+      const y = wib.getFullYear();
+      const m = String(wib.getMonth() + 1).padStart(2, "0");
+      const d = String(wib.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    let activePeriod = new URLSearchParams(window.location.search).get("period") || "today";
+    let customStartDate = new URLSearchParams(window.location.search).get("start_date") || "";
+    let customEndDate = new URLSearchParams(window.location.search).get("end_date") || "";
+    if (!customStartDate) customStartDate = getTodayOperationalDateStr();
+    if (!customEndDate) customEndDate = getTodayOperationalDateStr();
+
+    let activeTab = new URLSearchParams(window.location.search).get("tab") || "overview";
+    let currentSnapshot = null;
+    let inventoryCategoryFilter = "all";
+    let inventoryStatusFilter = "all";
+    let inventorySearchKeyword = "";
+    let fnbPhysicalSearchKeyword = "";
+    let analyticsChartMode = "hourly";
+    let analyticsCompareTo = "previous_period";
+    let customAnalyticsData = null;
+
+    const formatCurrency = (value) => new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(Number(value) || 0);
+
+    const formatCompactCurrency = (value) => {
+      const num = Number(value) || 0;
+      if (num <= 0) return "";
+      if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace(/\.0$/, "") + "M";
+      if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, "") + "jt";
+      if (num >= 1000) return Math.round(num / 1000) + "rb";
+      return String(num);
+    };
+
+    const formatNumber = (value) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
+
+    function safe(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function formatSimpleDateTime(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value).replace("T", " ").replace(/\+\d{2}:\d{2}$/, "").trim();
+      }
+
+      return new Intl.DateTimeFormat("id-ID", {
+        timeZone: "Asia/Jakarta",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(date).replace(".", ":");
+    }
+
+    function formatDisplayDate(value) {
+      if (!value) return "-";
+      const date = new Date(`${value}T00:00:00+07:00`);
+      if (Number.isNaN(date.getTime())) return String(value);
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+      return `${String(date.getDate()).padStart(2, "0")}-${monthNames[date.getMonth()]}-${date.getFullYear()}`;
+    }
+
+    function formatDuration(minutes) {
+      const total = Number(minutes) || 0;
+      const hours = Math.floor(total / 60);
+      const mins = total % 60;
+      if (hours && mins) return `${hours} jam ${mins} menit`;
+      if (hours) return `${hours} jam`;
+      return `${mins} menit`;
+    }
+
+    function setStatus(text, tone = "available") {
+      const status = document.getElementById("connectionStatus");
+      status.className = `status ${tone}`;
+      status.innerHTML = `<span class="dot"></span><span>${safe(text)}</span>`;
+    }
+
+    function setUrlState() {
+      const params = new URLSearchParams(window.location.search);
+      params.set("period", activePeriod);
+      params.set("tab", activeTab);
+      if (activePeriod === "custom") {
+        if (customStartDate) params.set("start_date", customStartDate);
+        if (customEndDate) params.set("end_date", customEndDate);
+      } else {
+        params.delete("start_date");
+        params.delete("end_date");
+      }
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    }
+
+    function renderPeriodButtons() {
+      document.getElementById("periodButtons").innerHTML = PERIODS.map(period => `
+        <button type="button" class="${period.key === activePeriod ? "active" : ""}" data-period="${period.key}">
+          ${period.label}
+        </button>
+      `).join("");
+
+      const customBar = document.getElementById("customDateBar");
+      if (customBar) {
+        if (activePeriod === "custom") {
+          customBar.style.display = "flex";
+          const startInput = document.getElementById("customStartDate");
+          const endInput = document.getElementById("customEndDate");
+          if (startInput) startInput.value = customStartDate;
+          if (endInput) endInput.value = customEndDate;
+        } else {
+          customBar.style.display = "none";
+        }
+      }
+    }
+
+    function renderTabs() {
+      document.getElementById("monitorTabs").innerHTML = TABS.map(tab => `
+        <button type="button" class="tab-button ${tab.key === activeTab ? "active" : ""}" data-tab="${tab.key}">
+          ${tab.label}
+        </button>
+      `).join("");
+    }
+
+    function metric(label, value, note = "") {
+      const rawValue = String(value).replace(/<[^>]*>/g, "").trim();
+      return `
+        <article class="metric">
+          <p class="metric-label" title="${safe(label)}">${safe(label)}</p>
+          <p class="metric-value" title="${safe(rawValue)}">${value}</p>
+          ${note ? `<p class="metric-note" title="${safe(note)}">${safe(note)}</p>` : ""}
+        </article>
+      `;
+    }
+
+    function table(headers, rows, emptyText) {
+      if (!rows.length) return `<div class="empty">${safe(emptyText)}</div>`;
+      return `
+        <table>
+          <thead><tr>${headers.map(header => `<th class="${header.right ? "right" : ""}">${safe(header.label)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      `;
+    }
+
+    function renderMetrics(snapshot) {
+      const summary = snapshot.summary || {};
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidSalesComm = Number(summary.paid_sales_commission !== undefined
+        ? summary.paid_sales_commission
+        : transactions.filter(t => t.payment_status === 'paid').reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidRev = Number(summary.paid_revenue || 0);
+      const netPaidRev = Number(summary.net_paid_revenue !== undefined
+        ? summary.net_paid_revenue
+        : Math.max(0, paidRev - paidSalesComm)
+      );
+      const commTrxCount = Number(summary.transactions_with_commission !== undefined
+        ? summary.transactions_with_commission
+        : transactions.filter(t => Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0) > 0).length
+      );
+
+      const commDisplay = totalSalesComm > 0 ? `-${formatCurrency(totalSalesComm)}` : formatCurrency(0);
+
+      return `
+        <section class="metrics">
+          ${metric("Omzet Lunas (Gross)", formatCurrency(paidRev), `${formatNumber(summary.paid_transactions)} transaksi lunas`)}
+          ${metric("Komisi Sales (5%)", `<span class="${totalSalesComm > 0 ? 'text-amber' : ''}">${commDisplay}</span>`, `${formatNumber(commTrxCount)} transaksi ada komisi`)}
+          ${metric("Omzet Bersih (Net)", `<span class="text-green">${formatCurrency(netPaidRev)}</span>`, "Omzet setelah potongan komisi")}
+          ${metric("Omzet F&B", formatCurrency(summary.total_fnb_revenue), `${formatNumber(snapshot.fnb_sold_summary?.total_qty || 0)} item terjual`)}
+          ${metric("Omzet LC", formatCurrency(summary.total_lc_revenue), `${formatNumber(snapshot.lc_performance?.active_lc_count || 0)} LC perform`)}
+        </section>
+      `;
+    }
+
+    function renderOverview(snapshot) {
+      const summary = snapshot.summary || {};
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      const fnbItems = snapshot.fnb_sold_summary?.items || snapshot.fnb_sold_items || [];
+      const lcItems = snapshot.lc_performance?.items || snapshot.lc_performance_items || [];
+
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const paidRev = Number(summary.paid_revenue || 0);
+      const netPaidRev = Number(summary.net_paid_revenue !== undefined
+        ? summary.net_paid_revenue
+        : Math.max(0, paidRev - totalSalesComm)
+      );
+
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="two-col">
+          <div class="panel">
+            <h2>Ringkasan Shift & Finansial</h2>
+            ${table(
+              [{ label: "Komponen Finansial" }, { label: "Nilai", right: true }],
+              [
+                ["Omzet Lunas (Gross)", formatCurrency(paidRev)],
+                ["Potongan Komisi Sales (5%)", `<span class="${totalSalesComm > 0 ? 'text-amber' : ''}">-${formatCurrency(totalSalesComm)}</span>`],
+                ["Omzet Bersih Diterima (Net)", `<strong class="text-green">${formatCurrency(netPaidRev)}</strong>`],
+                ["Cash", formatCurrency(summary.cash_revenue)],
+                ["Transfer/QRIS", formatCurrency(summary.transfer_revenue)],
+                ["Belum Dibayar", formatCurrency(summary.unpaid_revenue)],
+                ["Room Terisi", formatNumber(summary.occupied_rooms)],
+                ["Room Cleaning", formatNumber(summary.cleaning_rooms)],
+                ["Open F&B", formatCurrency(summary.open_fnb_revenue)],
+              ].map(row => `<tr><td>${safe(row[0])}</td><td class="right">${row[1]}</td></tr>`),
+              "Belum ada ringkasan."
+            )}
+          </div>
+          <div class="panel">
+            <h2>Top Ringkas</h2>
+            ${table(
+              [{ label: "Kategori" }, { label: "Nama" }, { label: "Omzet", right: true }],
+              [
+                ...fnbItems.slice(0, 3).map(item => `<tr><td>F&B</td><td>${safe(item.menu_name)}</td><td class="right">${formatCurrency(item.revenue)}</td></tr>`),
+                ...lcItems.slice(0, 3).map(item => `<tr><td>LC</td><td>${safe(item.lc_name)}</td><td class="right">${formatCurrency(item.total_fee)}</td></tr>`),
+              ],
+              "Belum ada aktivitas F&B/LC di periode ini."
+            )}
+          </div>
+        </section>
+      `;
+    }
+
+    function formatAnalyticsDelta(deltaPercent, inverse = false) {
+      const delta = Number(deltaPercent) || 0;
+      if (delta === 0) return `<span class="delta-badge neutral">0.0%</span>`;
+      const isPositive = delta > 0;
+      const isGood = inverse ? !isPositive : isPositive;
+      const cls = isGood ? "positive" : "negative";
+      const icon = isPositive ? "▲" : "▼";
+      const sign = isPositive ? "+" : "";
+      return `<span class="delta-badge ${cls}">${icon} ${sign}${delta.toFixed(1)}%</span>`;
+    }
+
+    function getJakartaHour(dateInput) {
+      if (!dateInput) return null;
+      if (typeof dateInput === 'string') {
+        const matchWib = dateInput.match(/T(\d{2}):\d{2}/);
+        if (matchWib && dateInput.includes('+07:00')) {
+          return parseInt(matchWib[1], 10);
+        }
+      }
+      const dt = new Date(dateInput);
+      if (Number.isNaN(dt.getTime())) return null;
+      const jakartaDate = new Date(dt.getTime() + (7 * 60 * 60 * 1000));
+      return jakartaDate.getUTCHours();
+    }
+
+    function deriveAnalyticsFromSnapshot(snapshot) {
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      const paidTrx = transactions.filter(t => t.payment_status === 'paid');
+      const summary = snapshot.summary || {};
+      const rooms = Array.isArray(snapshot.rooms) ? snapshot.rooms : [];
+      const totalRoomsCount = Math.max(1, rooms.length || 1);
+      const operationalHoursPerDay = 18;
+      const durationDays = snapshot.operational_date_start && snapshot.operational_date_end
+        ? Math.max(1, Math.round((new Date(snapshot.operational_date_end) - new Date(snapshot.operational_date_start)) / 86400000) + 1)
+        : 1;
+      const availableRoomHours = totalRoomsCount * operationalHoursPerDay * durationDays;
+
+      const totalRevenue = Number(summary.paid_revenue !== undefined ? summary.paid_revenue : paidTrx.reduce((s, t) => s + Number(t.grand_total || 0), 0));
+      const roomRevenue = Number(summary.total_room_revenue !== undefined ? summary.total_room_revenue : paidTrx.reduce((s, t) => s + Number(t.room_total || 0), 0));
+      const fnbRevenue = Number(summary.total_fnb_revenue !== undefined ? summary.total_fnb_revenue : paidTrx.reduce((s, t) => s + Number(t.fnb_total || 0), 0));
+      const lcRevenue = Number(summary.total_lc_revenue !== undefined ? summary.total_lc_revenue : paidTrx.reduce((s, t) => s + Number(t.lc_total || 0), 0));
+      const discounts = Number(summary.total_promo_discount || 0) + Number(summary.total_manual_discount || 0);
+
+      const curRevPah = availableRoomHours > 0 ? Math.round(roomRevenue / availableRoomHours) : 0;
+      const curAov = paidTrx.length > 0 ? Math.round(totalRevenue / paidTrx.length) : 0;
+      const extCount = paidTrx.filter(t => Number(t.duration_minutes || 0) > 120).length;
+      const lcCount = paidTrx.filter(t => Number(t.lc_total || 0) > 0).length;
+      const fnbHpp = Math.round(fnbRevenue * 0.4);
+      const fnbGrossProfit = Math.max(0, fnbRevenue - fnbHpp);
+      const fnbMarginPercent = fnbRevenue > 0 ? Math.round((fnbGrossProfit / fnbRevenue) * 1000) / 10 : 0;
+
+      // 24 Jam WIB
+      const hourlySequence = [];
+      for (let i = 0; i < 24; i++) {
+        const h = (10 + i) % 24;
+        const inHour = paidTrx.filter(t => {
+          const dtStr = t.start_time_wib || t.start_time || '';
+          if (!dtStr) return false;
+          const hrs = getJakartaHour(dtStr);
+          return hrs === h;
+        });
+        hourlySequence.push({
+          hour_wib: h,
+          session_count: inHour.length,
+          hourly_revenue: inHour.reduce((s, t) => s + Number(t.grand_total || 0), 0),
+          hourly_room_hours: Math.round(inHour.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60 * 10) / 10
+        });
+      }
+
+      // Daily trend
+      const dailyMap = new Map();
+      for (const t of paidTrx) {
+        const d = t.operational_date || (t.start_time_wib ? String(t.start_time_wib).split('T')[0] : '2026-09-20');
+        if (!dailyMap.has(d)) {
+          dailyMap.set(d, { operational_date: d, trx_count: 0, daily_revenue: 0, daily_room_hours: 0 });
+        }
+        const item = dailyMap.get(d);
+        item.trx_count += 1;
+        item.daily_revenue += Number(t.grand_total || 0);
+        item.daily_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+      }
+      const dailySequence = Array.from(dailyMap.values()).sort((a, b) => a.operational_date.localeCompare(b.operational_date));
+
+      // Day of week
+      const dayNamesId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+      const dowList = dayNamesId.map(name => ({ day_name: name, total_sessions: 0, total_revenue: 0, total_room_hours: 0 }));
+      for (const t of paidTrx) {
+        const dStr = t.operational_date || '';
+        if (dStr) {
+          const [y, m, d] = dStr.split('-').map(Number);
+          if (y && m && d) {
+            const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+            dowList[dow].total_sessions += 1;
+            dowList[dow].total_revenue += Number(t.grand_total || 0);
+            dowList[dow].total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+          }
+        }
+      }
+
+      // Leaderboard Room
+      const roomMap = new Map();
+      for (const t of paidTrx) {
+        const rName = t.room_name || t.room_id || 'Room';
+        if (!roomMap.has(rName)) {
+          roomMap.set(rName, { room_id: t.room_id, room_name: rName, session_count: 0, total_revenue: 0, total_room_hours: 0 });
+        }
+        const rm = roomMap.get(rName);
+        rm.session_count += 1;
+        rm.total_revenue += Number(t.grand_total || 0);
+        rm.total_room_hours += Math.round(Number(t.duration_minutes || 0) / 60 * 10) / 10;
+      }
+      const roomLeaderboard = Array.from(roomMap.values()).sort((a, b) => b.total_revenue - a.total_revenue);
+
+      // Leaderboard FnB
+      const fnbSold = Array.isArray(snapshot.fnb_sold_items) ? snapshot.fnb_sold_items : (snapshot.fnb_sold_summary?.items || []);
+      const fnbLeaderboard = fnbSold.slice(0, 10).map(f => ({
+        menu_id: f.menu_id || '',
+        menu_name: f.menu_name || '',
+        category: f.category || 'F&B',
+        total_quantity: Number(f.quantity || 0),
+        total_revenue: Number(f.revenue || 0)
+      }));
+
+      return {
+        filters: {
+          period: snapshot.period || 'today',
+          startDate: snapshot.operational_date_start,
+          endDate: snapshot.operational_date_end,
+          durationDays,
+          totalRoomsCount,
+          availableRoomHours,
+          operationalHoursPerDay
+        },
+        kpi: {
+          totalRevenue: { current: totalRevenue, compare: 0, deltaPercent: 0, trxCount: paidTrx.length },
+          revPah: { current: curRevPah, compare: 0, deltaPercent: 0, availableHours: availableRoomHours },
+          avgSpendPerRoom: { current: curAov, compare: 0, deltaPercent: 0 },
+          roomOccupancyRate: {
+            currentPercent: availableRoomHours > 0 ? Math.round(((paidTrx.reduce((s, t) => s + Number(t.duration_minutes || 0), 0) / 60) / availableRoomHours) * 1000) / 10 : 0,
+            comparePercent: 0,
+            deltaPercent: 0,
+            availableHours: availableRoomHours
+          },
+          fnbGrossMargin: { grossSales: fnbRevenue, currentPercent: fnbMarginPercent, grossProfit: fnbGrossProfit, totalHpp: fnbHpp },
+          roomExtensionRate: {
+            currentPercent: paidTrx.length > 0 ? Math.round((extCount / paidTrx.length) * 1000) / 10 : 0,
+            comparePercent: 0,
+            deltaPercent: 0,
+            extendedSessions: extCount,
+            totalSessions: paidTrx.length
+          },
+          lcAttachmentRate: {
+            currentPercent: paidTrx.length > 0 ? Math.round((lcCount / paidTrx.length) * 1000) / 10 : 0,
+            comparePercent: 0,
+            deltaPercent: 0,
+            lcSessions: lcCount,
+            totalSessions: paidTrx.length
+          },
+          discountLeakage: { current: discounts, compare: 0, deltaPercent: 0 }
+        },
+        revenueComposition: { roomTotal: roomRevenue, fnbTotal: fnbRevenue, lcTotal: lcRevenue, discounts, netRevenue: totalRevenue },
+        paymentBreakdown: { cash: Number(summary.cash_revenue || 0), transfer: Number(summary.transfer_revenue || 0) },
+        hourlyTraffic: hourlySequence,
+        dailyTrend: dailySequence.length ? dailySequence : [{ operational_date: snapshot.operational_date_start || '2026-09-20', trx_count: paidTrx.length, daily_revenue: totalRevenue, daily_room_hours: 15 }],
+        dayOfWeekPattern: { days: dowList, peakDay: "Minggu", slowestDay: "Senin" },
+        roomLeaderboard,
+        fnbLeaderboard
+      };
+    }
+
+    function renderAnalytics(snapshot) {
+      let data = customAnalyticsData || snapshot.analytics;
+      if (!data || !data.kpi) {
+        if (snapshot && (snapshot.transactions?.length > 0 || snapshot.summary?.total_revenue_all > 0)) {
+          data = deriveAnalyticsFromSnapshot(snapshot);
+        } else {
+          return `
+            <section class="panel">
+              <h2>Analisa &amp; Intelijen Bisnis</h2>
+              <div class="empty">
+                Belum ada transaksi operasional pada periode ini.<br>
+                Data performa, jam sibuk, dan profitabilitas akan otomatis muncul begitu transaksi tercatat.
+              </div>
+            </section>
+          `;
+        }
+      }
+
+      const kpi = data.kpi || {};
+      const composition = data.revenueComposition || {};
+      const payment = data.paymentBreakdown || {};
+      const hourly = Array.isArray(data.hourlyTraffic) ? data.hourlyTraffic : [];
+      const daily = Array.isArray(data.dailyTrend) ? data.dailyTrend : [];
+      const dow = data.dayOfWeekPattern || { days: [] };
+      const roomLd = Array.isArray(data.roomLeaderboard) ? data.roomLeaderboard : [];
+      const fnbLd = Array.isArray(data.fnbLeaderboard) ? data.fnbLeaderboard : [];
+
+      const rTotal = Number(composition.roomTotal || 0);
+      const fTotal = Number(composition.fnbTotal || 0);
+      const lTotal = Number(composition.lcTotal || 0);
+      const netTotal = Math.max(1, rTotal + fTotal + lTotal);
+      const rPct = Math.round((rTotal / netTotal) * 100);
+      const fPct = Math.round((fTotal / netTotal) * 100);
+      const lPct = Math.max(0, 100 - rPct - fPct);
+
+      const cashTotal = Number(payment.cash || 0);
+      const trfTotal = Number(payment.transfer || 0);
+      const payTotal = Math.max(1, cashTotal + trfTotal);
+      const cashPct = Math.round((cashTotal / payTotal) * 100);
+      const trfPct = Math.max(0, 100 - cashPct);
+
+      let chartTitle = "Kurva Jam Sibuk 24 Jam (Hourly Traffic Sequence)";
+      let chartSubtitle = "Distribusi okupansi & omzet 24 jam operasional mulai pukul 10:00 WIB hingga 09:00 WIB.";
+      let chartBarsHtml = "";
+
+      if (analyticsChartMode === "daily") {
+        chartTitle = "Tren Pertumbuhan Harian (Daily Timeline Trend)";
+        chartSubtitle = "Pergerakan omzet dan durasi sewa room hari-ke-hari sepanjang periode terpilih. Arahkan mouse/sentuh batang untuk rincian.";
+        const maxDaily = Math.max(1, ...daily.map(d => Number(d.currentRevenue ?? d.daily_revenue ?? 0)));
+        chartBarsHtml = daily.map(d => {
+          const rev = Number(d.currentRevenue ?? d.daily_revenue ?? 0);
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDaily) * 100));
+          const rawDate = d.date || d.operational_date;
+          const dateLabel = d.dateLabel || formatDisplayDate(rawDate);
+          const compact = formatCompactCurrency(rev);
+          const isPeak = rev === maxDaily && rev > 0;
+          const sessions = d.currentSessions ?? d.trx_count ?? 0;
+          const hours = Number(d.currentRoomHours ?? d.daily_room_hours ?? 0);
+          return `
+            <div class="analytics-bar-col"
+                 data-tooltip-title="📅 ${safe(dateLabel)}"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(sessions)} Transaksi Lunas"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
+                <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
+                </div>
+              </div>
+              <div class="analytics-bar-label">${safe(dateLabel)}</div>
+            </div>
+          `;
+        }).join("");
+      } else if (analyticsChartMode === "day_of_week") {
+        const peakText = dow.peakDay ? ` · Hari Tersibuk: <strong style="color:var(--gold)">${safe(dow.peakDay)} 🔥</strong>` : "";
+        const slowText = dow.slowestDay ? ` · Hari Tersepi: <strong style="color:var(--green)">${safe(dow.slowestDay)} ❄️</strong>` : "";
+        chartTitle = "Pola & Distribusi Hari Ramai (Day-of-Week Rhythm)";
+        chartSubtitle = `Rata-rata performa bisnis per hari dalam sepekan (Senin s/d Minggu)${peakText}${slowText}`;
+        const days = Array.isArray(dow.days) ? dow.days : [];
+        const maxDow = Math.max(1, ...days.map(d => Number(d.totalRevenue ?? d.total_revenue ?? 0)));
+        chartBarsHtml = days.map(d => {
+          const rev = Number(d.totalRevenue ?? d.total_revenue ?? 0);
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxDow) * 100));
+          const dayName = d.dayName || d.day_name || "";
+          const isPeak = dayName === dow.peakDay;
+          const isSlowest = dayName === dow.slowestDay;
+          const barCls = isPeak ? "peak" : (isSlowest ? "slowest" : "");
+          const compact = formatCompactCurrency(rev);
+          const sessions = d.totalSessions ?? d.total_sessions ?? 0;
+          const hours = Number(d.totalRoomHours ?? d.total_room_hours ?? 0);
+          return `
+            <div class="analytics-bar-col"
+                 data-tooltip-title="📆 Hari ${safe(dayName)}"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(sessions)} Total Sesi Karaoke"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
+                <div class="analytics-bar-fill ${barCls}" style="height: ${pct}%;">
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
+                </div>
+              </div>
+              <div class="analytics-bar-label">${safe(dayName)}</div>
+            </div>
+          `;
+        }).join("");
+      } else {
+        const maxHourly = Math.max(1, ...hourly.map(h => Number(h.currentRevenue ?? h.hourly_revenue ?? 0)));
+        chartBarsHtml = hourly.map(h => {
+          const rev = Number(h.currentRevenue ?? h.hourly_revenue ?? 0);
+          const pct = Math.max(rev > 0 ? 6 : 2, Math.round((rev / maxHourly) * 100));
+          const hourNum = h.hour ?? h.hour_wib ?? 0;
+          const hourText = h.hourLabel || `${String(hourNum).padStart(2, '0')}:00`;
+          const isPeak = rev === maxHourly && rev > 0;
+          const compact = formatCompactCurrency(rev);
+          const sessions = h.currentSessions ?? h.session_count ?? 0;
+          const hours = Number(h.currentRoomHours ?? h.hourly_room_hours ?? 0);
+          return `
+            <div class="analytics-bar-col"
+                 data-tooltip-title="⏰ Pukul ${hourText} WIB"
+                 data-tooltip-rev="${formatCurrency(rev)}"
+                 data-tooltip-sessions="${formatNumber(sessions)} Sesi Karaoke"
+                 data-tooltip-hours="${hours.toFixed(1)} Jam Room">
+              <div class="analytics-bar-track ${rev > 0 ? 'has-data' : ''}">
+                <div class="analytics-bar-fill ${isPeak ? 'peak' : ''}" style="height: ${pct}%;">
+                  ${compact ? `<span class="analytics-bar-value-tip">${compact}</span>` : ""}
+                </div>
+              </div>
+              <div class="analytics-bar-label">${hourText}</div>
+            </div>
+          `;
+        }).join("");
+      }
+
+      const topRoomMaxRev = Math.max(1, ...roomLd.map(r => Number(r.total_grand_revenue ?? r.total_revenue ?? 0)));
+      const topFnbMaxRev = Math.max(1, ...fnbLd.map(f => Number(f.total_sales ?? f.total_revenue ?? 0)));
+
+      return `
+        <div class="analytics-toolbar">
+          <div class="analytics-toolbar-title">
+            <h2>Analisa &amp; Intelijen Bisnis</h2>
+            <p>Cutoff operasional jam 10:00 WIB · Metrik performa, jam sibuk, utilisasi &amp; profitabilitas.</p>
+          </div>
+          <div class="analytics-toolbar-actions">
+            <label for="analyticsCompareSelect" style="font-size:0.8rem; color:var(--muted); font-weight:600;">Pembanding:</label>
+            <select id="analyticsCompareSelect" class="analytics-select">
+              <option value="previous_period" ${analyticsCompareTo === "previous_period" ? "selected" : ""}>Shift Mundur (Periode Sebelumnya)</option>
+              <option value="same_day_last_week" ${analyticsCompareTo === "same_day_last_week" ? "selected" : ""}>Hari yang Sama Pekan Lalu (-7 Hari)</option>
+            </select>
+          </div>
+        </div>
+
+        <section class="analytics-kpi-grid">
+          <article class="analytics-kpi-card featured">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Total Omzet Bersih</span>
+              ${formatAnalyticsDelta(kpi.totalRevenue?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.totalRevenue?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.totalRevenue?.compare || 0)} · ${formatNumber(kpi.totalRevenue?.trxCount || 0)} transaksi lunas</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">RevPAH (Revenue / Avail. Hour)</span>
+              ${formatAnalyticsDelta(kpi.revPah?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.revPah?.current || 0)} <span style="font-size:0.75rem; color:var(--muted); font-weight:normal">/jam</span></div>
+            <div class="analytics-kpi-sub">Kapasitas: ${formatNumber(kpi.revPah?.availableHours || 0)} jam ketersediaan room</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rata-rata Belanja / Room</span>
+              ${formatAnalyticsDelta(kpi.avgSpendPerRoom?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.avgSpendPerRoom?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.avgSpendPerRoom?.compare || 0)} per sesi karaoke</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Estimasi F&amp;B Gross Margin</span>
+              <span class="delta-badge positive">${(Number(kpi.fnbGrossMargin?.currentPercent) || 0).toFixed(1)}%</span>
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.fnbGrossMargin?.grossProfit || 0)}</div>
+            <div class="analytics-kpi-sub">Total Penjualan: ${formatCurrency(kpi.fnbGrossMargin?.grossSales || 0)}</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rasio Perpanjangan Room</span>
+              ${formatAnalyticsDelta(kpi.roomExtensionRate?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${(Number(kpi.roomExtensionRate?.currentPercent) || 0).toFixed(1)}%</div>
+            <div class="analytics-kpi-sub">${formatNumber(kpi.roomExtensionRate?.extendedSessions || 0)} dari ${formatNumber(kpi.roomExtensionRate?.totalSessions || 0)} sesi diperpanjang (&gt;2 jam)</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Rasio Tamu Sewa LC</span>
+              ${formatAnalyticsDelta(kpi.lcAttachmentRate?.deltaPercent)}
+            </div>
+            <div class="analytics-kpi-value">${(Number(kpi.lcAttachmentRate?.currentPercent) || 0).toFixed(1)}%</div>
+            <div class="analytics-kpi-sub">${formatNumber(kpi.lcAttachmentRate?.lcSessions || 0)} dari ${formatNumber(kpi.lcAttachmentRate?.totalSessions || 0)} sesi menyewa LC</div>
+          </article>
+
+          <article class="analytics-kpi-card">
+            <div class="analytics-kpi-top">
+              <span class="analytics-kpi-label">Diskon &amp; Potongan</span>
+              ${formatAnalyticsDelta(kpi.discountLeakage?.deltaPercent, true)}
+            </div>
+            <div class="analytics-kpi-value">${formatCurrency(kpi.discountLeakage?.current || 0)}</div>
+            <div class="analytics-kpi-sub">Pembanding: ${formatCurrency(kpi.discountLeakage?.compare || 0)}</div>
+          </article>
+        </section>
+
+        <section class="analytics-chart-panel">
+          <div class="analytics-chart-header">
+            <div class="analytics-chart-titles">
+              <h3>${safe(chartTitle)}</h3>
+              <p>${chartSubtitle}</p>
+            </div>
+            <div class="analytics-chart-modes">
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "hourly" ? "active" : ""}" data-analytics-chart="hourly">Jam Sibuk</button>
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "daily" ? "active" : ""}" data-analytics-chart="daily">Tren Harian</button>
+              <button type="button" class="analytics-chart-btn ${analyticsChartMode === "day_of_week" ? "active" : ""}" data-analytics-chart="day_of_week">Hari Ramai</button>
+            </div>
+          </div>
+          <div class="analytics-chart-scroll-wrapper">
+            <div class="analytics-bar-chart">
+              ${chartBarsHtml || '<div class="empty">Belum ada data visualisasi untuk mode ini.</div>'}
+            </div>
+          </div>
+        </section>
+
+        <section class="two-col">
+          <div class="panel">
+            <h2>Komposisi Sumber Pendapatan</h2>
+            <div class="analytics-stacked-bar">
+              <div class="analytics-stacked-segment room" style="width: ${rPct}%;" title="Sewa Ruangan: ${rPct}%"></div>
+              <div class="analytics-stacked-segment fnb" style="width: ${fPct}%;" title="F&B: ${fPct}%"></div>
+              <div class="analytics-stacked-segment lc" style="width: ${lPct}%;" title="Lady Companion: ${lPct}%"></div>
+            </div>
+            <div class="analytics-legend-list">
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--gold);"></span>Sewa Room</span>
+                <span><strong>${formatCurrency(rTotal)}</strong> (${rPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--green);"></span>F&amp;B</span>
+                <span><strong>${formatCurrency(fTotal)}</strong> (${fPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:var(--purple);"></span>Lady Companion (LC)</span>
+                <span><strong>${formatCurrency(lTotal)}</strong> (${lPct}%)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Saluran Pembayaran</h2>
+            <div class="analytics-stacked-bar">
+              <div class="analytics-stacked-segment cash" style="width: ${cashPct}%;" title="Tunai: ${cashPct}%"></div>
+              <div class="analytics-stacked-segment transfer" style="width: ${trfPct}%;" title="Non-Tunai: ${trfPct}%"></div>
+            </div>
+            <div class="analytics-legend-list">
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:#fcd34d;"></span>Tunai (Cash)</span>
+                <span><strong>${formatCurrency(cashTotal)}</strong> (${cashPct}%)</span>
+              </div>
+              <div class="analytics-legend-row">
+                <span class="analytics-legend-left"><span class="analytics-legend-dot" style="background:#60a5fa;"></span>Transfer / QRIS</span>
+                <span><strong>${formatCurrency(trfTotal)}</strong> (${trfPct}%)</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="two-col" style="margin-top: 16px;">
+          <div class="panel">
+            <h2>Peringkat Room Terpopuler</h2>
+            <div>
+              ${roomLd.length ? roomLd.slice(0, 5).map(room => {
+                const rev = Number(room.total_grand_revenue ?? room.total_revenue ?? 0);
+                const pct = Math.max(5, Math.round((rev / topRoomMaxRev) * 100));
+                const sessions = room.total_sessions ?? room.session_count ?? 0;
+                return `
+                  <div class="analytics-leaderboard-row">
+                    <div class="analytics-leaderboard-top">
+                      <span><strong>${safe(room.room_name || room.room_id)}</strong> <span class="muted">(${formatNumber(sessions)} sesi)</span></span>
+                      <span>${formatCurrency(rev)}</span>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill" style="width: ${pct}%;"></div>
+                    </div>
+                  </div>
+                `;
+              }).join("") : '<div class="empty">Belum ada aktivitas room di periode ini.</div>'}
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Peringkat F&amp;B Terlaris</h2>
+            <div>
+              ${fnbLd.length ? fnbLd.slice(0, 5).map(item => {
+                const rev = Number(item.total_sales ?? item.total_revenue ?? 0);
+                const pct = Math.max(5, Math.round((rev / topFnbMaxRev) * 100));
+                const itemName = item.item_name || item.menu_name || 'Item';
+                const qty = item.qty_sold ?? item.total_quantity ?? 0;
+                return `
+                  <div class="analytics-leaderboard-row">
+                    <div class="analytics-leaderboard-top">
+                      <span><strong>${safe(itemName)}</strong> <span class="muted">(${formatNumber(qty)} porsi)</span></span>
+                      <span>${formatCurrency(rev)}</span>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill" style="width: ${pct}%; background: var(--green);"></div>
+                    </div>
+                  </div>
+                `;
+              }).join("") : '<div class="empty">Belum ada penjualan F&B di periode ini.</div>'}
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderRooms(snapshot) {
+      const rooms = Array.isArray(snapshot.rooms) ? snapshot.rooms : [];
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="panel">
+          <h2>Status Ruangan</h2>
+          <div class="rooms">
+            ${rooms.length ? rooms.map(room => {
+              const tone = room.status === "occupied" ? "occupied" : room.status === "cleaning" ? "cleaning" : "available";
+              const orders = Array.isArray(room.open_fnb_orders) ? room.open_fnb_orders : [];
+              return `
+                <article class="room-card">
+                  <div class="room-name">${safe(room.room_name || room.room_id)}</div>
+                  <span class="badge ${tone}">${safe(room.status || "-")}</span>
+                  <div class="room-meta">
+                    <div>Tarif: ${formatCurrency(room.rate_per_hour)} / jam</div>
+                    ${room.start_time_wib ? `<div>Mulai: ${formatSimpleDateTime(room.start_time_wib)}</div>` : ""}
+                    ${room.scheduled_end_time_wib ? `<div>Selesai: ${formatSimpleDateTime(room.scheduled_end_time_wib)}</div>` : ""}
+                    ${Number(room.open_fnb_total) > 0 ? `<div>Open F&B: ${formatCurrency(room.open_fnb_total)}</div>` : ""}
+                    ${orders.length ? `<div>${formatNumber(orders.length)} order F&B terbuka</div>` : ""}
+                  </div>
+                </article>
+              `;
+            }).join("") : '<div class="empty">Belum ada data status room dari kasir untuk periode ini.</div>'}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderTransactions(snapshot) {
+      const transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      const summary = snapshot.summary || {};
+
+      const totalGross = Number(summary.total_revenue_all !== undefined
+        ? summary.total_revenue_all
+        : transactions.reduce((sum, t) => sum + Number(t.grand_total || 0), 0)
+      );
+      const totalSalesComm = Number(summary.total_sales_commission !== undefined
+        ? summary.total_sales_commission
+        : transactions.reduce((sum, t) => sum + Number(t.sales_commission_amount || t.sales_commission?.commission_amount || 0), 0)
+      );
+      const totalDisc = Number(summary.total_discounts !== undefined
+        ? summary.total_discounts
+        : transactions.reduce((sum, t) => sum + Number(t.promo_discount || 0) + Number(t.manual_discount || 0), 0)
+      );
+      const totalNet = Math.max(0, totalGross - totalSalesComm);
+
+      return `
+        ${renderMetrics(snapshot)}
+        <section class="panel">
+          <h2>Transaksi Periode Ini</h2>
+          <div class="accounting-summary-bar">
+            <div class="item"><span class="label">💰 Total Bill:</span> <span class="val">${formatCurrency(totalGross)}</span></div>
+            <span class="divider">·</span>
+            <div class="item"><span class="label">🏷️ Komisi Sales:</span> <span class="val text-amber">-${formatCurrency(totalSalesComm)}</span></div>
+            ${totalDisc > 0 ? `
+            <span class="divider">·</span>
+            <div class="item"><span class="label">✂️ Diskon:</span> <span class="val text-red">-${formatCurrency(totalDisc)}</span></div>
+            ` : ''}
+            <span class="divider">·</span>
+            <div class="item"><span class="label">✨ Net Omzet:</span> <span class="val text-green">${formatCurrency(totalNet)}</span></div>
+          </div>
+          ${table(
+            [
+              { label: "ID / Room" },
+              { label: "Status" },
+              { label: "Metode" },
+              { label: "Room", right: true },
+              { label: "F&B", right: true },
+              { label: "LC", right: true },
+              { label: "Total Bill", right: true },
+              { label: "Komisi (5%)", right: true },
+              { label: "Net Omzet", right: true },
+            ],
+            transactions.map(trx => {
+              const comm = trx.sales_commission || null;
+              const commAmount = Number(trx.sales_commission_amount !== undefined
+                ? trx.sales_commission_amount
+                : (comm?.commission_amount || 0)
+              );
+              const commPercent = comm?.commission_percent || trx.sales_commission_percent || 5;
+              const commRecipient = comm?.recipient_name || trx.sales_commission_recipient || "";
+              const promoDisc = Number(trx.promo_discount || 0);
+              const manualDisc = Number(trx.manual_discount || 0);
+              const grandTotal = Number(trx.grand_total || 0);
+              const netTotal = Number(trx.net_total !== undefined
+                ? trx.net_total
+                : Math.max(0, grandTotal - commAmount)
+              );
+
+              return `
+                <tr>
+                  <td>
+                    ${safe(trx.transaction_id || "-")}
+                    <div class="small">${safe(trx.room_name || trx.room_id || "-")} · ${formatSimpleDateTime(trx.end_time_wib || trx.created_at)}</div>
+                    ${Array.isArray(trx.room_journey) && trx.room_journey.length > 1
+                      ? `<div class="small">Pindah: ${trx.room_journey.map(segment => safe(segment.room_name || segment.room_id || "-")).join(" &rarr; ")}</div>`
+                      : ""}
+                    ${trx.package_name ? `<div class="small">Paket: ${safe(trx.package_name)}</div>` : ""}
+                    ${Number(trx.free_room_minutes || 0) > 0 ? `<div class="small">Free room: ${formatDuration(trx.free_room_minutes)}</div>` : ""}
+                    ${promoDisc > 0 ? `<div class="deduction-badge discount">🏷️ Promo: -${formatCurrency(promoDisc)}${trx.promo_code ? ` (${safe(trx.promo_code)})` : ''}</div>` : ""}
+                    ${manualDisc > 0 ? `<div class="deduction-badge discount">✂️ Diskon Kasir: -${formatCurrency(manualDisc)}${trx.manual_discount_reason ? ` (${safe(trx.manual_discount_reason)})` : ''}</div>` : ""}
+                    ${commAmount > 0 ? `<div class="deduction-badge">👤 Sales: ${safe(commRecipient || 'Marketing')} (${commPercent}%)</div>` : ""}
+                  </td>
+                  <td>${safe(trx.payment_status || "-")}</td>
+                  <td>${safe(trx.payment_method || "-")}</td>
+                  <td class="right">${formatCurrency(trx.room_total)}</td>
+                  <td class="right">${formatCurrency(trx.fnb_total)}</td>
+                  <td class="right">${formatCurrency(trx.lc_total)}</td>
+                  <td class="right"><strong>${formatCurrency(trx.grand_total)}</strong></td>
+                  <td class="right">
+                    ${commAmount > 0
+                      ? `<strong class="text-amber">-${formatCurrency(commAmount)}</strong><div class="small muted">${commPercent}%${commRecipient ? ` · ${safe(commRecipient)}` : ''}</div>`
+                      : '<span class="muted">-</span>'}
+                  </td>
+                  <td class="right">
+                    <strong class="text-green">${formatCurrency(netTotal)}</strong>
+                    ${commAmount > 0 ? '<div class="small muted">Setelah komisi</div>' : '<div class="small muted">Penuh</div>'}
+                  </td>
+                </tr>
+              `;
+            }),
+            "Belum ada transaksi pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderInventory(snapshot) {
+      const hasInventoryData = snapshot.inventory_items !== undefined || snapshot.inventory_summary !== undefined;
+      if (!hasInventoryData) {
+        return `
+          <section class="panel">
+            <h2>Stok Inventori</h2>
+            <div class="empty" style="text-align: center; padding: 36px 16px;">
+              <p style="font-size: 1.15rem; font-weight: 800; color: var(--amber); margin-bottom: 8px;">⏳ Menunggu Pengiriman Snapshot Stok dari Server Kasir Lokal</p>
+              <p class="muted" style="max-width: 600px; margin: 0 auto 16px; line-height: 1.5;">
+                Snapshot yang tersimpan di cloud saat ini dikirim oleh server kasir sebelum pembaruan fitur stok diaktifkan.
+                Begitu server kasir lokal di-restart atau script snapshot berjalan berikutnya, seluruh data stok barang fisik akan otomatis tampil di sini.
+              </p>
+              <button type="button" onclick="loadSnapshot()">Cek Pembaruan Snapshot</button>
+            </div>
+          </section>
+        `;
+      }
+
+      const summary = snapshot.inventory_summary || {};
+      const allItems = Array.isArray(snapshot.inventory_items)
+        ? snapshot.inventory_items
+        : (Array.isArray(snapshot.inventory?.items) ? snapshot.inventory.items : []);
+
+      const categories = Array.isArray(summary.categories) && summary.categories.length > 0
+        ? summary.categories
+        : Array.from(new Set(allItems.map(item => String(item.category || "General").trim()).filter(Boolean))).sort();
+
+      const filteredItems = allItems.filter(item => {
+        if (inventoryCategoryFilter !== "all") {
+          const itemCat = String(item.category || "General").trim().toLowerCase();
+          if (itemCat !== inventoryCategoryFilter.toLowerCase()) return false;
+        }
+        if (inventoryStatusFilter !== "all") {
+          if (item.stock_status !== inventoryStatusFilter) return false;
+        }
+        if (inventorySearchKeyword.trim()) {
+          const q = inventorySearchKeyword.trim().toLowerCase();
+          const matchName = String(item.stock_item_name || "").toLowerCase().includes(q);
+          const matchId = String(item.stock_item_id || "").toLowerCase().includes(q);
+          const matchCat = String(item.category || "").toLowerCase().includes(q);
+          if (!matchName && !matchId && !matchCat) return false;
+        }
+        return true;
+      });
+
+      return `
+        <section class="metrics">
+          ${metric("Total Item", `${formatNumber(summary.total_items || allItems.length)} item`, "Seluruh barang aktif")}
+          ${metric("Stok Aman", `${formatNumber(summary.safe_items || allItems.filter(i => i.stock_status === 'safe').length)} item`, "Di atas batas minimum")}
+          ${metric("Perlu Restock", `${formatNumber(summary.low_items || allItems.filter(i => i.stock_status === 'low').length)} item`, "Mendekati / batas minimum")}
+          ${metric("Kritis / Minus", `${formatNumber(summary.negative_items || allItems.filter(i => i.stock_status === 'negative').length)} item`, "Stok habis / minus")}
+        </section>
+        <section class="panel">
+          <h2>Stok Inventori</h2>
+          <div class="filter-bar">
+            <input type="search" class="search-input" id="inventorySearch" placeholder="🔍 Cari nama barang..." value="${safe(inventorySearchKeyword)}">
+            <select class="select-filter" id="inventoryCategoryFilter" aria-label="Filter Kategori">
+              <option value="all" ${inventoryCategoryFilter === "all" ? "selected" : ""}>📂 Semua Kategori (${allItems.length})</option>
+              ${categories.map(cat => {
+                const count = allItems.filter(i => String(i.category || "General").trim().toLowerCase() === cat.toLowerCase()).length;
+                return `<option value="${safe(cat)}" ${inventoryCategoryFilter.toLowerCase() === cat.toLowerCase() ? "selected" : ""}>${safe(cat)} (${count})</option>`;
+              }).join("")}
+            </select>
+            <select class="select-filter" id="inventoryStatusFilter" aria-label="Filter Status">
+              <option value="all" ${inventoryStatusFilter === "all" ? "selected" : ""}>⚡ Semua Status</option>
+              <option value="low" ${inventoryStatusFilter === "low" ? "selected" : ""}>⚠️ Menipis (Low Stock)</option>
+              <option value="negative" ${inventoryStatusFilter === "negative" ? "selected" : ""}>🚨 Kritis / Minus</option>
+              <option value="safe" ${inventoryStatusFilter === "safe" ? "selected" : ""}>✅ Stok Aman</option>
+            </select>
+            <div class="small">Menampilkan ${formatNumber(filteredItems.length)} dari ${formatNumber(allItems.length)} item</div>
+          </div>
+          ${table(
+            [
+              { label: "Nama Barang" },
+              { label: "Kategori" },
+              { label: "Sisa Stok", right: true },
+              { label: "Min. Stok", right: true },
+              { label: "Satuan" },
+              { label: "Status" },
+            ],
+            filteredItems.map(item => {
+              const tone = item.stock_status === "negative" ? "negative" : item.stock_status === "low" ? "low" : "safe";
+              const label = item.stock_status === "negative" ? "MINUS" : item.stock_status === "low" ? "MENIPIS" : "AMAN";
+              return `
+                <tr>
+                  <td>
+                    <strong>${safe(item.stock_item_name || "-")}</strong>
+                    <div class="small muted">${safe(item.stock_item_id || "-")}</div>
+                  </td>
+                  <td>${safe(item.category || "General")}</td>
+                  <td class="right"><span class="stock-qty-val ${tone}">${formatNumber(item.stock_qty)}</span></td>
+                  <td class="right">${formatNumber(item.min_stock)}</td>
+                  <td>${safe(item.unit || "pcs")}</td>
+                  <td><span class="badge ${tone}">${label}</span></td>
+                </tr>
+              `;
+            }),
+            "Tidak ada barang inventori yang cocok dengan filter."
+          )}
+        </section>
+      `;
+    }
+
+    function renderFnb(snapshot) {
+      const summary = snapshot.fnb_sold_summary || {};
+      const items = summary.items || snapshot.fnb_sold_items || [];
+      let physicalAll = Array.isArray(snapshot.fnb_physical_consumption) ? snapshot.fnb_physical_consumption : [];
+      const hasBundleSoldInItems = items.some(it => {
+        const n = (it.menu_name || "").toLowerCase();
+        const id = (it.menu_id || "").toLowerCase();
+        return n.includes("paket") || n.includes("bundle") || n.includes("holic") || n.includes("abidin") || id.includes("pkg-");
+      });
+      const hasPackageConsumption = physicalAll.some(i => Number(i.package_qty || 0) > 0);
+      const shouldDerivePhysical = (physicalAll.length === 0 || (hasBundleSoldInItems && !hasPackageConsumption)) && Array.isArray(snapshot.inventory_items) && snapshot.inventory_items.length > 0;
+
+      if (shouldDerivePhysical) {
+        const invMap = new Map();
+        for (const inv of snapshot.inventory_items) {
+          const key = inv.stock_item_id || inv.stock_item_name;
+          invMap.set(key, {
+            stock_item_id: inv.stock_item_id || "",
+            stock_item_name: inv.stock_item_name || "",
+            category: inv.category || "General",
+            unit: inv.unit || "pcs",
+            current_stock: Number(inv.stock_qty || 0),
+            ala_carte_qty: 0,
+            package_qty: 0,
+            total_consumed: 0
+          });
+        }
+
+        const baselineBoms = {
+          "beer holic draft": [
+            { stock_item_id: "MENU-019", stock_item_name: "Draft beer", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic bintang": [
+            { stock_item_id: "MENU-017", stock_item_name: "Bintang", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic balihai": [
+            { stock_item_id: "MENU-018", stock_item_name: "Balihai", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic angker": [
+            { stock_item_id: "MENU-016", stock_item_name: "Angker", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "beer holic singaraja": [
+            { stock_item_id: "MENU-020", stock_item_name: "Singaraja", qty_used: 3, unit: "botol" },
+            { stock_item_id: "MENU-001", stock_item_name: "French Fries", qty_used: 1, unit: "pack" }
+          ],
+          "abidin-draft beer": [
+            { stock_item_id: "MENU-035", stock_item_name: "Anggur Merah", qty_used: 1, unit: "botol" },
+            { stock_item_id: "MENU-019", stock_item_name: "Draft beer", qty_used: 1, unit: "botol" }
+          ],
+          "pink lady sprite": [
+            { stock_item_id: "MENU-041", stock_item_name: "Pink Lady", qty_used: 1, unit: "botol" },
+            { stock_item_id: "MENU-099", stock_item_name: "Sprite", qty_used: 1, unit: "botol" }
+          ]
+        };
+
+        const bundleRecipesMap = new Map();
+        for (const [bKey, comps] of Object.entries(baselineBoms)) {
+          bundleRecipesMap.set(bKey.toLowerCase().trim(), comps);
+        }
+
+        const dynamicRecipes = Array.isArray(snapshot.bundle_recipes) ? snapshot.bundle_recipes : [];
+        for (const r of dynamicRecipes) {
+          const kName = (r.menu_name || r.package_name || "").toLowerCase().trim();
+          const kId = (r.menu_id || r.package_id || "").toLowerCase().trim();
+          const compObj = {
+            stock_item_id: r.item_id || r.stock_item_id || r.component_ref_id || "",
+            stock_item_name: r.stock_item_name || r.component_name || "",
+            qty_used: Number(r.qty_used || r.qty || 1),
+            unit: r.unit || "pcs"
+          };
+          if (kName) {
+            if (!bundleRecipesMap.has(kName)) bundleRecipesMap.set(kName, []);
+            bundleRecipesMap.get(kName).push(compObj);
+          }
+          if (kId) {
+            if (!bundleRecipesMap.has(kId)) bundleRecipesMap.set(kId, []);
+            bundleRecipesMap.get(kId).push(compObj);
+          }
+        }
+
+        function findEntry(refId, refName) {
+          if (refId && invMap.has(refId)) return invMap.get(refId);
+          if (refName) {
+            const target = refName.toLowerCase().trim();
+            for (const val of invMap.values()) {
+              if (val.stock_item_name && val.stock_item_name.toLowerCase().trim() === target) {
+                return val;
+              }
+            }
+          }
+          return null;
+        }
+
+        for (const it of items) {
+          const q = Number(it.quantity || it.quantity_sold || 0);
+          if (q <= 0) continue;
+
+          const itName = (it.menu_name || "").toLowerCase().trim();
+          const itId = (it.menu_id || "").toLowerCase().trim();
+
+          const bundleComps = bundleRecipesMap.get(itName) || bundleRecipesMap.get(itId);
+          if (bundleComps && bundleComps.length > 0) {
+            for (const comp of bundleComps) {
+              let entry = findEntry(comp.stock_item_id, comp.stock_item_name);
+              const needed = q * Number(comp.qty_used || 1);
+              if (entry) {
+                entry.package_qty += needed;
+                entry.total_consumed += needed;
+              } else if (comp.stock_item_id || comp.stock_item_name) {
+                const newEntry = {
+                  stock_item_id: comp.stock_item_id || "",
+                  stock_item_name: comp.stock_item_name || "",
+                  category: "Paket F&B",
+                  unit: comp.unit || "pcs",
+                  current_stock: 0,
+                  ala_carte_qty: 0,
+                  package_qty: needed,
+                  total_consumed: needed
+                };
+                invMap.set(newEntry.stock_item_id || newEntry.stock_item_name, newEntry);
+              }
+            }
+          } else {
+            let entry = findEntry(it.menu_id || it.stock_item_id, it.menu_name);
+            if (entry) {
+              entry.ala_carte_qty += q;
+              entry.total_consumed += q;
+            }
+          }
+        }
+
+        physicalAll = Array.from(invMap.values())
+          .filter(i => i.total_consumed > 0)
+          .sort((a, b) => (b.total_consumed - a.total_consumed) || a.stock_item_name.localeCompare(b.stock_item_name));
+      }
+
+      const filteredPhysical = physicalAll.filter(item => {
+        if (!fnbPhysicalSearchKeyword.trim()) return true;
+        const q = fnbPhysicalSearchKeyword.trim().toLowerCase();
+        const matchName = String(item.stock_item_name || "").toLowerCase().includes(q);
+        const matchSku = String(item.stock_item_id || "").toLowerCase().includes(q);
+        const matchCat = String(item.category || "").toLowerCase().includes(q);
+        return matchName || matchSku || matchCat;
+      });
+
+      return `
+        <section class="metrics">
+          ${metric("Omzet F&B", formatCurrency(summary.total_revenue), `${formatNumber(summary.total_qty)} item terjual`)}
+          ${metric("Jenis Item", formatNumber(summary.unique_items), "Menu berbeda yang terjual")}
+          ${metric("Order Terkait", formatNumber(summary.order_count), "Order F&B masuk transaksi")}
+          ${metric("Top Item", safe(items[0]?.menu_name || "-"), items[0] ? formatCurrency(items[0].revenue) : "")}
+        </section>
+        <section class="panel">
+          <h2>F&B Terjual</h2>
+          ${table(
+            [
+              { label: "Menu" },
+              { label: "Kategori" },
+              { label: "Qty", right: true },
+              { label: "Omzet", right: true },
+            ],
+            items.map(item => `
+              <tr>
+                <td>${safe(item.menu_name || item.menu_id || "-")}</td>
+                <td>${safe(item.category || "-")}</td>
+                <td class="right">${formatNumber(item.quantity)}</td>
+                <td class="right">${formatCurrency(item.revenue)}</td>
+              </tr>
+            `),
+            "Belum ada F&B terjual pada periode ini."
+          )}
+        </section>
+        <section class="panel">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+            <div>
+              <h2 style="display: flex; align-items: center; gap: 8px; margin: 0 0 4px 0;">
+                <span>📦</span> Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)
+              </h2>
+              <p style="margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4;">
+                Menghitung total barang/bahan baku fisik yang keluar dari gudang (penjualan satuan + keluar via paket F&B/Room) disandingkan dengan sisa stok fisik aktual.
+              </p>
+            </div>
+            <div style="min-width: 200px; flex: 1; max-width: 320px;">
+              <input type="search" class="search-input" id="fnbPhysicalSearch" placeholder="🔍 Cari SKU atau nama barang..." value="${safe(fnbPhysicalSearchKeyword)}" style="width: 100%;" aria-label="Cari SKU atau nama barang fisik">
+            </div>
+          </div>
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%;">
+            ${table(
+              [
+                { label: "No" },
+                { label: "Kode SKU" },
+                { label: "Nama Barang Fisik" },
+                { label: "Kategori" },
+                { label: "Satuan" },
+                { label: "Terjual Satuan", right: true },
+                { label: "Keluar via Paket", right: true },
+                { label: "Total Fisik Keluar", right: true },
+                { label: "Sisa Stok Fisik", right: true },
+              ],
+              filteredPhysical.map((item, idx) => {
+                const alaCarte = Number(item.ala_carte_qty || 0);
+                const packageQty = Number(item.package_qty || 0);
+                const totalOut = Number(item.total_consumed || 0);
+                const stock = Number(item.current_stock || 0);
+                const stockTone = stock <= 0 ? "negative" : (stock <= 5 ? "low" : "safe");
+                return `
+                  <tr>
+                    <td style="color: var(--muted);">${idx + 1}</td>
+                    <td><strong>${safe(item.stock_item_id || "-")}</strong></td>
+                    <td><strong>${safe(item.stock_item_name || "-")}</strong></td>
+                    <td>${safe(item.category || "General")}</td>
+                    <td>${safe(item.unit || "pcs")}</td>
+                    <td class="right">${formatNumber(alaCarte)}</td>
+                    <td class="right"><strong class="text-green">${formatNumber(packageQty)}</strong></td>
+                    <td class="right"><strong style="font-size: 0.95rem;">${formatNumber(totalOut)}</strong></td>
+                    <td class="right">
+                      <span class="badge ${stockTone}" style="padding: 2px 8px; font-weight: 800;">
+                        ${formatNumber(stock)} ${safe(item.unit || "")}
+                      </span>
+                    </td>
+                  </tr>
+                `;
+              }),
+              "Belum ada pergerakan/konsumsi barang fisik pada periode ini."
+            )}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderLc(snapshot) {
+      const summary = snapshot.lc_performance || {};
+      const items = summary.items || snapshot.lc_performance_items || [];
+      return `
+        <section class="metrics">
+          ${metric("Omzet LC", formatCurrency(summary.total_fee), `${formatNumber(summary.total_sessions)} sesi LC`)}
+          ${metric("LC Perform", formatNumber(summary.active_lc_count), "Nama LC aktif di periode ini")}
+          ${metric("Total Durasi", formatDuration(summary.total_duration_minutes), "Akumulasi durasi perform")}
+          ${metric("Top LC", safe(items[0]?.lc_name || "-"), items[0] ? formatCurrency(items[0].total_fee) : "")}
+        </section>
+        <section class="panel">
+          <h2>LC Performance</h2>
+          ${table(
+            [
+              { label: "LC" },
+              { label: "Room" },
+              { label: "Sesi", right: true },
+              { label: "Durasi", right: true },
+              { label: "Fee", right: true },
+            ],
+            items.map(item => `
+              <tr>
+                <td>${safe(item.lc_name || item.lc_id || "-")}</td>
+                <td>${safe((item.rooms || []).join(", ") || "-")}</td>
+                <td class="right">${formatNumber(item.session_count)}</td>
+                <td class="right">${formatDuration(item.total_duration_minutes)}</td>
+                <td class="right">${formatCurrency(item.total_fee)}</td>
+              </tr>
+            `),
+            "Belum ada LC perform pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderClosing(snapshot) {
+      const closings = Array.isArray(snapshot.cashier_closings) ? snapshot.cashier_closings : [];
+      return `
+        <section class="panel">
+          <h2>Closing Kasir</h2>
+          ${table(
+            [
+              { label: "Tanggal" },
+              { label: "Kasir" },
+              { label: "Omzet Lunas", right: true },
+              { label: "Komisi Sales", right: true },
+              { label: "Net Omzet", right: true },
+              { label: "Cash Aktual", right: true },
+              { label: "Selisih", right: true },
+              { label: "Status" },
+            ],
+            closings.map(closing => {
+              const commTotal = Number(closing.sales_commission_total || 0);
+              const paidRev = Number(closing.paid_revenue || 0);
+              const netRev = Number(closing.net_revenue_after_commission || (paidRev - commTotal));
+              return `
+                <tr>
+                  <td>${safe(formatDisplayDate(closing.closing_date))}<div class="small">${formatSimpleDateTime(closing.created_at)}</div></td>
+                  <td>${safe(closing.cashier_name || closing.created_by || "-")}</td>
+                  <td class="right">${formatCurrency(paidRev)}</td>
+                  <td class="right">${commTotal > 0 ? `<span class="text-amber">-${formatCurrency(commTotal)}</span>` : '<span class="muted">-</span>'}</td>
+                  <td class="right"><strong class="text-green">${formatCurrency(netRev)}</strong></td>
+                  <td class="right">${formatCurrency(closing.cash_actual)}</td>
+                  <td class="right">${formatCurrency(closing.cash_difference)}</td>
+                  <td>${safe(closing.status || "-")}</td>
+                </tr>
+              `;
+            }),
+            "Belum ada closing kasir pada periode ini."
+          )}
+        </section>
+      `;
+    }
+
+    function renderContent() {
+      if (!currentSnapshot) return;
+      const content = document.getElementById("content");
+      if (!currentSnapshot.has_snapshot && currentSnapshot.mode === "cloud_latest_snapshot") {
+        content.innerHTML = `<section class="panel"><h2>Belum Ada Snapshot</h2><div class="empty">${safe(currentSnapshot.message || "Belum ada data untuk periode ini.")}</div></section>`;
+        return;
+      }
+
+      const renderers = {
+        overview: renderOverview,
+        analytics: renderAnalytics,
+        rooms: renderRooms,
+        transactions: renderTransactions,
+        inventory: renderInventory,
+        fnb: renderFnb,
+        lc: renderLc,
+        closing: renderClosing,
+      };
+      content.innerHTML = (renderers[activeTab] || renderOverview)(currentSnapshot);
+    }
+
+    function updateSnapshotHeader(snapshot) {
+      if (!snapshot?.has_snapshot && snapshot?.mode === "cloud_latest_snapshot") {
+        if (activePeriod === "today" || activePeriod === "activeshift") {
+          setStatus("Shift Baru Belum Buka · Belum Ada Transaksi", "cleaning");
+        } else {
+          setStatus("Belum ada snapshot", "cleaning");
+        }
+      } else if (snapshot?.is_fallback) {
+        setStatus("PC Kasir Offline · Data Terakhir", "cleaning");
+      } else {
+        setStatus("Cloud Mirror Aktif", "available");
+      }
+
+      document.getElementById("lastUpdate").textContent = snapshot.cloud_received_at_wib
+        ? `Update cloud: ${formatSimpleDateTime(snapshot.cloud_received_at_wib)}`
+        : (snapshot.generated_at_wib
+            ? `Update lokal: ${formatSimpleDateTime(snapshot.generated_at_wib)}`
+            : (snapshot.message || "Belum ada transaksi"));
+      const noteSuffix = snapshot?.is_fallback ? " · Data Closing Terakhir" : "";
+      const dateDisplay = (snapshot.operational_date_start && snapshot.operational_date_end)
+        ? (snapshot.operational_date_start === snapshot.operational_date_end
+            ? `${formatDisplayDate(snapshot.operational_date_start)}`
+            : `${formatDisplayDate(snapshot.operational_date_start)} s/d ${formatDisplayDate(snapshot.operational_date_end)}`)
+        : "-";
+      document.getElementById("periodInfo").textContent = snapshot.operational_date_start
+        ? `Periode: ${dateDisplay} · Source: ${snapshot.source_id || "local"}${noteSuffix}`
+        : "Periode: -";
+    }
+
+    async function loadSnapshot() {
+      try {
+        let url = `${API_URL}&period=${encodeURIComponent(activePeriod)}`;
+        if (activePeriod === "custom") {
+          const sDate = document.getElementById("customStartDate")?.value || customStartDate;
+          const eDate = document.getElementById("customEndDate")?.value || customEndDate;
+          if (sDate && eDate) {
+            url += `&start_date=${encodeURIComponent(sDate)}&end_date=${encodeURIComponent(eDate)}`;
+          }
+        }
+        url += `&_=${Date.now()}`;
+
+        const response = await fetch(url, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+        currentSnapshot = data;
+        customAnalyticsData = null;
+        updateSnapshotHeader(data);
+        renderPeriodButtons();
+        renderTabs();
+        renderContent();
+      } catch (error) {
+        setStatus("Gagal memuat mirror", "occupied");
+        document.getElementById("lastUpdate").innerHTML = `<span class="error">${safe(error.message)}</span>`;
+      }
+    }
+
+    document.getElementById("content").addEventListener("input", (event) => {
+      if (event.target && event.target.id === "inventorySearch") {
+        inventorySearchKeyword = event.target.value;
+        renderContent();
+        const searchBox = document.getElementById("inventorySearch");
+        if (searchBox) {
+          searchBox.focus();
+          searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length);
+        }
+      } else if (event.target && event.target.id === "fnbPhysicalSearch") {
+        fnbPhysicalSearchKeyword = event.target.value;
+        renderContent();
+        const searchBox = document.getElementById("fnbPhysicalSearch");
+        if (searchBox) {
+          searchBox.focus();
+          searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length);
+        }
+      }
+    });
+
+    document.getElementById("content").addEventListener("click", (event) => {
+      const chartBtn = event.target.closest("[data-analytics-chart]");
+      if (chartBtn) {
+        analyticsChartMode = chartBtn.dataset.analyticsChart;
+        renderContent();
+      }
+    });
+
+    document.getElementById("content").addEventListener("change", async (event) => {
+      if (event.target && event.target.id === "inventoryCategoryFilter") {
+        inventoryCategoryFilter = event.target.value;
+        renderContent();
+      } else if (event.target && event.target.id === "inventoryStatusFilter") {
+        inventoryStatusFilter = event.target.value;
+        renderContent();
+      } else if (event.target && event.target.id === "analyticsCompareSelect") {
+        analyticsCompareTo = event.target.value;
+        try {
+          setStatus("Memperbarui analisa...", "cleaning");
+          let analyticsUrl = `/exec?action=getOperationalAnalytics&period=${encodeURIComponent(activePeriod)}&compare_to=${encodeURIComponent(analyticsCompareTo)}`;
+          if (activePeriod === "custom") {
+            const sDate = document.getElementById("customStartDate")?.value || customStartDate;
+            const eDate = document.getElementById("customEndDate")?.value || customEndDate;
+            if (sDate && eDate) {
+              analyticsUrl += `&start_date=${encodeURIComponent(sDate)}&end_date=${encodeURIComponent(eDate)}`;
+            }
+          }
+          analyticsUrl += `&_=${Date.now()}`;
+          const res = await fetch(analyticsUrl);
+          const json = await res.json();
+          if (json && (json.ok || json.success)) {
+            customAnalyticsData = json.data || json;
+            setStatus("Cloud Mirror Aktif", "available");
+          }
+        } catch (err) {
+          console.warn("Gagal fetch live operational analytics:", err);
+          setStatus("Mode Snapshot", "available");
+        }
+        renderContent();
+      }
+    });
+
+    document.getElementById("refreshButton").addEventListener("click", () => {
+      customAnalyticsData = null;
+      loadSnapshot();
+    });
+
+    document.getElementById("periodButtons").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-period]");
+      if (!button) return;
+      activePeriod = button.dataset.period;
+      customAnalyticsData = null;
+      setUrlState();
+      renderPeriodButtons();
+      loadSnapshot();
+    });
+
+    document.getElementById("customDateApplyBtn")?.addEventListener("click", () => {
+      const sInput = document.getElementById("customStartDate");
+      const eInput = document.getElementById("customEndDate");
+      if (!sInput || !eInput) return;
+      if (!sInput.value || !eInput.value) {
+        alert("Silakan tentukan tanggal mulai dan tanggal selesai.");
+        return;
+      }
+      if (sInput.value > eInput.value) {
+        alert("Tanggal mulai tidak boleh lebih besar dari tanggal selesai.");
+        return;
+      }
+      customStartDate = sInput.value;
+      customEndDate = eInput.value;
+      activePeriod = "custom";
+      customAnalyticsData = null;
+      setUrlState();
+      renderPeriodButtons();
+      loadSnapshot();
+    });
+
+    document.querySelectorAll(".custom-date-quick-chips .chip-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const preset = btn.dataset.preset;
+        const todayStr = getTodayOperationalDateStr();
+        const [y, m, d] = todayStr.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+
+        if (preset === "today") {
+          customStartDate = todayStr;
+          customEndDate = todayStr;
+        } else if (preset === "yesterday") {
+          dt.setUTCDate(dt.getUTCDate() - 1);
+          const yStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+          customStartDate = yStr;
+          customEndDate = yStr;
+        } else if (preset === "last7days") {
+          dt.setUTCDate(dt.getUTCDate() - 6);
+          customStartDate = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+          customEndDate = todayStr;
+        } else if (preset === "thismonth") {
+          customStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
+          customEndDate = todayStr;
+        }
+
+        const sInput = document.getElementById("customStartDate");
+        const eInput = document.getElementById("customEndDate");
+        if (sInput) sInput.value = customStartDate;
+        if (eInput) eInput.value = customEndDate;
+
+        activePeriod = "custom";
+        customAnalyticsData = null;
+        setUrlState();
+        renderPeriodButtons();
+        loadSnapshot();
+      });
+    });
+
+    document.getElementById("monitorTabs").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-tab]");
+      if (!button) return;
+      activeTab = button.dataset.tab;
+      setUrlState();
+      renderTabs();
+      renderContent();
+    });
+
+    // Interactive Tooltip Popover for Analytics Charts
+    let analyticsTooltipEl = null;
+
+    function getOrCreateAnalyticsTooltip() {
+      if (!analyticsTooltipEl) {
+        analyticsTooltipEl = document.createElement("div");
+        analyticsTooltipEl.id = "analyticsFloatingTooltip";
+        analyticsTooltipEl.className = "analytics-floating-popover";
+        document.body.appendChild(analyticsTooltipEl);
+      }
+      return analyticsTooltipEl;
+    }
+
+    function showAnalyticsTooltip(col) {
+      const tooltip = getOrCreateAnalyticsTooltip();
+      const title = col.dataset.tooltipTitle;
+      if (!title) return;
+
+      const rev = col.dataset.tooltipRev || "Rp 0";
+      const sessions = col.dataset.tooltipSessions || "";
+      const hours = col.dataset.tooltipHours || "";
+
+      tooltip.innerHTML = `
+        <div class="analytics-floating-popover-title">${safe(title)}</div>
+        <div class="analytics-floating-popover-rev">${safe(rev)}</div>
+        <div class="analytics-floating-popover-meta">
+          ${sessions ? `<span>🎤 ${safe(sessions)}</span>` : ""}
+          ${hours ? `<span>⏱️ ${safe(hours)}</span>` : ""}
+        </div>
+      `;
+
+      tooltip.classList.add("visible");
+      positionAnalyticsTooltip(col);
+    }
+
+    function positionAnalyticsTooltip(col) {
+      if (!analyticsTooltipEl || !analyticsTooltipEl.classList.contains("visible")) return;
+
+      const rect = col.getBoundingClientRect();
+      const tooltipRect = analyticsTooltipEl.getBoundingClientRect();
+
+      let x = rect.left + (rect.width / 2);
+      let y = rect.top - 12;
+
+      if (y - tooltipRect.height < 10) {
+        y = rect.bottom + tooltipRect.height + 14;
+      }
+
+      const margin = 14;
+      const halfW = tooltipRect.width / 2;
+      if (x - halfW < margin) {
+        x = margin + halfW;
+      } else if (x + halfW > window.innerWidth - margin) {
+        x = window.innerWidth - margin - halfW;
+      }
+
+      analyticsTooltipEl.style.left = `${Math.round(x)}px`;
+      analyticsTooltipEl.style.top = `${Math.round(y)}px`;
+    }
+
+    function hideAnalyticsTooltip() {
+      if (analyticsTooltipEl) {
+        analyticsTooltipEl.classList.remove("visible");
+      }
+    }
+
+    document.addEventListener("mouseover", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col && col.dataset.tooltipTitle) {
+        showAnalyticsTooltip(col);
+      }
+    });
+
+    document.addEventListener("mouseout", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col) {
+        hideAnalyticsTooltip();
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      const col = event.target.closest(".analytics-bar-col");
+      if (col && col.dataset.tooltipTitle) {
+        showAnalyticsTooltip(col);
+      } else {
+        hideAnalyticsTooltip();
+      }
+    });
+
+    window.addEventListener("scroll", hideAnalyticsTooltip, { passive: true });
+
+    renderPeriodButtons();
+    renderTabs();
+    loadSnapshot();
+    setInterval(loadSnapshot, REFRESH_MS);
+  </script>
+</body>
+</html>

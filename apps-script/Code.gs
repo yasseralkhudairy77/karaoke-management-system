@@ -9,6 +9,18 @@
  */
 
 var SERVICE_NAME = "karaoke-pos-api";
+var FNB_V25A_BOOKING_MODE_REGULAR = "regular";
+var FNB_V25A_BOOKING_MODE_PACKAGE = "package";
+var FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE = "room_fnb_bundle";
+var FNB_V25A_PRICING_VERSION = "fnb-v2.5a";
+var FNB_V25A_VALID_DAY_ALL = "all";
+var FNB_V25A_VALID_DAY_WEEKDAY = "weekday";
+var FNB_V25A_VALID_DAY_WEEKEND = "weekend";
+var FNB_GENERAL_ROOM_ID = "FNB-GENERAL";
+var FNB_GENERAL_ROOM_NAME = "F&B Umum";
+var DEV_SHORT_SESSION_ENABLED = true;
+var DEV_MIN_SESSION_MINUTES = 1;
+var MIN_SESSION_MINUTES = 15;
 var NUMERIC_FIELDS = {
   rate_per_hour: true,
   duration_minutes: true,
@@ -34,6 +46,19 @@ var NUMERIC_FIELDS = {
   qty_change: true,
   stock_before: true,
   stock_after: true,
+  total_items: true,
+  counted_items: true,
+  matched_items: true,
+  variance_items: true,
+  shortage_items: true,
+  overage_items: true,
+  absolute_variance_qty: true,
+  net_variance_qty: true,
+  book_qty_snapshot: true,
+  sealed_container_qty: true,
+  count_qty: true,
+  final_qty: true,
+  difference_qty: true,
   cost_per_unit: true,
   cost_rate: true,
   selling_rate: true,
@@ -53,6 +78,21 @@ var NUMERIC_FIELDS = {
   qty_used: true,
   waste_percent: true,
   base_salary: true,
+  rate_per_room: true,
+  rate: true,
+  lc_total: true,
+  promo_discount: true,
+  bonus_per_item: true,
+  bonus_total: true,
+  room_earning_total: true,
+  sales_bonus_total: true,
+  cash_advance_deducted: true,
+  gross_earning_total: true,
+  net_payout_total: true,
+  amount: true,
+  cash_in_amount: true,
+  cash_out_amount: true,
+  balance_after: true,
 };
 var CASHIER_CLOSINGS_HEADERS = [
   "closing_id",
@@ -87,6 +127,11 @@ var FNB_ORDERS_HEADERS = [
   "cancel_reason",
   "cancelled_by",
   "cancelled_at",
+  "customer_name",
+  "general_bill_id",
+  "billed_transaction_id",
+  "idempotency_key",
+  "operational_date",
 ];
 var FNB_ORDER_ITEMS_HEADERS = [
   "order_id",
@@ -96,12 +141,204 @@ var FNB_ORDER_ITEMS_HEADERS = [
   "price",
   "quantity",
   "subtotal",
+  "bonus_sales_lc",
   "created_at",
+];
+var FNB_DUPLICATE_REPLAY_WINDOW_MS = 2 * 60 * 1000;
+var CASHIER_CLOSING_TRANSACTIONS_HEADERS = [
+  "closing_transaction_id",
+  "closing_id",
+  "transaction_id",
+  "transaction_type",
+  "session_id",
+  "room_id",
+  "room_name",
+  "start_time",
+  "end_time",
+  "duration_minutes",
+  "room_total",
+  "fnb_total",
+  "lc_total",
+  "promo_code",
+  "promo_discount",
+  "grand_total",
+  "fnb_order_ids",
+  "payment_method",
+  "payment_status",
+  "cashier_name",
+  "transaction_created_at",
+  "snapshot_at",
+];
+var CASHIER_CLOSING_FNB_ITEMS_HEADERS = [
+  "closing_fnb_item_id",
+  "closing_id",
+  "transaction_id",
+  "order_id",
+  "room_id",
+  "room_name",
+  "order_status",
+  "menu_id",
+  "menu_name",
+  "category",
+  "price",
+  "quantity",
+  "subtotal",
+  "order_created_at",
+  "snapshot_at",
+];
+var CASHIER_CLOSING_LC_DETAILS_HEADERS = [
+  "closing_lc_detail_id",
+  "closing_id",
+  "entry_type",
+  "log_id",
+  "bonus_log_id",
+  "transaction_id",
+  "order_id",
+  "session_id",
+  "room_id",
+  "room_name",
+  "lc_id",
+  "lc_name",
+  "start_time",
+  "end_time",
+  "duration_minutes",
+  "work_status",
+  "rate",
+  "menu_name",
+  "quantity",
+  "bonus_per_item",
+  "bonus_total",
+  "snapshot_at",
+];
+var RECEIPT_PRINT_LOGS_HEADERS = [
+  "print_log_id",
+  "transaction_id",
+  "print_sequence",
+  "is_reprint",
+  "print_type",
+  "cashier_name",
+  "printed_at",
+  "note",
 ];
 var TRANSACTIONS_EXTRA_HEADERS = [
   "fnb_total",
   "grand_total",
   "fnb_order_ids",
+  "transaction_type",
+  "lc_total",
+  "promo_code",
+  "promo_discount",
+  "customer_name",
+  "general_bill_id",
+  "entry_source",
+  "source_note",
+  "entered_by",
+  "idempotency_key",
+  "operational_date",
+];
+var PROMO_MASTER_HEADERS = [
+  "code",
+  "type",
+  "discount_type",
+  "discount_value",
+  "status",
+  "used_in_transaction_id",
+  "used_at",
+  "created_at",
+];
+var LC_MASTER_HEADERS = [
+  "lc_id",
+  "lc_name",
+  "rate_per_room",
+  "status",
+  "availability",
+  "updated_at",
+];
+var LC_WORK_LOG_HEADERS = [
+  "log_id",
+  "session_id",
+  "lc_id",
+  "lc_name",
+  "rate",
+  "duration_minutes",
+  "rate_per_hour",
+  "status",
+  "created_at",
+  "closed_at",
+  "payroll_id",
+  "operational_date",
+];
+var LC_PAYROLL_HISTORY_HEADERS = [
+  "payroll_id",
+  "start_date",
+  "end_date",
+  "total_amount",
+  "total_sessions",
+  "total_lcs_paid",
+  "processed_at",
+  "processed_by",
+  "room_earning_total",
+  "sales_bonus_total",
+  "cash_advance_deducted",
+  "gross_earning_total",
+  "net_payout_total",
+  "petty_cash_ledger_id",
+  "status",
+];
+var LC_SALES_BONUS_LOG_HEADERS = [
+  "bonus_log_id",
+  "operational_date",
+  "transaction_id",
+  "order_id",
+  "menu_id",
+  "menu_name",
+  "category",
+  "lc_id",
+  "lc_name",
+  "quantity",
+  "bonus_per_item",
+  "bonus_total",
+  "source_status",
+  "payroll_id",
+  "created_at",
+  "created_by",
+  "voided_at",
+  "void_reason",
+];
+var LC_CASH_ADVANCES_HEADERS = [
+  "cash_advance_id",
+  "operational_date",
+  "lc_id",
+  "lc_name",
+  "amount",
+  "status",
+  "requested_by",
+  "cashier_name",
+  "petty_cash_ledger_id",
+  "payroll_id",
+  "note",
+  "created_at",
+  "deducted_at",
+  "cancelled_at",
+  "cancel_reason",
+];
+var PETTY_CASH_LEDGER_HEADERS = [
+  "ledger_id",
+  "operational_date",
+  "entry_type",
+  "category",
+  "reference_type",
+  "reference_id",
+  "lc_id",
+  "lc_name",
+  "cash_in_amount",
+  "cash_out_amount",
+  "balance_after",
+  "cashier_name",
+  "note",
+  "created_at",
+  "voided_at",
+  "void_reason",
 ];
 var MENU_STOCK_HEADERS = [
   "stock_tracking",
@@ -131,10 +368,58 @@ var STOCK_MOVEMENTS_HEADERS = [
   "stock_after",
   "note",
   "cashier_name",
+  "operational_date",
+];
+var INVENTORY_AUDIT_HEADERS = [
+  "audit_id",
+  "operational_date",
+  "audit_type",
+  "scope",
+  "status",
+  "started_at",
+  "started_by",
+  "submitted_at",
+  "submitted_by",
+  "approved_at",
+  "approved_by",
+  "posted_at",
+  "posted_by",
+  "note",
+  "total_items",
+  "counted_items",
+  "matched_items",
+  "variance_items",
+  "shortage_items",
+  "overage_items",
+  "absolute_variance_qty",
+  "net_variance_qty"
+];
+var INVENTORY_AUDIT_LINE_HEADERS = [
+  "audit_line_id",
+  "audit_id",
+  "stock_item_id",
+  "stock_item_name",
+  "category",
+  "unit",
+  "book_qty_snapshot",
+  "count_method",
+  "sealed_container_qty",
+  "open_container_percentages_json",
+  "count_qty",
+  "final_qty",
+  "difference_qty",
+  "reason_code",
+  "note",
+  "status",
+  "movement_id",
+  "updated_at"
 ];
 var ROOMS_BOOKING_HEADERS = [
   "booked_duration_minutes",
   "scheduled_end_time",
+  "customer_name",
+  "package_id",
+  "lc_ids",
 ];
 var ROOM_TIME_LOGS_HEADERS = [
   "log_id",
@@ -220,6 +505,9 @@ var MENU_MASTER_HEADERS = [
   "stock_tracking",
   "stock_item_id",
   "stock_qty_per_unit",
+  "bonus_sales_lc",
+  "hpp",
+  "variable_cost_rate",
 ];
 var MASTER_DATA_AUDIT_LOG_HEADERS = [
   "log_id",
@@ -301,6 +589,142 @@ var PACKAGE_DETAIL_HEADERS = [
   "updated_at",
   "note",
 ];
+var ROOM_SESSIONS_SHEET = "RoomSessions";
+var SESSION_PACKAGES_SHEET = "SessionPackages";
+var SESSION_PACKAGE_DETAILS_SHEET = "SessionPackageDetails";
+var TRANSACTION_LINES_SHEET = "TransactionLines";
+var ROOM_SESSION_HEADERS = [
+  "session_id",
+  "room_id",
+  "room_name",
+  "booking_mode",
+  "status",
+  "start_time",
+  "scheduled_end_time",
+  "end_time",
+  "booked_duration_minutes",
+  "package_included_minutes",
+  "promotion_free_minutes",
+  "billable_room_minutes",
+  "rate_per_hour",
+  "cashier_name",
+  "created_at",
+  "updated_at",
+  "closed_transaction_id",
+  "idempotency_key",
+  "legacy_room_start_time",
+  "note",
+  "customer_name",
+  "package_id",
+  "prepayment_transaction_id",
+  "lc_ids",
+  "lc_assignments",
+];
+var SESSION_PACKAGE_HEADERS = [
+  "session_package_id",
+  "session_id",
+  "package_id",
+  "package_name",
+  "package_category",
+  "package_type",
+  "selling_price",
+  "duration_minutes",
+  "valid_day_type",
+  "valid_day_result",
+  "status",
+  "selected_at",
+  "selected_by",
+  "snapshot_json",
+  "void_reason",
+  "voided_at",
+];
+var SESSION_PACKAGE_DETAIL_HEADERS = [
+  "session_package_detail_id",
+  "session_package_id",
+  "session_id",
+  "package_detail_id",
+  "line_no",
+  "component_type",
+  "component_ref_id",
+  "component_name",
+  "qty",
+  "unit",
+  "hpp",
+  "additional_price",
+  "cost_amount",
+  "is_choice",
+  "choice_group",
+  "chosen_ref_id",
+  "chosen_name",
+  "fulfillment_status",
+  "fulfilled_qty",
+  "fulfilled_at",
+  "snapshot_json",
+];
+var TRANSACTION_LINE_HEADERS = [
+  "transaction_line_id",
+  "transaction_id",
+  "session_id",
+  "line_type",
+  "source_type",
+  "source_id",
+  "description",
+  "qty",
+  "unit",
+  "unit_price",
+  "gross_amount",
+  "discount_amount",
+  "net_amount",
+  "tax_amount",
+  "sort_order",
+  "created_at",
+  "snapshot_json",
+];
+var PACKAGE_SESSION_FOUNDATION_SHEETS = [
+  {
+    sheet_name: ROOM_SESSIONS_SHEET,
+    headers: ROOM_SESSION_HEADERS,
+    primary_id: "session_id",
+  },
+  {
+    sheet_name: SESSION_PACKAGES_SHEET,
+    headers: SESSION_PACKAGE_HEADERS,
+    primary_id: "session_package_id",
+  },
+  {
+    sheet_name: SESSION_PACKAGE_DETAILS_SHEET,
+    headers: SESSION_PACKAGE_DETAIL_HEADERS,
+    primary_id: "session_package_detail_id",
+  },
+  {
+    sheet_name: TRANSACTION_LINES_SHEET,
+    headers: TRANSACTION_LINE_HEADERS,
+    primary_id: "transaction_line_id",
+  },
+];
+var LC_FINANCE_FOUNDATION_SHEETS = [
+  {
+    sheet_name: "LcSalesBonusLogs",
+    headers: LC_SALES_BONUS_LOG_HEADERS,
+    primary_id: "bonus_log_id",
+  },
+  {
+    sheet_name: "LcCashAdvances",
+    headers: LC_CASH_ADVANCES_HEADERS,
+    primary_id: "cash_advance_id",
+  },
+  {
+    sheet_name: "PettyCashLedger",
+    headers: PETTY_CASH_LEDGER_HEADERS,
+    primary_id: "ledger_id",
+  },
+  {
+    sheet_name: "LcPayrollHistory",
+    headers: LC_PAYROLL_HISTORY_HEADERS,
+    primary_id: "payroll_id",
+    allow_append_headers: true,
+  },
+];
 var RECIPE_BOM_HEADERS = [
   "recipe_id",
   "menu_id",
@@ -332,6 +756,15 @@ function doGet(e) {
       });
     }
 
+    if (action === "correctActiveRoomDuration") {
+      return jsonResponse(correctActiveRoomDuration_(
+        e.parameter.room_id,
+        e.parameter.target_duration_minutes,
+        e.parameter.cashier_name,
+        e.parameter.note
+      ));
+    }
+
     if (action === "getTvDevices") {
       return jsonResponse(getTvDevices_());
     }
@@ -360,6 +793,14 @@ function doGet(e) {
       return jsonResponse(getPackages_());
     }
 
+    if (action === "getEligiblePackages") {
+      return jsonResponse(getEligiblePackages_(
+        e.parameter.room_id,
+        e.parameter.duration_minutes,
+        e.parameter.booking_date
+      ));
+    }
+
     if (action === "getPackageDetails") {
       return jsonResponse(getPackageDetails_(e.parameter.package_id));
     }
@@ -380,12 +821,28 @@ function doGet(e) {
       ));
     }
 
+    if (action === "getTransactionLcEditDetails") {
+      return jsonResponse(getTransactionLcEditDetails_(e.parameter.transaction_id));
+    }
+
+    if (action === "getTransactionLcReceiptDetails") {
+      return jsonResponse(getTransactionLcReceiptDetails_(e.parameter.transaction_id));
+    }
+
     if (action === "getTodayCashierClosings") {
       return jsonResponse(getCashierClosingsByPeriod_(
         e.parameter.period,
         e.parameter.start_date,
         e.parameter.end_date
       ));
+    }
+
+    if (action === "getCashierClosingDetails") {
+      return jsonResponse(getCashierClosingDetails_(e.parameter.closing_id));
+    }
+
+    if (action === "validateCashierClosingSnapshot") {
+      return jsonResponse(validateCashierClosingSnapshot_());
     }
 
     if (action === "getOpenFnbOrders") {
@@ -411,6 +868,18 @@ function doGet(e) {
         e.parameter.start_date,
         e.parameter.end_date
       ));
+    }
+
+    if (action === "initializeStockFromJul31") {
+      return jsonResponse(initializeStockFromJul31_(e.parameter));
+    }
+
+    if (action === "getInventoryAudits") {
+      return jsonResponse(getInventoryAudits_(e.parameter.status, e.parameter.limit));
+    }
+
+    if (action === "getInventoryAuditDetails") {
+      return jsonResponse(getInventoryAuditDetails_(e.parameter.audit_id));
     }
 
     if (action === "getTodayFnbSalesReport") {
@@ -459,8 +928,67 @@ function doGet(e) {
       return jsonResponse(getEmployees_());
     }
 
+    if (action === "getApiCapabilities") {
+      return jsonResponse({
+        ok: true,
+        success: true,
+        lc_assignment_dry_run: true,
+      });
+    }
+
+    if (action === "getLcMasterList") {
+      return jsonResponse(getLcMasterList_());
+    }
+
+    if (action === "getLcWorkReports") {
+      return jsonResponse(getLcWorkReports_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
+    if (action === "getLcPayrollHistory") {
+      return jsonResponse(getLcPayrollHistory_());
+    }
+
+    if (action === "getLcPayrollDetails") {
+      return jsonResponse(getLcPayrollDetails_(e.parameter.payroll_id));
+    }
+
+    if (action === "getPendingLcPayroll") {
+      return jsonResponse(getPendingLcPayroll_(
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
+    if (action === "validateLcFinanceFoundation") {
+      return jsonResponse(validateLcFinanceFoundation_());
+    }
+
+    if (action === "getLcFinanceSummary") {
+      return jsonResponse(getLcFinanceSummary_(
+        e.parameter.period,
+        e.parameter.start_date,
+        e.parameter.end_date
+      ));
+    }
+
+    if (action === "getPromos") {
+      return jsonResponse(getPromos_());
+    }
+
+    if (action === "validatePromoCode") {
+      return jsonResponse(validatePromoCode_(e.parameter));
+    }
+
     if (action === "getExpiredRoomRecoveryList") {
       return jsonResponse(getExpiredRoomRecoveryList_(e.parameter));
+    }
+
+    if (action === "getOperationalAnalytics") {
+      return jsonResponse(getOperationalAnalytics_(e.parameter));
     }
 
     return jsonResponse({
@@ -489,19 +1017,79 @@ function doPost(e) {
     var action = payload.action || "";
 
     if (action === "startSession") {
-      return jsonResponse(startSession_(payload.room_id, payload.duration_minutes));
+      return jsonResponse(startSession_(payload.room_id, payload.duration_minutes, payload));
+    }
+
+    if (action === "prepareRoomSession") {
+      return jsonResponse(prepareRoomSession_(payload));
+    }
+
+    if (action === "payAndStartSession") {
+      return jsonResponse(payAndStartSession_(payload));
+    }
+
+    if (action === "completeCleaning") {
+      return jsonResponse(completeCleaning_(payload));
+    }
+
+    if (action === "cancelBooking") {
+      return jsonResponse(cancelBooking_(payload));
+    }
+
+    if (action === "bulkImportPackages") {
+      return jsonResponse(bulkImportPackages_(payload));
+    }
+
+    if (action === "seedReceptionistEmployee") {
+      return jsonResponse(seedReceptionistEmployee_());
+    }
+
+    if (action === "activatePreparedSession") {
+      return jsonResponse(activatePreparedSession_(payload.room_id, payload.cashier_name));
     }
 
     if (action === "extendSession") {
-      return jsonResponse(extendSession_(payload.room_id, payload.add_minutes, payload.cashier_name, payload.note));
+      return jsonResponse(extendSession_(
+        payload.room_id,
+        payload.add_minutes,
+        payload.cashier_name,
+        payload.note,
+        payload.payment_method,
+        payload.payment_status
+      ));
+    }
+
+    if (action === "correctActiveRoomDuration") {
+      return jsonResponse(correctActiveRoomDuration_(
+        payload.room_id,
+        payload.target_duration_minutes,
+        payload.cashier_name,
+        payload.note
+      ));
     }
 
     if (action === "closeSession") {
-      return jsonResponse(closeSession_(payload.room_id, payload.cashier_name));
+      return jsonResponse(closeSession_(payload.room_id, payload.cashier_name, payload));
     }
 
     if (action === "markTransactionPaid") {
-      return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method));
+      return jsonResponse(markTransactionPaid_(payload.transaction_id, payload.payment_method, payload.promo_code));
+    }
+
+    if (action === "updateTransactionDetails") {
+      return jsonResponse(updateTransactionDetails_(payload));
+    }
+
+    if (action === "updateTransactionLcDurations") {
+      return jsonResponse(updateTransactionLcDurations_(payload));
+    }
+
+    if (action === "deleteTransaction") {
+      return jsonResponse(deleteTransaction_(payload));
+    }
+
+    if (action === "logReceiptPrint") {
+      return jsonResponse(logReceiptPrint_(payload));
     }
 
     if (action === "saveCashierClosing") {
@@ -509,11 +1097,53 @@ function doPost(e) {
     }
 
     if (action === "saveFnbOrder") {
-      return jsonResponse(saveFnbOrder_(payload.room_id, payload.items, payload.cashier_name, payload.note));
+      return jsonResponse(saveFnbOrder_(
+        payload.room_id,
+        payload.items,
+        payload.cashier_name,
+        payload.note,
+        payload.payment_method,
+        payload.payment_status,
+        payload.customer_name,
+        payload.general_bill_id,
+        payload.idempotency_key
+      ));
+    }
+
+    if (action === "settleGeneralFnbBill") {
+      return jsonResponse(settleGeneralFnbBill_(payload));
+    }
+
+    if (action === "createManualOutageTransaction") {
+      return jsonResponse(createManualOutageTransaction_(payload));
+    }
+
+    if (action === "previewSessionPricing") {
+      return jsonResponse(previewSessionPricing_(payload));
+    }
+
+    if (action === "validatePackageSessionFoundation") {
+      return jsonResponse(validatePackageSessionFoundation_());
+    }
+
+    if (action === "initializePackageSessionFoundation") {
+      return jsonResponse(initializePackageSessionFoundation_(payload));
+    }
+
+    if (action === "validateLcFinanceFoundation") {
+      return jsonResponse(validateLcFinanceFoundation_());
+    }
+
+    if (action === "initializeLcFinanceFoundation") {
+      return jsonResponse(initializeLcFinanceFoundation_(payload));
     }
 
     if (action === "cancelFnbOrder") {
       return jsonResponse(cancelFnbOrder_(payload.order_id, payload.cancel_reason, payload.cancelled_by));
+    }
+
+    if (action === "cancelGeneralFnbBill") {
+      return jsonResponse(cancelGeneralFnbBill_(payload.general_bill_id, payload.cancel_reason, payload.cancelled_by));
     }
 
     if (action === "sendTvCommand") {
@@ -566,6 +1196,42 @@ function doPost(e) {
       ));
     }
 
+    if (action === "toggleInventoryItemStatus") {
+      return jsonResponse(toggleInventoryItemStatus_(
+        payload.stock_item_id,
+        payload.status,
+        payload.cashier_name
+      ));
+    }
+
+    if (action === "renameInventoryItem") {
+      return jsonResponse(renameInventoryItem_(
+        payload.stock_item_id,
+        payload.new_name || payload.stock_item_name,
+        payload.changed_by || payload.cashier_name
+      ));
+    }
+
+    if (action === "initializeStockFromJul31") {
+      return jsonResponse(initializeStockFromJul31_(payload));
+    }
+
+    if (action === "createInventoryAudit") {
+      return jsonResponse(createInventoryAudit_(payload));
+    }
+
+    if (action === "saveInventoryAuditCounts") {
+      return jsonResponse(saveInventoryAuditCounts_(payload));
+    }
+
+    if (action === "submitInventoryAudit") {
+      return jsonResponse(submitInventoryAudit_(payload));
+    }
+
+    if (action === "approveInventoryAudit") {
+      return jsonResponse(approveInventoryAudit_(payload));
+    }
+
     if (action === "validateAdminPin") {
       return jsonResponse(validateAdminPin_(payload));
     }
@@ -586,6 +1252,10 @@ function doPost(e) {
       return jsonResponse(updateMenuMaster_(payload));
     }
 
+    if (action === "bulkUpdateMenuProfitability") {
+      return jsonResponse(bulkUpdateMenuProfitability_(payload));
+    }
+
     if (action === "saveInventoryMaster") {
       return jsonResponse(saveInventoryMaster_(payload));
     }
@@ -604,6 +1274,54 @@ function doPost(e) {
 
     if (action === "deleteInventoryMaster") {
       return jsonResponse(deleteInventoryMaster_(payload));
+    }
+
+    if (action === "saveLcMaster") {
+      return jsonResponse(saveLcMaster_(payload));
+    }
+
+    if (action === "updateLcMaster") {
+      return jsonResponse(updateLcMaster_(payload));
+    }
+
+    if (action === "deleteLcMaster") {
+      return jsonResponse(deleteLcMaster_(payload));
+    }
+
+    if (action === "bulkUpdateLcRate") {
+      return jsonResponse(bulkUpdateLcRate_(payload));
+    }
+
+    if (action === "assignSessionLcs") {
+      return jsonResponse(assignSessionLcs_(payload));
+    }
+
+    if (action === "processLcPayroll") {
+      return jsonResponse(processLcPayroll_(payload));
+    }
+
+    if (action === "createLcCashAdvance") {
+      return jsonResponse(createLcCashAdvance_(payload));
+    }
+
+    if (action === "recordPettyCashEntry") {
+      return jsonResponse(recordPettyCashEntry_(payload));
+    }
+
+    if (action === "createLcSalesBonusLog") {
+      return jsonResponse(createLcSalesBonusLog_(payload));
+    }
+
+    if (action === "savePromo") {
+      return jsonResponse(savePromo_(payload));
+    }
+
+    if (action === "updatePromoStatus") {
+      return jsonResponse(updatePromoStatus_(payload));
+    }
+
+    if (action === "deletePromo") {
+      return jsonResponse(deletePromo_(payload));
     }
 
     return jsonResponse({
@@ -698,7 +1416,37 @@ function getRooms_() {
       ? latestTvLogByDevice[String(tvDevice.tv_device_id || "").trim()] || null
       : null;
 
-    return {
+    // Get LC IDs from active session - IMPORTANT: Must check all relevant statuses
+    var lcIds = "";
+    var lcAssignments = "";
+    var debugInfo = {
+      room_id: room.room_id,
+      lcIds_initial: lcIds,
+      activeSession_found: false,
+      lcIds_from_session: null,
+      lcIds_final: ""
+    };
+
+    try {
+      // Try to find session with any of these statuses
+      var activeSession = findLatestRoomSessionForRoom_(room.room_id || "", ["starting", "active", "closing", "paid_waiting_start"]);
+      debugInfo.activeSession_found = !!activeSession;
+      
+      if (activeSession && activeSession.session) {
+        var sessionLcIds = activeSession.session.lc_ids;
+        debugInfo.lcIds_from_session = sessionLcIds;
+        lcIds = String(sessionLcIds || "").trim();
+        lcAssignments = String(activeSession.session.lc_assignments || "").trim();
+      }
+    } catch (err) {
+      Logger.log("Error finding session for " + room.room_id + ": " + err.message);
+      // Safe fallback - use lc_ids from room sheet if available
+      lcIds = String(room.lc_ids || "").trim();
+    }
+
+    debugInfo.lcIds_final = lcIds;
+
+    var roomObj = {
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       status: room.status || "",
@@ -709,7 +1457,15 @@ function getRooms_() {
       tv_device_id: room.tv_device_id || "",
       tv_device: buildRoomTvSummary_(room, tvDevice, latestTvLog),
       updated_at: room.updated_at || null,
+      customer_name: room.customer_name || "",
+      package_id: room.package_id || "",
+      lc_ids: lcIds,
+      lc_assignments: lcAssignments,
+      lc_companion_ids: lcIds,
+      _debug_lc_info: debugInfo,
     };
+
+    return roomObj;
   });
 }
 
@@ -1131,7 +1887,9 @@ function seedTvDisplayForRoom_(roomId, options) {
 
 function seedPilotTvDisplay_() {
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang menyiapkan TV display lain. Coba lagi sebentar.");
+  }
 
   try {
     var result = seedTvDisplayForRoom_("ROOM-002", {
@@ -1168,7 +1926,9 @@ function seedPilotTvDisplay_() {
 
 function seedTvDisplaysForAllRooms_() {
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang menyiapkan TV display lain. Coba lagi sebentar.");
+  }
 
   try {
     ensureRoomsMasterColumns_();
@@ -1228,7 +1988,9 @@ function rotateTvDisplayToken_(payload) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang memproses perubahan TV display lain. Coba lagi sebentar.");
+  }
 
   try {
     var result = seedTvDisplayForRoom_(payload.room_id, {
@@ -1664,7 +2426,9 @@ function recoverExpiredRoomSession_(payload) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return recoveryErrorResponse_("LOCK_BUSY", "Sistem sedang memproses recovery room lain. Coba lagi sebentar.");
+  }
 
   try {
     return recoverExpiredRoomSessionWithLock_(request, candidate);
@@ -2301,6 +3065,20 @@ function appendTvControlLogFromResponse_(response, triggerSource, cashierName, t
 
 function getMenuItems_() {
   ensureMenuStockColumns_();
+  var inventoryMap = {};
+  try {
+    var inventoryItems = getInventoryItems_();
+    for (var i = 0; i < inventoryItems.length; i++) {
+      var inv = inventoryItems[i];
+      if (inv && inv.stock_item_id) {
+        var key = String(inv.stock_item_id).trim().toLowerCase();
+        inventoryMap[key] = inv;
+      }
+    }
+  } catch (err) {
+    // Fallback if Inventory sheet is empty or unavailable
+  }
+
   var menuItems = readSheetAsObjects_("Menu")
     .filter(function (menuItem) {
       return menuItem.menu_id && menuItem.menu_name;
@@ -2317,16 +3095,34 @@ function getMenuItems_() {
         status = String(menuItem.is_active).toUpperCase() === "TRUE" ? "active" : "inactive";
       }
 
+      var stockItemId = String(menuItem.stock_item_id || "").trim();
+      var stockTracking = menuItem.stock_tracking || (stockItemId ? "yes" : "no");
+      var lookupKey = stockItemId.toLowerCase();
+      var stockItem = stockItemId ? inventoryMap[lookupKey] : null;
+      var sellingPrice = Number(price) || 0;
+      var hpp = Number(menuItem.hpp) || 0;
+      var variableCostRate = Number(menuItem.variable_cost_rate) || 0;
+      var bonusSalesLc = Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0;
+      var variableCostAmount = sellingPrice * variableCostRate / 100;
+      var marginAmount = sellingPrice - hpp - variableCostAmount - bonusSalesLc;
+      var marginPercent = sellingPrice > 0 ? marginAmount / sellingPrice * 100 : 0;
+
       return {
         menu_id: menuItem.menu_id || "",
         menu_name: menuItem.menu_name || "",
         category: menuItem.category || "",
-        price: Number(price) || 0,
-        status: status || "",
+        price: sellingPrice,
+        status: String(status || "").trim().toLowerCase(),
         updated_at: menuItem.updated_at || "",
         stock_tracking: menuItem.stock_tracking || "",
         stock_item_id: menuItem.stock_item_id || "",
         stock_qty_per_unit: Number(menuItem.stock_qty_per_unit) || 0,
+        bonus_sales_lc: bonusSalesLc,
+        hpp: hpp,
+        variable_cost_rate: variableCostRate,
+        variable_cost_amount: variableCostAmount,
+        margin_amount: marginAmount,
+        margin_percent: marginPercent,
       };
     })
     .sort(function (first, second) {
@@ -2504,6 +3300,2293 @@ function normalizePackageDetail_(item) {
   };
 }
 
+function getEligiblePackages_(roomId, durationMinutes, bookingDate) {
+  var roomResult = getAvailableRoomForPricing_(roomId);
+
+  if (!roomResult.ok) {
+    return roomResult;
+  }
+
+  var durationResult = normalizePricingDuration_(durationMinutes);
+
+  if (!durationResult.ok) {
+    return durationResult;
+  }
+
+  var bookingDateResult = normalizePricingBookingDate_(bookingDate);
+
+  if (!bookingDateResult.ok) {
+    return bookingDateResult;
+  }
+
+  var packageDetailsById = getPackageDetailsByPackageIdForPricing_();
+  var candidates = readSheetAsObjects_("PackageMaster").map(function (item) {
+    var normalizedPackageId = normalizePackageIdForPricing_(item.package_id);
+    return buildPackageCandidateForPricing_(item, getPackageDetailDiagnosticsForPricing_(packageDetailsById, normalizedPackageId));
+  });
+  var eligibleCandidates = candidates.filter(function (candidate) {
+    return evaluatePackageEligibilityForPricing_(
+      candidate,
+      durationResult.duration_minutes,
+      bookingDateResult.day_type
+    ).eligible;
+  });
+  var packages = eligibleCandidates
+    .sort(sortEligiblePackagesForPricing_)
+    .map(function (candidate) {
+      return {
+        package_id: candidate.package_id,
+        package_name: candidate.package_name,
+        package_category: candidate.package_category,
+        package_type: candidate.package_type,
+        selling_price: candidate.selling_price,
+        duration_minutes: candidate.duration_minutes,
+        valid_day_type: candidate.valid_day_type,
+        valid_day_result: "pass",
+        details_preview: candidate.details.map(buildPackageDetailPreviewForPricing_),
+      };
+    });
+
+  return {
+    ok: true,
+    success: true,
+    room: roomResult.room,
+    criteria: {
+      duration_minutes: durationResult.duration_minutes,
+      booking_date: bookingDateResult.booking_date,
+      day_type: bookingDateResult.day_type,
+    },
+    packages: packages,
+    meta: {
+      eligible_count: packages.length,
+      evaluated_count: candidates.length,
+      excluded_count: candidates.length - packages.length,
+      pricing_version: FNB_V25A_PRICING_VERSION,
+    },
+  };
+}
+
+function previewSessionPricing_(payload) {
+  var request = payload || {};
+  var roomResult = getAvailableRoomForPricing_(request.room_id);
+
+  if (!roomResult.ok) {
+    return roomResult;
+  }
+
+  var durationResult = normalizePricingDuration_(request.duration_minutes);
+
+  if (!durationResult.ok) {
+    return durationResult;
+  }
+
+  var bookingDateResult = normalizePricingBookingDate_(request.booking_date);
+
+  if (!bookingDateResult.ok) {
+    return bookingDateResult;
+  }
+
+  var bookingMode = String(request.booking_mode || "").trim().toLowerCase();
+
+  if (!bookingMode) {
+    return pricingError_("BOOKING_MODE_REQUIRED", "booking_mode wajib diisi.");
+  }
+
+  if (bookingMode !== FNB_V25A_BOOKING_MODE_REGULAR && bookingMode !== FNB_V25A_BOOKING_MODE_PACKAGE) {
+    return pricingError_("INVALID_BOOKING_MODE", "booking_mode tidak didukung.");
+  }
+
+  if (bookingMode === FNB_V25A_BOOKING_MODE_REGULAR) {
+    var regularPricing = calculateRegularPricingPreview_(
+      roomResult.room,
+      durationResult.duration_minutes,
+      roomResult.room.rate_per_hour
+    );
+
+    if (regularPricing.ok === false) {
+      return regularPricing;
+    }
+
+    return {
+      ok: true,
+      success: true,
+      pricing: regularPricing,
+      room: roomResult.room,
+      package_snapshot: null,
+      criteria: {
+        duration_minutes: durationResult.duration_minutes,
+        booking_mode: bookingMode,
+        booking_date: bookingDateResult.booking_date,
+        day_type: bookingDateResult.day_type,
+        valid_day_result: "not_applicable",
+      },
+    };
+  }
+
+  var packageId = String(request.package_id || "").trim();
+
+  if (!packageId) {
+    return pricingError_("PACKAGE_REQUIRED", "package_id wajib diisi untuk booking package.");
+  }
+
+  var packageDetailsById = getPackageDetailsByPackageIdForPricing_();
+  var packageCandidate = findPackageCandidateForPricing_(packageId, packageDetailsById);
+
+  if (!packageCandidate) {
+    return pricingError_("PACKAGE_NOT_FOUND", "Package tidak ditemukan.");
+  }
+
+  var eligibility = evaluatePackageEligibilityForPricing_(
+    packageCandidate,
+    durationResult.duration_minutes,
+    bookingDateResult.day_type
+  );
+
+  if (!eligibility.eligible) {
+    return pricingError_(eligibility.code, eligibility.message);
+  }
+
+  var packagePricing = calculatePackagePricingPreview_(
+    roomResult.room,
+    packageCandidate,
+    durationResult.duration_minutes,
+    roomResult.room.rate_per_hour
+  );
+
+  if (packagePricing.ok === false) {
+    return packagePricing;
+  }
+
+  return {
+    ok: true,
+    success: true,
+    pricing: packagePricing,
+    room: roomResult.room,
+    package_snapshot: buildPackageSnapshotForPricing_(packageCandidate),
+    criteria: {
+      duration_minutes: durationResult.duration_minutes,
+      booking_mode: bookingMode,
+      booking_date: bookingDateResult.booking_date,
+      day_type: bookingDateResult.day_type,
+      valid_day_result: "pass",
+    },
+  };
+}
+
+function getAvailableRoomForPricing_(roomId) {
+  var normalizedRoomId = String(roomId || "").trim();
+
+  if (!normalizedRoomId) {
+    return pricingError_("ROOM_ID_REQUIRED", "room_id wajib diisi.");
+  }
+
+  var sheet = getSheet_("Rooms");
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "room_id", normalizedRoomId);
+
+  if (!rowNumber) {
+    return pricingError_("ROOM_NOT_FOUND", "Ruangan tidak ditemukan.");
+  }
+
+  var room = getRowObject_(sheet, headerMap, rowNumber);
+  var status = String(room.status || "").trim().toLowerCase();
+
+  if (status !== "available") {
+    return pricingError_("ROOM_NOT_AVAILABLE", "Ruangan tidak tersedia.");
+  }
+
+  var roomRateResult = normalizeNonNegativeFiniteNumberForPricing_(room.rate_per_hour);
+
+  if (!roomRateResult.ok) {
+    return pricingError_("INVALID_ROOM_RATE", "Tarif room tidak valid.");
+  }
+
+  return {
+    ok: true,
+    room: {
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      status: status,
+      rate_per_hour: roomRateResult.value,
+    },
+  };
+}
+
+function normalizePricingDuration_(durationMinutes) {
+  if (!isStrictNumericValueForPricing_(durationMinutes)) {
+    return pricingError_("INVALID_DURATION", "duration_minutes wajib berupa angka bulat positif.");
+  }
+
+  var numberValue = Number(durationMinutes);
+
+  if (!isFinite(numberValue) || numberValue <= 0 || Math.floor(numberValue) !== numberValue) {
+    return pricingError_("INVALID_DURATION", "duration_minutes wajib berupa angka bulat positif.");
+  }
+
+  if (numberValue < 15) {
+    return pricingError_("INVALID_DURATION", "Durasi minimal 15 menit.");
+  }
+
+  return {
+    ok: true,
+    duration_minutes: numberValue,
+  };
+}
+
+function normalizePricingBookingDate_(bookingDate) {
+  var isOmitted = bookingDate === undefined || bookingDate === null ||
+    (typeof bookingDate === "string" && !bookingDate.trim());
+
+  if (isOmitted) {
+    var jakartaDate = getJakartaDateString_(new Date());
+    return {
+      ok: true,
+      booking_date: jakartaDate,
+      day_type: resolvePricingDayTypeFromParts_(jakartaDate),
+    };
+  }
+
+  if (typeof bookingDate !== "string") {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date wajib memakai format YYYY-MM-DD.");
+  }
+
+  var normalizedDate = bookingDate.trim();
+  var match = normalizedDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date wajib memakai format YYYY-MM-DD.");
+  }
+
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+  var localDate = new Date(year, month - 1, day);
+
+  if (
+    localDate.getFullYear() !== year ||
+    localDate.getMonth() !== month - 1 ||
+    localDate.getDate() !== day
+  ) {
+    return pricingError_("INVALID_BOOKING_DATE", "booking_date tidak valid.");
+  }
+
+  return {
+    ok: true,
+    booking_date: normalizedDate,
+    day_type: resolvePricingDayType_(localDate),
+  };
+}
+
+function resolvePricingDayTypeFromParts_(dateText) {
+  var parts = String(dateText || "").split("-");
+  var year = Number(parts[0]);
+  var month = Number(parts[1]);
+  var day = Number(parts[2]);
+  return resolvePricingDayType_(new Date(year, month - 1, day));
+}
+
+function resolvePricingDayType_(date) {
+  var day = date.getDay();
+  return day === 0 || day === 6 ? FNB_V25A_VALID_DAY_WEEKEND : FNB_V25A_VALID_DAY_WEEKDAY;
+}
+
+function normalizeNonNegativeFiniteNumberForPricing_(value) {
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < 0) {
+    return {
+      ok: false,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function normalizePositiveFiniteNumberForPricing_(value) {
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue <= 0) {
+    return {
+      ok: false,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function normalizePositiveIntegerForPricing_(value) {
+  var result = normalizePositiveFiniteNumberForPricing_(value);
+
+  if (!result.ok || Math.floor(result.value) !== result.value) {
+    return {
+      ok: false,
+    };
+  }
+
+  return result;
+}
+
+function normalizeOptionalNumberForPricing_(value, defaultValue) {
+  if (value === "" || value === null || value === undefined) {
+    return {
+      ok: true,
+      value: defaultValue,
+    };
+  }
+
+  if (!isStrictNumericValueForPricing_(value)) {
+    return {
+      ok: false,
+      value: defaultValue,
+    };
+  }
+
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < 0) {
+    return {
+      ok: false,
+      value: defaultValue,
+    };
+  }
+
+  return {
+    ok: true,
+    value: numberValue,
+  };
+}
+
+function isStrictNumericValueForPricing_(value) {
+  if (value === "" || value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "number") {
+    return isFinite(value);
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  var normalizedText = value.trim();
+
+  if (!normalizedText) {
+    return false;
+  }
+
+  return /^[-+]?(?:\d+|\d+\.\d+|\.\d+)$/.test(normalizedText) && isFinite(Number(normalizedText));
+}
+
+function getPackageDetailsByPackageIdForPricing_() {
+  return readSheetAsObjects_("PackageDetail")
+    .map(buildPackageDetailForPricing_)
+    .reduce(function (map, detail) {
+      if (!detail.package_id) {
+        return map;
+      }
+
+      if (!map[detail.package_id]) {
+        map[detail.package_id] = createPackageDetailDiagnosticsForPricing_();
+      }
+
+      map[detail.package_id].raw_detail_count += 1;
+
+      if (!detail.is_choice_valid) {
+        map[detail.package_id].invalid_choice_count += 1;
+      }
+
+      if (!detail.detail_valid) {
+        map[detail.package_id].invalid_detail_count += 1;
+        return map;
+      }
+
+      map[detail.package_id].valid_detail_count += 1;
+      map[detail.package_id].details.push(detail);
+      return map;
+    }, {});
+}
+
+function findPackageCandidateForPricing_(packageId, packageDetailsById) {
+  var normalizedPackageId = normalizePackageIdForPricing_(packageId);
+  var rows = readSheetAsObjects_("PackageMaster");
+
+  for (var index = 0; index < rows.length; index += 1) {
+    if (normalizePackageIdForPricing_(rows[index].package_id) === normalizedPackageId) {
+      return buildPackageCandidateForPricing_(rows[index], getPackageDetailDiagnosticsForPricing_(packageDetailsById, normalizedPackageId));
+    }
+  }
+
+  return null;
+}
+
+function buildPackageCandidateForPricing_(item, detailDiagnostics) {
+  var priceResult = normalizeNonNegativeFiniteNumberForPricing_(item.selling_price);
+  var durationResult = normalizePositiveIntegerForPricing_(item.duration_minutes);
+  var diagnostics = detailDiagnostics || createPackageDetailDiagnosticsForPricing_();
+
+  return {
+    package_id: normalizePackageIdForPricing_(item.package_id),
+    package_name: String(item.package_name || "").trim(),
+    package_category: String(item.package_category || "").trim(),
+    package_type: String(item.package_type || "").trim().toLowerCase(),
+    selling_price: priceResult.ok ? priceResult.value : item.selling_price,
+    selling_price_valid: priceResult.ok,
+    status: String(item.status || "").trim().toLowerCase(),
+    valid_day_type: String(item.valid_day_type || "").trim().toLowerCase(),
+    duration_minutes: durationResult.ok ? durationResult.value : item.duration_minutes,
+    duration_minutes_valid: durationResult.ok,
+    note: item.note || "",
+    raw_detail_count: diagnostics.raw_detail_count,
+    valid_detail_count: diagnostics.valid_detail_count,
+    invalid_detail_count: diagnostics.invalid_detail_count,
+    invalid_choice_count: diagnostics.invalid_choice_count,
+    details: (diagnostics.details || []).slice().sort(sortPackageDetailsForPricing_),
+  };
+}
+
+function buildPackageDetailForPricing_(item) {
+  var lineNoResult = normalizePositiveIntegerForPricing_(item.line_no);
+  var qtyResult = normalizePositiveFiniteNumberForPricing_(item.qty);
+  var hppResult = normalizeOptionalNumberForPricing_(item.hpp, 0);
+  var additionalPriceResult = normalizeOptionalNumberForPricing_(item.additional_price, 0);
+  var costAmountResult = normalizeOptionalNumberForPricing_(item.cost_amount, 0);
+  var choiceResult = normalizePackageChoiceForPricing_(item.is_choice);
+  var packageDetailId = String(item.package_detail_id || "").trim();
+  var packageId = normalizePackageIdForPricing_(item.package_id);
+  var componentType = String(item.component_type || "").trim().toLowerCase();
+  var componentRefId = String(item.component_ref_id || "").trim();
+  var componentName = String(item.component_name || "").trim();
+  var unit = String(item.unit || "").trim();
+
+  return {
+    package_detail_id: packageDetailId,
+    package_id: packageId,
+    line_no: lineNoResult.value,
+    component_type: componentType,
+    component_ref_id: componentRefId,
+    component_name: componentName,
+    qty: qtyResult.value,
+    unit: unit,
+    hpp: hppResult.value,
+    additional_price: additionalPriceResult.value,
+    cost_amount: costAmountResult.value,
+    is_choice: choiceResult.value,
+    is_choice_valid: choiceResult.ok,
+    choice_group: String(item.choice_group || "").trim(),
+    note: String(item.note || "").trim(),
+    detail_valid: Boolean(
+      packageDetailId &&
+      packageId &&
+      isSupportedPackageDetailComponentTypeForPricing_(componentType) &&
+      componentRefId &&
+      componentName &&
+      unit &&
+      lineNoResult.ok &&
+      qtyResult.ok &&
+      hppResult.ok &&
+      additionalPriceResult.ok &&
+      costAmountResult.ok &&
+      choiceResult.ok
+    ),
+  };
+}
+
+function evaluatePackageEligibilityForPricing_(candidate, requestedDurationMinutes, requestDayType) {
+  if (candidate.status !== "active") {
+    return packageEligibilityFailure_("PACKAGE_NOT_ACTIVE", "Package tidak aktif.");
+  }
+
+  if (candidate.package_type !== FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE) {
+    return packageEligibilityFailure_("PACKAGE_TYPE_NOT_SUPPORTED", "Tipe package tidak didukung.");
+  }
+
+  if (!candidate.selling_price_valid) {
+    return packageEligibilityFailure_("INVALID_PACKAGE_PRICE", "Harga package tidak valid.");
+  }
+
+  if (!candidate.duration_minutes_valid) {
+    return packageEligibilityFailure_("INVALID_PACKAGE_DURATION", "Durasi package tidak valid.");
+  }
+
+  if (requestedDurationMinutes < candidate.duration_minutes) {
+    return packageEligibilityFailure_("PACKAGE_DURATION_TOO_SHORT", "Durasi request lebih pendek dari durasi package.");
+  }
+
+  if (!isValidPackageDayForPricing_(candidate.valid_day_type, requestDayType)) {
+    return packageEligibilityFailure_("PACKAGE_DAY_NOT_ELIGIBLE", "Package tidak berlaku untuk tanggal booking.");
+  }
+
+  if (candidate.raw_detail_count === 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_REQUIRED", "Package belum memiliki detail.");
+  }
+
+  if (candidate.invalid_choice_count > 0) {
+    return packageEligibilityFailure_("PACKAGE_CHOICE_NOT_SUPPORTED", "Nilai pilihan komponen package tidak didukung.");
+  }
+
+  if (candidate.invalid_detail_count > 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_INVALID", "Detail package tidak valid.");
+  }
+
+  if (candidate.valid_detail_count === 0) {
+    return packageEligibilityFailure_("PACKAGE_DETAILS_REQUIRED", "Package belum memiliki detail valid.");
+  }
+
+  if (candidate.details.some(function (detail) { return detail.is_choice; })) {
+    return packageEligibilityFailure_("PACKAGE_CHOICE_NOT_SUPPORTED", "Package dengan pilihan komponen belum didukung.");
+  }
+
+  return {
+    eligible: true,
+  };
+}
+
+function createPackageDetailDiagnosticsForPricing_() {
+  return {
+    raw_detail_count: 0,
+    valid_detail_count: 0,
+    invalid_detail_count: 0,
+    invalid_choice_count: 0,
+    details: [],
+  };
+}
+
+function getPackageDetailDiagnosticsForPricing_(packageDetailsById, packageId) {
+  var normalizedPackageId = normalizePackageIdForPricing_(packageId);
+  return packageDetailsById[normalizedPackageId] || createPackageDetailDiagnosticsForPricing_();
+}
+
+function normalizePackageIdForPricing_(packageId) {
+  return String(packageId || "").trim();
+}
+
+function isSupportedPackageDetailComponentTypeForPricing_(componentType) {
+  return componentType === "service" || componentType === "inventory" || componentType === "menu";
+}
+
+function normalizePackageChoiceForPricing_(value) {
+  if (value === null || value === undefined) {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  if (typeof value === "boolean") {
+    return {
+      ok: true,
+      value: value,
+    };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) {
+      return {
+        ok: true,
+        value: true,
+      };
+    }
+
+    if (value === 0) {
+      return {
+        ok: true,
+        value: false,
+      };
+    }
+
+    return {
+      ok: false,
+      value: false,
+    };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      ok: false,
+      value: false,
+    };
+  }
+
+  var normalizedText = value.trim().toLowerCase();
+
+  if (!normalizedText) {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  if (normalizedText === "true" || normalizedText === "1" || normalizedText === "yes") {
+    return {
+      ok: true,
+      value: true,
+    };
+  }
+
+  if (normalizedText === "false" || normalizedText === "0" || normalizedText === "no") {
+    return {
+      ok: true,
+      value: false,
+    };
+  }
+
+  return {
+    ok: false,
+    value: false,
+  };
+}
+
+function isValidPackageDayForPricing_(validDayType, requestDayType) {
+  if (validDayType === FNB_V25A_VALID_DAY_ALL) {
+    return true;
+  }
+
+  if (validDayType === FNB_V25A_VALID_DAY_WEEKDAY) {
+    return requestDayType === FNB_V25A_VALID_DAY_WEEKDAY;
+  }
+
+  if (validDayType === FNB_V25A_VALID_DAY_WEEKEND) {
+    return requestDayType === FNB_V25A_VALID_DAY_WEEKEND;
+  }
+
+  return false;
+}
+
+function calculateRegularPricingPreview_(room, durationMinutes, ratePerHour) {
+  var baseRoomCharge = calculateRoomTotal_(durationMinutes, ratePerHour);
+
+  return validatePricingPreviewObject_(buildPricingPreviewObject_({
+    booking_mode: FNB_V25A_BOOKING_MODE_REGULAR,
+    requested_duration_minutes: durationMinutes,
+    package_included_minutes: 0,
+    billable_room_minutes: durationMinutes,
+    rate_per_hour: ratePerHour,
+    package_subtotal: 0,
+    base_room_charge: baseRoomCharge,
+    excess_room_charge: 0,
+    room_total_compat: baseRoomCharge,
+    grand_total: baseRoomCharge,
+    lines: [
+      buildPricingLineForPreview_(
+        "room_base",
+        "room",
+        room.room_id,
+        "Room " + durationMinutes + " menit",
+        durationMinutes,
+        "minute",
+        0,
+        baseRoomCharge,
+        10
+      ),
+    ],
+  }));
+}
+
+function calculatePackagePricingPreview_(room, packageCandidate, requestedDurationMinutes, ratePerHour) {
+  var packageIncludedMinutes = Number(packageCandidate.duration_minutes);
+  var billableRoomMinutes = Math.max(0, requestedDurationMinutes - packageIncludedMinutes);
+  var excessRoomCharge = calculateRoomTotal_(billableRoomMinutes, ratePerHour);
+  var lines = [
+    buildPricingLineForPreview_(
+      "package_subtotal",
+      "package",
+      packageCandidate.package_id,
+      packageCandidate.package_name,
+      1,
+      "package",
+      packageCandidate.selling_price,
+      packageCandidate.selling_price,
+      10
+    ),
+    buildPricingLineForPreview_(
+      "package_included_room",
+      "package_component",
+      getPackageIncludedRoomSourceIdForPricing_(packageCandidate),
+      "Room included " + packageIncludedMinutes + " menit",
+      packageIncludedMinutes,
+      "minute",
+      0,
+      0,
+      20
+    ),
+  ];
+
+  if (billableRoomMinutes > 0) {
+    lines.push(buildPricingLineForPreview_(
+      "room_excess",
+      "room",
+      room.room_id,
+      "Excess room " + billableRoomMinutes + " menit",
+      billableRoomMinutes,
+      "minute",
+      0,
+      excessRoomCharge,
+      30
+    ));
+  }
+
+  return validatePricingPreviewObject_(buildPricingPreviewObject_({
+    booking_mode: FNB_V25A_BOOKING_MODE_PACKAGE,
+    requested_duration_minutes: requestedDurationMinutes,
+    package_included_minutes: packageIncludedMinutes,
+    billable_room_minutes: billableRoomMinutes,
+    rate_per_hour: ratePerHour,
+    package_subtotal: packageCandidate.selling_price,
+    base_room_charge: 0,
+    excess_room_charge: excessRoomCharge,
+    room_total_compat: excessRoomCharge,
+    grand_total: packageCandidate.selling_price + excessRoomCharge,
+    lines: lines,
+  }));
+}
+
+function buildPricingPreviewObject_(input) {
+  return {
+    pricing_version: FNB_V25A_PRICING_VERSION,
+    booking_mode: input.booking_mode,
+    requested_duration_minutes: input.requested_duration_minutes,
+    package_included_minutes: input.package_included_minutes,
+    promotion_free_minutes: 0,
+    billable_room_minutes: input.billable_room_minutes,
+    rate_per_hour: input.rate_per_hour,
+    package_subtotal: input.package_subtotal,
+    base_room_charge: input.base_room_charge,
+    excess_room_charge: input.excess_room_charge,
+    additional_fnb_total: 0,
+    additional_service_total: 0,
+    surcharge: 0,
+    promotion_benefit: 0,
+    manual_discount: 0,
+    room_total_compat: input.room_total_compat,
+    grand_total: input.grand_total,
+    lines: input.lines,
+  };
+}
+
+function buildPricingLineForPreview_(lineType, sourceType, sourceId, description, qty, unit, unitPrice, netAmount, sortOrder) {
+  return {
+    line_type: lineType,
+    source_type: sourceType,
+    source_id: sourceId,
+    description: description,
+    qty: qty,
+    unit: unit,
+    unit_price: unitPrice,
+    gross_amount: netAmount,
+    discount_amount: 0,
+    net_amount: netAmount,
+    sort_order: sortOrder,
+  };
+}
+
+function validatePricingPreviewObject_(pricing) {
+  var amountFields = [
+    "package_subtotal",
+    "base_room_charge",
+    "excess_room_charge",
+    "room_total_compat",
+    "grand_total",
+  ];
+
+  for (var index = 0; index < amountFields.length; index += 1) {
+    if (!isValidPricingAmount_(pricing[amountFields[index]])) {
+      return pricingError_("PRICING_AMOUNT_INVALID", "Hasil perhitungan harga tidak valid.");
+    }
+  }
+
+  for (var lineIndex = 0; lineIndex < pricing.lines.length; lineIndex += 1) {
+    if (
+      !isValidPricingAmount_(pricing.lines[lineIndex].gross_amount) ||
+      !isValidPricingAmount_(pricing.lines[lineIndex].net_amount)
+    ) {
+      return pricingError_("PRICING_AMOUNT_INVALID", "Hasil perhitungan harga tidak valid.");
+    }
+  }
+
+  return pricing;
+}
+
+function isValidPricingAmount_(value) {
+  return typeof value === "number" && isFinite(value) && value >= 0;
+}
+
+function buildPackageSnapshotForPricing_(candidate) {
+  return {
+    package_id: candidate.package_id,
+    package_name: candidate.package_name,
+    package_category: candidate.package_category,
+    package_type: candidate.package_type,
+    selling_price: candidate.selling_price,
+    duration_minutes: candidate.duration_minutes,
+    valid_day_type: candidate.valid_day_type,
+    valid_day_result: "pass",
+    details: candidate.details.map(buildPackageDetailPreviewForPricing_),
+  };
+}
+
+function buildPackageDetailPreviewForPricing_(detail) {
+  return {
+    package_detail_id: detail.package_detail_id,
+    line_no: detail.line_no,
+    component_type: detail.component_type,
+    component_ref_id: detail.component_ref_id,
+    component_name: detail.component_name,
+    qty: detail.qty,
+    unit: detail.unit,
+    hpp: detail.hpp,
+    additional_price: detail.additional_price,
+    cost_amount: detail.cost_amount,
+    is_choice: detail.is_choice,
+    choice_group: detail.choice_group,
+    note: detail.note,
+  };
+}
+
+function getPackageIncludedRoomSourceIdForPricing_(candidate) {
+  var roomDetails = candidate.details.filter(function (detail) {
+    return String(detail.component_name || "").trim().toLowerCase() === "room";
+  });
+
+  if (roomDetails.length > 0) {
+    return roomDetails[0].package_detail_id || candidate.package_id;
+  }
+
+  return candidate.package_id;
+}
+
+function sortPackageDetailsForPricing_(first, second) {
+  var lineCompare = Number(first.line_no) - Number(second.line_no);
+
+  if (lineCompare !== 0) {
+    return lineCompare;
+  }
+
+  return String(first.package_detail_id || "").localeCompare(String(second.package_detail_id || ""));
+}
+
+function sortEligiblePackagesForPricing_(first, second) {
+  var categoryCompare = String(first.package_category || "").localeCompare(String(second.package_category || ""));
+
+  if (categoryCompare !== 0) {
+    return categoryCompare;
+  }
+
+  var nameCompare = String(first.package_name || "").localeCompare(String(second.package_name || ""));
+
+  if (nameCompare !== 0) {
+    return nameCompare;
+  }
+
+  return String(first.package_id || "").localeCompare(String(second.package_id || ""));
+}
+
+function packageEligibilityFailure_(code, message) {
+  return {
+    eligible: false,
+    code: code,
+    message: message,
+  };
+}
+
+function pricingError_(code, message) {
+  return {
+    ok: false,
+    success: false,
+    code: code,
+    message: message,
+    error: message,
+  };
+}
+
+function validatePackageSessionFoundation_() {
+  var validation = buildPackageSessionFoundationValidation_();
+
+  return {
+    ok: true,
+    success: true,
+    status: validation.status,
+    sheets: validation.sheets,
+    summary: validation.summary,
+  };
+}
+
+function initializePackageSessionFoundation_(payload) {
+  var request = payload || {};
+  var dryRun = request.dry_run !== false;
+  var backupConfirmed = request.backup_confirmed === true;
+  var confirmToken = typeof request.confirm === "string"
+    ? request.confirm.trim()
+    : "";
+  var initialValidation = buildPackageSessionFoundationValidation_();
+  var output = buildPackageSessionFoundationInitializerPlan_(dryRun, initialValidation);
+
+  if (dryRun) {
+    return output;
+  }
+
+  if (!backupConfirmed) {
+    return packageSessionFoundationError_(
+      "BACKUP_CONFIRMATION_REQUIRED",
+      "Backup manual spreadsheet wajib dikonfirmasi sebelum initializer dijalankan.",
+      output
+    );
+  }
+
+  if (confirmToken !== "INITIALIZE_V25B") {
+    return packageSessionFoundationError_(
+      "INITIALIZATION_CONFIRMATION_REQUIRED",
+      "Token confirm wajib INITIALIZE_V25B.",
+      output
+    );
+  }
+
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+
+  try {
+    if (!lock.tryLock(2000)) {
+      return packageSessionFoundationError_(
+        "LOCK_BUSY",
+        "Sistem sedang memproses perubahan lain. Coba lagi sebentar.",
+        output
+      );
+    }
+    lockAcquired = true;
+
+    var lockedValidation = buildPackageSessionFoundationValidation_();
+    var lockedPlan = buildPackageSessionFoundationInitializerPlan_(false, lockedValidation);
+
+    if (lockedValidation.summary.valid_sheet_count === lockedValidation.summary.required_sheet_count) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_ALREADY_INITIALIZED",
+        "Package session foundation sudah terinisialisasi.",
+        lockedPlan
+      );
+    }
+
+    if (lockedValidation.summary.invalid_sheet_count > 0) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_SCHEMA_CONFLICT",
+        "Terdapat sheet foundation dengan header konflik. Initializer dihentikan tanpa perbaikan otomatis.",
+        lockedPlan
+      );
+    }
+
+    var createdSheets = [];
+    var failedSheets = [];
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (!spreadsheet) {
+      throw new Error("Active spreadsheet was not found.");
+    }
+
+    PACKAGE_SESSION_FOUNDATION_SHEETS.forEach(function (definition) {
+      var existingSheet = spreadsheet.getSheetByName(definition.sheet_name);
+
+      if (existingSheet) {
+        return;
+      }
+
+      try {
+        var sheet = spreadsheet.insertSheet(definition.sheet_name);
+        sheet.getRange(1, 1, 1, definition.headers.length).setValues([definition.headers]);
+
+        if (typeof sheet.setFrozenRows === "function") {
+          sheet.setFrozenRows(1);
+        }
+
+        createdSheets.push(definition.sheet_name);
+      } catch (error) {
+        failedSheets.push({
+          sheet_name: definition.sheet_name,
+          error: error.message,
+        });
+      }
+    });
+
+    var finalValidation = buildPackageSessionFoundationValidation_();
+
+    if (failedSheets.length > 0) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "Sebagian sheet foundation gagal dibuat. Tidak ada rollback otomatis.",
+        {
+          ok: false,
+          success: false,
+          status: "partial_initialization_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    if (!isPackageSessionFoundationReady_(finalValidation)) {
+      return packageSessionFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "Post-validation package session foundation gagal.",
+        {
+          status: "post_validation_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    return {
+      ok: true,
+      success: true,
+      status: "initialized",
+      dry_run: false,
+      code: "FOUNDATION_INITIALIZED",
+      message: "Package session foundation berhasil diinisialisasi.",
+      created_sheets: createdSheets,
+      failed_sheets: failedSheets,
+      validation: finalValidation,
+    };
+  } catch (error) {
+    return packageSessionFoundationError_(
+      "FOUNDATION_INITIALIZATION_FAILED",
+      "Package session foundation gagal diinisialisasi.",
+      {
+        dry_run: false,
+        safe_error_detail: error.message,
+      }
+    );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function isPackageSessionFoundationReady_(validation) {
+  var summary = validation.summary || {};
+
+  return validation.status === "ready" &&
+    summary.required_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.existing_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.valid_sheet_count === PACKAGE_SESSION_FOUNDATION_SHEETS.length &&
+    summary.missing_sheet_count === 0 &&
+    summary.invalid_sheet_count === 0;
+}
+
+function buildPackageSessionFoundationInitializerPlan_(dryRun, validation) {
+  var sheetsToCreate = PACKAGE_SESSION_FOUNDATION_SHEETS
+    .filter(function (definition) {
+      var sheetResult = validation.sheets[definition.sheet_name];
+      return !sheetResult || !sheetResult.exists;
+    })
+    .map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    });
+  var blockers = [];
+
+  Object.keys(validation.sheets).forEach(function (sheetName) {
+    var sheetResult = validation.sheets[sheetName];
+
+    if (sheetResult.exists && sheetResult.validation_status !== "valid") {
+      blockers.push({
+        code: "FOUNDATION_SCHEMA_CONFLICT",
+        sheet_name: sheetName,
+        validation_status: sheetResult.validation_status,
+        missing_headers: sheetResult.missing_headers,
+        unexpected_headers: sheetResult.unexpected_headers,
+        duplicate_headers: sheetResult.duplicate_headers,
+        header_order_valid: sheetResult.header_order_valid,
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    success: true,
+    status: dryRun ? "dry_run" : "ready_to_initialize",
+    dry_run: dryRun,
+    required_sheet_count: PACKAGE_SESSION_FOUNDATION_SHEETS.length,
+    sheets_to_create: sheetsToCreate,
+    blockers: blockers,
+    expected_schemas: PACKAGE_SESSION_FOUNDATION_SHEETS.map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    }),
+    validation: validation,
+  };
+}
+
+function packageSessionFoundationError_(code, message, data) {
+  var response = data || {};
+  response.ok = false;
+  response.success = false;
+  response.code = code;
+  response.message = message;
+  response.error = message;
+  return response;
+}
+
+function validateLcFinanceFoundation_() {
+  var validation = buildLcFinanceFoundationValidation_();
+
+  return {
+    ok: true,
+    success: true,
+    status: validation.status,
+    sheets: validation.sheets,
+    summary: validation.summary,
+  };
+}
+
+function initializeLcFinanceFoundation_(payload) {
+  var request = payload || {};
+  var dryRun = request.dry_run !== false;
+  var backupConfirmed = request.backup_confirmed === true;
+  var confirmToken = typeof request.confirm === "string"
+    ? request.confirm.trim()
+    : "";
+  var initialValidation = buildLcFinanceFoundationValidation_();
+  var output = buildLcFinanceFoundationInitializerPlan_(dryRun, initialValidation);
+
+  if (dryRun) {
+    return output;
+  }
+
+  if (!backupConfirmed) {
+    return lcFinanceFoundationError_(
+      "BACKUP_CONFIRMATION_REQUIRED",
+      "Backup manual spreadsheet wajib dikonfirmasi sebelum initializer LC finance dijalankan.",
+      output
+    );
+  }
+
+  if (confirmToken !== "INITIALIZE_LC_FINANCE") {
+    return lcFinanceFoundationError_(
+      "INITIALIZATION_CONFIRMATION_REQUIRED",
+      "Token confirm wajib INITIALIZE_LC_FINANCE.",
+      output
+    );
+  }
+
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+
+  try {
+    if (!lock.tryLock(2000)) {
+      return lcFinanceFoundationError_(
+        "LOCK_BUSY",
+        "Sistem sedang memproses perubahan lain. Coba lagi sebentar.",
+        output
+      );
+    }
+    lockAcquired = true;
+
+    var lockedValidation = buildLcFinanceFoundationValidation_();
+    var lockedPlan = buildLcFinanceFoundationInitializerPlan_(false, lockedValidation);
+
+    if (isLcFinanceFoundationReady_(lockedValidation)) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_ALREADY_INITIALIZED",
+        "LC finance foundation sudah terinisialisasi.",
+        lockedPlan
+      );
+    }
+
+    if (lockedValidation.summary.invalid_sheet_count > 0) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_SCHEMA_CONFLICT",
+        "Terdapat sheet LC finance dengan header konflik. Initializer dihentikan tanpa perbaikan otomatis.",
+        lockedPlan
+      );
+    }
+
+    var createdSheets = [];
+    var updatedSheets = [];
+    var failedSheets = [];
+
+    LC_FINANCE_FOUNDATION_SHEETS.forEach(function (definition) {
+      try {
+        var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+        var existingSheet = spreadsheet.getSheetByName(definition.sheet_name);
+        var beforeValidation = lockedValidation.sheets[definition.sheet_name] || {};
+        var sheet = ensureSheetWithHeaders_(definition.sheet_name, definition.headers);
+
+        ensureSheetHasHeaders_(sheet, definition.headers);
+
+        if (!existingSheet) {
+          createdSheets.push(definition.sheet_name);
+        } else if (beforeValidation.missing_headers && beforeValidation.missing_headers.length > 0) {
+          updatedSheets.push(definition.sheet_name);
+        }
+
+        if (typeof sheet.setFrozenRows === "function") {
+          sheet.setFrozenRows(1);
+        }
+      } catch (error) {
+        failedSheets.push({
+          sheet_name: definition.sheet_name,
+          error: error.message,
+        });
+      }
+    });
+
+    var finalValidation = buildLcFinanceFoundationValidation_();
+
+    if (failedSheets.length > 0 || !isLcFinanceFoundationReady_(finalValidation)) {
+      return lcFinanceFoundationError_(
+        "FOUNDATION_INITIALIZATION_FAILED",
+        "LC finance foundation gagal diinisialisasi penuh.",
+        {
+          status: "post_validation_failed",
+          dry_run: false,
+          created_sheets: createdSheets,
+          updated_sheets: updatedSheets,
+          failed_sheets: failedSheets,
+          validation: finalValidation,
+        }
+      );
+    }
+
+    return {
+      ok: true,
+      success: true,
+      status: "initialized",
+      dry_run: false,
+      code: "FOUNDATION_INITIALIZED",
+      message: "LC finance foundation berhasil diinisialisasi.",
+      created_sheets: createdSheets,
+      updated_sheets: updatedSheets,
+      failed_sheets: failedSheets,
+      validation: finalValidation,
+    };
+  } catch (error) {
+    return lcFinanceFoundationError_(
+      "FOUNDATION_INITIALIZATION_FAILED",
+      "LC finance foundation gagal diinisialisasi.",
+      {
+        dry_run: false,
+        safe_error_detail: error.message,
+      }
+    );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function lcFinanceFoundationError_(code, message, data) {
+  var response = data || {};
+  response.ok = false;
+  response.success = false;
+  response.code = code;
+  response.message = message;
+  response.error = message;
+  return response;
+}
+
+function isLcFinanceFoundationReady_(validation) {
+  var summary = validation.summary || {};
+
+  return validation.status === "ready" &&
+    summary.required_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.existing_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.valid_sheet_count === LC_FINANCE_FOUNDATION_SHEETS.length &&
+    summary.missing_sheet_count === 0 &&
+    summary.invalid_sheet_count === 0;
+}
+
+function buildLcFinanceFoundationInitializerPlan_(dryRun, validation) {
+  var sheetsToCreate = LC_FINANCE_FOUNDATION_SHEETS
+    .filter(function (definition) {
+      var sheetResult = validation.sheets[definition.sheet_name];
+      return !sheetResult || !sheetResult.exists;
+    })
+    .map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    });
+  var sheetsToUpdate = [];
+  var blockers = [];
+
+  Object.keys(validation.sheets).forEach(function (sheetName) {
+    var sheetResult = validation.sheets[sheetName];
+
+    if (sheetResult.exists && sheetResult.missing_headers.length > 0 && sheetResult.allow_append_headers) {
+      sheetsToUpdate.push({
+        sheet_name: sheetName,
+        missing_headers: sheetResult.missing_headers,
+      });
+    }
+
+    if (sheetResult.exists && sheetResult.validation_status === "invalid") {
+      blockers.push({
+        code: "FOUNDATION_SCHEMA_CONFLICT",
+        sheet_name: sheetName,
+        validation_status: sheetResult.validation_status,
+        duplicate_headers: sheetResult.duplicate_headers,
+        unexpected_headers: sheetResult.unexpected_headers,
+        header_order_valid: sheetResult.header_order_valid,
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    success: true,
+    status: dryRun ? "dry_run" : "ready_to_initialize",
+    dry_run: dryRun,
+    required_sheet_count: LC_FINANCE_FOUNDATION_SHEETS.length,
+    sheets_to_create: sheetsToCreate,
+    sheets_to_update: sheetsToUpdate,
+    blockers: blockers,
+    expected_schemas: LC_FINANCE_FOUNDATION_SHEETS.map(function (definition) {
+      return {
+        sheet_name: definition.sheet_name,
+        expected_headers: definition.headers.slice(),
+      };
+    }),
+    validation: validation,
+  };
+}
+
+function buildLcFinanceFoundationValidation_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!spreadsheet) {
+    throw new Error("Active spreadsheet was not found.");
+  }
+
+  var sheets = {};
+  var summary = {
+    required_sheet_count: LC_FINANCE_FOUNDATION_SHEETS.length,
+    existing_sheet_count: 0,
+    valid_sheet_count: 0,
+    missing_sheet_count: 0,
+    invalid_sheet_count: 0,
+    append_required_count: 0,
+  };
+
+  LC_FINANCE_FOUNDATION_SHEETS.forEach(function (definition) {
+    var sheetResult = validateLcFinanceFoundationSheet_(spreadsheet, definition);
+    sheets[definition.sheet_name] = sheetResult;
+
+    if (!sheetResult.exists) {
+      summary.missing_sheet_count++;
+      return;
+    }
+
+    summary.existing_sheet_count++;
+
+    if (sheetResult.validation_status === "valid") {
+      summary.valid_sheet_count++;
+    } else if (sheetResult.validation_status === "append_required") {
+      summary.append_required_count++;
+    } else {
+      summary.invalid_sheet_count++;
+    }
+  });
+
+  var status = "ready";
+
+  if (summary.missing_sheet_count > 0 && summary.invalid_sheet_count > 0) {
+    status = "partial_invalid";
+  } else if (summary.invalid_sheet_count > 0) {
+    status = "invalid";
+  } else if (summary.missing_sheet_count > 0) {
+    status = "not_initialized";
+  } else if (summary.append_required_count > 0) {
+    status = "append_required";
+  }
+
+  return {
+    status: status,
+    sheets: sheets,
+    summary: summary,
+  };
+}
+
+function validateLcFinanceFoundationSheet_(spreadsheet, definition) {
+  var sheet = spreadsheet.getSheetByName(definition.sheet_name);
+
+  if (!sheet) {
+    return {
+      sheet_name: definition.sheet_name,
+      exists: false,
+      allow_append_headers: definition.allow_append_headers === true,
+      expected_headers: definition.headers.slice(),
+      missing_headers: definition.headers.slice(),
+      unexpected_headers: [],
+      duplicate_headers: [],
+      header_order_valid: false,
+      data_row_count: 0,
+      missing_primary_id_count: 0,
+      duplicate_primary_id_count: 0,
+      validation_status: "missing",
+    };
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) { return String(header).trim(); })
+    : [];
+  var headerIssues = getPackageSessionFoundationHeaderIssues_(headers, definition.headers);
+  var duplicateHeaders = headerIssues.duplicate_headers;
+  var missingHeaders = headerIssues.missing_headers;
+  var unexpectedHeaders = headerIssues.unexpected_headers;
+  var headerOrderValid = headerIssues.header_order_valid;
+  var appendPrefixOrderValid = definition.allow_append_headers === true &&
+    headers.every(function (header, index) {
+      return !header || definition.headers[index] === header;
+    });
+  var rows = values.slice(1).filter(function (row) {
+    return row.some(function (cell) {
+      return cell !== "" && cell !== null;
+    });
+  });
+  var primaryIndex = headers.indexOf(definition.primary_id);
+  var primaryIds = {};
+  var missingPrimaryIdCount = 0;
+  var duplicatePrimaryIdCount = 0;
+
+  if (primaryIndex >= 0) {
+    rows.forEach(function (row) {
+      var id = String(row[primaryIndex] || "").trim();
+
+      if (!id) {
+        missingPrimaryIdCount++;
+        return;
+      }
+
+      if (primaryIds[id]) {
+        duplicatePrimaryIdCount++;
+      }
+
+      primaryIds[id] = true;
+    });
+  }
+
+  var hasBlockingHeaderConflict = duplicateHeaders.length > 0 ||
+    unexpectedHeaders.length > 0 ||
+    (!definition.allow_append_headers && missingHeaders.length > 0) ||
+    (definition.allow_append_headers ? !appendPrefixOrderValid : !headerOrderValid);
+  var validationStatus = hasBlockingHeaderConflict ||
+    primaryIndex === -1 ||
+    missingPrimaryIdCount > 0 ||
+    duplicatePrimaryIdCount > 0
+      ? "invalid"
+      : "valid";
+
+  if (definition.allow_append_headers &&
+      missingHeaders.length > 0 &&
+      appendPrefixOrderValid &&
+      duplicateHeaders.length === 0 &&
+      unexpectedHeaders.length === 0 &&
+      primaryIndex >= 0 &&
+      missingPrimaryIdCount === 0 &&
+      duplicatePrimaryIdCount === 0) {
+    validationStatus = "append_required";
+  }
+
+  return {
+    sheet_name: definition.sheet_name,
+    exists: true,
+    allow_append_headers: definition.allow_append_headers === true,
+    header_count: headers.length,
+    expected_header_count: definition.headers.length,
+    expected_headers: definition.headers.slice(),
+    missing_headers: missingHeaders,
+    unexpected_headers: unexpectedHeaders,
+    duplicate_headers: duplicateHeaders,
+    header_order_valid: headerOrderValid,
+    data_row_count: rows.length,
+    missing_primary_id_count: missingPrimaryIdCount,
+    duplicate_primary_id_count: duplicatePrimaryIdCount,
+    validation_status: validationStatus,
+  };
+}
+
+function buildPackageSessionFoundationValidation_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!spreadsheet) {
+    throw new Error("Active spreadsheet was not found.");
+  }
+
+  var sheets = {};
+  var referenceMaps = buildPackageSessionFoundationReferenceMaps_(spreadsheet);
+
+  PACKAGE_SESSION_FOUNDATION_SHEETS.forEach(function (definition) {
+    sheets[definition.sheet_name] = validatePackageSessionFoundationSheet_(spreadsheet, definition, referenceMaps);
+  });
+
+  var summary = Object.keys(sheets).reduce(function (result, sheetName) {
+    var sheetResult = sheets[sheetName];
+
+    if (sheetResult.exists) {
+      result.existing_sheet_count += 1;
+    } else {
+      result.missing_sheet_count += 1;
+    }
+
+    if (sheetResult.validation_status === "valid") {
+      result.valid_sheet_count += 1;
+    } else if (sheetResult.validation_status === "invalid") {
+      result.invalid_sheet_count += 1;
+    }
+
+    return result;
+  }, {
+    required_sheet_count: PACKAGE_SESSION_FOUNDATION_SHEETS.length,
+    existing_sheet_count: 0,
+    valid_sheet_count: 0,
+    missing_sheet_count: 0,
+    invalid_sheet_count: 0,
+  });
+
+  return {
+    status: getPackageSessionFoundationStatus_(summary),
+    sheets: sheets,
+    summary: summary,
+  };
+}
+
+function getPackageSessionFoundationStatus_(summary) {
+  if (summary.invalid_sheet_count > 0 && summary.missing_sheet_count > 0) {
+    return "partial_invalid";
+  }
+
+  if (summary.invalid_sheet_count > 0) {
+    return "invalid";
+  }
+
+  if (summary.missing_sheet_count > 0) {
+    return "not_initialized";
+  }
+
+  return "ready";
+}
+
+function validatePackageSessionFoundationSheet_(spreadsheet, definition, referenceMaps) {
+  var sheet = spreadsheet.getSheetByName(definition.sheet_name);
+  var result = {
+    sheet_name: definition.sheet_name,
+    exists: !!sheet,
+    header_count: 0,
+    expected_header_count: definition.headers.length,
+    missing_headers: definition.headers.slice(),
+    unexpected_headers: [],
+    header_order_valid: false,
+    duplicate_headers: [],
+    data_row_count: 0,
+    missing_primary_id_count: 0,
+    duplicate_primary_id_count: 0,
+    validation_status: "missing",
+  };
+
+  if (!sheet) {
+    return result;
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var rows = values.length > 1 ? values.slice(1).filter(packageSessionFoundationRowHasData_) : [];
+  var headerIssues = getPackageSessionFoundationHeaderIssues_(headers, definition.headers);
+
+  result.header_count = headers.length;
+  result.missing_headers = headerIssues.missing_headers;
+  result.unexpected_headers = headerIssues.unexpected_headers;
+  result.header_order_valid = headerIssues.header_order_valid;
+  result.duplicate_headers = headerIssues.duplicate_headers;
+  result.data_row_count = rows.length;
+  result.missing_primary_id_count = countMissingValuesInRows_(rows, headers, definition.primary_id);
+  result.duplicate_primary_id_count = countDuplicateNonBlankValuesInRows_(rows, headers, definition.primary_id);
+
+  var dataIssues = validatePackageSessionFoundationRows_(definition.sheet_name, headers, rows, referenceMaps);
+
+  Object.keys(dataIssues).forEach(function (key) {
+    result[key] = dataIssues[key];
+  });
+
+  result.validation_status = (
+    result.missing_headers.length === 0 &&
+    result.unexpected_headers.length === 0 &&
+    result.duplicate_headers.length === 0 &&
+    result.header_order_valid &&
+    result.missing_primary_id_count === 0 &&
+    result.duplicate_primary_id_count === 0 &&
+    dataIssues.issue_count === 0
+  ) ? "valid" : "invalid";
+
+  return result;
+}
+
+function getPackageSessionFoundationHeaderIssues_(headers, expectedHeaders) {
+  var headerCounts = countValues_(headers);
+  var expectedMap = countValues_(expectedHeaders);
+
+  return {
+    missing_headers: expectedHeaders.filter(function (header) {
+      return !headerCounts[header];
+    }),
+    unexpected_headers: headers.filter(function (header) {
+      return header && !expectedMap[header];
+    }),
+    header_order_valid: headers.length === expectedHeaders.length && expectedHeaders.every(function (header, index) {
+      return headers[index] === header;
+    }),
+    duplicate_headers: Object.keys(headerCounts).filter(function (header) {
+      return header && headerCounts[header] > 1;
+    }),
+  };
+}
+
+function buildPackageSessionFoundationReferenceMaps_(spreadsheet) {
+  var rooms = readPackageSessionFoundationRowsForReference_(spreadsheet, "Rooms");
+  var transactions = readPackageSessionFoundationRowsForReference_(spreadsheet, "Transactions");
+  var roomSessions = readPackageSessionFoundationRowsForReference_(spreadsheet, ROOM_SESSIONS_SHEET);
+  var sessionPackages = readPackageSessionFoundationRowsForReference_(spreadsheet, SESSION_PACKAGES_SHEET);
+
+  return {
+    rooms_sheet_exists: rooms.exists,
+    transactions_sheet_exists: transactions.exists,
+    room_ids: buildValueSet_(rooms.rows, rooms.headers, "room_id"),
+    transaction_ids: buildValueSet_(transactions.rows, transactions.headers, "transaction_id"),
+    room_session_ids: buildValueSet_(roomSessions.rows, roomSessions.headers, "session_id"),
+    session_package_ids: buildValueSet_(sessionPackages.rows, sessionPackages.headers, "session_package_id"),
+    session_package_session_ids: buildValueMap_(sessionPackages.rows, sessionPackages.headers, "session_package_id", "session_id"),
+  };
+}
+
+function readPackageSessionFoundationRowsForReference_(spreadsheet, sheetName) {
+  var sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    return {
+      exists: false,
+      headers: [],
+      rows: [],
+    };
+  }
+
+  var values = sheet.getDataRange().getValues();
+
+  return {
+    exists: true,
+    headers: values.length ? values[0].map(function (header) {
+      return String(header).trim();
+    }) : [],
+    rows: values.length > 1 ? values.slice(1).filter(packageSessionFoundationRowHasData_) : [],
+  };
+}
+
+function validatePackageSessionFoundationRows_(sheetName, headers, rows, referenceMaps) {
+  if (sheetName === ROOM_SESSIONS_SHEET) {
+    return validateRoomSessionFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === SESSION_PACKAGES_SHEET) {
+    return validateSessionPackageFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === SESSION_PACKAGE_DETAILS_SHEET) {
+    return validateSessionPackageDetailFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  if (sheetName === TRANSACTION_LINES_SHEET) {
+    return validateTransactionLineFoundationRows_(headers, rows, referenceMaps);
+  }
+
+  return {
+    issue_count: 0,
+  };
+}
+
+function validateRoomSessionFoundationRows_(headers, rows, referenceMaps) {
+  var idempotencyDuplicateCount = countDuplicateNonBlankValuesInRows_(rows, headers, "idempotency_key");
+  var issues = {
+    duplicate_idempotency_key_count: idempotencyDuplicateCount,
+    missing_room_id_count: 0,
+    missing_room_reference_count: 0,
+    missing_required_field_count: 0,
+    invalid_booking_mode_count: 0,
+    invalid_status_count: 0,
+    invalid_duration_or_rate_count: 0,
+    closed_without_transaction_count: 0,
+    active_with_closed_transaction_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var roomId = String(objectRow.room_id || "").trim();
+    var bookingMode = String(objectRow.booking_mode || "").trim().toLowerCase();
+    var status = String(objectRow.status || "").trim().toLowerCase();
+
+    [
+      "session_id",
+      "room_id",
+      "booking_mode",
+      "status",
+      "booked_duration_minutes",
+      "package_included_minutes",
+      "promotion_free_minutes",
+      "billable_room_minutes",
+      "rate_per_hour",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!roomId) {
+      issues.missing_room_id_count += 1;
+    } else if (!referenceMaps.rooms_sheet_exists || !referenceMaps.room_ids[roomId]) {
+      issues.missing_room_reference_count += 1;
+    }
+
+    if (["regular", "package"].indexOf(bookingMode) === -1) {
+      issues.invalid_booking_mode_count += 1;
+    }
+
+    if (["starting", "active", "closing", "closed", "cancelled", "voided", "start_failed", "close_failed"].indexOf(status) === -1) {
+      issues.invalid_status_count += 1;
+    }
+
+    ["booked_duration_minutes", "package_included_minutes", "promotion_free_minutes", "billable_room_minutes"].forEach(function (fieldName) {
+      if (!isFoundationNonNegativeInteger_(objectRow[fieldName])) {
+        issues.invalid_duration_or_rate_count += 1;
+      }
+    });
+
+    if (status === "active" && Number(objectRow.booked_duration_minutes) < 15) {
+      issues.invalid_duration_or_rate_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.rate_per_hour)) {
+      issues.invalid_duration_or_rate_count += 1;
+    }
+
+    if (status === "closed" && !String(objectRow.closed_transaction_id || "").trim()) {
+      issues.closed_without_transaction_count += 1;
+    }
+
+    if (status === "active" && String(objectRow.closed_transaction_id || "").trim()) {
+      issues.active_with_closed_transaction_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateSessionPackageFoundationRows_(headers, rows, referenceMaps) {
+  var activePackageCountBySession = {};
+  var issues = {
+    missing_session_reference_count: 0,
+    missing_package_identity_count: 0,
+    missing_snapshot_field_count: 0,
+    missing_required_field_count: 0,
+    multiple_active_package_session_count: 0,
+    invalid_package_type_count: 0,
+    invalid_status_count: 0,
+    invalid_price_count: 0,
+    invalid_duration_count: 0,
+    invalid_valid_day_type_count: 0,
+    invalid_valid_day_result_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var sessionId = String(objectRow.session_id || "").trim();
+    var status = String(objectRow.status || "").trim().toLowerCase();
+
+    if (isFoundationBlank_(objectRow.package_id)) {
+      issues.missing_package_identity_count += 1;
+    }
+
+    [
+      "session_id",
+      "package_id",
+      "package_name",
+      "package_type",
+      "selling_price",
+      "duration_minutes",
+      "valid_day_type",
+      "valid_day_result",
+      "status",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    [
+      "package_name",
+      "package_type",
+      "selling_price",
+      "duration_minutes",
+      "valid_day_type",
+      "valid_day_result",
+      "status",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_snapshot_field_count += 1;
+      }
+    });
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if (String(objectRow.package_type || "").trim().toLowerCase() !== FNB_V25A_PACKAGE_TYPE_ROOM_FNB_BUNDLE) {
+      issues.invalid_package_type_count += 1;
+    }
+
+    if (["active", "voided"].indexOf(status) === -1) {
+      issues.invalid_status_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.selling_price)) {
+      issues.invalid_price_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.duration_minutes)) {
+      issues.invalid_duration_count += 1;
+    }
+
+    if (!isFoundationStringInEnum_(objectRow.valid_day_type, ["all", "weekday", "weekend"])) {
+      issues.invalid_valid_day_type_count += 1;
+    }
+
+    if (String(objectRow.valid_day_result || "").trim().toLowerCase() !== "pass") {
+      issues.invalid_valid_day_result_count += 1;
+    }
+
+    if (status === "active" && sessionId) {
+      activePackageCountBySession[sessionId] = (activePackageCountBySession[sessionId] || 0) + 1;
+    }
+  });
+
+  issues.multiple_active_package_session_count = Object.keys(activePackageCountBySession).filter(function (sessionId) {
+    return activePackageCountBySession[sessionId] > 1;
+  }).length;
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateSessionPackageDetailFoundationRows_(headers, rows, referenceMaps) {
+  var issues = {
+    missing_session_package_reference_count: 0,
+    missing_session_reference_count: 0,
+    missing_required_field_count: 0,
+    session_package_session_mismatch_count: 0,
+    invalid_component_type_count: 0,
+    invalid_line_no_count: 0,
+    invalid_qty_count: 0,
+    invalid_amount_count: 0,
+    invalid_is_choice_count: 0,
+    invalid_fulfillment_status_count: 0,
+    invalid_fulfilled_qty_count: 0,
+    fulfilled_qty_exceeds_qty_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var sessionPackageId = String(objectRow.session_package_id || "").trim();
+    var sessionId = String(objectRow.session_id || "").trim();
+    var choiceResult = parseFoundationBoolean_(objectRow.is_choice);
+    var qty = isFoundationPositiveNumber_(objectRow.qty) ? Number(objectRow.qty) : NaN;
+    var fulfilledQty = isFoundationBlank_(objectRow.fulfilled_qty)
+      ? 0
+      : isFoundationFiniteNumber_(objectRow.fulfilled_qty) ? Number(objectRow.fulfilled_qty) : NaN;
+
+    [
+      "session_package_id",
+      "session_id",
+      "package_detail_id",
+      "component_type",
+      "component_ref_id",
+      "component_name",
+      "line_no",
+      "qty",
+      "unit",
+      "is_choice",
+      "fulfillment_status",
+      "fulfilled_qty",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!sessionPackageId || !referenceMaps.session_package_ids[sessionPackageId]) {
+      issues.missing_session_package_reference_count += 1;
+    } else if (sessionId && referenceMaps.session_package_session_ids[sessionPackageId] !== sessionId) {
+      issues.session_package_session_mismatch_count += 1;
+    }
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if (["service", "inventory", "menu"].indexOf(String(objectRow.component_type || "").trim().toLowerCase()) === -1) {
+      issues.invalid_component_type_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.line_no)) {
+      issues.invalid_line_no_count += 1;
+    }
+
+    if (!isFoundationPositiveNumber_(objectRow.qty)) {
+      issues.invalid_qty_count += 1;
+    }
+
+    ["hpp", "additional_price", "cost_amount"].forEach(function (fieldName) {
+      if (!isFoundationBlank_(objectRow[fieldName]) && !isFoundationNonNegativeNumber_(objectRow[fieldName])) {
+        issues.invalid_amount_count += 1;
+      }
+    });
+
+    if (!choiceResult.valid || choiceResult.value !== false) {
+      issues.invalid_is_choice_count += 1;
+    }
+
+    if (["pending", "fulfilled", "partial", "voided"].indexOf(String(objectRow.fulfillment_status || "").trim().toLowerCase()) === -1) {
+      issues.invalid_fulfillment_status_count += 1;
+    }
+
+    if (!isFinite(fulfilledQty) || fulfilledQty < 0) {
+      issues.invalid_fulfilled_qty_count += 1;
+    } else if (isFinite(qty) && fulfilledQty > qty) {
+      issues.fulfilled_qty_exceeds_qty_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function validateTransactionLineFoundationRows_(headers, rows, referenceMaps) {
+  var issues = {
+    missing_session_reference_count: 0,
+    missing_transaction_reference_count: 0,
+    missing_required_field_count: 0,
+    invalid_line_type_count: 0,
+    invalid_qty_count: 0,
+    invalid_unit_price_count: 0,
+    invalid_negative_net_amount_count: 0,
+    invalid_amount_count: 0,
+    invalid_sort_order_count: 0,
+  };
+
+  rows.forEach(function (row) {
+    var objectRow = buildObjectFromFoundationRow_(headers, row);
+    var transactionId = String(objectRow.transaction_id || "").trim();
+    var sessionId = String(objectRow.session_id || "").trim();
+    var lineType = String(objectRow.line_type || "").trim().toLowerCase();
+
+    [
+      "transaction_id",
+      "session_id",
+      "line_type",
+      "source_type",
+      "source_id",
+      "description",
+      "qty",
+      "unit",
+      "unit_price",
+      "gross_amount",
+      "discount_amount",
+      "net_amount",
+      "tax_amount",
+      "sort_order",
+      "created_at",
+    ].forEach(function (fieldName) {
+      if (isFoundationBlank_(objectRow[fieldName])) {
+        issues.missing_required_field_count += 1;
+      }
+    });
+
+    if (!transactionId || !referenceMaps.transactions_sheet_exists || !referenceMaps.transaction_ids[transactionId]) {
+      issues.missing_transaction_reference_count += 1;
+    }
+
+    if (!sessionId || !referenceMaps.room_session_ids[sessionId]) {
+      issues.missing_session_reference_count += 1;
+    }
+
+    if ([
+      "room_base",
+      "package_subtotal",
+      "package_included_room",
+      "room_excess",
+      "fnb_order",
+      "service",
+      "promotion",
+      "manual_discount",
+      "surcharge",
+    ].indexOf(lineType) === -1) {
+      issues.invalid_line_type_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.qty)) {
+      issues.invalid_qty_count += 1;
+    }
+
+    if (!isFoundationNonNegativeNumber_(objectRow.unit_price)) {
+      issues.invalid_unit_price_count += 1;
+    }
+
+    ["gross_amount", "discount_amount", "tax_amount"].forEach(function (fieldName) {
+      if (!isFoundationNonNegativeNumber_(objectRow[fieldName])) {
+        issues.invalid_amount_count += 1;
+      }
+    });
+
+    if (!isFoundationFiniteNumber_(objectRow.net_amount)) {
+      issues.invalid_amount_count += 1;
+    } else if (Number(objectRow.net_amount) < 0 && ["manual_discount", "promotion"].indexOf(lineType) === -1) {
+      issues.invalid_negative_net_amount_count += 1;
+    }
+
+    if (!isFoundationPositiveInteger_(objectRow.sort_order)) {
+      issues.invalid_sort_order_count += 1;
+    }
+  });
+
+  issues.issue_count = sumPackageSessionFoundationIssueCounts_(issues);
+  return issues;
+}
+
+function buildObjectFromFoundationRow_(headers, row) {
+  return headers.reduce(function (objectRow, header, index) {
+    if (header) {
+      objectRow[header] = row[index];
+    }
+
+    return objectRow;
+  }, {});
+}
+
+function packageSessionFoundationRowHasData_(row) {
+  return row.some(function (cell) {
+    return cell !== "" && cell !== null && cell !== undefined;
+  });
+}
+
+function buildValueSet_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return {};
+  }
+
+  return rows.reduce(function (set, row) {
+    var value = String(row[index] || "").trim();
+
+    if (value) {
+      set[value] = true;
+    }
+
+    return set;
+  }, {});
+}
+
+function buildValueMap_(rows, headers, keyFieldName, valueFieldName) {
+  var keyIndex = headers.indexOf(keyFieldName);
+  var valueIndex = headers.indexOf(valueFieldName);
+
+  if (keyIndex === -1 || valueIndex === -1) {
+    return {};
+  }
+
+  return rows.reduce(function (map, row) {
+    var key = String(row[keyIndex] || "").trim();
+
+    if (key) {
+      map[key] = String(row[valueIndex] || "").trim();
+    }
+
+    return map;
+  }, {});
+}
+
+function countDuplicateNonBlankValuesInRows_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  var counts = rows.reduce(function (map, row) {
+    var value = String(row[index] || "").trim();
+
+    if (value) {
+      map[value] = (map[value] || 0) + 1;
+    }
+
+    return map;
+  }, {});
+
+  return Object.keys(counts).filter(function (value) {
+    return counts[value] > 1;
+  }).length;
+}
+
+function countMissingValuesInRows_(rows, headers, fieldName) {
+  var index = headers.indexOf(fieldName);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  return rows.filter(function (row) {
+    return !String(row[index] || "").trim();
+  }).length;
+}
+
+function countValues_(values) {
+  return values.reduce(function (map, value) {
+    var key = String(value || "").trim();
+
+    if (key) {
+      map[key] = (map[key] || 0) + 1;
+    }
+
+    return map;
+  }, {});
+}
+
+function sumPackageSessionFoundationIssueCounts_(issues) {
+  return Object.keys(issues).reduce(function (total, key) {
+    if (key === "issue_count") {
+      return total;
+    }
+
+    return total + (Number(issues[key]) || 0);
+  }, 0);
+}
+
+function isFoundationFiniteNumber_(value) {
+  return isStrictNumericValueForPricing_(value);
+}
+
+function isFoundationNonNegativeNumber_(value) {
+  return isFoundationFiniteNumber_(value) && Number(value) >= 0;
+}
+
+function isFoundationPositiveNumber_(value) {
+  return isFoundationFiniteNumber_(value) && Number(value) > 0;
+}
+
+function isFoundationNonNegativeInteger_(value) {
+  var numberValue = Number(value);
+  return isFoundationNonNegativeNumber_(value) && Math.floor(numberValue) === numberValue;
+}
+
+function isFoundationPositiveInteger_(value) {
+  var numberValue = Number(value);
+  return isFoundationPositiveNumber_(value) && Math.floor(numberValue) === numberValue;
+}
+
+function isFoundationBlank_(value) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  return typeof value === "string" && value.trim() === "";
+}
+
+function isFoundationStringInEnum_(value, allowedValues) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return allowedValues.indexOf(value.trim().toLowerCase()) !== -1;
+}
+
+function parseFoundationBoolean_(value) {
+  if (typeof value === "boolean") {
+    return {
+      valid: true,
+      value: value,
+    };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1 || value === 0) {
+      return {
+        valid: true,
+        value: value === 1,
+      };
+    }
+
+    return {
+      valid: false,
+      value: false,
+    };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      valid: false,
+      value: false,
+    };
+  }
+
+  var normalizedValue = String(value || "").trim().toLowerCase();
+
+  if (["false", "0", "no"].indexOf(normalizedValue) !== -1) {
+    return {
+      valid: true,
+      value: false,
+    };
+  }
+
+  if (["true", "1", "yes"].indexOf(normalizedValue) !== -1) {
+    return {
+      valid: true,
+      value: true,
+    };
+  }
+
+  return {
+    valid: false,
+    value: false,
+  };
+}
+
 function getRecipeBom_(menuId) {
   ensureRecipeBomSheet_();
   var normalizedMenuId = String(menuId || "").trim();
@@ -2660,7 +5743,9 @@ function adjustInventoryStock_(stockItemId, adjustmentType, quantity, note, cash
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang memproses perubahan stok lain. Coba lagi sebentar.");
+  }
 
   try {
     var inventorySheet = ensureInventorySheetColumns_();
@@ -2749,6 +5834,167 @@ function adjustInventoryStock_(stockItemId, adjustmentType, quantity, note, cash
       },
       item: updatedItem,
       movement: movement,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function toggleInventoryItemStatus_(stockItemId, status, cashierName) {
+  var normalizedStockItemId = String(stockItemId || "").trim();
+  var normalizedStatus = String(status || "").trim().toLowerCase();
+
+  if (!normalizedStockItemId) {
+    return {
+      ok: false,
+      error: "stock_item_id wajib diisi.",
+    };
+  }
+
+  if (normalizedStatus !== "active" && normalizedStatus !== "inactive") {
+    return {
+      ok: false,
+      error: "Status harus bernilai 'active' atau 'inactive'.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses pembaruan data lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var rowNumber = findInventoryRowByStockItemId_(normalizedStockItemId, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        error: "Item stok tidak ditemukan.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+
+    if (inventoryHeaderMap.status) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.status).setValue(normalizedStatus);
+    }
+    if (inventoryHeaderMap.updated_at) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+    }
+
+    var updatedMenusCount = 0;
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet ? SpreadsheetApp.getActiveSpreadsheet() : null;
+      var menuSheet = ss ? (ss.getSheetByName("Menu") || ss.getSheetByName("menu")) : null;
+      if (menuSheet) {
+        var menuHeaderMap = getHeaderMap_(menuSheet);
+        if (menuHeaderMap.stock_item_id && menuHeaderMap.status) {
+          var menuData = menuSheet.getDataRange().getValues();
+          for (var i = 1; i < menuData.length; i++) {
+            var rowStockItemId = String(menuData[i][menuHeaderMap.stock_item_id - 1] || "").trim();
+            if (rowStockItemId === normalizedStockItemId) {
+              menuSheet.getRange(i + 1, menuHeaderMap.status).setValue(normalizedStatus);
+              if (menuHeaderMap.updated_at) {
+                menuSheet.getRange(i + 1, menuHeaderMap.updated_at).setValue(now);
+              }
+              updatedMenusCount++;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    return {
+      ok: true,
+      message: "Status material berhasil diubah menjadi " + (normalizedStatus === "active" ? "Aktif" : "Non-Aktif") + ".",
+      stock_item_id: normalizedStockItemId,
+      status: normalizedStatus,
+      updated_menus_count: updatedMenusCount
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function renameInventoryItem_(stockItemId, newName, changedBy) {
+  var normalizedStockItemId = String(stockItemId || "").trim();
+  var normalizedNewName = String(newName || "").trim();
+
+  if (!normalizedStockItemId) {
+    return {
+      ok: false,
+      error: "stock_item_id wajib diisi.",
+    };
+  }
+
+  if (!normalizedNewName || normalizedNewName.length < 2) {
+    return {
+      ok: false,
+      error: "Nama item minimal 2 karakter.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses pembaruan data lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var rowNumber = findInventoryRowByStockItemId_(normalizedStockItemId, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        error: "Item stok tidak ditemukan.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var oldName = "";
+    if (inventoryHeaderMap.stock_item_name) {
+      oldName = String(inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_item_name).getValue() || "");
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_item_name).setValue(normalizedNewName);
+    }
+    if (inventoryHeaderMap.updated_at) {
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+    }
+
+    var updatedMenusCount = 0;
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet ? SpreadsheetApp.getActiveSpreadsheet() : null;
+      var menuSheet = ss ? (ss.getSheetByName("Menu") || ss.getSheetByName("menu")) : null;
+      if (menuSheet) {
+        var menuHeaderMap = getHeaderMap_(menuSheet);
+        if (menuHeaderMap.stock_item_id && menuHeaderMap.menu_name) {
+          var menuData = menuSheet.getDataRange().getValues();
+          for (var i = 1; i < menuData.length; i++) {
+            var rowStockItemId = String(menuData[i][menuHeaderMap.stock_item_id - 1] || "").trim();
+            if (rowStockItemId === normalizedStockItemId) {
+              menuSheet.getRange(i + 1, menuHeaderMap.menu_name).setValue(normalizedNewName);
+              if (menuHeaderMap.updated_at) {
+                menuSheet.getRange(i + 1, menuHeaderMap.updated_at).setValue(now);
+              }
+              updatedMenusCount++;
+            }
+          }
+        }
+      }
+    } catch (menuErr) {
+      console.warn("Gagal sinkronisasi nama ke tabel Menu: " + menuErr.message);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Nama material berhasil diubah menjadi '" + normalizedNewName + "'.",
+      stock_item_id: normalizedStockItemId,
+      old_name: oldName,
+      new_name: normalizedNewName,
+      updated_menus_count: updatedMenusCount
     };
   } finally {
     lock.releaseLock();
@@ -2925,9 +6171,19 @@ function sanitizeEmployeeForAccess_(employee) {
   return {
     employee_id: employee.employee_id || "",
     employee_name: employee.employee_name || "",
-    role: String(employee.role || "").trim().toLowerCase(),
+    role: normalizeEmployeeRole_(employee.role),
     status: getEmployeeStatus_(employee),
   };
+}
+
+function normalizeEmployeeRole_(role) {
+  var normalizedRole = String(role || "").trim().toLowerCase();
+
+  if (normalizedRole === "admin") {
+    return "manager";
+  }
+
+  return normalizedRole || "cashier";
 }
 
 function getEmployeeStatus_(employee) {
@@ -2945,12 +6201,13 @@ function getEmployees_() {
 }
 
 function roleMeetsRequired_(role, requiredRole) {
-  var normalizedRole = String(role || "").trim().toLowerCase();
-  var normalizedRequiredRole = String(requiredRole || "admin").trim().toLowerCase();
+  var normalizedRole = normalizeEmployeeRole_(role);
+  var normalizedRequiredRole = normalizeEmployeeRole_(requiredRole || "manager");
   var rank = {
     staff: 1,
+    receptionist: 1,
     cashier: 2,
-    admin: 3,
+    manager: 3,
     owner: 4,
   };
 
@@ -2958,11 +6215,11 @@ function roleMeetsRequired_(role, requiredRole) {
     return true;
   }
 
-  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.admin);
+  return (rank[normalizedRole] || 0) >= (rank[normalizedRequiredRole] || rank.manager);
 }
 
 function auditAdminPinValidation_(payload, result, blockReason, employee) {
-  var requestedAction = String(payload.requested_action || "admin_pin").trim();
+  var requestedAction = String(payload.requested_action || "manager_pin").trim();
   var safeEmployee = sanitizeEmployeeForAccess_(employee);
 
   appendMasterDataAuditLog_({
@@ -2977,14 +6234,14 @@ function auditAdminPinValidation_(payload, result, blockReason, employee) {
         employee_name: safeEmployee.employee_name,
         role: safeEmployee.role,
         status: safeEmployee.status,
-        required_role: payload.required_role || "admin",
+        required_role: payload.required_role || "manager",
         requested_action: requestedAction,
       }
       : {
-        required_role: payload.required_role || "admin",
+        required_role: payload.required_role || "manager",
         requested_action: requestedAction,
       },
-    changed_by: safeEmployee ? safeEmployee.employee_name : payload.changed_by || "Admin",
+    changed_by: safeEmployee ? safeEmployee.employee_name : payload.changed_by || "Manager",
     note: requestedAction,
     result: result,
     block_reason: blockReason || "",
@@ -2996,11 +6253,14 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
 
   var payload = {
     pin: pin,
-    required_role: requiredRole || "admin",
-    requested_action: requestedAction || "admin_pin",
-    changed_by: changedBy || "Admin",
+    required_role: requiredRole || "manager",
+    requested_action: requestedAction || "manager_pin",
+    changed_by: changedBy || "Manager",
   };
   var normalizedPin = String(pin || "").trim();
+  var pinLabel = roleMeetsRequired_("cashier", payload.required_role)
+    ? "PIN operator"
+    : "PIN owner/manager";
 
   if (!normalizedPin) {
     if (shouldAudit !== false) {
@@ -3010,7 +6270,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN admin wajib diisi.",
+      message: pinLabel + " wajib diisi.",
       block_reason: "EMPTY_PIN",
     };
   }
@@ -3029,7 +6289,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
     return {
       ok: false,
       success: false,
-      message: "PIN admin tidak valid.",
+      message: pinLabel + " tidak valid.",
       block_reason: "INVALID_PIN",
     };
   }
@@ -3055,7 +6315,7 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
   return {
     ok: true,
     success: true,
-    message: "PIN admin valid.",
+    message: pinLabel + " valid.",
     employee: sanitizeEmployeeForAccess_(employee),
   };
 }
@@ -3063,9 +6323,9 @@ function validateAdminPinPayload_(pin, requiredRole, requestedAction, changedBy,
 function validateAdminPin_(payload) {
   var result = validateAdminPinPayload_(
     payload.pin,
-    payload.required_role || "admin",
-    payload.requested_action || "admin_pin",
-    payload.changed_by || "Admin",
+    payload.required_role || "manager",
+    payload.requested_action || "manager_pin",
+    payload.changed_by || "Manager",
     true
   );
 
@@ -3121,7 +6381,10 @@ function getNextAuditLogId_() {
 
 function appendMasterDataAuditLog_(entry) {
   var lock = LockService.getDocumentLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    Logger.log("Audit log skipped because document lock is busy.");
+    return null;
+  }
 
   try {
     var sheet = ensureMasterDataAuditLogsSheet_();
@@ -3300,37 +6563,58 @@ function validateRoomMasterPayload_(payload, isUpdate) {
 
 function saveRoomMaster_(payload) {
   var data = validateRoomMasterPayload_(payload, false);
-  var sheet = ensureRoomsMasterColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var roomId = generateSequentialId_(sheet, headerMap, "room_id", "ROOM");
-  var room = {
-    room_id: roomId,
-    room_name: data.room_name,
-    status: data.status,
-    start_time: "",
-    booked_duration_minutes: "",
-    scheduled_end_time: "",
-    rate_per_hour: data.rate_per_hour,
-    tv_device_id: data.tv_device_id,
-    updated_at: toJakartaIsoString_(new Date()),
-  };
 
-  appendObjectRow_(sheet, room);
-  var savedRoom = getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "room",
-    entity_id: savedRoom.room_id,
-    entity_name: savedRoom.room_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedRoom,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureRoomsMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data room berhasil disimpan.", savedRoom);
+    // Cek duplikasi nama room
+    var existingRooms = readSheetAsObjects_("Rooms");
+    var nameLower = data.room_name.toLowerCase();
+    var duplicateName = existingRooms.some(function(r) {
+      return String(r.room_name || "").trim().toLowerCase() === nameLower;
+    });
+    if (duplicateName) {
+      return masterError_("Nama room \"" + data.room_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var roomId = generateSequentialId_(sheet, headerMap, "room_id", "ROOM");
+    var room = {
+      room_id: roomId,
+      room_name: data.room_name,
+      status: data.status,
+      start_time: "",
+      booked_duration_minutes: "",
+      scheduled_end_time: "",
+      rate_per_hour: data.rate_per_hour,
+      tv_device_id: data.tv_device_id,
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+
+    appendObjectRow_(sheet, room);
+    var savedRoom = getRoomFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "room",
+      entity_id: savedRoom.room_id,
+      entity_name: savedRoom.room_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedRoom,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data room berhasil disimpan.", savedRoom);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateRoomMaster_(payload) {
@@ -3380,6 +6664,9 @@ function validateMenuMasterPayload_(payload, isUpdate) {
   var price = Number(payload.price);
   var stockItemId = String(payload.stock_item_id || "").trim();
   var qtyPerUnit = Number(payload.qty_per_unit || payload.stock_qty_per_unit || 0);
+  var bonusSalesLc = Number(payload.bonus_sales_lc || payload.bonus_per_item || 0);
+  var hpp = Number(payload.hpp || 0);
+  var variableCostRate = Number(payload.variable_cost_rate || 0);
   var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
 
   if (isUpdate && !String(payload.menu_id || "").trim()) {
@@ -3402,6 +6689,18 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     masterError_("Qty stok per unit wajib angka 0 atau lebih jika stock item diisi.");
   }
 
+  if (!isFinite(bonusSalesLc) || bonusSalesLc < 0) {
+    masterError_("Bonus sales LC wajib angka 0 atau lebih.");
+  }
+
+  if (!isFinite(hpp) || hpp < 0) {
+    masterError_("HPP wajib angka 0 atau lebih.");
+  }
+
+  if (!isFinite(variableCostRate) || variableCostRate < 0 || variableCostRate > 100) {
+    masterError_("Var cost % wajib angka 0 sampai 100.");
+  }
+
   return {
     menu_name: menuName,
     category: category,
@@ -3409,6 +6708,9 @@ function validateMenuMasterPayload_(payload, isUpdate) {
     stock_item_id: stockItemId,
     stock_qty_per_unit: stockItemId ? qtyPerUnit : 0,
     stock_tracking: stockItemId ? "yes" : "no",
+    bonus_sales_lc: bonusSalesLc,
+    hpp: hpp,
+    variable_cost_rate: variableCostRate,
     status: status,
   };
 }
@@ -3426,42 +6728,70 @@ function getMenuMasterRow_(sheet, headerMap, rowNumber) {
     stock_tracking: row.stock_tracking || "",
     stock_item_id: row.stock_item_id || "",
     stock_qty_per_unit: Number(row.stock_qty_per_unit) || 0,
+    bonus_sales_lc: Number(row.bonus_sales_lc || row.bonus_per_item) || 0,
+    hpp: Number(row.hpp) || 0,
+    variable_cost_rate: Number(row.variable_cost_rate) || 0,
   };
 }
 
 function saveMenuMaster_(payload) {
   var data = validateMenuMasterPayload_(payload, false);
-  var sheet = ensureMenuMasterColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var menuId = generateSequentialId_(sheet, headerMap, "menu_id", "MENU");
-  var menu = {
-    menu_id: menuId,
-    menu_name: data.menu_name,
-    category: data.category,
-    price: data.price,
-    status: data.status,
-    updated_at: toJakartaIsoString_(new Date()),
-    stock_tracking: data.stock_tracking,
-    stock_item_id: data.stock_item_id,
-    stock_qty_per_unit: data.stock_qty_per_unit,
-  };
 
-  appendObjectRow_(sheet, menu);
-  var savedMenu = getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "menu",
-    entity_id: savedMenu.menu_id,
-    entity_name: savedMenu.menu_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedMenu,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureMenuMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data menu berhasil disimpan.", savedMenu);
+    // Cek duplikasi nama menu (hanya untuk menu yang masih aktif)
+    var existingMenus = readSheetAsObjects_("Menu");
+    var nameLower = data.menu_name.toLowerCase();
+    var duplicateName = existingMenus.some(function(m) {
+      return String(m.menu_name || "").trim().toLowerCase() === nameLower
+        && String(m.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama menu \"" + data.menu_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var menuId = generateSequentialId_(sheet, headerMap, "menu_id", "MENU");
+    var menu = {
+      menu_id: menuId,
+      menu_name: data.menu_name,
+      category: data.category,
+      price: data.price,
+      status: data.status,
+      updated_at: toJakartaIsoString_(new Date()),
+      stock_tracking: data.stock_tracking,
+      stock_item_id: data.stock_item_id,
+      stock_qty_per_unit: data.stock_qty_per_unit,
+      bonus_sales_lc: data.bonus_sales_lc,
+      hpp: data.hpp,
+      variable_cost_rate: data.variable_cost_rate,
+    };
+
+    appendObjectRow_(sheet, menu);
+    var savedMenu = getMenuMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "menu",
+      entity_id: savedMenu.menu_id,
+      entity_name: savedMenu.menu_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedMenu,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data menu berhasil disimpan.", savedMenu);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateMenuMaster_(payload) {
@@ -3485,6 +6815,9 @@ function updateMenuMaster_(payload) {
     stock_tracking: data.stock_tracking,
     stock_item_id: data.stock_item_id,
     stock_qty_per_unit: data.stock_qty_per_unit,
+    bonus_sales_lc: data.bonus_sales_lc,
+    hpp: data.hpp,
+    variable_cost_rate: data.variable_cost_rate,
   });
   var updatedMenu = getMenuMasterRow_(sheet, headerMap, rowNumber);
 
@@ -3501,6 +6834,130 @@ function updateMenuMaster_(payload) {
   });
 
   return masterSuccessResponse_("Data menu berhasil diperbarui.", updatedMenu);
+}
+
+function bulkUpdateMenuProfitability_(payload) {
+  var request = payload || {};
+  var items = Array.isArray(request.items) ? request.items : [];
+  var changedBy = getMasterChangedBy_(request);
+
+  if (items.length === 0) {
+    return { ok: false, success: false, error: "items wajib diisi.", message: "items wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return createLockBusyResponse_("Sistem sedang memproses update menu lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var sheet = ensureMenuMasterColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var values = sheet.getDataRange().getValues();
+    var headers = values.length > 0
+      ? values[0].map(function (header) { return String(header).trim(); })
+      : [];
+    var rowIndexByMenuId = {};
+    var itemByMenuId = {};
+    var updated = [];
+    var skipped = [];
+    var now = toJakartaIsoString_(new Date());
+
+    values.slice(1).forEach(function (row, index) {
+      var menuId = String(row[(headerMap.menu_id || 1) - 1] || "").trim();
+      if (menuId) {
+        rowIndexByMenuId[menuId] = index + 1;
+      }
+    });
+
+    items.forEach(function (item) {
+      var menuId = String(item.menu_id || "").trim();
+
+      if (!menuId) {
+        skipped.push({ menu_id: "", reason: "menu_id kosong" });
+        return;
+      }
+
+      if (rowIndexByMenuId[menuId] === undefined) {
+        skipped.push({ menu_id: menuId, reason: "menu tidak ditemukan" });
+        return;
+      }
+
+      var price = Number(item.price);
+      var hpp = Number(item.hpp || 0);
+      var variableCostRate = Number(item.variable_cost_rate || 0);
+      var bonusSalesLc = Number(item.bonus_sales_lc || 0);
+
+      if (!isFinite(price) || price < 0 ||
+          !isFinite(hpp) || hpp < 0 ||
+          !isFinite(variableCostRate) || variableCostRate < 0 || variableCostRate > 100 ||
+          !isFinite(bonusSalesLc) || bonusSalesLc < 0) {
+        skipped.push({ menu_id: menuId, reason: "nilai profit tidak valid" });
+        return;
+      }
+
+      itemByMenuId[menuId] = {
+        price: price,
+        hpp: hpp,
+        variable_cost_rate: variableCostRate,
+        bonus_sales_lc: bonusSalesLc,
+      };
+    });
+
+    Object.keys(itemByMenuId).forEach(function (menuId) {
+      var rowIndex = rowIndexByMenuId[menuId];
+      var row = values[rowIndex];
+      var item = itemByMenuId[menuId];
+
+      row[headerMap.price - 1] = item.price;
+      row[headerMap.hpp - 1] = item.hpp;
+      row[headerMap.variable_cost_rate - 1] = item.variable_cost_rate;
+      row[headerMap.bonus_sales_lc - 1] = item.bonus_sales_lc;
+      row[headerMap.updated_at - 1] = now;
+
+      updated.push({
+        menu_id: menuId,
+        menu_name: row[headerMap.menu_name - 1],
+        category: row[headerMap.category - 1],
+        price: item.price,
+        hpp: item.hpp,
+        variable_cost_rate: item.variable_cost_rate,
+        bonus_sales_lc: item.bonus_sales_lc,
+      });
+    });
+
+    if (updated.length > 0) {
+      sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+
+      appendMasterDataAuditLog_({
+        entity_type: "menu",
+        entity_id: "BULK_MENU_PROFITABILITY",
+        entity_name: "Bulk Menu Profitability",
+        action_type: "bulk_profit_update",
+        old_value: "",
+        new_value: {
+          updated_count: updated.length,
+          skipped_count: skipped.length,
+          menu_ids: updated.map(function (item) { return item.menu_id; }),
+        },
+        changed_by: changedBy,
+        note: getMasterNote_(request),
+        result: "success",
+      });
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Profitability menu berhasil diupdate.",
+      updated_count: updated.length,
+      skipped_count: skipped.length,
+      updated: updated,
+      skipped: skipped,
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function validateInventoryMasterPayload_(payload, isUpdate) {
@@ -3541,36 +6998,58 @@ function validateInventoryMasterPayload_(payload, isUpdate) {
 
 function saveInventoryMaster_(payload) {
   var data = validateInventoryMasterPayload_(payload, false);
-  var sheet = ensureInventorySheetColumns_();
-  var headerMap = getHeaderMap_(sheet);
-  var stockItemId = generateSequentialId_(sheet, headerMap, "stock_item_id", "ITEM");
-  var item = {
-    stock_item_id: stockItemId,
-    stock_item_name: data.stock_item_name,
-    category: data.category,
-    unit: data.unit,
-    stock_qty: 0,
-    min_stock: data.min_stock,
-    status: data.status,
-    updated_at: toJakartaIsoString_(new Date()),
-  };
 
-  appendObjectRow_(sheet, item);
-  var savedItem = buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
 
-  appendMasterDataAuditLog_({
-    entity_type: "inventory",
-    entity_id: savedItem.stock_item_id,
-    entity_name: savedItem.stock_item_name,
-    action_type: "create",
-    old_value: "",
-    new_value: savedItem,
-    changed_by: getMasterChangedBy_(payload),
-    note: getMasterNote_(payload),
-    result: "success",
-  });
+  try {
+    var sheet = ensureInventorySheetColumns_();
+    var headerMap = getHeaderMap_(sheet);
 
-  return masterSuccessResponse_("Data inventory berhasil disimpan.", savedItem);
+    // Cek duplikasi nama item inventory
+    var existingItems = readSheetAsObjects_("Inventory");
+    var nameLower = data.stock_item_name.toLowerCase();
+    var duplicateName = existingItems.some(function(inv) {
+      return String(inv.stock_item_name || inv.item_name || "").trim().toLowerCase() === nameLower
+        && String(inv.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama item inventory \"" + data.stock_item_name + "\" sudah digunakan. Gunakan nama lain.");
+    }
+
+    var stockItemId = generateSequentialId_(sheet, headerMap, "stock_item_id", "ITEM");
+    var item = {
+      stock_item_id: stockItemId,
+      stock_item_name: data.stock_item_name,
+      category: data.category,
+      unit: data.unit,
+      stock_qty: 0,
+      min_stock: data.min_stock,
+      status: data.status,
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+
+    appendObjectRow_(sheet, item);
+    var savedItem = buildInventoryItemFromRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "inventory",
+      entity_id: savedItem.stock_item_id,
+      entity_name: savedItem.stock_item_name,
+      action_type: "create",
+      old_value: "",
+      new_value: savedItem,
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data inventory berhasil disimpan.", savedItem);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateInventoryMaster_(payload) {
@@ -3652,9 +7131,9 @@ function deleteBlockedResponse_(entityType, entityId, blockReason, message) {
 function authorizeAdminPinForMasterDelete_(payload, entityType, entityId) {
   var authResult = validateAdminPinPayload_(
     payload.admin_pin,
-    "admin",
+    "manager",
     "delete_permanent_" + entityType,
-    payload.changed_by || "Admin",
+    payload.changed_by || "Manager",
     true
   );
 
@@ -3667,7 +7146,7 @@ function authorizeAdminPinForMasterDelete_(payload, entityType, entityId) {
         entityType,
         entityId,
         "INVALID_ADMIN_PIN",
-        "Delete permanen membutuhkan PIN owner/admin yang valid."
+        "Delete permanen membutuhkan PIN owner/manager yang valid."
       ),
     };
   }
@@ -3846,11 +7325,1854 @@ function deleteInventoryMaster_(payload) {
   });
 }
 
+function ensureLcMasterSheet_() {
+  return ensureSheetWithHeaders_("LcMaster", LC_MASTER_HEADERS);
+}
+
+function ensureLcWorkLogsSheet_() {
+  var sheet = ensureSheetWithHeaders_("LcWorkLogs", LC_WORK_LOG_HEADERS);
+  var lastCol = sheet.getLastColumn();
+  if (lastCol > 0) {
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+      return String(h).trim();
+    });
+    LC_WORK_LOG_HEADERS.forEach(function (h) {
+      if (headers.indexOf(h) === -1) {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue(h);
+        headers.push(h);
+      }
+    });
+  }
+  return sheet;
+}
+
+function ensureSheetHasHeaders_(sheet, expectedHeaders) {
+  var lastCol = sheet.getLastColumn();
+  var headers = lastCol > 0
+    ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+        return String(h).trim();
+      })
+    : [];
+
+  expectedHeaders.forEach(function (header) {
+    if (headers.indexOf(header) === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      headers.push(header);
+    }
+  });
+
+  return sheet;
+}
+
+function ensureLcPayrollHistorySheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcPayrollHistory", LC_PAYROLL_HISTORY_HEADERS),
+    LC_PAYROLL_HISTORY_HEADERS
+  );
+}
+
+function ensureLcSalesBonusLogsSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcSalesBonusLogs", LC_SALES_BONUS_LOG_HEADERS),
+    LC_SALES_BONUS_LOG_HEADERS
+  );
+}
+
+function ensureLcCashAdvancesSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("LcCashAdvances", LC_CASH_ADVANCES_HEADERS),
+    LC_CASH_ADVANCES_HEADERS
+  );
+}
+
+function ensurePettyCashLedgerSheet_() {
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("PettyCashLedger", PETTY_CASH_LEDGER_HEADERS),
+    PETTY_CASH_LEDGER_HEADERS
+  );
+}
+
+function ensureLcFinanceFoundation_() {
+  ensureLcSalesBonusLogsSheet_();
+  ensureLcCashAdvancesSheet_();
+  ensurePettyCashLedgerSheet_();
+  ensureLcPayrollHistorySheet_();
+}
+
+function ensurePromoMasterSheet_() {
+  return ensureSheetWithHeaders_("PromoMaster", PROMO_MASTER_HEADERS);
+}
+
+function getLcMasterList_() {
+  ensureLcMasterSheet_();
+  var lcs = readSheetAsObjects_("LcMaster") || [];
+  lcs.sort(function (a, b) {
+    return String(a.lc_name || "").localeCompare(String(b.lc_name || ""), "id", { sensitivity: "base" });
+  });
+  return {
+    ok: true,
+    success: true,
+    lcs: lcs,
+  };
+}
+
+function validateLcMasterPayload_(payload, isUpdate) {
+  var lcName = String(payload.lc_name || "").trim();
+  var ratePerRoom = Number(payload.rate_per_room);
+  var status = normalizeMasterStatus_(payload.status, ["active", "inactive"], "active");
+  var availability = normalizeMasterStatus_(payload.availability, ["available", "busy"], "available");
+
+  if (isUpdate && !String(payload.lc_id || "").trim()) {
+    masterError_("lc_id wajib diisi.");
+  }
+
+  if (!lcName) {
+    masterError_("Nama LC wajib diisi.");
+  }
+
+  if (isNaN(ratePerRoom) || ratePerRoom < 0) {
+    masterError_("Tarif LC wajib angka 0 atau lebih.");
+  }
+
+  return {
+    lc_name: lcName,
+    rate_per_room: ratePerRoom,
+    status: status,
+    availability: availability,
+  };
+}
+
+function saveLcMaster_(payload) {
+  var data = validateLcMasterPayload_(payload, false);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterError_("Sistem sedang memproses master data lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var sheet = ensureLcMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var now = toJakartaIsoString_(new Date());
+
+    // Cek duplikasi nama LC
+    var existingLcs = readSheetAsObjects_("LcMaster");
+    var nameLower = data.lc_name.toLowerCase();
+    var duplicateName = existingLcs.some(function(lc) {
+      return String(lc.lc_name || "").trim().toLowerCase() === nameLower
+        && String(lc.status || "").trim().toLowerCase() !== "deleted";
+    });
+    if (duplicateName) {
+      return masterError_("Nama LC \"" + data.lc_name + "\" sudah terdaftar. Gunakan nama lain.");
+    }
+
+    var lcId = generateSequentialId_(sheet, headerMap, "lc_id", "LC");
+    var lc = {
+      lc_id: lcId,
+      lc_name: data.lc_name,
+      rate_per_room: data.rate_per_room,
+      status: data.status,
+      availability: data.availability,
+      updated_at: now,
+    };
+
+    appendObjectRow_(sheet, lc);
+    var savedLc = getLcMasterRow_(sheet, getHeaderMap_(sheet), sheet.getLastRow());
+
+    appendMasterDataAuditLog_({
+      entity_type: "lc",
+      entity_id: savedLc.lc_id,
+      entity_name: savedLc.lc_name,
+      action_type: "create",
+      old_value_json: "",
+      new_value_json: JSON.stringify(savedLc),
+      changed_by: getMasterChangedBy_(payload),
+      note: getMasterNote_(payload),
+      result: "success",
+    });
+
+    return masterSuccessResponse_("Data LC berhasil disimpan.", savedLc);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getLcMasterRow_(sheet, headerMap, rowNumber) {
+  return getRowObject_(sheet, headerMap, rowNumber);
+}
+
+function updateLcMaster_(payload) {
+  var lcId = String(payload.lc_id || "").trim();
+  var data = validateLcMasterPayload_(payload, true);
+  var sheet = ensureLcMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "lc_id", lcId);
+
+  if (!rowNumber) {
+    masterError_("LC tidak ditemukan.");
+  }
+  
+  var currentLc = getLcMasterRow_(sheet, headerMap, rowNumber);
+  var now = toJakartaIsoString_(new Date());
+  
+  var updatedFields = {
+    lc_name: data.lc_name,
+    rate_per_room: data.rate_per_room,
+    status: data.status,
+    availability: payload.availability || currentLc.availability,
+    updated_at: now,
+  };
+
+  setRowValues_(sheet, headerMap, rowNumber, updatedFields);
+  var updatedLc = getLcMasterRow_(sheet, headerMap, rowNumber);
+
+  appendMasterDataAuditLog_({
+    entity_type: "lc",
+    entity_id: updatedLc.lc_id,
+    entity_name: updatedLc.lc_name,
+    action_type: "update",
+    old_value_json: JSON.stringify(currentLc),
+    new_value_json: JSON.stringify(updatedLc),
+    changed_by: getMasterChangedBy_(payload),
+    note: getMasterNote_(payload),
+    result: "success",
+  });
+
+  return masterSuccessResponse_("Data LC berhasil diperbarui.", updatedLc);
+}
+
+function deleteLcMaster_(payload) {
+  var lcId = String(payload.lc_id || "").trim();
+
+  if (!lcId) {
+    return { ok: false, success: false, error: "lc_id wajib diisi." };
+  }
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "lc", lcId);
+
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
+  var changedBy = getMasterChangedBy_(payload);
+  var sheet = ensureLcMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "lc_id", lcId);
+
+  if (!rowNumber) {
+    return { ok: false, success: false, error: "LC tidak ditemukan." };
+  }
+  
+  var lc = getLcMasterRow_(sheet, headerMap, rowNumber);
+
+  ensureLcWorkLogsSheet_();
+  var workLogs = readSheetAsObjects_("LcWorkLogs");
+  var hasHistory = false;
+  for (var i = 0; i < workLogs.length; i++) {
+    if (String(workLogs[i].lc_id || "").trim() === lcId) {
+      hasHistory = true;
+      break;
+    }
+  }
+
+  if (hasHistory) {
+    appendMasterDataAuditLog_({
+      entity_type: "lc",
+      entity_id: lcId,
+      entity_name: lc.lc_name,
+      action_type: "delete_blocked",
+      old_value_json: JSON.stringify(lc),
+      new_value_json: "",
+      changed_by: changedBy,
+      note: "Delete blocked: LC has work history.",
+      result: "blocked",
+      block_reason: "LC memiliki riwayat kerja di LcWorkLogs.",
+    });
+    return {
+      ok: false,
+      success: false,
+      error: "LC tidak bisa dihapus karena sudah memiliki riwayat kerja.",
+      block_reason: "LC memiliki riwayat kerja.",
+    };
+  }
+
+  sheet.deleteRow(rowNumber);
+
+  appendMasterDataAuditLog_({
+    entity_type: "lc",
+    entity_id: lcId,
+    entity_name: lc.lc_name,
+    action_type: "delete_permanent",
+    old_value_json: JSON.stringify(lc),
+    new_value_json: "",
+    changed_by: changedBy,
+    note: "Deleted permanently.",
+    result: "success",
+  });
+
+  return {
+    ok: true,
+    success: true,
+    message: "LC berhasil dihapus secara permanen.",
+  };
+}
+
+function bulkUpdateLcRate_(payload) {
+  var ratePerHour = Number(payload.rate_per_hour || payload.rate_per_room || 0);
+  if (!ratePerHour || ratePerHour <= 0) {
+    return { ok: false, success: false, error: "Tarif per jam harus berupa angka dan lebih besar dari 0." };
+  }
+
+  var authResult = authorizeAdminPinForMasterDelete_(payload, "lc", "BULK_RATE");
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+
+  try {
+    var sheet = ensureLcMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var now = toJakartaIsoString_(new Date());
+    var applyToAll = Boolean(payload.apply_to_all);
+    var updatedCount = 0;
+
+    var rows = readSheetAsObjects_("LcMaster");
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var status = String(row.status || "").toLowerCase();
+      if (!applyToAll && status !== "active") continue;
+
+      var rowNum = findRowByValue_(sheet, headerMap, "lc_id", row.lc_id);
+      if (rowNum) {
+        if (headerMap["rate_per_hour"]) sheet.getRange(rowNum, headerMap["rate_per_hour"]).setValue(ratePerHour);
+        if (headerMap["updated_at"]) sheet.getRange(rowNum, headerMap["updated_at"]).setValue(now);
+        updatedCount++;
+      }
+    }
+
+    logMasterAudit_({
+      entity_type: "lc",
+      entity_id: "BULK_RATE",
+      entity_name: "Ubah tarif " + updatedCount + " LC ke Rp " + ratePerHour,
+      action_type: "bulk_update_rate",
+      old_value_json: "",
+      new_value_json: JSON.stringify({ rate_per_hour: ratePerHour, updated_count: updatedCount }),
+      changed_by: getMasterChangedBy_(payload),
+      note: payload.reason || "Pembaruan tarif massal LC (Weekday/Weekend)",
+      result: "success",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Berhasil mengubah tarif untuk " + updatedCount + " LC aktif menjadi Rp " + ratePerHour.toLocaleString("id-ID") + " / jam.",
+      updated_count: updatedCount,
+      rate_per_hour: ratePerHour
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function appendLcWorkLog_(log) {
+  var sheet = ensureLcWorkLogsSheet_();
+  appendObjectRow_(sheet, log);
+}
+
+function normalizeLcDurationMinutes_(value, defaultDurationMinutes) {
+  var fallback = Math.max(1, Math.round(Number(defaultDurationMinutes) || 60));
+
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  var durationMinutes = Math.round(Number(value));
+
+  if (!isFinite(durationMinutes) || durationMinutes <= 0) {
+    return fallback;
+  }
+
+  return durationMinutes;
+}
+
+function calculateLcRateForDuration_(durationMinutes, ratePerHour) {
+  var safeRatePerHour = Number(ratePerHour) || 0;
+  var safeDurationMinutes = normalizeLcDurationMinutes_(durationMinutes, 60);
+
+  return Math.ceil(safeDurationMinutes / 60) * safeRatePerHour;
+}
+
+function parseLcAssignments_(request, defaultDurationMinutes) {
+  var payload = request || {};
+  var rawAssignments = payload.lc_assignments;
+  var assignments = [];
+
+  if (typeof rawAssignments === "string" && String(rawAssignments || "").trim()) {
+    try {
+      rawAssignments = JSON.parse(rawAssignments);
+    } catch (err) {
+      rawAssignments = null;
+    }
+  }
+
+  if (Array.isArray(rawAssignments)) {
+    rawAssignments.forEach(function (assignment) {
+      var lcId = String(assignment && assignment.lc_id || assignment && assignment.id || "").trim();
+
+      if (!lcId) {
+        return;
+      }
+
+      assignments.push({
+        lc_id: lcId,
+        duration_minutes: normalizeLcDurationMinutes_(assignment.duration_minutes, defaultDurationMinutes),
+      });
+    });
+  }
+
+  if (assignments.length === 0) {
+    String(payload.lc_ids || "").split(",").forEach(function (rawId) {
+      var lcId = String(rawId || "").trim();
+
+      if (!lcId) {
+        return;
+      }
+
+      assignments.push({
+        lc_id: lcId,
+        duration_minutes: normalizeLcDurationMinutes_("", defaultDurationMinutes),
+      });
+    });
+  }
+
+  return assignments;
+}
+
+function serializeLcAssignments_(assignments) {
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return "";
+  }
+
+  return JSON.stringify(assignments.map(function (assignment) {
+    return {
+      lc_id: String(assignment.lc_id || "").trim(),
+      duration_minutes: normalizeLcDurationMinutes_(assignment.duration_minutes, 60),
+    };
+  }).filter(function (assignment) {
+    return !!assignment.lc_id;
+  }));
+}
+
+function getLcIdsFromAssignments_(assignments) {
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return "";
+  }
+
+  return assignments.map(function (assignment) {
+    return String(assignment.lc_id || "").trim();
+  }).filter(Boolean).join(",");
+}
+
+function inferLcWorkLogDurationMinutes_(log) {
+  var explicitDuration = Number(log.duration_minutes);
+
+  if (isFinite(explicitDuration) && explicitDuration > 0) {
+    return Math.round(explicitDuration);
+  }
+
+  var ratePerHour = Number(log.rate_per_hour) || 0;
+  var totalRate = Number(log.rate) || 0;
+
+  if (ratePerHour > 0 && totalRate > 0) {
+    return Math.ceil(totalRate / ratePerHour) * 60;
+  }
+
+  if (log.created_at && log.closed_at) {
+    return calculateDurationMinutes_(log.created_at, log.closed_at);
+  }
+
+  return 0;
+}
+
+function resolveLcClosedAtByDuration_(startTime, durationMinutes, fallbackEndTime) {
+  if (startTime && Number(durationMinutes) > 0) {
+    try {
+      return addMinutesToJakartaIsoString_(startTime, durationMinutes);
+    } catch (err) {
+      Logger.log("Gagal menghitung closed_at LC custom: " + err.message);
+    }
+  }
+
+  return fallbackEndTime || "";
+}
+
+function getLcWorkReports_(period, startDate, endDate) {
+  var range = getOperationalDateRangeForPeriod_(period, startDate, endDate);
+
+  if (!range.ok) {
+    return range;
+  }
+
+  var cache = CacheService.getScriptCache();
+  var cacheKey = [
+    "lc-work-reports-v2",
+    range.period,
+    range.startDate || "all",
+    range.endDate || "all",
+  ].join(":");
+  var cachedResponse = cache.get(cacheKey);
+
+  if (cachedResponse) {
+    try {
+      return JSON.parse(cachedResponse);
+    } catch (cacheError) {
+      Logger.log("Cache laporan LC tidak valid: " + cacheError.message);
+    }
+  }
+
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  var lcs = readSheetAsObjects_("LcMaster");
+  var salesBonusLogs = readSheetAsObjects_("LcSalesBonusLogs");
+  var transactions = readSheetAsObjects_("Transactions");
+  var transactionMap = {};
+  transactions.forEach(function (tx) {
+    var id = String(tx.transaction_id || "").trim();
+    if (id) transactionMap[id] = tx;
+  });
+  var reportsByLcId = {};
+
+  lcs.forEach(function (lc) {
+    var lcId = String(lc.lc_id || "").trim();
+
+    if (!lcId) {
+      return;
+    }
+
+    reportsByLcId[lcId] = {
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      rate_per_room: Number(lc.rate_per_room) || 0,
+      total_sessions: 0,
+      room_earning_total: 0,
+      sales_bonus_total: 0,
+      gross_earning_total: 0,
+      total_earnings: 0,
+      logs: [],
+      sales_bonus_logs: [],
+    };
+  });
+
+  logs.forEach(function (log) {
+    var createdTime = log.created_at || log.closed_at || "";
+
+    if (!createdTime) {
+      return;
+    }
+
+    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log, transactionMap);
+
+    if (!matchesOperationalPeriod_(logOperationalDate, range)) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var report = reportsByLcId[lcId];
+
+    if (!report) {
+      return;
+    }
+
+    var rate = Number(log.rate) || 0;
+    report.logs.push({
+      log_id: log.log_id,
+      session_id: log.session_id,
+      lc_id: log.lc_id,
+      lc_name: log.lc_name,
+      rate: rate,
+      duration_minutes: inferLcWorkLogDurationMinutes_(log),
+      rate_per_hour: Number(log.rate_per_hour) || 0,
+      status: log.status,
+      created_at: log.created_at,
+      closed_at: log.closed_at,
+      operational_date: logOperationalDate,
+      is_upfront: Boolean(log.upfront_transaction_id),
+      upfront_transaction_id: log.upfront_transaction_id || "",
+      closed_transaction_id: log.closed_transaction_id || "",
+    });
+
+    if (log.status === "done") {
+      report.total_sessions += 1;
+      report.room_earning_total += rate;
+    }
+  });
+
+  salesBonusLogs.forEach(function (bonusLog) {
+    var status = String(bonusLog.source_status || "").trim().toLowerCase();
+    var operationalDate = resolveLcFinanceOperationalDate_(bonusLog);
+
+    if (
+      isLcFinanceRowVoided_(bonusLog) ||
+      status === "cancelled" ||
+      status === "voided" ||
+      !operationalDate ||
+      !matchesOperationalPeriod_(operationalDate, range)
+    ) {
+      return;
+    }
+
+    var lcId = String(bonusLog.lc_id || "").trim();
+    var report = reportsByLcId[lcId];
+
+    if (!report) {
+      return;
+    }
+
+    var bonusTotal = Number(bonusLog.bonus_total) || 0;
+    report.sales_bonus_total += bonusTotal;
+    report.sales_bonus_logs.push({
+      bonus_log_id: bonusLog.bonus_log_id || "",
+      transaction_id: bonusLog.transaction_id || "",
+      order_id: bonusLog.order_id || "",
+      menu_id: bonusLog.menu_id || "",
+      menu_name: bonusLog.menu_name || "",
+      category: bonusLog.category || "",
+      quantity: Number(bonusLog.quantity) || 0,
+      bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
+      bonus_total: bonusTotal,
+      source_status: bonusLog.source_status || "",
+      operational_date: operationalDate,
+      created_at: bonusLog.created_at || "",
+    });
+  });
+
+  var reports = lcs.map(function (lc) {
+    var report = reportsByLcId[String(lc.lc_id || "").trim()];
+
+    if (!report) {
+      return null;
+    }
+
+    report.sales_bonus_logs.sort(function (first, second) {
+      return String(second.created_at || "").localeCompare(String(first.created_at || ""));
+    });
+    report.gross_earning_total = report.room_earning_total + report.sales_bonus_total;
+    report.total_earnings = report.gross_earning_total;
+
+    return report;
+  }).filter(function (report) {
+    return report && (report.total_sessions > 0 || report.sales_bonus_total > 0);
+  });
+
+  var response = {
+    ok: true,
+    success: true,
+    reports: reports,
+    range: range,
+  };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(response), 15);
+  } catch (cacheWriteError) {
+    Logger.log("Gagal menyimpan cache laporan LC: " + cacheWriteError.message);
+  }
+
+  return response;
+}
+
+function getLcPayrollHistory_() {
+  ensureLcPayrollHistorySheet_();
+  var history = readSheetAsObjects_("LcPayrollHistory");
+  history.sort(function(a, b) {
+    var dateA = new Date(a.processed_at || 0).getTime();
+    var dateB = new Date(b.processed_at || 0).getTime();
+    return dateB - dateA;
+  });
+  return {
+    ok: true,
+    success: true,
+    history: history,
+  };
+}
+
+function getLcPayrollDetails_(payrollId) {
+  if (!payrollId) {
+    return { ok: false, success: false, error: "payroll_id wajib diisi." };
+  }
+
+  ensureLcWorkLogsSheet_();
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  
+  var payrollLogs = logs.filter(function(log) {
+    return String(log.payroll_id || "").trim() === String(payrollId).trim();
+  });
+
+  // Grouping per LC untuk summary
+  var lcGroups = {};
+  payrollLogs.forEach(function(log) {
+    var lcId = String(log.lc_id || "").trim();
+    if (!lcId) return;
+
+    if (!lcGroups[lcId]) {
+      lcGroups[lcId] = {
+        lc_id: lcId,
+        lc_name: log.lc_name || ("LC " + lcId),
+        rate_per_room: Number(log.rate) || 175000, // fallback/tarif sesi itu
+        total_sessions: 0,
+        total_earnings: 0,
+        logs: []
+      };
+    }
+    lcGroups[lcId].total_sessions++;
+    lcGroups[lcId].total_earnings += (Number(log.rate) || 0);
+    lcGroups[lcId].logs.push({
+      log_id: log.log_id,
+      session_id: log.session_id,
+      rate: Number(log.rate) || 0,
+      duration_minutes: inferLcWorkLogDurationMinutes_(log),
+      rate_per_hour: Number(log.rate_per_hour) || 0,
+      created_at: log.created_at,
+      closed_at: log.closed_at
+    });
+  });
+
+  return {
+    ok: true,
+    success: true,
+    payroll_id: payrollId,
+    details: Object.values(lcGroups)
+  };
+}
+
+function generateLcFinanceId_(prefix) {
+  return prefix + "-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function normalizeLcFinanceOperationalDate_(value) {
+  var normalized = normalizeJakartaDateString_(value);
+  return normalized || getCurrentOperationalDateString_();
+}
+
+function resolveLcFinanceOperationalDate_(row) {
+  var direct = normalizeJakartaDateString_(row.operational_date);
+  if (direct) {
+    return direct;
+  }
+
+  return getOperationalDateString_(row.created_at || row.deducted_at || row.voided_at || "");
+}
+
+function isLcFinanceRowVoided_(row) {
+  return !!String(row.voided_at || row.cancelled_at || "").trim();
+}
+
+function getLatestPettyCashBalance_() {
+  ensurePettyCashLedgerSheet_();
+  var rows = readSheetAsObjects_("PettyCashLedger");
+  var latestBalance = 0;
+
+  rows.forEach(function (row) {
+    if (!String(row.voided_at || "").trim() && row.balance_after !== "" && row.balance_after !== null) {
+      latestBalance = Number(row.balance_after) || 0;
+    }
+  });
+
+  return latestBalance;
+}
+
+function appendPettyCashLedgerEntry_(entry) {
+  var sheet = ensurePettyCashLedgerSheet_();
+  var entryType = String(entry.entry_type || "").trim().toLowerCase();
+  var amount = Number(entry.amount || entry.cash_out_amount || entry.cash_in_amount);
+  var previousBalance = getLatestPettyCashBalance_();
+  var cashIn = entryType === "cash_in" ? amount : 0;
+  var cashOut = entryType === "cash_out" ? amount : 0;
+  var ledger = {
+    ledger_id: entry.ledger_id || generateLcFinanceId_("PETTY"),
+    operational_date: normalizeLcFinanceOperationalDate_(entry.operational_date),
+    entry_type: entryType,
+    category: entry.category || "manual",
+    reference_type: entry.reference_type || "manual",
+    reference_id: entry.reference_id || "",
+    lc_id: entry.lc_id || "",
+    lc_name: entry.lc_name || "",
+    cash_in_amount: cashIn,
+    cash_out_amount: cashOut,
+    balance_after: previousBalance + cashIn - cashOut,
+    cashier_name: entry.cashier_name || "Kasir",
+    note: entry.note || "",
+    created_at: toJakartaIsoString_(new Date()),
+    voided_at: "",
+    void_reason: "",
+  };
+
+  appendObjectRow_(sheet, ledger);
+  return ledger;
+}
+
+function getLcMasterById_(lcId) {
+  var targetId = String(lcId || "").trim();
+  if (!targetId) {
+    return null;
+  }
+
+  ensureLcMasterSheet_();
+  return readSheetAsObjects_("LcMaster").find(function (lc) {
+    return String(lc.lc_id || "").trim() === targetId;
+  }) || null;
+}
+
+function filterLcFinanceRowsByPeriod_(rows, periodResult) {
+  return rows.filter(function (row) {
+    var operationalDate = resolveLcFinanceOperationalDate_(row);
+    return operationalDate && matchesOperationalPeriod_(operationalDate, periodResult);
+  });
+}
+
+function getPendingLcSalesBonusRows_(range) {
+  ensureLcSalesBonusLogsSheet_();
+  return readSheetAsObjects_("LcSalesBonusLogs").map(function (row, index) {
+    row.__row_number = index + 2;
+    return row;
+  }).filter(function (row) {
+    var status = String(row.source_status || "").trim().toLowerCase();
+    var isUnpaid = !String(row.payroll_id || "").trim();
+    return isUnpaid &&
+      !isLcFinanceRowVoided_(row) &&
+      status !== "cancelled" &&
+      status !== "voided" &&
+      matchesOperationalPeriod_(resolveLcFinanceOperationalDate_(row), range);
+  });
+}
+
+function getDeductibleLcCashAdvanceRows_(range) {
+  ensureLcCashAdvancesSheet_();
+  return readSheetAsObjects_("LcCashAdvances").map(function (row, index) {
+    row.__row_number = index + 2;
+    return row;
+  }).filter(function (row) {
+    var status = String(row.status || "open").trim().toLowerCase();
+    var operationalDate = resolveLcFinanceOperationalDate_(row);
+    var withinCutoff = range.period === "all" || !range.endDate || operationalDate <= range.endDate;
+    return !String(row.payroll_id || "").trim() &&
+      !isLcFinanceRowVoided_(row) &&
+      status === "open" &&
+      operationalDate &&
+      withinCutoff;
+  });
+}
+
+function buildLcPayrollFinanceGroups_(range) {
+  var groups = {};
+
+  getPendingLcSalesBonusRows_(range).forEach(function (row) {
+    var lcId = String(row.lc_id || "").trim();
+    if (!lcId) {
+      return;
+    }
+    if (!groups[lcId]) {
+      groups[lcId] = { sales_bonus_total: 0, cash_advance_deducted: 0, bonus_rows: [], advance_rows: [] };
+    }
+    groups[lcId].sales_bonus_total += Number(row.bonus_total) || 0;
+    groups[lcId].bonus_rows.push(row);
+  });
+
+  getDeductibleLcCashAdvanceRows_(range).forEach(function (row) {
+    var lcId = String(row.lc_id || "").trim();
+    if (!lcId) {
+      return;
+    }
+    if (!groups[lcId]) {
+      groups[lcId] = { sales_bonus_total: 0, cash_advance_deducted: 0, bonus_rows: [], advance_rows: [] };
+    }
+    groups[lcId].cash_advance_deducted += Number(row.amount) || 0;
+    groups[lcId].advance_rows.push(row);
+  });
+
+  return groups;
+}
+
+function calculateDeductibleCashAdvanceTotal_(advanceRows, grossLimit) {
+  var remaining = Math.max(0, Number(grossLimit) || 0);
+  var deducted = 0;
+
+  (advanceRows || []).slice().sort(function (a, b) {
+    return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+  }).forEach(function (row) {
+    var amount = Number(row.amount) || 0;
+    if (amount > 0 && amount <= remaining) {
+      deducted += amount;
+      remaining -= amount;
+    }
+  });
+
+  return deducted;
+}
+
+function getLcFinanceSummary_(period, startDate, endDate) {
+  var periodResult = parseTransactionPeriod_(period || "today", startDate || "", endDate || "");
+  if (!periodResult.ok) {
+    return periodResult;
+  }
+
+  ensureLcFinanceFoundation_();
+
+  var salesBonusLogs = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("LcSalesBonusLogs"),
+    periodResult
+  ).filter(function (row) {
+    return !isLcFinanceRowVoided_(row);
+  });
+  var cashAdvances = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("LcCashAdvances"),
+    periodResult
+  );
+  var pettyCashLedger = filterLcFinanceRowsByPeriod_(
+    readSheetAsObjects_("PettyCashLedger"),
+    periodResult
+  ).filter(function (row) {
+    return !String(row.voided_at || "").trim();
+  });
+
+  var summary = {
+    sales_bonus_total: salesBonusLogs.reduce(function (sum, row) { return sum + (Number(row.bonus_total) || 0); }, 0),
+    cash_advance_total: cashAdvances.filter(function (row) {
+      return String(row.status || "").trim().toLowerCase() !== "cancelled";
+    }).reduce(function (sum, row) { return sum + (Number(row.amount) || 0); }, 0),
+    petty_cash_in_total: pettyCashLedger.reduce(function (sum, row) { return sum + (Number(row.cash_in_amount) || 0); }, 0),
+    petty_cash_out_total: pettyCashLedger.reduce(function (sum, row) { return sum + (Number(row.cash_out_amount) || 0); }, 0),
+    petty_cash_balance: getLatestPettyCashBalance_(),
+  };
+
+  return {
+    ok: true,
+    success: true,
+    range: periodResult,
+    summary: summary,
+    sales_bonus_logs: salesBonusLogs,
+    cash_advances: cashAdvances,
+    petty_cash_ledger: pettyCashLedger,
+  };
+}
+
+function getPendingLcPayroll_(startDate, endDate) {
+  ensureLcPayrollHistorySheet_();
+  ensureLcWorkLogsSheet_();
+
+  var history = readSheetAsObjects_("LcPayrollHistory");
+  var suggestedStartDate = "";
+  var suggestedEndDate = "";
+
+  if (history.length > 0) {
+    var sortedHistory = history.slice().sort(function(a, b) {
+      return String(b.end_date || "").localeCompare(String(a.end_date || ""));
+    });
+    var lastPayroll = sortedHistory[0];
+    suggestedStartDate = addDaysToOperationalDateString_(lastPayroll.end_date, 1);
+    suggestedEndDate = addDaysToOperationalDateString_(suggestedStartDate, 13);
+  } else {
+    var activeOpDate = getCurrentOperationalDateString_();
+    suggestedStartDate = getOperationalMonthStartDateString_(activeOpDate);
+    suggestedEndDate = activeOpDate;
+  }
+
+  var startVal = startDate || suggestedStartDate;
+  var endVal = endDate || suggestedEndDate;
+
+  var range = {
+    period: "custom",
+    startDate: startVal,
+    endDate: endVal
+  };
+
+  var logs = readSheetAsObjects_("LcWorkLogs");
+  var lcs = readSheetAsObjects_("LcMaster");
+  var financeGroups = buildLcPayrollFinanceGroups_(range);
+
+  var filteredLogs = logs.filter(function(log) {
+    var status = String(log.status || "").trim().toLowerCase();
+    if (status !== "done") {
+      return false;
+    }
+    if (log.payroll_id && String(log.payroll_id).trim() !== "") {
+      return false;
+    }
+    var effectiveTime = log.closed_at || log.created_at || "";
+    if (!effectiveTime) {
+      return false;
+    }
+    var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
+    return matchesOperationalPeriod_(logOperationalDate, range);
+  });
+
+  var lcById = {};
+  lcs.forEach(function (lc) {
+    lcById[String(lc.lc_id || "").trim()] = lc;
+  });
+
+  var reportLcIds = {};
+  filteredLogs.forEach(function (log) {
+    if (String(log.lc_id || "").trim()) {
+      reportLcIds[String(log.lc_id || "").trim()] = true;
+    }
+  });
+  Object.keys(financeGroups).forEach(function (lcId) {
+    reportLcIds[lcId] = true;
+  });
+
+  var reports = Object.keys(reportLcIds).map(function(lcId) {
+    var lc = lcById[lcId] || { lc_id: lcId, lc_name: "LC " + lcId, rate_per_room: 0 };
+    var lcLogs = filteredLogs.filter(function(log) {
+      return String(log.lc_id || "").trim() === String(lc.lc_id || "").trim();
+    });
+
+    var roomEarningTotal = lcLogs.reduce(function(sum, log) {
+      return sum + (Number(log.rate) || 0);
+    }, 0);
+    var finance = financeGroups[lcId] || { sales_bonus_total: 0, cash_advance_deducted: 0 };
+    var salesBonusTotal = Number(finance.sales_bonus_total) || 0;
+    var grossEarningTotal = roomEarningTotal + salesBonusTotal;
+    var cashAdvanceOutstanding = Number(finance.cash_advance_deducted) || 0;
+    var cashAdvanceDeducted = calculateDeductibleCashAdvanceTotal_(finance.advance_rows || [], grossEarningTotal);
+    var netPayoutTotal = grossEarningTotal - cashAdvanceDeducted;
+
+    return {
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      rate_per_room: Number(lc.rate_per_room) || 0,
+      total_sessions: lcLogs.length,
+      room_earning_total: roomEarningTotal,
+      sales_bonus_total: salesBonusTotal,
+      cash_advance_deducted: cashAdvanceDeducted,
+      cash_advance_outstanding: cashAdvanceOutstanding - cashAdvanceDeducted,
+      gross_earning_total: grossEarningTotal,
+      net_payout_total: netPayoutTotal,
+      total_earnings: netPayoutTotal,
+    };
+  }).filter(function(report) {
+    return report.total_sessions > 0 ||
+      report.sales_bonus_total > 0 ||
+      report.cash_advance_deducted > 0 ||
+      report.cash_advance_outstanding > 0;
+  });
+
+  var summaryRoomEarningTotal = reports.reduce(function(sum, r) {
+    return sum + r.room_earning_total;
+  }, 0);
+
+  var summarySalesBonusTotal = reports.reduce(function(sum, r) {
+    return sum + r.sales_bonus_total;
+  }, 0);
+
+  var summaryCashAdvanceDeducted = reports.reduce(function(sum, r) {
+    return sum + r.cash_advance_deducted;
+  }, 0);
+
+  var summaryTotalAmount = reports.reduce(function(sum, r) {
+    return sum + r.net_payout_total;
+  }, 0);
+
+  var summaryTotalSessions = reports.reduce(function(sum, r) {
+    return sum + r.total_sessions;
+  }, 0);
+
+  return {
+    ok: true,
+    success: true,
+    reports: reports,
+    suggested_range: {
+      startDate: suggestedStartDate,
+      endDate: suggestedEndDate,
+    },
+    current_range: {
+      startDate: startVal,
+      endDate: endVal,
+    },
+    summary: {
+      total_amount: summaryTotalAmount,
+      room_earning_total: summaryRoomEarningTotal,
+      sales_bonus_total: summarySalesBonusTotal,
+      cash_advance_deducted: summaryCashAdvanceDeducted,
+      gross_earning_total: summaryRoomEarningTotal + summarySalesBonusTotal,
+      net_payout_total: summaryTotalAmount,
+      total_sessions: summaryTotalSessions,
+      total_lcs: reports.length,
+    }
+  };
+}
+
+function processLcPayroll_(payload) {
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      return { ok: false, error: "Sistem sedang sibuk. Silakan coba beberapa saat lagi." };
+    }
+
+    var startDate = String(payload.start_date || "").trim();
+    var endDate = String(payload.end_date || "").trim();
+    var cashierName = String(payload.cashier_name || "Kasir").trim() || "Kasir";
+
+    if (!startDate || !endDate) {
+      return { ok: false, error: "Tanggal mulai dan tanggal akhir wajib ditentukan." };
+    }
+
+    // Cek duplikasi: apakah periode ini sudah pernah di-payroll?
+    ensureLcPayrollHistorySheet_();
+    var existingPayrolls = readSheetAsObjects_("LcPayrollHistory");
+    var duplicatePayroll = null;
+    for (var p = 0; p < existingPayrolls.length; p++) {
+      var prev = existingPayrolls[p];
+      var prevStart = normalizeCompareDate_(prev.start_date);
+      var prevEnd = normalizeCompareDate_(prev.end_date);
+      var targetStart = normalizeCompareDate_(startDate);
+      var targetEnd = normalizeCompareDate_(endDate);
+      if (prevStart === targetStart && prevEnd === targetEnd) {
+        duplicatePayroll = prev;
+        break;
+      }
+    }
+    if (duplicatePayroll) {
+      return {
+        ok: false,
+        error: "Payroll untuk periode " + startDate + " s/d " + endDate +
+          " sudah pernah diproses (ID: " + duplicatePayroll.payroll_id +
+          ", diproses oleh: " + (duplicatePayroll.processed_by || "?") +
+          "). Cek riwayat payroll jika terjadi kesalahan.",
+      };
+    }
+
+    var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+    var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+    var salesBonusSheet = ensureLcSalesBonusLogsSheet_();
+    var salesBonusHeaders = getHeaderMap_(salesBonusSheet);
+    var cashAdvanceSheet = ensureLcCashAdvancesSheet_();
+    var cashAdvanceHeaders = getHeaderMap_(cashAdvanceSheet);
+
+    var range = {
+      period: "custom",
+      startDate: startDate,
+      endDate: endDate
+    };
+
+    var logs = readSheetAsObjects_("LcWorkLogs");
+    
+    var matchingLogIndices = [];
+    var matchedLogs = [];
+
+    for (var i = 0; i < logs.length; i++) {
+      var log = logs[i];
+      var status = String(log.status || "").trim().toLowerCase();
+      var isUnpaid = !log.payroll_id || String(log.payroll_id).trim() === "";
+      var effectiveTime = log.closed_at || log.created_at || "";
+
+      if (status === "done" && isUnpaid && effectiveTime) {
+        var logOperationalDate = resolveLcWorkLogOperationalDateString_(log);
+        if (matchesOperationalPeriod_(logOperationalDate, range)) {
+          matchingLogIndices.push(i);
+          matchedLogs.push(log);
+        }
+      }
+    }
+
+    var pendingRoomEarningByLc = {};
+    matchedLogs.forEach(function (log) {
+      var lcId = String(log.lc_id || "").trim();
+      pendingRoomEarningByLc[lcId] = (pendingRoomEarningByLc[lcId] || 0) + (Number(log.rate) || 0);
+    });
+
+    var financeGroups = buildLcPayrollFinanceGroups_(range);
+    var hasProcessableFinanceRows = Object.keys(financeGroups).some(function (lcId) {
+      var group = financeGroups[lcId] || {};
+      var salesBonusTotal = Number(group.sales_bonus_total) || 0;
+      var lcGross = (Number(pendingRoomEarningByLc[lcId]) || 0) + salesBonusTotal;
+      return salesBonusTotal > 0 ||
+        calculateDeductibleCashAdvanceTotal_(group.advance_rows || [], lcGross) > 0;
+    });
+
+    if (matchedLogs.length === 0 && !hasProcessableFinanceRows) {
+      return { ok: false, error: "Tidak ada sesi kerja, bonus sales, atau potongan kasbon LC yang bisa diproses pada periode ini." };
+    }
+
+    var todayStr = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd");
+    var payrollId = "LCPAY-" + todayStr + "-" + Math.floor(Math.random() * 9000 + 1000);
+
+    var uniqueLcIds = {};
+    var roomEarningByLc = {};
+    var roomEarningTotal = 0;
+    var totalSessions = matchedLogs.length;
+
+    matchedLogs.forEach(function(log) {
+      var lcId = String(log.lc_id || "").trim();
+      var rate = Number(log.rate) || 0;
+      uniqueLcIds[lcId] = true;
+      roomEarningByLc[lcId] = (roomEarningByLc[lcId] || 0) + rate;
+      roomEarningTotal += rate;
+    });
+
+    Object.keys(financeGroups).forEach(function (lcId) {
+      uniqueLcIds[lcId] = true;
+    });
+
+    var totalLcsPaid = Object.keys(uniqueLcIds).length;
+    var salesBonusTotal = Object.keys(financeGroups).reduce(function (sum, lcId) {
+      return sum + (Number(financeGroups[lcId].sales_bonus_total) || 0);
+    }, 0);
+    var cashAdvanceDeducted = 0;
+    var grossEarningTotal = roomEarningTotal + salesBonusTotal;
+
+    matchingLogIndices.forEach(function(origIdx) {
+      var rowNum = origIdx + 2;
+      lcWorkLogsSheet.getRange(rowNum, lcWorkLogsHeaders.payroll_id).setValue(payrollId);
+    });
+
+    Object.keys(financeGroups).forEach(function (lcId) {
+      (financeGroups[lcId].bonus_rows || []).forEach(function (row) {
+        salesBonusSheet.getRange(row.__row_number, salesBonusHeaders.payroll_id).setValue(payrollId);
+      });
+
+      var lcGross = (Number(roomEarningByLc[lcId]) || 0) + (Number(financeGroups[lcId].sales_bonus_total) || 0);
+      var remainingDeduction = lcGross;
+      (financeGroups[lcId].advance_rows || []).slice().sort(function (a, b) {
+        return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+      }).forEach(function (row) {
+        var amount = Number(row.amount) || 0;
+        if (amount > 0 && amount <= remainingDeduction) {
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.status).setValue("deducted");
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.payroll_id).setValue(payrollId);
+          cashAdvanceSheet.getRange(row.__row_number, cashAdvanceHeaders.deducted_at).setValue(toJakartaIsoString_(new Date()));
+          remainingDeduction -= amount;
+          cashAdvanceDeducted += amount;
+        }
+      });
+    });
+
+    var netPayoutTotal = grossEarningTotal - cashAdvanceDeducted;
+
+    var payoutLedger = null;
+    if (netPayoutTotal > 0) {
+      payoutLedger = appendPettyCashLedgerEntry_({
+        operational_date: getCurrentOperationalDateString_(),
+        entry_type: "cash_out",
+        category: "lc_payroll",
+        reference_type: "lc_payroll",
+        reference_id: payrollId,
+        amount: netPayoutTotal,
+        cashier_name: cashierName,
+        note: "Pembayaran payroll LC periode " + startDate + " s/d " + endDate,
+      });
+    }
+
+    var payrollRecord = {
+      payroll_id: payrollId,
+      start_date: startDate,
+      end_date: endDate,
+      total_amount: netPayoutTotal,
+      room_earning_total: roomEarningTotal,
+      sales_bonus_total: salesBonusTotal,
+      cash_advance_deducted: cashAdvanceDeducted,
+      gross_earning_total: grossEarningTotal,
+      net_payout_total: netPayoutTotal,
+      total_sessions: totalSessions,
+      total_lcs_paid: totalLcsPaid,
+      petty_cash_ledger_id: payoutLedger ? payoutLedger.ledger_id : "",
+      status: "processed",
+      processed_at: toJakartaIsoString_(new Date()),
+      processed_by: cashierName
+    };
+    
+    var historySheet = ensureLcPayrollHistorySheet_();
+    appendObjectRow_(historySheet, payrollRecord);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Payroll berhasil diproses.",
+      payroll: payrollRecord
+    };
+
+  } catch(e) {
+    return { ok: false, error: "Gagal memproses payroll: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createLcCashAdvance_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var lcId = String(request.lc_id || "").trim();
+    var lc = getLcMasterById_(lcId);
+    var amount = Number(request.amount);
+    var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+    var operationalDate = normalizeLcFinanceOperationalDate_(request.operational_date);
+    var note = String(request.note || "").trim();
+
+    if (!lc) {
+      return { ok: false, success: false, error: "LC tidak ditemukan.", message: "LC tidak ditemukan." };
+    }
+
+    if (!isFinite(amount) || amount <= 0) {
+      return { ok: false, success: false, error: "Nominal kasbon wajib lebih dari 0.", message: "Nominal kasbon wajib lebih dari 0." };
+    }
+
+    var advanceId = generateLcFinanceId_("LCADV");
+    var ledger = appendPettyCashLedgerEntry_({
+      operational_date: operationalDate,
+      entry_type: "cash_out",
+      category: "lc_cash_advance",
+      reference_type: "lc_cash_advance",
+      reference_id: advanceId,
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      amount: amount,
+      cashier_name: cashierName,
+      note: note,
+    });
+
+    var advance = {
+      cash_advance_id: advanceId,
+      operational_date: operationalDate,
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      amount: amount,
+      status: "open",
+      requested_by: String(request.requested_by || lc.lc_name || "").trim(),
+      cashier_name: cashierName,
+      petty_cash_ledger_id: ledger.ledger_id,
+      payroll_id: "",
+      note: note,
+      created_at: toJakartaIsoString_(new Date()),
+      deducted_at: "",
+      cancelled_at: "",
+      cancel_reason: "",
+    };
+
+    appendObjectRow_(ensureLcCashAdvancesSheet_(), advance);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Kasbon LC berhasil dicatat dan petty cash otomatis keluar.",
+      cash_advance: advance,
+      petty_cash_entry: ledger,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat kasbon LC: " + error.message, message: "Gagal mencatat kasbon LC: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function recordPettyCashEntry_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var entryType = String(request.entry_type || "").trim().toLowerCase();
+    var amount = Number(request.amount);
+    var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+
+    if (["cash_in", "cash_out"].indexOf(entryType) === -1) {
+      return { ok: false, success: false, error: "Tipe petty cash wajib cash_in atau cash_out.", message: "Tipe petty cash wajib cash_in atau cash_out." };
+    }
+
+    if (!isFinite(amount) || amount <= 0) {
+      return { ok: false, success: false, error: "Nominal petty cash wajib lebih dari 0.", message: "Nominal petty cash wajib lebih dari 0." };
+    }
+
+    var ledger = appendPettyCashLedgerEntry_({
+      operational_date: normalizeLcFinanceOperationalDate_(request.operational_date),
+      entry_type: entryType,
+      category: String(request.category || "manual").trim() || "manual",
+      reference_type: "manual",
+      reference_id: "",
+      amount: amount,
+      cashier_name: cashierName,
+      note: String(request.note || "").trim(),
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Mutasi petty cash berhasil dicatat.",
+      petty_cash_entry: ledger,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat petty cash: " + error.message, message: "Gagal mencatat petty cash: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function createLcSalesBonusLog_(payload) {
+  var lock = LockService.getScriptLock();
+  var lockAcquired = false;
+  try {
+    if (!lock.tryLock(10000)) {
+      return createLockBusyResponse_();
+    }
+    lockAcquired = true;
+
+    ensureLcFinanceFoundation_();
+
+    var request = payload || {};
+    var lcId = String(request.lc_id || "").trim();
+    var lc = getLcMasterById_(lcId);
+    var quantity = Number(request.quantity || 1);
+    var bonusPerItem = Number(request.bonus_per_item);
+    var cashierName = String(request.cashier_name || request.created_by || "Kasir").trim() || "Kasir";
+
+    if (!lc) {
+      return { ok: false, success: false, error: "LC tidak ditemukan.", message: "LC tidak ditemukan." };
+    }
+
+    if (!isFinite(quantity) || quantity <= 0) {
+      return { ok: false, success: false, error: "Quantity bonus wajib lebih dari 0.", message: "Quantity bonus wajib lebih dari 0." };
+    }
+
+    if (!isFinite(bonusPerItem) || bonusPerItem < 0) {
+      return { ok: false, success: false, error: "Bonus per item wajib angka 0 atau lebih.", message: "Bonus per item wajib angka 0 atau lebih." };
+    }
+
+    var bonusLog = {
+      bonus_log_id: generateLcFinanceId_("LCBONUS"),
+      operational_date: normalizeLcFinanceOperationalDate_(request.operational_date),
+      transaction_id: String(request.transaction_id || "").trim(),
+      order_id: String(request.order_id || "").trim(),
+      menu_id: String(request.menu_id || "").trim(),
+      menu_name: String(request.menu_name || "").trim(),
+      category: String(request.category || "").trim(),
+      lc_id: lc.lc_id,
+      lc_name: lc.lc_name,
+      quantity: quantity,
+      bonus_per_item: bonusPerItem,
+      bonus_total: quantity * bonusPerItem,
+      source_status: String(request.source_status || "manual").trim() || "manual",
+      payroll_id: "",
+      created_at: toJakartaIsoString_(new Date()),
+      created_by: cashierName,
+      voided_at: "",
+      void_reason: "",
+    };
+
+    appendObjectRow_(ensureLcSalesBonusLogsSheet_(), bonusLog);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Bonus sales LC berhasil dicatat.",
+      sales_bonus_log: bonusLog,
+    };
+  } catch (error) {
+    return { ok: false, success: false, error: "Gagal mencatat bonus sales LC: " + error.message, message: "Gagal mencatat bonus sales LC: " + error.message };
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function getActiveSessionLcSnapshotsForRoom_(roomId) {
+  var sessionResult = findLatestRoomSessionForRoom_(roomId, ["active", "starting", "paid_waiting_start", "closing"]);
+  if (!sessionResult || !sessionResult.session) {
+    return [];
+  }
+
+  var lcIds = String(sessionResult.session.lc_ids || "")
+    .split(",")
+    .map(function (id) { return String(id || "").trim(); })
+    .filter(function (id) { return id && id !== "PENDING"; });
+
+  if (lcIds.length === 0) {
+    return [];
+  }
+
+  ensureLcMasterSheet_();
+  var lcRows = readSheetAsObjects_("LcMaster");
+  var lcMap = lcRows.reduce(function (map, lc) {
+    map[String(lc.lc_id || "").trim()] = lc;
+    return map;
+  }, {});
+
+  return lcIds.map(function (lcId) {
+    var lc = lcMap[lcId] || {};
+    return {
+      lc_id: lcId,
+      lc_name: lc.lc_name || lcId,
+    };
+  });
+}
+
+function appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName) {
+  ensureLcSalesBonusLogsSheet_();
+
+  var activeLcs = getActiveSessionLcSnapshotsForRoom_(order.room_id);
+  if (!activeLcs.length) {
+    return [];
+  }
+
+  var rows = [];
+  var createdAt = toJakartaIsoString_(new Date());
+
+  (orderItems || []).forEach(function (item) {
+    var bonusPerItem = Number(item.bonus_sales_lc) || 0;
+    var quantity = Number(item.quantity) || 0;
+    var totalBonus = bonusPerItem * quantity;
+
+    if (totalBonus <= 0) {
+      return;
+    }
+
+    var baseShare = Math.floor(totalBonus / activeLcs.length);
+    var remainder = totalBonus - (baseShare * activeLcs.length);
+
+    activeLcs.forEach(function (lc, index) {
+      var lcBonusTotal = baseShare + (index < remainder ? 1 : 0);
+      if (lcBonusTotal <= 0) {
+        return;
+      }
+
+      rows.push({
+        bonus_log_id: generateLcFinanceId_("LCBONUS"),
+        operational_date: normalizeLcFinanceOperationalDate_(order.created_at),
+        transaction_id: "",
+        order_id: order.order_id,
+        menu_id: item.menu_id,
+        menu_name: item.menu_name,
+        category: item.category,
+        lc_id: lc.lc_id,
+        lc_name: lc.lc_name,
+        quantity: quantity / activeLcs.length,
+        bonus_per_item: bonusPerItem,
+        bonus_total: lcBonusTotal,
+        source_status: "fnb_order",
+        payroll_id: "",
+        created_at: createdAt,
+        created_by: cashierName || order.cashier_name || "Kasir",
+        voided_at: "",
+        void_reason: "",
+      });
+    });
+  });
+
+  rows.forEach(function (row) {
+    appendObjectRow_(ensureLcSalesBonusLogsSheet_(), row);
+  });
+
+  return rows;
+}
+
+function buildLcFnbBonusReconciliationContext_() {
+  ensureLcSalesBonusLogsSheet_();
+  ensureLcWorkLogsSheet_();
+  ensureRoomSessionsSheet_();
+  ensureFnbOrdersSheetColumns_();
+  ensureFnbOrderItemsSheet_();
+
+  var bonusRows = readSheetAsObjects_("LcSalesBonusLogs");
+  bonusRows.forEach(function (row, index) {
+    row.__row_number = index + 2;
+  });
+
+  return {
+    sessions: readSheetAsObjects_(ROOM_SESSIONS_SHEET),
+    work_logs: readSheetAsObjects_("LcWorkLogs"),
+    orders: readFnbOrdersOrEmpty_(),
+    items_by_order_id: groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_()),
+    bonus_rows: bonusRows,
+    menu_map: getMenuItemsMap_(),
+  };
+}
+
+function findLcBonusSessionForTransaction_(transaction, context) {
+  var transactionId = String(transaction.transaction_id || "").trim();
+  var roomId = String(transaction.room_id || "").trim();
+  var transactionStart = normalizeFnbOrderDateTime_(transaction.start_time);
+  var fallback = null;
+
+  for (var index = context.sessions.length - 1; index >= 0; index--) {
+    var session = context.sessions[index];
+    if (String(session.closed_transaction_id || "").trim() === transactionId) {
+      return session;
+    }
+    if (
+      !fallback
+      && String(session.room_id || "").trim() === roomId
+      && normalizeFnbOrderDateTime_(session.start_time) === transactionStart
+    ) {
+      fallback = session;
+    }
+  }
+
+  return fallback;
+}
+
+function getFinalLcSnapshotsForSession_(session, context) {
+  var sessionId = String(session && session.session_id || "").trim();
+  var snapshotsById = {};
+
+  context.work_logs.forEach(function (log) {
+    if (String(log.session_id || "").trim() !== sessionId) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var status = String(log.status || "").trim().toLowerCase();
+    if (!lcId || lcId === "PENDING" || status === "cancelled") {
+      return;
+    }
+
+    snapshotsById[lcId] = {
+      lc_id: lcId,
+      lc_name: log.lc_name || lcId,
+    };
+  });
+
+  return Object.keys(snapshotsById).sort().map(function (lcId) {
+    return snapshotsById[lcId];
+  });
+}
+
+function getFnbOrdersForBonusSession_(transaction, session, context) {
+  var referencedIds = {};
+  parseCommaSeparatedIds_(transaction.fnb_order_ids || "").forEach(function (orderId) {
+    referencedIds[orderId] = true;
+  });
+  var roomId = String(session.room_id || transaction.room_id || "").trim();
+  var sessionStart = normalizeFnbOrderDateTime_(session.start_time || transaction.start_time);
+
+  return context.orders.filter(function (order) {
+    var status = String(order.order_status || "").trim().toLowerCase();
+    if (status === "cancelled" || status === "voided") {
+      return false;
+    }
+
+    var orderId = String(order.order_id || "").trim();
+    var matchesReference = !!referencedIds[orderId];
+    var matchesSession = String(order.room_id || "").trim() === roomId
+      && normalizeFnbOrderDateTime_(order.room_start_time) === sessionStart;
+
+    return matchesReference || matchesSession;
+  });
+}
+
+function buildExpectedLcFnbBonusRows_(transaction, session, context) {
+  var lcs = getFinalLcSnapshotsForSession_(session, context);
+  var orders = getFnbOrdersForBonusSession_(transaction, session, context);
+  var operationalDate = resolveTransactionOperationalDateString_(transaction)
+    || getOperationalDateString_(session.end_time || session.start_time);
+  var expectedRows = [];
+
+  if (lcs.length === 0) {
+    return {
+      lcs: lcs,
+      orders: orders,
+      rows: expectedRows,
+      operational_date: operationalDate,
+    };
+  }
+
+  orders.forEach(function (order) {
+    var orderItems = context.items_by_order_id[order.order_id] || [];
+    orderItems.forEach(function (item) {
+      var masterItem = context.menu_map[String(item.menu_id || "").trim()] || {};
+      var bonusPerItem = Number(item.bonus_sales_lc);
+      if (!isFinite(bonusPerItem) || bonusPerItem <= 0) {
+        bonusPerItem = Number(masterItem.bonus_sales_lc || masterItem.bonus_per_item) || 0;
+      }
+
+      var quantity = Number(item.quantity) || 0;
+      var totalBonus = Math.round(bonusPerItem * quantity);
+      if (totalBonus <= 0) {
+        return;
+      }
+
+      var baseShare = Math.floor(totalBonus / lcs.length);
+      var remainder = totalBonus - baseShare * lcs.length;
+      lcs.forEach(function (lc, index) {
+        var bonusTotal = baseShare + (index < remainder ? 1 : 0);
+        if (bonusTotal <= 0) {
+          return;
+        }
+        expectedRows.push({
+          transaction_id: transaction.transaction_id || "",
+          order_id: order.order_id || "",
+          menu_id: item.menu_id || "",
+          menu_name: item.menu_name || masterItem.menu_name || item.menu_id || "",
+          category: item.category || masterItem.category || "",
+          lc_id: lc.lc_id,
+          lc_name: lc.lc_name,
+          quantity: quantity / lcs.length,
+          bonus_per_item: bonusPerItem,
+          bonus_total: bonusTotal,
+          operational_date: operationalDate,
+        });
+      });
+    });
+  });
+
+  return {
+    lcs: lcs,
+    orders: orders,
+    rows: expectedRows,
+    operational_date: operationalDate,
+  };
+}
+
+function buildLcFnbBonusAllocationMap_(rows) {
+  var map = {};
+  (rows || []).forEach(function (row) {
+    var key = [
+      String(row.order_id || "").trim(),
+      String(row.menu_id || "").trim(),
+      String(row.lc_id || "").trim(),
+    ].join("|");
+    if (!key.replace(/\|/g, "")) {
+      return;
+    }
+    map[key] = (map[key] || 0) + (Number(row.bonus_total) || 0);
+  });
+  return map;
+}
+
+function lcFnbBonusAllocationMapsEqual_(first, second) {
+  var keys = {};
+  Object.keys(first || {}).forEach(function (key) { keys[key] = true; });
+  Object.keys(second || {}).forEach(function (key) { keys[key] = true; });
+  return Object.keys(keys).every(function (key) {
+    return Number(first[key] || 0) === Number(second[key] || 0);
+  });
+}
+
+function reconcileLcFnbBonusForTransaction_(transaction, context, options) {
+  var config = options || {};
+  var session = findLcBonusSessionForTransaction_(transaction, context);
+  if (!session) {
+    return {
+      status: "skipped",
+      reason: "SESSION_NOT_FOUND",
+      transaction_id: transaction.transaction_id || "",
+    };
+  }
+
+  var expected = buildExpectedLcFnbBonusRows_(transaction, session, context);
+  var orderIds = {};
+  expected.orders.forEach(function (order) {
+    orderIds[String(order.order_id || "").trim()] = true;
+  });
+  var existingRows = context.bonus_rows.filter(function (row) {
+    return orderIds[String(row.order_id || "").trim()]
+      && !isLcFinanceRowVoided_(row)
+      && ["cancelled", "voided"].indexOf(String(row.source_status || "").trim().toLowerCase()) === -1;
+  });
+  var expectedMap = buildLcFnbBonusAllocationMap_(expected.rows);
+  var existingMap = buildLcFnbBonusAllocationMap_(existingRows);
+  var expectedTotal = expected.rows.reduce(function (sum, row) {
+    return sum + (Number(row.bonus_total) || 0);
+  }, 0);
+  var existingTotal = existingRows.reduce(function (sum, row) {
+    return sum + (Number(row.bonus_total) || 0);
+  }, 0);
+  var allocationsMatch = lcFnbBonusAllocationMapsEqual_(expectedMap, existingMap);
+  var hasPayrollLock = existingRows.some(function (row) {
+    return !!String(row.payroll_id || "").trim();
+  });
+  var result = {
+    status: allocationsMatch ? "matched" : hasPayrollLock ? "blocked" : "change_required",
+    reason: hasPayrollLock && !allocationsMatch ? "PAYROLL_LOCKED" : "",
+    transaction_id: transaction.transaction_id || "",
+    session_id: session.session_id || "",
+    room_id: transaction.room_id || session.room_id || "",
+    room_name: transaction.room_name || session.room_name || "",
+    operational_date: expected.operational_date,
+    lc_count: expected.lcs.length,
+    lc_ids: expected.lcs.map(function (lc) { return lc.lc_id; }),
+    order_count: expected.orders.length,
+    expected_log_count: expected.rows.length,
+    existing_log_count: existingRows.length,
+    expected_total: expectedTotal,
+    existing_total: existingTotal,
+    delta: expectedTotal - existingTotal,
+    created_logs: 0,
+    voided_logs: 0,
+  };
+
+  if (allocationsMatch || hasPayrollLock || config.dry_run === true) {
+    return result;
+  }
+
+  var now = toJakartaIsoString_(new Date());
+  var bonusSheet = ensureLcSalesBonusLogsSheet_();
+  var bonusHeaders = getHeaderMap_(bonusSheet);
+  existingRows.forEach(function (row) {
+    setRowValues_(bonusSheet, bonusHeaders, row.__row_number, {
+      voided_at: now,
+      void_reason: "Diganti rekonsiliasi pembagian rata per room.",
+    });
+    row.voided_at = now;
+    row.void_reason = "Diganti rekonsiliasi pembagian rata per room.";
+    result.voided_logs += 1;
+  });
+
+  expected.rows.forEach(function (row) {
+    var newRow = {
+      bonus_log_id: generateLcFinanceId_("LCBONUS"),
+      operational_date: row.operational_date,
+      transaction_id: row.transaction_id,
+      order_id: row.order_id,
+      menu_id: row.menu_id,
+      menu_name: row.menu_name,
+      category: row.category,
+      lc_id: row.lc_id,
+      lc_name: row.lc_name,
+      quantity: row.quantity,
+      bonus_per_item: row.bonus_per_item,
+      bonus_total: row.bonus_total,
+      source_status: "fnb_bonus_reconciled",
+      payroll_id: "",
+      created_at: now,
+      created_by: config.changed_by || "System Reconciliation",
+      voided_at: "",
+      void_reason: "",
+    };
+    appendObjectRow_(bonusSheet, newRow);
+    context.bonus_rows.push(newRow);
+    result.created_logs += 1;
+  });
+
+  result.status = "reconciled";
+  return result;
+}
+
 function getTodayTransactions_() {
   return getTransactionsByPeriod_("today", "", "");
 }
 
 function getTransactionsByPeriod_(period, startDate, endDate) {
+  applyManualOperationalDateCorrectionMigration_();
   var periodResult = parseTransactionPeriod_(period, startDate, endDate);
 
   if (!periodResult.ok) {
@@ -3878,17 +9200,69 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
         rate_per_hour: Number(transaction.rate_per_hour) || 0,
         room_total: Number(transaction.room_total) || 0,
         fnb_total: Number(transaction.fnb_total) || 0,
+        lc_total: Number(transaction.lc_total) || 0,
+        promo_code: transaction.promo_code || "",
+        promo_discount: Number(transaction.promo_discount) || 0,
         grand_total: getTransactionAmount_(transaction),
         fnb_order_ids: transaction.fnb_order_ids || "",
+        transaction_type: transaction.transaction_type || "session_checkout",
         payment_method: transaction.payment_method || "",
         payment_status: transaction.payment_status || "",
         cashier_name: transaction.cashier_name || "",
         created_at: transaction.created_at || "",
+        entry_source: transaction.entry_source || "",
+        source_note: transaction.source_note || "",
+        entered_by: transaction.entered_by || "",
+        operational_date: resolveTransactionOperationalDateString_(transaction),
       };
     })
     .sort(function (first, second) {
       return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
     });
+
+  try {
+    var allWorkLogs = readSheetAsObjects_("LcWorkLogs");
+    var lcLogsByTxId = {};
+    allWorkLogs.forEach(function (l) {
+      var txId = String(l.closed_transaction_id || "").trim();
+      var status = String(l.status || "").trim().toLowerCase();
+      if (txId && status !== "cancelled") {
+        if (!lcLogsByTxId[txId]) lcLogsByTxId[txId] = [];
+        lcLogsByTxId[txId].push(l);
+      }
+    });
+
+    transactions.forEach(function (transaction) {
+      var logs = lcLogsByTxId[transaction.transaction_id] || [];
+      var totalLcMinutes = logs.reduce(function (sum, item) {
+        return sum + (Number(item.duration_minutes) || 0);
+      }, 0);
+      var lcSummaryText = "";
+      if (logs.length === 1) {
+        var l = logs[0];
+        var hours = (Number(l.duration_minutes) || 0) / 60;
+        var hoursStr = (hours % 1 === 0) ? (hours + " jam") : (hours.toFixed(1) + " jam");
+        lcSummaryText = hoursStr + " • " + (l.lc_name || l.lc_id);
+      } else if (logs.length > 1) {
+        var totalHours = totalLcMinutes / 60;
+        var totalHoursStr = (totalHours % 1 === 0) ? (totalHours + " jam") : (totalHours.toFixed(1) + " jam");
+        var names = logs.map(function (item) {
+          var h = (Number(item.duration_minutes) || 0) / 60;
+          return (item.lc_name || item.lc_id) + " (" + ((h % 1 === 0) ? h : h.toFixed(1)) + "j)";
+        }).join(", ");
+        lcSummaryText = totalHoursStr + " • " + names;
+      } else if (Number(transaction.lc_total) > 0) {
+        var estHours = Math.round(Number(transaction.lc_total) / 135000);
+        lcSummaryText = estHours > 0 ? (estHours + " jam") : "Ada LC";
+      }
+      transaction.lc_summary = lcSummaryText;
+      transaction.lc_duration_minutes = totalLcMinutes;
+      transaction.lc_count = logs.length;
+      transaction.lc_logs = logs;
+    });
+  } catch (enrichErr) {
+    Logger.log("Error enriching transactions with LC summary: " + enrichErr.message);
+  }
 
   var summary = transactions.reduce(function (result, transaction) {
     var amount = getTransactionAmount_(transaction);
@@ -3904,12 +9278,21 @@ function getTransactionsByPeriod_(period, startDate, endDate) {
       result.total_revenue_paid += amount;
       result.paid_revenue += amount;
 
-      if (paymentMethod === "cash") {
-        result.cash_revenue += amount;
+      var cashAmount = 0;
+      var transferAmount = 0;
+      if (paymentMethod === "split") {
+        cashAmount = Number(transaction.cash_amount || 0);
+        transferAmount = Number(transaction.transfer_amount || 0);
+      } else if (paymentMethod === "cash") {
+        cashAmount = amount;
+      } else if (paymentMethod === "transfer" || paymentMethod === "qris") {
+        transferAmount = amount;
       }
-
-      if (paymentMethod === "transfer") {
-        result.transfer_revenue += amount;
+      if (cashAmount > 0) {
+        result.cash_revenue += cashAmount;
+      }
+      if (transferAmount > 0) {
+        result.transfer_revenue += transferAmount;
       }
     }
 
@@ -3974,8 +9357,12 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
     var fnbRevenue = Number(transaction.fnb_total) || 0;
     var grandRevenue = Number(transaction.grand_total) || 0;
     var isPaid = isTransactionPaidForReport_(transaction);
+    var type = String(transaction.transaction_type || "").trim().toLowerCase();
+    var isMainSession = (type === "" || type === "session_checkout");
 
-    summary.total_sessions += 1;
+    if (isMainSession) {
+      summary.total_sessions += 1;
+    }
     summary.total_duration_minutes += durationMinutes;
     summary.total_room_revenue += roomRevenue;
     summary.total_fnb_revenue += fnbRevenue;
@@ -3983,10 +9370,14 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
 
     if (isPaid) {
       summary.paid_revenue += grandRevenue;
-      summary.paid_sessions += 1;
+      if (isMainSession) {
+        summary.paid_sessions += 1;
+      }
     } else {
       summary.unpaid_revenue += grandRevenue;
-      summary.unpaid_sessions += 1;
+      if (isMainSession) {
+        summary.unpaid_sessions += 1;
+      }
     }
 
     if (!roomUsageMap[roomKey]) {
@@ -4005,7 +9396,9 @@ function getRoomUsageReportByPeriod_(period, startDate, endDate) {
 
     var roomUsage = roomUsageMap[roomKey];
 
-    roomUsage.session_count += 1;
+    if (isMainSession) {
+      roomUsage.session_count += 1;
+    }
     roomUsage.duration_minutes += durationMinutes;
     roomUsage.room_revenue += roomRevenue;
     roomUsage.fnb_revenue += fnbRevenue;
@@ -4276,6 +9669,14 @@ function normalizeOperationalPeriodKey_(period) {
     return "today";
   }
 
+  if (normalizedPeriod === "this_month") {
+    return "thismonth";
+  }
+
+  if (normalizedPeriod === "last_7_days") {
+    return "last7days";
+  }
+
   return normalizedPeriod;
 }
 
@@ -4283,7 +9684,7 @@ function getOperationalDateRangeForPeriod_(period, startDate, endDate) {
   var normalizedPeriod = normalizeOperationalPeriodKey_(period);
   var activeOperationalDate = getCurrentOperationalDateString_();
 
-  if (["today", "yesterday", "last7days", "thismonth", "all", "custom"].indexOf(normalizedPeriod) === -1) {
+  if (["today", "yesterday", "last7days", "this_week", "last_week", "thismonth", "last_month", "all", "custom"].indexOf(normalizedPeriod) === -1) {
     return {
       ok: false,
       error: "Periode transaksi tidak dikenal.",
@@ -4316,6 +9717,33 @@ function getOperationalDateRangeForPeriod_(period, startDate, endDate) {
       period: normalizedPeriod,
       startDate: addDaysToOperationalDateString_(activeOperationalDate, -6),
       endDate: activeOperationalDate,
+    };
+  }
+
+  if (normalizedPeriod === "this_week") {
+    var weekAnchor = parseOperationalDateAnchor_(activeOperationalDate);
+    var weekDay = weekAnchor ? weekAnchor.getUTCDay() : 0;
+    var daysFromMonday = weekDay === 0 ? 6 : weekDay - 1;
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: addDaysToOperationalDateString_(activeOperationalDate, -daysFromMonday),
+      endDate: activeOperationalDate,
+    };
+  }
+
+  if (normalizedPeriod === "last_week") {
+    var lastWeekAnchor = parseOperationalDateAnchor_(activeOperationalDate);
+    var lastWeekDay = lastWeekAnchor ? lastWeekAnchor.getUTCDay() : 0;
+    var offsetFromMonday = lastWeekDay === 0 ? 6 : lastWeekDay - 1;
+    var thisWeekMonday = addDaysToOperationalDateString_(activeOperationalDate, -offsetFromMonday);
+
+    return {
+      ok: true,
+      period: normalizedPeriod,
+      startDate: addDaysToOperationalDateString_(thisWeekMonday, -7),
+      endDate: addDaysToOperationalDateString_(thisWeekMonday, -1),
     };
   }
 
@@ -4388,6 +9816,18 @@ function matchesOperationalPeriod_(operationalDate, periodResult) {
 }
 
 function resolveTransactionOperationalDateString_(transaction) {
+  var explicitOperationalDate = normalizeJakartaDateString_(transaction.operational_date);
+  if (explicitOperationalDate) {
+    return explicitOperationalDate;
+  }
+
+  if (String(transaction.entry_source || "").trim().toLowerCase() === "manual_power_outage") {
+    return getOperationalDateString_(transaction.start_time)
+      || getOperationalDateString_(transaction.created_at)
+      || getOperationalDateString_(transaction.end_time)
+      || "";
+  }
+
   return getOperationalDateString_(transaction.created_at)
     || getOperationalDateString_(transaction.end_time)
     || getOperationalDateString_(transaction.start_time)
@@ -4411,9 +9851,127 @@ function resolveClosingOperationalDateString_(closing) {
 }
 
 function resolveFnbOrderOperationalDateString_(order) {
-  return getOperationalDateString_(order.created_at)
+  return normalizeJakartaDateString_(order.operational_date)
+    || getOperationalDateString_(order.created_at)
     || getOperationalDateString_(order.updated_at)
     || "";
+}
+
+function resolveLcWorkLogOperationalDateString_(log, transactionMap) {
+  if (transactionMap) {
+    var txId = String(log.closed_transaction_id || log.upfront_transaction_id || "").trim();
+    if (txId && transactionMap[txId]) {
+      var tx = transactionMap[txId];
+      var txOpDate = normalizeJakartaDateString_(tx.operational_date)
+        || getOperationalDateString_(tx.start_time || tx.created_at);
+      if (txOpDate) return txOpDate;
+    }
+  }
+  return normalizeJakartaDateString_(log.operational_date)
+    || getOperationalDateString_(log.created_at)
+    || getOperationalDateString_(log.closed_at)
+    || "";
+}
+
+function resolveStockMovementOperationalDateString_(movement) {
+  return normalizeJakartaDateString_(movement.operational_date)
+    || getOperationalDateString_(movement.created_at)
+    || "";
+}
+
+function applyManualOperationalDateCorrectionMigration_() {
+  var migrationKey = "manual-operational-date-correction-20260807-v1";
+  var properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(migrationKey) === "done") {
+    return;
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return;
+  }
+
+  try {
+    if (properties.getProperty(migrationKey) === "done") {
+      return;
+    }
+
+    var transactionId = "TRX-20260807135359039-99CBEF85";
+    var operationalDate = "2026-08-06";
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getHeaderMap_(transactionsSheet);
+    var transactionRow = findRowByValue_(
+      transactionsSheet,
+      transactionHeaders,
+      "transaction_id",
+      transactionId
+    );
+
+    if (!transactionRow || !transactionHeaders.operational_date) {
+      return;
+    }
+
+    var transaction = getRowObject_(
+      transactionsSheet,
+      transactionHeaders,
+      transactionRow
+    );
+    if (String(transaction.entry_source || "").trim().toLowerCase() !== "manual_power_outage") {
+      return;
+    }
+
+    transactionsSheet
+      .getRange(transactionRow, transactionHeaders.operational_date)
+      .setValue(operationalDate);
+
+    var ordersSheet = ensureFnbOrdersSheetColumns_();
+    var orderHeaders = getHeaderMap_(ordersSheet);
+    readSheetAsObjects_("FnbOrders").forEach(function (order, index) {
+      if (String(order.billed_transaction_id || "").trim() !== transactionId) {
+        return;
+      }
+      if (orderHeaders.operational_date) {
+        ordersSheet.getRange(index + 2, orderHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var stockSheet = ensureStockMovementsSheet_();
+    var stockHeaders = getHeaderMap_(stockSheet);
+    readSheetAsObjectsOrEmpty_("StockMovements").forEach(function (movement, index) {
+      if (String(movement.reference_id || "").trim() === transactionId && stockHeaders.operational_date) {
+        stockSheet.getRange(index + 2, stockHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var sessionIds = {};
+    if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+      readSheetAsObjects_(ROOM_SESSIONS_SHEET).forEach(function (session) {
+        if (String(session.closed_transaction_id || "").trim() === transactionId) {
+          sessionIds[String(session.session_id || "").trim()] = true;
+        }
+      });
+    }
+
+    var workLogsSheet = ensureLcWorkLogsSheet_();
+    var workLogHeaders = getHeaderMap_(workLogsSheet);
+    readSheetAsObjects_("LcWorkLogs").forEach(function (workLog, index) {
+      if (sessionIds[String(workLog.session_id || "").trim()] && workLogHeaders.operational_date) {
+        workLogsSheet.getRange(index + 2, workLogHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    var bonusSheet = ensureLcSalesBonusLogsSheet_();
+    var bonusHeaders = getHeaderMap_(bonusSheet);
+    readSheetAsObjects_("LcSalesBonusLogs").forEach(function (bonus, index) {
+      if (String(bonus.transaction_id || "").trim() === transactionId && bonusHeaders.operational_date) {
+        bonusSheet.getRange(index + 2, bonusHeaders.operational_date).setValue(operationalDate);
+      }
+    });
+
+    properties.setProperty(migrationKey, "done");
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function isDateWithinInclusiveRange_(dateString, startDateString, endDateString) {
@@ -4513,7 +10071,7 @@ function parsePostBody_(e) {
   }
 }
 
-function startSession_(roomId, durationMinutes) {
+function startSession_(roomId, durationMinutes, options) {
   if (!roomId) {
     return {
       ok: false,
@@ -4530,15 +10088,21 @@ function startSession_(roomId, durationMinutes) {
     };
   }
 
-  if (bookedDurationMinutes < 15) {
+  if (bookedDurationMinutes < getMinimumSessionMinutes_(options)) {
     return {
       ok: false,
-      error: "Durasi minimal 15 menit.",
+      error: getMinimumSessionErrorMessage_(options),
     };
   }
 
+
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return {
+      ok: false,
+      error: "Sistem sedang memproses booking lain. Coba lagi sebentar.",
+    };
+  }
 
   try {
     var sheet = ensureRoomsBookingColumns_();
@@ -4585,7 +10149,999 @@ function startSession_(roomId, durationMinutes) {
   }
 }
 
-function extendSession_(roomId, addMinutes, cashierName, note) {
+function prepareRoomSession_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+  var durationMinutes = Number(request.duration_minutes);
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var customerName = String(request.customer_name || "").trim();
+  var packageId = String(request.package_id || "").trim();
+
+  if (!roomId) {
+    return {
+      ok: false,
+      success: false,
+      error: "room_id wajib diisi.",
+    };
+  }
+
+  if (!isFinite(durationMinutes) || durationMinutes <= 0 || Math.floor(durationMinutes) !== durationMinutes) {
+    return {
+      ok: false,
+      success: false,
+      error: "duration_minutes wajib berupa angka bulat positif.",
+    };
+  }
+
+  if (durationMinutes < getMinimumSessionMinutes_(request)) {
+    return {
+      ok: false,
+      success: false,
+      error: getMinimumSessionErrorMessage_(request),
+    };
+  }
+
+  if (paymentMethod && !getAllowedPaymentMethods_()[paymentMethod]) {
+    return {
+      ok: false,
+      success: false,
+      error: "Metode pembayaran tidak dikenal.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses booking lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak ditemukan.",
+      };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "available") {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak tersedia untuk dibuat booking.",
+      };
+    }
+
+    var bookingMode = "regular";
+    if (packageId) {
+      var packagesList = readSheetAsObjects_("PackageMaster");
+      var selectedPackage = null;
+      for (var i = 0; i < packagesList.length; i++) {
+        if (String(packagesList[i].package_id || "").trim() === packageId) {
+          selectedPackage = packagesList[i];
+          break;
+        }
+      }
+      if (!selectedPackage) {
+        return {
+          ok: false,
+          success: false,
+          error: "Paket tidak ditemukan.",
+        };
+      }
+      bookingMode = "package";
+      durationMinutes = Number(selectedPackage.duration_minutes) || durationMinutes;
+    }
+
+    var requestIdempotencyKey = String(request.idempotency_key || "").trim();
+    var activeSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active", "closing"]);
+
+    if (activeSession) {
+      if (
+        requestIdempotencyKey &&
+        String(activeSession.session.idempotency_key || "").trim() === requestIdempotencyKey
+      ) {
+        return {
+          ok: true,
+          success: true,
+          message: "Booking room sudah pernah disiapkan.",
+          room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+          session: activeSession.session,
+          idempotent_replay: true,
+        };
+      }
+
+      return {
+        ok: false,
+        success: false,
+        error: "Room masih memiliki session aktif atau menunggu mulai.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+
+    var lcAssignments = parseLcAssignments_(request, durationMinutes);
+    var lcIds = getLcIdsFromAssignments_(lcAssignments);
+    var lcAssignmentsJson = serializeLcAssignments_(lcAssignments);
+    if (lcIds) {
+      var selectedLcIds = lcAssignments.map(function (assignment) {
+        return String(assignment.lc_id || "").trim();
+      }).filter(Boolean);
+      var lcMasterSheet = ensureLcMasterSheet_();
+      var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
+      var lcMasterRows = readSheetAsObjects_("LcMaster");
+      
+      for (var k = 0; k < selectedLcIds.length; k++) {
+        var selId = selectedLcIds[k];
+        if (selId === "PENDING") {
+          continue; // Skip validation for pending LC selections
+        }
+        var foundLc = null;
+        for (var idx = 0; idx < lcMasterRows.length; idx++) {
+          if (String(lcMasterRows[idx].lc_id || "").trim() === selId) {
+            foundLc = lcMasterRows[idx];
+            break;
+          }
+        }
+        if (!foundLc) {
+          return { ok: false, success: false, error: "LC dengan ID " + selId + " tidak ditemukan." };
+        }
+        if (foundLc.status !== "active") {
+          return { ok: false, success: false, error: "LC " + foundLc.lc_name + " sedang tidak aktif." };
+        }
+        if (foundLc.availability === "busy") {
+          return { ok: false, success: false, error: "LC " + foundLc.lc_name + " sedang sibuk di room lain." };
+        }
+      }
+      
+      selectedLcIds.forEach(function(selId) {
+        if (selId === "PENDING") {
+          return; // Skip locking for pending LC selections
+        }
+        var rowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", selId);
+        if (rowNum) {
+          lcMasterSheet.getRange(rowNum, lcMasterHeaders.availability).setValue("busy");
+          lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(now);
+        }
+      });
+    }
+
+    var ratePerHour = Number(room.rate_per_hour) || 0;
+    var session = {
+      session_id: generateRoomSessionId_(roomId),
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      booking_mode: bookingMode,
+      status: "starting",
+      start_time: "",
+      scheduled_end_time: "",
+      end_time: "",
+      booked_duration_minutes: durationMinutes,
+      package_included_minutes: bookingMode === "package" ? durationMinutes : 0,
+      promotion_free_minutes: 0,
+      billable_room_minutes: bookingMode === "package" ? 0 : durationMinutes,
+      rate_per_hour: ratePerHour,
+      cashier_name: cashierName,
+      created_at: now,
+      updated_at: now,
+      closed_transaction_id: "",
+      idempotency_key: requestIdempotencyKey,
+      legacy_room_start_time: "",
+      note: buildPreparedSessionNote_(paymentMethod, request.note),
+      customer_name: customerName,
+      package_id: packageId,
+      prepayment_transaction_id: "",
+      lc_ids: lcIds,
+      lc_assignments: lcAssignmentsJson,
+    };
+
+    appendRoomSession_(session);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("booked");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue(customerName);
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue(packageId);
+    }
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
+    }
+
+    SpreadsheetApp.flush();
+    var fnbItems = request.fnb_items;
+    if (Array.isArray(fnbItems) && fnbItems.length > 0) {
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dipesan via Resepsionis", "", "unpaid");
+      if (!fnbResult.ok) {
+        throw new Error("Gagal menyimpan pesanan F&B: " + fnbResult.error);
+      }
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Booking room berhasil disimpan. Mulai sesi saat pelanggan sudah masuk room.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      session: session,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function payAndStartSession_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var requestIdempotencyKey = String(request.idempotency_key || "").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  if (!paymentMethod || !getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib diisi dengan benar." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    // Idempotency check: jika room sudah paid_waiting_start dan key cocok,
+    // kembalikan sukses tanpa membuat transaksi baru (replay aman)
+    if (requestIdempotencyKey && (status === "paid_waiting_start" || status === "occupied")) {
+      var paidSession = findLatestRoomSessionForRoom_(roomId, ["starting", "active"]);
+      if (
+        paidSession &&
+        String(paidSession.session.pay_idempotency_key || "").trim() === requestIdempotencyKey
+      ) {
+        return {
+          ok: true,
+          success: true,
+          message: "Pembayaran awal sudah pernah diproses.",
+          room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+          idempotent_replay: true,
+        };
+      }
+    }
+
+    if (status !== "waiting_payment") {
+      return { ok: false, success: false, error: "Room tidak berstatus menunggu pembayaran." };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
+    if (!sessionResult) {
+      return { ok: false, success: false, error: "Sesi booking tidak ditemukan." };
+
+    }
+
+    var session = sessionResult.session;
+    var durationMinutes = Number(session.booked_duration_minutes) || 0;
+    var ratePerHour = Number(room.rate_per_hour) || 0;
+    var upfrontCharge = 0;
+
+    if (session.booking_mode === "package") {
+      var packagesList = readSheetAsObjects_("PackageMaster");
+      for (var i = 0; i < packagesList.length; i++) {
+        if (String(packagesList[i].package_id || "").trim() === session.package_id) {
+          upfrontCharge = Number(packagesList[i].selling_price) || 0;
+          break;
+        }
+      }
+    } else {
+      upfrontCharge = Math.ceil(durationMinutes / 60 * ratePerHour);
+    }
+
+    var now = toJakartaIsoString_(new Date());
+
+    var promoCode = String(request.promo_code || "").trim().toUpperCase();
+    var promoDiscount = 0;
+    var appliedPromo = null;
+
+    if (promoCode) {
+      var promoRes = validatePromoCode_({ code: promoCode, room_total: upfrontCharge });
+      if (!promoRes.ok || !promoRes.success) {
+        return { ok: false, success: false, error: promoRes.error || "Gagal menerapkan kode promo." };
+      }
+      promoDiscount = promoRes.discount;
+      appliedPromo = promoRes;
+      
+      upfrontCharge = upfrontCharge - promoDiscount;
+      if (upfrontCharge < 0) {
+        upfrontCharge = 0;
+      }
+    }
+    
+    var lcFeeTotal = 0;
+    var lcAssignmentSource = (request.lc_ids !== undefined || request.lc_assignments !== undefined)
+      ? request
+      : {
+          lc_ids: session.lc_ids,
+          lc_assignments: session.lc_assignments,
+        };
+    var lcAssignments = parseLcAssignments_(lcAssignmentSource, durationMinutes);
+    var lcIds = getLcIdsFromAssignments_(lcAssignments);
+    var lcAssignmentsJson = serializeLcAssignments_(lcAssignments);
+    if (lcIds) {
+      var lcMasterRows = readSheetAsObjects_("LcMaster");
+
+      // Hitung rata-rata tarif dari semua LC aktif di Master (untuk slot PENDING)
+      var activeLcRates = [];
+      for (var m = 0; m < lcMasterRows.length; m++) {
+        var lcRow = lcMasterRows[m];
+        if (String(lcRow.status || "").trim().toLowerCase() === "active") {
+          var r = Number(lcRow.rate_per_room);
+          if (r > 0) activeLcRates.push(r);
+        }
+      }
+      var avgLcRate = activeLcRates.length > 0
+        ? activeLcRates.reduce(function(a, b) { return a + b; }, 0) / activeLcRates.length
+        : 0;
+
+      var pendingSerial = 0;
+      lcAssignments.forEach(function(assignment) {
+        var selId = String(assignment.lc_id || "").trim();
+        var lcDurationMinutes = normalizeLcDurationMinutes_(assignment.duration_minutes, durationMinutes);
+
+        if (selId === "PENDING") {
+          var rateForPending = calculateLcRateForDuration_(lcDurationMinutes, avgLcRate);
+          lcFeeTotal += rateForPending;
+          pendingSerial++;
+          appendLcWorkLog_({
+            log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-PENDING" + pendingSerial + "-" + Math.floor(Math.random() * 100),
+            session_id: session.session_id,
+            lc_id: "PENDING",
+            lc_name: "Belum Dipilih",
+            rate: rateForPending,
+            duration_minutes: lcDurationMinutes,
+            rate_per_hour: avgLcRate,
+            status: "active",
+            created_at: now,
+            closed_at: "",
+          });
+          return;
+        }
+        var foundLc = null;
+        for (var idx = 0; idx < lcMasterRows.length; idx++) {
+          if (String(lcMasterRows[idx].lc_id || "").trim() === selId) {
+            foundLc = lcMasterRows[idx];
+            break;
+          }
+        }
+        if (!foundLc) {
+          throw new Error("LC dengan ID '" + selId + "' tidak ditemukan di Master LC. Pastikan data LC sudah benar.");
+        }
+        var hourlyRate = Number(foundLc.rate_per_room);
+        if (!hourlyRate || isNaN(hourlyRate) || hourlyRate <= 0) {
+          throw new Error("Tarif per jam LC '" + (foundLc.lc_name || selId) + "' tidak valid. Isi tarif per jam di menu Master LC.");
+        }
+        var rateForSession = calculateLcRateForDuration_(lcDurationMinutes, hourlyRate);
+        lcFeeTotal += rateForSession;
+        appendLcWorkLog_({
+          log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + selId + "-" + Math.floor(Math.random() * 100),
+          session_id: session.session_id,
+          lc_id: selId,
+          lc_name: foundLc.lc_name || selId,
+          rate: rateForSession,
+          duration_minutes: lcDurationMinutes,
+          rate_per_hour: hourlyRate,
+          status: "active",
+          created_at: now,
+          closed_at: "",
+        });
+      });
+    }
+
+    var scheduledEndTime = addMinutesToJakartaIsoString_(now, durationMinutes);
+    var transactionId = generateTransactionId_();
+
+    // Hapus order F&B prepay lama
+    deleteOpenFnbOrdersForPrepay_(roomId);
+
+    var fnbTotal = 0;
+    var fnbOrderIds = "";
+    var fnbItems = request.fnb_items;
+    if (Array.isArray(fnbItems) && fnbItems.length > 0) {
+      var fnbResult = saveFnbOrder_(roomId, fnbItems, cashierName, "Dibayar via Prepayment Kasir", "", "unpaid");
+      if (!fnbResult.ok) {
+        throw new Error("Gagal memproses F&B Prepayment: " + fnbResult.error);
+      }
+      fnbTotal = Number(fnbResult.order.order_total) || 0;
+      fnbOrderIds = String(fnbResult.order.order_id || "");
+      
+      // Ubah status order F&B menjadi paid
+      markFnbOrdersAsPaid_([fnbOrderIds], now);
+      
+      // Potong stok F&B
+      var detailedOrder = Object.assign({}, fnbResult.order, { items: fnbResult.items });
+      deductStockForFnbOrders_([detailedOrder], transactionId, cashierName, now);
+    }
+
+    // Create Transaction 1 (Upfront)
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      start_time: now,
+      end_time: scheduledEndTime,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+      room_total: upfrontCharge,
+      fnb_total: fnbTotal,
+      lc_total: lcFeeTotal,
+      grand_total: upfrontCharge + lcFeeTotal + fnbTotal,
+      fnb_order_ids: fnbOrderIds,
+      payment_method: paymentMethod,
+      payment_status: "paid",
+      cashier_name: cashierName,
+      created_at: now,
+      billing_basis: "upfront_prepay",
+      promo_code: promoCode,
+      promo_discount: promoDiscount
+    };
+    appendTransaction_(transaction);
+
+    // Mark voucher as used in database
+    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+      var promoSheet = ensurePromoMasterSheet_();
+      var promoHeaderMap = getHeaderMap_(promoSheet);
+      var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", promoCode);
+      if (promoRowNum) {
+        setRowValues_(promoSheet, promoHeaderMap, promoRowNum, {
+          used_in_transaction_id: transactionId,
+          used_at: now,
+          status: "inactive"
+        });
+      }
+    }
+
+    // Deduct stock for package F&B
+    if (session.booking_mode === "package" && session.package_id) {
+      deductPackageStock_(session.package_id, transactionId, cashierName, now);
+    }
+
+    // Update session — simpan pay_idempotency_key untuk deteksi replay
+    var sessionUpdateFields = {
+      updated_at: now,
+      cashier_name: cashierName,
+      prepayment_transaction_id: transactionId,
+      pay_idempotency_key: requestIdempotencyKey,
+    };
+    if ((request.lc_ids !== undefined || request.lc_assignments !== undefined) && sessionResult.headerMap.lc_ids) {
+      sessionUpdateFields.lc_ids = lcIds;
+    }
+    if ((request.lc_ids !== undefined || request.lc_assignments !== undefined) && sessionResult.headerMap.lc_assignments) {
+      sessionUpdateFields.lc_assignments = lcAssignmentsJson;
+    }
+    setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, sessionUpdateFields);
+
+    // Update Room
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("paid_waiting_start");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(lcIds);
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Pembayaran awal lunas. Room menunggu siap diaktifkan waiters.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      transaction: transaction,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getPostpaidPackageContext_(packageId) {
+  var normalizedPackageId = String(packageId || "").trim();
+  var packageMaster = readSheetAsObjects_("PackageMaster").find(function (item) {
+    return String(item.package_id || "").trim() === normalizedPackageId;
+  });
+
+  if (!packageMaster) {
+    throw new Error("Paket sesi tidak ditemukan: " + normalizedPackageId);
+  }
+
+  var packageDetails = readSheetAsObjects_("PackageDetail").filter(function (detail) {
+    return String(detail.package_id || "").trim() === normalizedPackageId;
+  });
+  var includedTalentCount = packageDetails.reduce(function (total, detail) {
+    var componentType = String(detail.component_type || "").trim().toLowerCase();
+    var componentRefId = String(detail.component_ref_id || "").trim().toUpperCase();
+    var componentName = String(detail.component_name || "").trim().toLowerCase();
+    var isTalent = componentType === "service"
+      && (componentRefId === "SVC-TALENT" || componentName.indexOf("talent") !== -1);
+
+    return total + (isTalent ? Number(detail.qty) || 0 : 0);
+  }, 0);
+
+  return {
+    package_id: normalizedPackageId,
+    package_name: packageMaster.package_name || normalizedPackageId,
+    selling_price: Number(packageMaster.selling_price) || 0,
+    duration_minutes: Number(packageMaster.duration_minutes) || 0,
+    included_talent_count: Math.max(0, Math.floor(includedTalentCount)),
+  };
+}
+
+function calculatePostpaidPackageRoomTotal_(durationMinutes, packageContext, ratePerHour) {
+  var includedDuration = Number(packageContext && packageContext.duration_minutes) || 0;
+  var packagePrice = Number(packageContext && packageContext.selling_price) || 0;
+  var excessMinutes = Math.max(0, (Number(durationMinutes) || 0) - includedDuration);
+
+  return packagePrice + Math.ceil(excessMinutes / 60 * (Number(ratePerHour) || 0));
+}
+
+function deductPackageStock_(packageId, transactionId, cashierName, now) {
+  try {
+    var packageItems = readSheetAsObjects_("PackageDetail").filter(function (detail) {
+      var componentType = String(detail.component_type || "").trim().toLowerCase();
+      var refId = String(detail.component_ref_id || "").trim();
+      return String(detail.package_id || "").trim() === String(packageId || "").trim()
+        && ["menu", "inventory"].indexOf(componentType) !== -1
+        && refId.indexOf("MENU-") === 0
+        && Number(detail.qty) > 0;
+    }).map(function (detail) {
+      return {
+        menu_id: String(detail.component_ref_id || "").trim(),
+        menu_name: detail.component_name || detail.component_ref_id,
+        quantity: Number(detail.qty) || 0,
+      };
+    });
+
+    if (packageItems.length === 0) {
+      return { movements: [], warnings: [] };
+    }
+
+    return deductStockForFnbOrders_([
+      {
+        order_id: "PACKAGE-" + packageId,
+        items: packageItems,
+      },
+    ], transactionId, cashierName, now);
+  } catch (err) {
+    Logger.log("Gagal mengurangi stok paket: " + err.message);
+    return { movements: [], warnings: ["Stok paket gagal diperbarui: " + err.message] };
+  }
+}
+
+function completeCleaning_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses perubahan room lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "cleaning") {
+      return { ok: false, success: false, error: "Room tidak berstatus cleaning." };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
+    }
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue("");
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Room siap digunakan kembali.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cancelBooking_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses booking lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (["booked", "waiting_payment"].indexOf(status) === -1) {
+      return { ok: false, success: false, error: "Hanya booking yang belum dimulai yang bisa dibatalkan." };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(roomId, ["starting"]);
+    var now = toJakartaIsoString_(new Date());
+
+    if (sessionResult) {
+      setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
+        status: "cancelled",
+        updated_at: now,
+      });
+
+      var session = sessionResult.session;
+      var lcIds = String(session.lc_ids || "").trim();
+      if (lcIds) {
+        var selectedLcIds = lcIds.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+        var lcMasterSheet = ensureLcMasterSheet_();
+        var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
+        var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+        var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+        
+        selectedLcIds.forEach(function(selId) {
+          var rowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", selId);
+          if (rowNum) {
+            lcMasterSheet.getRange(rowNum, lcMasterHeaders.availability).setValue("available");
+            lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(now);
+          }
+          
+          var workLogRows = readSheetAsObjects_("LcWorkLogs");
+          for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
+            var log = workLogRows[rIdx];
+            if (
+              String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
+              String(log.lc_id || "").trim() === selId &&
+              log.status === "active"
+            ) {
+              var logRowNum = rIdx + 2;
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("cancelled");
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue(now);
+            }
+          }
+        });
+      }
+    }
+
+    // Hapus order F&B prepay yang belum dibayar jika booking dibatalkan
+    deleteOpenFnbOrdersForPrepay_(roomId);
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
+    }
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue("");
+    }
+
+    return {
+      ok: true,
+      success: true,
+      message: "Pemesanan berhasil dibatalkan.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function bulkImportPackages_(payload) {
+  var packages = payload.packages || [];
+  if (!packages.length) {
+    return { ok: false, success: false, error: "packages array wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses impor lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var masterSheet = ensurePackageMasterSheet_();
+    var detailSheet = ensurePackageDetailSheet_();
+
+    // Clear sheets keeping headers
+    var lastRowMaster = masterSheet.getLastRow();
+    if (lastRowMaster > 1) masterSheet.deleteRows(2, lastRowMaster - 1);
+    
+    var lastRowDetail = detailSheet.getLastRow();
+    if (lastRowDetail > 1) detailSheet.deleteRows(2, lastRowDetail - 1);
+
+    var masterHeaderMap = getHeaderMap_(masterSheet);
+    var detailHeaderMap = getHeaderMap_(detailSheet);
+    var now = toJakartaIsoString_(new Date());
+
+    packages.forEach(function (pkg) {
+      var master = pkg.package_master;
+      master.updated_at = now;
+      appendObjectRow_(masterSheet, master);
+
+      var details = pkg.package_details || [];
+      details.forEach(function (detail) {
+        detail.updated_at = now;
+        appendObjectRow_(detailSheet, detail);
+      });
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Impor paket berhasil. Total " + packages.length + " paket dimasukkan.",
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function seedReceptionistEmployee_() {
+  var sheet = getSheet_("Employees");
+  var headerMap = getHeaderMap_(sheet);
+  var employees = readSheetAsObjects_("Employees");
+  
+  var exists = employees.some(function (emp) {
+    return String(emp.role || "").trim().toLowerCase() === "receptionist";
+  });
+  
+  if (!exists) {
+    var nextEmpId = "EMP-004";
+    var receptionist = {
+      employee_id: nextEmpId,
+      employee_name: "Resepsionis 1",
+      role: "receptionist",
+      pin: "4444",
+      status: "active",
+      created_at: toJakartaIsoString_(new Date()),
+      updated_at: toJakartaIsoString_(new Date()),
+    };
+    appendObjectRow_(sheet, receptionist);
+    return { ok: true, success: true, message: "Karyawan resepsionis berhasil dibuat. PIN: 4444" };
+  }
+  
+  return { ok: true, success: true, message: "Karyawan resepsionis sudah terdaftar." };
+}
+
+function activatePreparedSession_(roomId, cashierName) {
+  var normalizedRoomId = String(roomId || "").trim();
+
+  if (!normalizedRoomId) {
+    return {
+      ok: false,
+      success: false,
+      error: "room_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses room lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var roomsSheet = ensureRoomsBookingColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+    if (!rowNumber) {
+      return {
+        ok: false,
+        success: false,
+        error: "Ruangan tidak ditemukan.",
+      };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (["booked", "waiting_payment", "paid_waiting_start"].indexOf(status) === -1) {
+      return {
+        ok: false,
+        success: false,
+        error: "Room belum berada pada status booking yang siap dimulai.",
+      };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(normalizedRoomId, ["starting"]);
+
+    if (!sessionResult) {
+      return {
+        ok: false,
+        success: false,
+        error: "Session menunggu mulai tidak ditemukan.",
+      };
+    }
+
+    var session = sessionResult.session;
+    var durationMinutes = Number(session.booked_duration_minutes) || Number(room.booked_duration_minutes) || 0;
+
+    var minimumDurationMinutes = DEV_SHORT_SESSION_ENABLED === true
+      ? Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1)
+      : MIN_SESSION_MINUTES;
+
+    if (!isFinite(durationMinutes) || durationMinutes < minimumDurationMinutes) {
+      return {
+        ok: false,
+        success: false,
+        error: "Durasi booking tidak valid.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var scheduledEndTime = addMinutesToJakartaIsoString_(now, durationMinutes);
+    var actor = String(cashierName || session.cashier_name || "Kasir").trim() || "Kasir";
+    var sessionsSheet = sessionResult.sheet;
+    var sessionsHeaderMap = sessionResult.headerMap;
+
+    setRowValues_(sessionsSheet, sessionsHeaderMap, sessionResult.rowNumber, {
+      status: "active",
+      start_time: now,
+      scheduled_end_time: scheduledEndTime,
+      updated_at: now,
+      legacy_room_start_time: now,
+      cashier_name: actor,
+    });
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("occupied");
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue(now);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue(durationMinutes);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue(scheduledEndTime);
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    ensureActiveLcWorkLogsForSession_(session, now);
+
+    // Sinkronkan order F&B yang dibuat saat booking dengan sesi aktif.
+    syncPrepaidFnbOrdersStartTime_(normalizedRoomId, now);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Countdown room berhasil dimulai.",
+      room: getRoomFromRow_(roomsSheet, roomsHeaderMap, rowNumber),
+      session: getRowObject_(sessionsSheet, sessionsHeaderMap, sessionResult.rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureActiveLcWorkLogsForSession_(session, startedAt) {
+  var assignments = parseLcAssignments_(
+    {
+      lc_ids: session.lc_ids,
+      lc_assignments: session.lc_assignments,
+    },
+    Number(session.booked_duration_minutes) || 60
+  );
+
+  if (assignments.length === 0) {
+    return;
+  }
+
+  var existingLogs = readSheetAsObjectsOrEmpty_("LcWorkLogs").filter(function (log) {
+    return String(log.session_id || "").trim() === String(session.session_id || "").trim()
+      && String(log.status || "").trim().toLowerCase() === "active";
+  });
+
+  if (existingLogs.length > 0) {
+    return;
+  }
+
+  var lcMasterRows = readSheetAsObjects_("LcMaster");
+  var activeRates = lcMasterRows.filter(function (lc) {
+    return String(lc.status || "").trim().toLowerCase() === "active";
+  }).map(function (lc) {
+    return Number(lc.rate_per_room) || 0;
+  }).filter(function (rate) {
+    return rate > 0;
+  });
+  var averageRate = activeRates.length > 0
+    ? activeRates.reduce(function (sum, rate) { return sum + rate; }, 0) / activeRates.length
+    : 0;
+
+  assignments.forEach(function (assignment, index) {
+    var lcId = String(assignment.lc_id || "").trim();
+    var durationMinutes = normalizeLcDurationMinutes_(
+      assignment.duration_minutes,
+      Number(session.booked_duration_minutes) || 60
+    );
+    var lc = lcMasterRows.find(function (item) {
+      return String(item.lc_id || "").trim() === lcId;
+    });
+    var hourlyRate = lcId === "PENDING"
+      ? averageRate
+      : Number(lc && lc.rate_per_room) || 0;
+
+    appendLcWorkLog_({
+      log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + (lcId || "PENDING") + "-" + index + "-" + Math.floor(Math.random() * 100),
+      session_id: session.session_id,
+      lc_id: lcId || "PENDING",
+      lc_name: lcId === "PENDING" ? "Belum Dipilih" : (lc && lc.lc_name || lcId),
+      rate: calculateLcRateForDuration_(durationMinutes, hourlyRate),
+      duration_minutes: durationMinutes,
+      rate_per_hour: hourlyRate,
+      status: "active",
+      created_at: startedAt,
+      closed_at: "",
+    });
+  });
+}
+
+function extendSession_(roomId, addMinutes, cashierName, note, paymentMethod, paymentStatus) {
   if (!roomId) {
     return {
       ok: false,
@@ -4610,7 +11166,12 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return {
+      ok: false,
+      error: "Sistem sedang memproses tambah waktu lain. Coba lagi sebentar.",
+    };
+  }
 
   try {
     var sheet = ensureRoomsBookingColumns_();
@@ -4656,6 +11217,9 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
     var newScheduledEndTime = addMinutesToJakartaIsoString_(oldScheduledEndTime, addedMinutes);
     var now = toJakartaIsoString_(new Date());
 
+    var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
+    var method = String(paymentMethod || "").trim().toLowerCase();
+
     sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(newBookedDurationMinutes);
     sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(newScheduledEndTime);
     sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
@@ -4678,6 +11242,57 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
 
     try {
       appendRoomTimeLog_(logEntry);
+      
+      // Update active RoomSession if exists
+      var activeRoomSession = findLatestRoomSessionForRoom_(roomId, ["active", "starting", "paid_waiting_start"]);
+      if (activeRoomSession && activeRoomSession.session) {
+        var sessionObj = activeRoomSession.session;
+        var packageIncludedMinutes = Number(sessionObj.package_included_minutes) || 0;
+        var newBillableRoomMinutes = Math.max(0, newBookedDurationMinutes - packageIncludedMinutes);
+        
+        setRowValues_(activeRoomSession.sheet, activeRoomSession.headerMap, activeRoomSession.rowNumber, {
+          booked_duration_minutes: newBookedDurationMinutes,
+          billable_room_minutes: newBillableRoomMinutes,
+          scheduled_end_time: newScheduledEndTime,
+          updated_at: now
+        });
+        
+        // Otomatis perpanjang durasi dan rate LC aktif saat room di-extend
+        try {
+          var lcSheet = getSheet_("LcWorkLogs");
+          if (lcSheet) {
+            var lcHeaderMap = getHeaderMap_(lcSheet);
+            var lcRows = lcSheet.getDataRange().getValues();
+            var sessionIdCol = lcHeaderMap.session_id ? lcHeaderMap.session_id - 1 : -1;
+            var roomIdCol = lcHeaderMap.room_id ? lcHeaderMap.room_id - 1 : -1;
+            var statusCol = lcHeaderMap.status ? lcHeaderMap.status - 1 : -1;
+            var durCol = lcHeaderMap.duration_minutes ? lcHeaderMap.duration_minutes - 1 : -1;
+            var ratePerHourCol = lcHeaderMap.rate_per_hour ? lcHeaderMap.rate_per_hour - 1 : -1;
+            var rateCol = lcHeaderMap.rate ? lcHeaderMap.rate - 1 : -1;
+            var closedTxCol = lcHeaderMap.closed_transaction_id ? lcHeaderMap.closed_transaction_id - 1 : -1;
+
+            for (var rIdx = 1; rIdx < lcRows.length; rIdx++) {
+              var rowSessionId = sessionIdCol >= 0 ? String(lcRows[rIdx][sessionIdCol] || "").trim() : "";
+              var rowRoomId = roomIdCol >= 0 ? String(lcRows[rIdx][roomIdCol] || "").trim() : "";
+              var rowStatus = statusCol >= 0 ? String(lcRows[rIdx][statusCol] || "").trim().toLowerCase() : "";
+              var rowClosedTx = closedTxCol >= 0 ? String(lcRows[rIdx][closedTxCol] || "").trim() : "";
+
+              var matchesSession = (sessionObj.session_id && rowSessionId === String(sessionObj.session_id).trim()) || (rowRoomId === String(roomId).trim());
+              if (matchesSession && (rowStatus === "active" || (!rowClosedTx && rowStatus !== "cancelled"))) {
+                var curDur = durCol >= 0 ? Number(lcRows[rIdx][durCol]) || 0 : 0;
+                var newLcDur = curDur + addedMinutes;
+                var curRatePerHour = ratePerHourCol >= 0 ? Number(lcRows[rIdx][ratePerHourCol]) || 0 : 0;
+                var newRate = Math.ceil(newLcDur / 60) * curRatePerHour;
+
+                if (durCol >= 0) lcSheet.getRange(rIdx + 1, durCol + 1).setValue(newLcDur);
+                if (rateCol >= 0) lcSheet.getRange(rIdx + 1, rateCol + 1).setValue(newRate);
+              }
+            }
+          }
+        } catch (lcExtErr) {
+          Logger.log("Error during LC extension handling: " + lcExtErr.message);
+        }
+      }
     } catch (logError) {
       sheet.getRange(rowNumber, headerMap.booked_duration_minutes).setValue(oldBookedDurationMinutes);
       sheet.getRange(rowNumber, headerMap.scheduled_end_time).setValue(oldScheduledEndTime);
@@ -4685,13 +11300,38 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
 
       return {
         ok: false,
-        error: "Gagal mencatat audit log tambah waktu. Perubahan durasi dibatalkan.",
+        error: "Gagal mencatat audit log tambah waktu atau memperbarui sesi. Perubahan durasi dibatalkan.",
       };
+    }
+
+    if (isPaid) {
+      var ratePerHour = Number(room.rate_per_hour) || 0;
+      var extensionCost = Math.ceil((addedMinutes / 60) * ratePerHour);
+
+      var transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        start_time: oldScheduledEndTime,
+        end_time: newScheduledEndTime,
+        duration_minutes: addedMinutes,
+        rate_per_hour: ratePerHour,
+        room_total: extensionCost,
+        fnb_total: 0,
+        grand_total: extensionCost,
+        fnb_order_ids: "",
+        payment_method: method || "cash",
+        payment_status: "paid",
+        cashier_name: cashierName || "Kasir",
+        created_at: now,
+        transaction_type: "room_extension",
+      };
+      appendTransaction_(transaction);
     }
 
     return {
       ok: true,
-      message: "Waktu room berhasil ditambahkan.",
+      message: isPaid ? "Waktu room berhasil ditambahkan & dibayar." : "Waktu room berhasil ditambahkan.",
       room: getRoomFromRow_(sheet, headerMap, rowNumber),
       audit_log: {
         log_id: logId,
@@ -4712,7 +11352,7 @@ function extendSession_(roomId, addMinutes, cashierName, note) {
   }
 }
 
-function closeSession_(roomId, cashierName) {
+function closeSession_(roomId, cashierName, requestPayload) {
   if (!roomId) {
     return {
       ok: false,
@@ -4721,7 +11361,12 @@ function closeSession_(roomId, cashierName) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return {
+      ok: false,
+      error: "Sistem sedang memproses penutupan sesi lain. Coba lagi sebentar.",
+    };
+  }
 
   try {
     var roomsSheet = getSheet_("Rooms");
@@ -4736,18 +11381,35 @@ function closeSession_(roomId, cashierName) {
     }
 
     var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
-    var status = String(room.status || "").trim();
+    var status = String(room.status || "").trim().toLowerCase();
+    var activeRoomSession = findLatestRoomSessionForRoom_(roomId, ["active"]);
 
     if (status !== "occupied") {
+      if (activeRoomSession && activeRoomSession.session) {
+        status = "occupied";
+        roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("occupied");
+      } else {
+        return {
+          ok: false,
+          error: "Ruangan belum sedang digunakan.",
+        };
+      }
+    }
+
+    if (!room.start_time && activeRoomSession && activeRoomSession.session) {
+      room.start_time = activeRoomSession.session.start_time || activeRoomSession.session.created_at || "";
+    }
+
+    if (!room.start_time) {
       return {
         ok: false,
-        error: "Ruangan belum sedang digunakan.",
+        error: "Waktu mulai sesi tidak valid.",
       };
     }
 
     var startDate = new Date(room.start_time);
 
-    if (!room.start_time || isNaN(startDate.getTime())) {
+    if (isNaN(startDate.getTime())) {
       return {
         ok: false,
         error: "Waktu mulai sesi tidak valid.",
@@ -4757,45 +11419,216 @@ function closeSession_(roomId, cashierName) {
     var endDate = new Date();
     var endTime = toJakartaIsoString_(endDate);
     var startTime = room.start_time instanceof Date ? toJakartaIsoString_(room.start_time) : room.start_time;
+    if (activeRoomSession && activeRoomSession.session) {
+      var sessBookedMin = Number(activeRoomSession.session.booked_duration_minutes) || 0;
+      if (sessBookedMin > 0 && (!room.booked_duration_minutes || Number(room.booked_duration_minutes) <= 0)) {
+        room.booked_duration_minutes = sessBookedMin;
+      }
+    }
     var billing = resolveSessionBilling_(room, startDate, endDate);
     var durationMinutes = billing.duration_minutes;
     var ratePerHour = Number(room.rate_per_hour) || 0;
+    
+    // Align LC billing end time with session duration rules
+    var sessionBillingEndTime = endTime;
+    if (billing.billing_basis === "booked_duration" && room.scheduled_end_time) {
+      sessionBillingEndTime = room.scheduled_end_time instanceof Date
+        ? toJakartaIsoString_(room.scheduled_end_time)
+        : String(room.scheduled_end_time).trim();
+    }
+    
     var roomTotal = billing.room_total;
+    var isPrepay = false;
+    var prepayTxId = "";
+    var initialPaidMinutes = 0;
+    var prepaidRoomTotal = 0;
+    var postpaidPackageContext = null;
+    
+    if (activeRoomSession && activeRoomSession.session && activeRoomSession.session.prepayment_transaction_id) {
+      isPrepay = true;
+      prepayTxId = activeRoomSession.session.prepayment_transaction_id;
+      
+      try {
+        var txRows = readSheetAsObjects_("Transactions");
+        var prepayTx = null;
+        for (var tIdx = 0; tIdx < txRows.length; tIdx++) {
+          if (String(txRows[tIdx].transaction_id || "").trim() === String(prepayTxId).trim()) {
+            prepayTx = txRows[tIdx];
+            break;
+          }
+        }
+        if (prepayTx) {
+          prepaidRoomTotal = Number(prepayTx.room_total) || 0;
+        }
+      } catch (err) {
+        Logger.log("Error finding prepayment transaction: " + err.message);
+      }
+
+      if (activeRoomSession.session.booking_mode === "package") {
+        initialPaidMinutes = Number(activeRoomSession.session.package_included_minutes) || 0;
+      } else {
+        if (prepayTx) {
+          initialPaidMinutes = Number(prepayTx.duration_minutes) || 0;
+        }
+      }
+      
+      var excessMinutes = Math.max(0, durationMinutes - initialPaidMinutes);
+      roomTotal = Math.ceil((excessMinutes / 60) * ratePerHour);
+    }
+
+    if (
+      !isPrepay &&
+      activeRoomSession &&
+      activeRoomSession.session &&
+      String(activeRoomSession.session.booking_mode || "").trim().toLowerCase() === "package"
+    ) {
+      postpaidPackageContext = getPostpaidPackageContext_(activeRoomSession.session.package_id);
+      roomTotal = calculatePostpaidPackageRoomTotal_(
+        durationMinutes,
+        postpaidPackageContext,
+        ratePerHour
+      );
+      billing.billing_basis = "package_postpaid";
+    }
+
+    var prepaidExtensionsAmount = 0;
+    try {
+      var sessionStartTimeMs = new Date(startTime).getTime();
+      var sessionEndTimeMs = endDate.getTime();
+      
+      var relatedExtensionTxs = readSheetAsObjects_("Transactions").filter(function (tx) {
+        if (String(tx.room_id || "").trim() !== String(room.room_id || "").trim()) {
+          return false;
+        }
+        if (String(tx.transaction_type || "").trim() !== "room_extension") {
+          return false;
+        }
+        var txTimeText = tx.created_at || tx.end_time || "";
+        if (!txTimeText) return false;
+        
+        var txTimeMs = new Date(txTimeText).getTime();
+        return txTimeMs >= sessionStartTimeMs && txTimeMs <= sessionEndTimeMs;
+      });
+      
+      prepaidExtensionsAmount = relatedExtensionTxs.reduce(function (sum, tx) {
+        return sum + (Number(tx.grand_total) || 0);
+      }, 0);
+    } catch (err) {
+      // Safe fallback
+    }
+
+    roomTotal = Math.max(0, roomTotal - prepaidExtensionsAmount);
+
+    // Calculate LC Fee for checkout (Upfront Booked calculation based on pre-calculated rate column)
+    var lcFeeTotal = 0;
+    if (activeRoomSession && activeRoomSession.session) {
+      try {
+        var sessionForLc = activeRoomSession.session;
+        var reqPayload = requestPayload || {};
+        if (reqPayload.lc_ids !== undefined || reqPayload.lc_assignments !== undefined) {
+          try {
+            assignSessionLcs_({
+              room_id: roomId,
+              lc_ids: reqPayload.lc_ids,
+              lc_assignments: reqPayload.lc_assignments,
+              changed_by: cashierName || "Kasir",
+            });
+          } catch (assignErr) {
+            Logger.log("Error auto-assigning LCs on closeSession: " + assignErr.message);
+          }
+        }
+
+        var workLogRowsForLc = readSheetAsObjects_("LcWorkLogs").filter(function(log) {
+          return String(log.session_id || "").trim() === String(sessionForLc.session_id || "").trim();
+        });
+        
+        var uniqueLcLogsMap = {};
+        workLogRowsForLc.forEach(function(log) {
+          var selId = String(log.lc_id || "").trim();
+          if (selId === "PENDING" || !selId) return;
+          var status = String(log.status || "").trim().toLowerCase();
+          if (status === "active" || (!uniqueLcLogsMap[selId] && status !== "cancelled")) {
+            uniqueLcLogsMap[selId] = log;
+          }
+        });
+
+        var totalLcCost = 0;
+        var physicalRoomDuration = Number(durationMinutes) || 0;
+        Object.keys(uniqueLcLogsMap).forEach(function(selId) {
+          var log = uniqueLcLogsMap[selId];
+          var curLcDur = Number(log.duration_minutes) || 0;
+          var ratePerHour = Number(log.rate_per_hour) || 0;
+          var finalLcDur = curLcDur > 0 ? curLcDur : physicalRoomDuration;
+          var finalRate = Math.ceil(finalLcDur / 60) * ratePerHour;
+          totalLcCost += finalRate;
+        });
+        
+        // Hak LC selalu dibayar penuh berdasarkan work log dan durasi riil sesi,
+        // tidak terpotong oleh Free Room maupun benefit sewa room lainnya.
+        lcFeeTotal = Math.max(0, totalLcCost);
+      } catch (lcErr) {
+        Logger.log("Error calculating LC checkout fee: " + lcErr.message);
+        throw lcErr;
+      }
+    }
+
     var fnbOrders = getOpenFnbOrdersForSession_(room.room_id || "", startTime || "");
     var fnbTotal = calculateFnbTotal_(fnbOrders);
     var fnbOrderIds = fnbOrders.map(function (order) {
       return order.order_id;
     }).join(",");
     var detailedFnbOrders = getFnbOrdersWithItemsByIds_(parseCommaSeparatedIds_(fnbOrderIds));
-    var transaction = {
-      transaction_id: generateTransactionId_(),
-      room_id: room.room_id || "",
-      room_name: room.room_name || "",
-      start_time: startTime || "",
-      end_time: endTime,
-      duration_minutes: durationMinutes,
-      rate_per_hour: ratePerHour,
-      room_total: roomTotal,
-      fnb_total: fnbTotal,
-      grand_total: roomTotal + fnbTotal,
-      fnb_order_ids: fnbOrderIds,
-      payment_method: "",
-      payment_status: "unpaid",
-      cashier_name: cashierName || "Kasir",
-      created_at: endTime,
-      billing_basis: billing.billing_basis,
-    };
 
-    appendTransaction_(transaction);
-    var stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
-    markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
-    fnbOrders = detailedFnbOrders.map(function (order) {
-      order.order_status = "billed";
-      order.updated_at = endTime;
-      return order;
-    });
+    var transaction = null;
+    var stockResult = { movements: [], warnings: [] };
 
-    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("available");
+    if (!isPrepay || fnbTotal > 0 || roomTotal > 0 || lcFeeTotal > 0) {
+      transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        start_time: startTime || "",
+        end_time: endTime,
+        duration_minutes: durationMinutes,
+        rate_per_hour: ratePerHour,
+        room_total: roomTotal,
+        fnb_total: fnbTotal,
+        lc_total: lcFeeTotal,
+        grand_total: roomTotal + fnbTotal + lcFeeTotal,
+        fnb_order_ids: fnbOrderIds,
+        payment_method: "",
+        payment_status: "unpaid",
+        cashier_name: cashierName || "Kasir",
+        created_at: endTime,
+        billing_basis: isPrepay ? "prepay_add_on" : billing.billing_basis,
+        transaction_type: "session_checkout",
+      };
+
+      appendTransaction_(transaction);
+      stockResult = deductStockForFnbOrders_(detailedFnbOrders, transaction.transaction_id, transaction.cashier_name, endTime);
+      if (postpaidPackageContext) {
+        var packageStockResult = deductPackageStock_(
+          postpaidPackageContext.package_id,
+          transaction.transaction_id,
+          transaction.cashier_name,
+          endTime
+        );
+        stockResult.movements = stockResult.movements.concat(packageStockResult.movements || []);
+        stockResult.warnings = stockResult.warnings.concat(packageStockResult.warnings || []);
+      }
+      markFnbOrdersAsBilled_(fnbOrderIds ? fnbOrderIds.split(",") : [], endTime);
+      fnbOrders = detailedFnbOrders.map(function (order) {
+        order.order_status = "billed";
+        order.updated_at = endTime;
+        return order;
+      });
+    } else {
+      if (fnbOrderIds) {
+        markFnbOrdersAsBilled_(fnbOrderIds.split(","), endTime);
+      }
+    }
+
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.status).setValue("cleaning");
     roomsSheet.getRange(rowNumber, roomsHeaderMap.start_time).setValue("");
     if (roomsHeaderMap.booked_duration_minutes) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.booked_duration_minutes).setValue("");
@@ -4803,7 +11636,94 @@ function closeSession_(roomId, cashierName) {
     if (roomsHeaderMap.scheduled_end_time) {
       roomsSheet.getRange(rowNumber, roomsHeaderMap.scheduled_end_time).setValue("");
     }
+    if (roomsHeaderMap.customer_name) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.customer_name).setValue("");
+    }
+    if (roomsHeaderMap.package_id) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.package_id).setValue("");
+    }
     roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(endTime);
+
+    if (activeRoomSession) {
+      setRowValues_(activeRoomSession.sheet, activeRoomSession.headerMap, activeRoomSession.rowNumber, {
+        status: "closed",
+        end_time: endTime,
+        updated_at: endTime,
+        closed_transaction_id: transaction ? transaction.transaction_id : prepayTxId,
+      });
+
+      var session = activeRoomSession.session;
+      var lcIds = String(session.lc_ids || "").trim();
+      if (lcIds) {
+        var selectedLcIds = lcIds.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+        var lcMasterSheet = ensureLcMasterSheet_();
+        var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
+        var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+        var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+        
+        selectedLcIds.forEach(function(selId) {
+          if (selId === "PENDING") {
+            return; // Skip pelepasan status dan work logs untuk LC pending
+          }
+          var rowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", selId);
+          if (rowNum) {
+            lcMasterSheet.getRange(rowNum, lcMasterHeaders.availability).setValue("available");
+            lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(endTime);
+          }
+          
+          var workLogRows = readSheetAsObjects_("LcWorkLogs");
+          for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
+            var log = workLogRows[rIdx];
+            if (
+              String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
+              String(log.lc_id || "").trim() === selId &&
+              log.status === "active"
+            ) {
+              var logRowNum = rIdx + 2;
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("done");
+              var lcDurationMinutes = inferLcWorkLogDurationMinutes_(log) || Number(session.booked_duration_minutes) || durationMinutes;
+              var lcClosedAt = resolveLcClosedAtByDuration_(log.created_at || session.start_time || startTime, lcDurationMinutes, sessionBillingEndTime);
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue(lcClosedAt);
+              if (lcWorkLogsHeaders.duration_minutes) {
+                lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.duration_minutes).setValue(lcDurationMinutes);
+              }
+              
+              // No need to recalculate rate since it's already updated and correct in the log rate column
+            }
+          }
+        });
+      }
+    }
+
+    var lcBonusReconciliation = null;
+    if (activeRoomSession && activeRoomSession.session) {
+      try {
+        var reconciliationTransaction = transaction || {
+          transaction_id: prepayTxId || "",
+          transaction_type: "session_checkout",
+          room_id: room.room_id || "",
+          room_name: room.room_name || "",
+          start_time: startTime || "",
+          end_time: endTime,
+          created_at: endTime,
+          fnb_order_ids: fnbOrderIds,
+        };
+        lcBonusReconciliation = reconcileLcFnbBonusForTransaction_(
+          reconciliationTransaction,
+          buildLcFnbBonusReconciliationContext_(),
+          {
+            dry_run: false,
+            changed_by: cashierName || "Kasir",
+          }
+        );
+      } catch (bonusReconciliationError) {
+        Logger.log("Gagal merekonsiliasi bonus F&B LC saat checkout: " + bonusReconciliationError.message);
+        lcBonusReconciliation = {
+          status: "error",
+          reason: bonusReconciliationError.message,
+        };
+      }
+    }
 
     return {
       ok: true,
@@ -4812,13 +11732,270 @@ function closeSession_(roomId, cashierName) {
       fnb_orders: fnbOrders,
       stock_movements: stockResult.movements,
       stock_warnings: stockResult.warnings,
+      lc_bonus_reconciliation: lcBonusReconciliation,
     };
   } finally {
     lock.releaseLock();
   }
 }
 
-function markTransactionPaid_(transactionId, paymentMethod) {
+function assignSessionLcs_(payload) {
+  var request = payload || {};
+  var roomId = String(request.room_id || "").trim();
+  var changedBy = String(request.changed_by || "Kasir").trim();
+
+  if (!roomId) {
+    return { ok: false, success: false, error: "room_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses LC room lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var roomsSheet = getSheet_("Rooms");
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+
+    if (!rowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan." };
+    }
+
+    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+    var status = String(room.status || "").trim().toLowerCase();
+
+    if (status !== "occupied") {
+      return { ok: false, success: false, error: "Ruangan harus dalam status occupied." };
+    }
+
+    var sessionResult = findLatestRoomSessionForRoom_(roomId, ["active"]);
+    if (!sessionResult) {
+      return { ok: false, success: false, error: "Sesi aktif tidak ditemukan." };
+    }
+
+    var session = sessionResult.session;
+    var now = toJakartaIsoString_(new Date());
+
+    var newLcAssignments = parseLcAssignments_(request, Number(session.booked_duration_minutes) || 60);
+    var newLcIds = newLcAssignments.map(function(assignment) {
+      return String(assignment.lc_id || "").trim();
+    }).filter(Boolean);
+    
+    var currentLcIdsRaw = String(session.lc_ids || "").trim();
+    var currentLcIds = currentLcIdsRaw.split(",").map(function(id) { return id.trim(); }).filter(Boolean);
+
+    var bookedCount = currentLcIds.length;
+    var finalLcCount = Math.max(bookedCount, newLcIds.length);
+
+    var lcMasterSheet = ensureLcMasterSheet_();
+    var lcMasterHeaders = getHeaderMap_(lcMasterSheet);
+    var lcMasterRows = readSheetAsObjects_("LcMaster");
+
+    for (var i = 0; i < newLcIds.length; i++) {
+      var newId = newLcIds[i];
+      var foundLc = null;
+      for (var idx = 0; idx < lcMasterRows.length; idx++) {
+        if (String(lcMasterRows[idx].lc_id || "").trim() === newId) {
+          foundLc = lcMasterRows[idx];
+          break;
+        }
+      }
+      if (!foundLc) {
+        return { ok: false, success: false, error: "LC dengan ID " + newId + " tidak ditemukan." };
+      }
+      if (foundLc.status !== "active") {
+        return { ok: false, success: false, error: "LC " + foundLc.lc_name + " sedang tidak aktif." };
+      }
+      if (foundLc.availability === "busy" && !currentLcIds.includes(newId)) {
+        return { ok: false, success: false, error: "LC " + foundLc.lc_name + " sedang sibuk di room lain." };
+      }
+    }
+
+    if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
+      return {
+        ok: true,
+        success: true,
+        dry_run: true,
+        message: "Validasi pilihan LC berhasil tanpa menyimpan perubahan.",
+        room_id: roomId,
+        session_id: session.session_id || "",
+        session_status: session.status || "",
+        lc_ids: newLcIds.join(","),
+      };
+    }
+
+    var lcWorkLogsSheet = ensureLcWorkLogsSheet_();
+    var lcWorkLogsHeaders = getHeaderMap_(lcWorkLogsSheet);
+
+    currentLcIds.forEach(function(oldId) {
+      if (oldId !== "PENDING" && !newLcIds.includes(oldId)) {
+        // Free in LcMaster
+        var rowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", oldId);
+        if (rowNum) {
+          lcMasterSheet.getRange(rowNum, lcMasterHeaders.availability).setValue("available");
+          lcMasterSheet.getRange(rowNum, lcMasterHeaders.updated_at).setValue(now);
+        }
+
+        // Close work log in LcWorkLogs
+        var workLogRows = readSheetAsObjects_("LcWorkLogs");
+        for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
+          var log = workLogRows[rIdx];
+          if (
+            String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
+            String(log.lc_id || "").trim() === oldId &&
+            log.status === "active"
+          ) {
+            var logRowNum = rIdx + 2;
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.status).setValue("done");
+            lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.closed_at).setValue(now);
+            
+            // Calculate rate
+            var hourlyRate = 0;
+            for (var idx = 0; idx < lcMasterRows.length; idx++) {
+              if (String(lcMasterRows[idx].lc_id || "").trim() === oldId) {
+                hourlyRate = Number(lcMasterRows[idx].rate_per_room) || 0;
+                break;
+              }
+            }
+            if (hourlyRate > 0) {
+              var startTimeText = log.created_at || session.start_time || now;
+              var workDurationMinutes = calculateDurationMinutes_(startTimeText, now);
+              var finalRate = Math.ceil(workDurationMinutes / 60) * hourlyRate;
+              lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate).setValue(finalRate);
+              if (lcWorkLogsHeaders.duration_minutes) {
+                lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.duration_minutes).setValue(workDurationMinutes);
+              }
+              if (lcWorkLogsHeaders.rate_per_hour) {
+                lcWorkLogsSheet.getRange(logRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
+              }
+            }
+          }
+        }
+      }
+    });
+
+    var workLogRows = readSheetAsObjects_("LcWorkLogs");
+
+    // Ganti work log PENDING satu per satu dengan LC yang baru dipilih
+    // Cari semua baris PENDING untuk session ini (dari belakang agar index tidak geser)
+    var pendingLogIndexes = [];
+    for (var rIdx = 0; rIdx < workLogRows.length; rIdx++) {
+      var log = workLogRows[rIdx];
+      if (
+        String(log.session_id || "").trim() === String(session.session_id || "").trim() &&
+        String(log.lc_id || "").trim() === "PENDING" &&
+        log.status === "active"
+      ) {
+        pendingLogIndexes.push(rIdx);
+      }
+    }
+
+    // Update baris PENDING yang ada dengan data LC nyata
+    newLcAssignments.forEach(function(assignment, i) {
+      var newId = String(assignment.lc_id || "").trim();
+      var requestedDurationMinutes = normalizeLcDurationMinutes_(assignment.duration_minutes, Number(session.booked_duration_minutes) || 60);
+      var foundLc = null;
+      for (var idx = 0; idx < lcMasterRows.length; idx++) {
+        if (String(lcMasterRows[idx].lc_id || "").trim() === newId) {
+          foundLc = lcMasterRows[idx];
+          break;
+        }
+      }
+
+      var lcRowNum = findRowByValue_(lcMasterSheet, lcMasterHeaders, "lc_id", newId);
+      if (lcRowNum) {
+        lcMasterSheet.getRange(lcRowNum, lcMasterHeaders.availability).setValue("busy");
+        lcMasterSheet.getRange(lcRowNum, lcMasterHeaders.updated_at).setValue(now);
+      }
+
+      var hourlyRate = foundLc ? (Number(foundLc.rate_per_room) || 0) : 0;
+      if (i < pendingLogIndexes.length) {
+        // Update baris PENDING yang sudah ada
+        var pendingRowNum = pendingLogIndexes[i] + 2;
+        lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_id).setValue(newId);
+        lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.lc_name).setValue(foundLc ? foundLc.lc_name : newId);
+        
+        // Calculate the rate based on full session booked duration since they replace a PENDING slot
+        var rateForSession = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
+        lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.rate).setValue(rateForSession);
+        if (lcWorkLogsHeaders.duration_minutes) {
+          lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.duration_minutes).setValue(requestedDurationMinutes);
+        }
+        if (lcWorkLogsHeaders.rate_per_hour) {
+          lcWorkLogsSheet.getRange(pendingRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
+        }
+      } else {
+        // Check if an active work log already exists for this session and LC ID
+        var existingLogIndex = -1;
+        for (var wIdx = 0; wIdx < workLogRows.length; wIdx++) {
+          var wLog = workLogRows[wIdx];
+          if (
+            String(wLog.session_id || "").trim() === String(session.session_id || "").trim() &&
+            String(wLog.lc_id || "").trim() === newId &&
+            wLog.status === "active"
+          ) {
+            existingLogIndex = wIdx;
+            break;
+          }
+        }
+
+        var rateForRemaining = calculateLcRateForDuration_(requestedDurationMinutes, hourlyRate);
+
+        if (existingLogIndex >= 0) {
+          var activeRowNum = existingLogIndex + 2;
+          lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.rate).setValue(rateForRemaining);
+          if (lcWorkLogsHeaders.duration_minutes) {
+            lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.duration_minutes).setValue(requestedDurationMinutes);
+          }
+          if (lcWorkLogsHeaders.rate_per_hour) {
+            lcWorkLogsSheet.getRange(activeRowNum, lcWorkLogsHeaders.rate_per_hour).setValue(hourlyRate);
+          }
+        } else {
+          appendLcWorkLog_({
+            log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + newId + "-" + Math.floor(Math.random() * 100),
+            session_id: session.session_id,
+            lc_id: newId,
+            lc_name: foundLc ? foundLc.lc_name : newId,
+            rate: rateForRemaining,
+            duration_minutes: requestedDurationMinutes,
+            rate_per_hour: hourlyRate,
+            status: "active",
+            created_at: now,
+          });
+        }
+      }
+    });
+
+    var finalLcIdsList = newLcIds.slice();
+    while (finalLcIdsList.length < finalLcCount) {
+      finalLcIdsList.push("PENDING");
+    }
+    var finalLcIdsStr = finalLcIdsList.join(",");
+
+    setRowValues_(sessionResult.sheet, sessionResult.headerMap, sessionResult.rowNumber, {
+      lc_ids: finalLcIdsStr,
+      lc_assignments: serializeLcAssignments_(newLcAssignments),
+      updated_at: now,
+    });
+
+    if (roomsHeaderMap.lc_ids) {
+      roomsSheet.getRange(rowNumber, roomsHeaderMap.lc_ids).setValue(finalLcIdsStr);
+    }
+    roomsSheet.getRange(rowNumber, roomsHeaderMap.updated_at).setValue(now);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Pilihan LC berhasil diperbarui.",
+      lc_ids: finalLcIdsStr,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function markTransactionPaid_(transactionId, paymentMethod, promoCode) {
   if (!transactionId) {
     return {
       ok: false,
@@ -4843,7 +12020,9 @@ function markTransactionPaid_(transactionId, paymentMethod) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return { ok: false, error: "Sistem sedang memproses closing lain. Coba lagi sebentar." };
+  }
 
   try {
     var sheet = getSheet_("Transactions");
@@ -4867,8 +12046,61 @@ function markTransactionPaid_(transactionId, paymentMethod) {
       };
     }
 
+    var existingDiscount = Number(transaction.promo_discount) || 0;
+    var roomTotal = Number(transaction.room_total) || 0;
+    var fnbTotal = Number(transaction.fnb_total) || 0;
+    var lcTotal = Number(transaction.lc_total) || 0;
+
+    var prCode = String(promoCode || "").trim().toUpperCase();
+    var promoDiscount = existingDiscount;
+    var appliedPromo = null;
+
+    if (prCode) {
+      var grossRoomTotal = existingDiscount > 0 ? roomTotal + existingDiscount : roomTotal;
+      var promoRes = validatePromoCode_({ code: prCode, room_total: grossRoomTotal, transaction_id: transactionId });
+      if (!promoRes.ok || !promoRes.success) {
+        return { ok: false, error: promoRes.error || "Gagal menerapkan kode promo." };
+      }
+      promoDiscount = promoRes.discount;
+      appliedPromo = promoRes;
+
+      roomTotal = Math.max(0, grossRoomTotal - promoDiscount);
+    }
+
+    var grandTotal = roomTotal + fnbTotal + lcTotal;
+
     sheet.getRange(rowNumber, headerMap.payment_method).setValue(paymentMethod);
     sheet.getRange(rowNumber, headerMap.payment_status).setValue("paid");
+
+    if (prCode) {
+      if (headerMap.room_total) {
+        sheet.getRange(rowNumber, headerMap.room_total).setValue(roomTotal);
+      }
+      if (headerMap.grand_total) {
+        sheet.getRange(rowNumber, headerMap.grand_total).setValue(grandTotal);
+      }
+      if (headerMap.promo_code) {
+        sheet.getRange(rowNumber, headerMap.promo_code).setValue(prCode);
+      }
+      if (headerMap.promo_discount) {
+        sheet.getRange(rowNumber, headerMap.promo_discount).setValue(promoDiscount);
+      }
+    }
+
+    // Tandai voucher terpakai
+    if (appliedPromo && String(appliedPromo.type).toLowerCase() === "voucher") {
+      var promoSheet = ensurePromoMasterSheet_();
+      var promoHeaderMap = getHeaderMap_(promoSheet);
+      var promoRowNum = findRowByValue_(promoSheet, promoHeaderMap, "code", prCode);
+      if (promoRowNum) {
+        var now = toJakartaIsoString_(new Date());
+        setRowValues_(promoSheet, promoHeaderMap, promoRowNum, {
+          used_in_transaction_id: transactionId,
+          used_at: now,
+          status: "inactive"
+        });
+      }
+    }
 
     return {
       ok: true,
@@ -4878,6 +12110,1709 @@ function markTransactionPaid_(transactionId, paymentMethod) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function updateTransactionDetails_(payload) {
+  var transactionId = String(payload.transaction_id || "").trim();
+  if (!transactionId) return { ok: false, error: "transaction_id wajib diisi." };
+
+  var sheet = getSheet_("Transactions");
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "transaction_id", transactionId);
+
+  if (!rowNumber) return { ok: false, error: "Transaksi tidak ditemukan." };
+
+  if (payload.room_total !== undefined && headerMap.room_total) sheet.getRange(rowNumber, headerMap.room_total).setValue(payload.room_total);
+  if (payload.fnb_total !== undefined && headerMap.fnb_total) sheet.getRange(rowNumber, headerMap.fnb_total).setValue(payload.fnb_total);
+  if (payload.lc_total !== undefined && headerMap.lc_total) sheet.getRange(rowNumber, headerMap.lc_total).setValue(payload.lc_total);
+  if (payload.promo_code !== undefined && headerMap.promo_code) sheet.getRange(rowNumber, headerMap.promo_code).setValue(payload.promo_code);
+  if (payload.promo_discount !== undefined && headerMap.promo_discount) sheet.getRange(rowNumber, headerMap.promo_discount).setValue(payload.promo_discount);
+  if (payload.grand_total !== undefined && headerMap.grand_total) sheet.getRange(rowNumber, headerMap.grand_total).setValue(payload.grand_total);
+  if (payload.fnb_order_ids !== undefined && headerMap.fnb_order_ids) sheet.getRange(rowNumber, headerMap.fnb_order_ids).setValue(payload.fnb_order_ids);
+  if (payload.payment_status !== undefined && headerMap.payment_status) sheet.getRange(rowNumber, headerMap.payment_status).setValue(payload.payment_status);
+
+  return {
+    ok: true,
+    message: "Transaksi berhasil diperbarui.",
+    transaction: getRowObject_(sheet, headerMap, rowNumber),
+  };
+}
+
+function getTransactionLcEditContext_(transactionId) {
+  var normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+
+  var transactionsSheet = getSheet_("Transactions");
+  var transactionHeaders = getHeaderMap_(transactionsSheet);
+  var transactionRow = findRowByValue_(
+    transactionsSheet,
+    transactionHeaders,
+    "transaction_id",
+    normalizedTransactionId
+  );
+
+  if (!transactionRow) {
+    return { ok: false, success: false, error: "Transaksi tidak ditemukan." };
+  }
+
+  var transaction = getRowObject_(transactionsSheet, transactionHeaders, transactionRow);
+  if (String(transaction.transaction_type || "").trim().toLowerCase() !== "session_checkout") {
+    return {
+      ok: false,
+      success: false,
+      error: "Edit durasi LC hanya tersedia untuk transaksi sesi room.",
+    };
+  }
+
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return { ok: false, success: false, error: "Riwayat sesi room tidak ditemukan." };
+  }
+
+  var sessionsSheet = getSheet_(ROOM_SESSIONS_SHEET);
+  var sessionHeaders = getHeaderMap_(sessionsSheet);
+  var session = null;
+  var sessionRow = sessionHeaders.closed_transaction_id
+    ? findRowByValue_(
+      sessionsSheet,
+      sessionHeaders,
+      "closed_transaction_id",
+      normalizedTransactionId
+    )
+    : 0;
+
+  if (sessionRow) {
+    session = getRowObject_(sessionsSheet, sessionHeaders, sessionRow);
+  } else {
+    var sessionRows = readSheetAsObjects_(ROOM_SESSIONS_SHEET);
+    for (var sessionIndex = sessionRows.length - 1; sessionIndex >= 0; sessionIndex--) {
+      var candidate = sessionRows[sessionIndex];
+      if (
+        String(candidate.room_id || "").trim() === String(transaction.room_id || "").trim()
+        && normalizeFnbOrderDateTime_(candidate.start_time)
+          === normalizeFnbOrderDateTime_(transaction.start_time)
+      ) {
+        session = candidate;
+        sessionRow = sessionIndex + 2;
+        break;
+      }
+    }
+  }
+
+  if (!session || !sessionRow) {
+    return { ok: false, success: false, error: "Sesi room untuk transaksi tidak ditemukan." };
+  }
+
+  if (!sheetExists_("LcWorkLogs")) {
+    return { ok: false, success: false, error: "Work log LC tidak ditemukan." };
+  }
+
+  var workLogsSheet = ensureLcWorkLogsSheet_();
+  var workLogHeaders = getHeaderMap_(workLogsSheet);
+  var workLogRows = readSheetAsObjects_("LcWorkLogs");
+  var canonicalLogsByLcId = {};
+  var canonicalOrder = [];
+
+  workLogRows.forEach(function (log, index) {
+    if (String(log.session_id || "").trim() !== String(session.session_id || "").trim()) {
+      return;
+    }
+
+    var lcId = String(log.lc_id || "").trim();
+    var status = String(log.status || "").trim().toLowerCase();
+    if (!lcId || lcId === "PENDING" || status === "cancelled") {
+      return;
+    }
+
+    if (!canonicalLogsByLcId[lcId]) {
+      canonicalOrder.push(lcId);
+      canonicalLogsByLcId[lcId] = {
+        row_number: index + 2,
+        log: log,
+      };
+      return;
+    }
+
+    if (
+      status === "active"
+      && String(canonicalLogsByLcId[lcId].log.status || "").trim().toLowerCase() !== "active"
+    ) {
+      canonicalLogsByLcId[lcId] = {
+        row_number: index + 2,
+        log: log,
+      };
+    }
+  });
+
+  var lcLogs = canonicalOrder.map(function (lcId) {
+    return canonicalLogsByLcId[lcId];
+  });
+
+  if (lcLogs.length === 0) {
+    return {
+      ok: false,
+      success: false,
+      error: "Transaksi tidak memiliki work log LC yang dapat diedit.",
+    };
+  }
+
+  var closingReference = findTransactionClosingReference_(normalizedTransactionId);
+  var payrollReferences = lcLogs.filter(function (entry) {
+    return !!String(entry.log.payroll_id || "").trim();
+  }).map(function (entry) {
+    return String(entry.log.payroll_id || "").trim();
+  });
+  var paymentStatus = String(transaction.payment_status || "").trim().toLowerCase();
+  var blockedReason = "";
+
+  if (closingReference) {
+    blockedReason = "Transaksi sudah masuk closing kasir dan tidak dapat diedit.";
+  } else if (payrollReferences.length > 0) {
+    blockedReason = "Pendapatan LC sudah masuk payroll dan tidak dapat diedit.";
+  } else if (paymentStatus !== "unpaid" && paymentStatus !== "paid") {
+    blockedReason = "Status pembayaran transaksi tidak mendukung edit durasi LC.";
+  }
+
+  return {
+    ok: true,
+    success: true,
+    transaction: transaction,
+    transaction_sheet: transactionsSheet,
+    transaction_headers: transactionHeaders,
+    transaction_row: transactionRow,
+    session: session,
+    session_sheet: sessionsSheet,
+    session_headers: sessionHeaders,
+    session_row: sessionRow,
+    work_logs_sheet: workLogsSheet,
+    work_log_headers: workLogHeaders,
+    lc_logs: lcLogs,
+    closing_reference: closingReference,
+    payroll_references: payrollReferences,
+    blocked_reason: blockedReason,
+    can_edit: !blockedReason,
+    requires_admin_pin: paymentStatus === "paid" && !blockedReason,
+  };
+}
+
+function serializeTransactionLcEditContext_(context) {
+  var currentLogTotal = context.lc_logs.reduce(function (total, entry) {
+    return total + (Number(entry.log.rate) || 0);
+  }, 0);
+  return {
+    ok: true,
+    success: true,
+    transaction_id: context.transaction.transaction_id || "",
+    session_id: context.session.session_id || "",
+    room_id: context.transaction.room_id || "",
+    room_name: context.transaction.room_name || "",
+    payment_status: String(context.transaction.payment_status || "").trim().toLowerCase(),
+    current_lc_total: Number(context.transaction.lc_total) || 0,
+    current_grand_total: Number(context.transaction.grand_total) || 0,
+    current_work_log_total: currentLogTotal,
+    // Sistem post-payment membayar hak LC penuh. Selisih historis dan komponen
+    // Talent paket tidak boleh menjadi potongan tagihan LC.
+    billing_adjustment: 0,
+    can_edit: context.can_edit,
+    requires_admin_pin: context.requires_admin_pin,
+    blocked_reason: context.blocked_reason || "",
+    lc_logs: context.lc_logs.map(function (entry) {
+      return {
+        log_id: entry.log.log_id || "",
+        lc_id: entry.log.lc_id || "",
+        lc_name: entry.log.lc_name || entry.log.lc_id || "",
+        duration_minutes: inferLcWorkLogDurationMinutes_(entry.log) || 60,
+        rate_per_hour: resolveLcWorkLogHourlyRate_(entry.log),
+        rate: Number(entry.log.rate) || 0,
+        status: String(entry.log.status || "").trim().toLowerCase(),
+        payroll_id: String(entry.log.payroll_id || "").trim(),
+      };
+    }),
+  };
+}
+
+function resolveLcWorkLogHourlyRate_(log) {
+  var explicitRate = Number(log && log.rate_per_hour) || 0;
+  if (explicitRate > 0) {
+    return explicitRate;
+  }
+
+  var durationMinutes = inferLcWorkLogDurationMinutes_(log || {}) || 60;
+  var billedHours = Math.max(1, Math.ceil(durationMinutes / 60));
+  var totalRate = Number(log && log.rate) || 0;
+  return totalRate > 0 ? totalRate / billedHours : 0;
+}
+
+function getTransactionLcEditDetails_(transactionId) {
+  var context = getTransactionLcEditContext_(transactionId);
+  if (!context.ok) {
+    return context;
+  }
+
+  return serializeTransactionLcEditContext_(context);
+}
+
+function getTransactionLcReceiptDetails_(transactionId) {
+  var normalizedTransactionId = String(transactionId || "").trim();
+  if (!normalizedTransactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+
+  var cache = CacheService.getScriptCache();
+  var cacheKey = "transaction-lc-receipt-v1:" + normalizedTransactionId;
+  var cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (error) {
+      cache.remove(cacheKey);
+    }
+  }
+
+  var context = getTransactionLcEditContext_(normalizedTransactionId);
+  if (!context.ok) {
+    return {
+      ok: true,
+      success: true,
+      transaction_id: normalizedTransactionId,
+      detail_available: false,
+      lc_logs: [],
+      message: context.error || "Detail LC historis tidak tersedia.",
+    };
+  }
+
+  var serialized = serializeTransactionLcEditContext_(context);
+  var response = {
+    ok: true,
+    success: true,
+    transaction_id: serialized.transaction_id,
+    detail_available: serialized.lc_logs.length > 0,
+    lc_total: serialized.current_lc_total,
+    work_log_total: serialized.current_work_log_total,
+    billing_adjustment: serialized.billing_adjustment,
+    lc_logs: serialized.lc_logs.map(function (log) {
+      return {
+        lc_id: log.lc_id,
+        lc_name: log.lc_name,
+        duration_minutes: log.duration_minutes,
+        rate_per_hour: log.rate_per_hour,
+        rate: log.rate,
+      };
+    }),
+  };
+
+  cache.put(cacheKey, JSON.stringify(response), 21600);
+  return response;
+}
+
+function normalizeTransactionLcDurationAssignments_(assignments, context) {
+  if (!Array.isArray(assignments)) {
+    return { ok: false, error: "Daftar durasi LC wajib diisi." };
+  }
+
+  var expectedByLcId = {};
+  context.lc_logs.forEach(function (entry) {
+    expectedByLcId[String(entry.log.lc_id || "").trim()] = entry;
+  });
+
+  var normalized = [];
+  var seen = {};
+
+  for (var index = 0; index < assignments.length; index++) {
+    var assignment = assignments[index] || {};
+    var lcId = String(assignment.lc_id || "").trim();
+    var durationMinutes = Math.round(Number(assignment.duration_minutes));
+
+    if (!lcId || !expectedByLcId[lcId]) {
+      return { ok: false, error: "LC pada permintaan tidak cocok dengan transaksi." };
+    }
+    if (seen[lcId]) {
+      return { ok: false, error: "LC yang sama tidak boleh dikirim lebih dari sekali." };
+    }
+    if (
+      !isFinite(durationMinutes)
+      || durationMinutes < 30
+      || durationMinutes > 720
+      || durationMinutes % 30 !== 0
+    ) {
+      return {
+        ok: false,
+        error: "Durasi LC wajib antara 30 menit dan 12 jam dengan kelipatan 30 menit.",
+      };
+    }
+
+    seen[lcId] = true;
+    normalized.push({
+      lc_id: lcId,
+      duration_minutes: durationMinutes,
+      context_entry: expectedByLcId[lcId],
+    });
+  }
+
+  if (normalized.length !== context.lc_logs.length) {
+    return { ok: false, error: "Semua LC pada transaksi wajib memiliki durasi." };
+  }
+
+  return { ok: true, assignments: normalized };
+}
+
+function clearLcWorkReportCacheForTransaction_(transaction) {
+  try {
+    var operationalDate = resolveTransactionOperationalDateString_(transaction);
+    var cache = CacheService.getScriptCache();
+    var keys = ["lc-work-reports-v2:all:all:all"];
+
+    if (operationalDate) {
+      keys.push(
+        "lc-work-reports-v2:today:" + operationalDate + ":" + operationalDate,
+        "lc-work-reports-v2:yesterday:" + operationalDate + ":" + operationalDate,
+        "lc-work-reports-v2:custom:" + operationalDate + ":" + operationalDate
+      );
+    }
+
+    keys.push(
+      "transaction-lc-receipt-v1:" + String(transaction.transaction_id || "").trim()
+    );
+    cache.removeAll(keys);
+  } catch (error) {
+    Logger.log("Gagal membersihkan cache laporan LC: " + error.message);
+  }
+}
+
+function updateTransactionLcDurations_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  var changedBy = String(request.changed_by || "Kasir").trim() || "Kasir";
+  var reason = String(request.reason || "").trim();
+
+  if (!transactionId) {
+    return { ok: false, success: false, error: "transaction_id wajib diisi." };
+  }
+  if (reason.length < 3) {
+    return { ok: false, success: false, error: "Alasan perubahan minimal 3 karakter." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses perubahan transaksi lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var context = getTransactionLcEditContext_(transactionId);
+    if (!context.ok) {
+      return context;
+    }
+    if (!context.can_edit) {
+      return {
+        ok: false,
+        success: false,
+        error: context.blocked_reason,
+        block_reason: context.blocked_reason,
+      };
+    }
+
+    var requiredRole = context.requires_admin_pin ? "manager" : "cashier";
+    var authorizationPin = context.requires_admin_pin
+      ? request.admin_pin
+      : request.operator_pin;
+    var requestedAction = context.requires_admin_pin
+      ? "edit_paid_transaction_lc_duration"
+      : "edit_unpaid_transaction_lc_duration";
+    var auth = validateAdminPinPayload_(
+      authorizationPin,
+      requiredRole,
+      requestedAction,
+      changedBy,
+      true
+    );
+    if (!auth.success) {
+      return {
+        ok: false,
+        success: false,
+        error: auth.message,
+        block_reason: auth.block_reason,
+      };
+    }
+    if (auth.employee && auth.employee.employee_name) {
+      changedBy = auth.employee.employee_name;
+    }
+
+    var normalizedResult = normalizeTransactionLcDurationAssignments_(
+      request.assignments,
+      context
+    );
+    if (!normalizedResult.ok) {
+      return { ok: false, success: false, error: normalizedResult.error };
+    }
+
+    var newLogTotal = 0;
+    var changes = [];
+
+    normalizedResult.assignments.forEach(function (assignment) {
+      var log = assignment.context_entry.log;
+      var hourlyRate = resolveLcWorkLogHourlyRate_(log);
+      if (hourlyRate <= 0) {
+        throw new Error("Tarif per jam LC tidak valid: " + (log.lc_name || assignment.lc_id));
+      }
+
+      var oldDuration = inferLcWorkLogDurationMinutes_(log) || 60;
+      var oldRate = Number(log.rate) || 0;
+      var newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
+
+      var newLcId = String(assignment.new_lc_id || assignment.target_lc_id || "").trim() || assignment.lc_id;
+      var newLcName = log.lc_name || assignment.lc_id;
+      if (newLcId !== assignment.lc_id) {
+        try {
+          var lcMasterRows = readSheetAsObjects_("LcMaster");
+          for (var mIdx = 0; mIdx < lcMasterRows.length; mIdx++) {
+            if (String(lcMasterRows[mIdx].lc_id || "").trim() === newLcId) {
+              newLcName = lcMasterRows[mIdx].lc_name || newLcId;
+              if (Number(lcMasterRows[mIdx].rate_per_hour) > 0) {
+                hourlyRate = Number(lcMasterRows[mIdx].rate_per_hour);
+                newRate = calculateLcRateForDuration_(assignment.duration_minutes, hourlyRate);
+              }
+              break;
+            }
+          }
+        } catch (mErr) {
+          Logger.log("Error finding LC master for replacement: " + mErr.message);
+        }
+      }
+
+      newLogTotal += newRate;
+      changes.push({
+        lc_id: assignment.lc_id,
+        lc_name: log.lc_name || assignment.lc_id,
+        new_lc_id: newLcId,
+        new_lc_name: newLcName,
+        row_number: assignment.context_entry.row_number,
+        old_duration_minutes: oldDuration,
+        new_duration_minutes: assignment.duration_minutes,
+        rate_per_hour: hourlyRate,
+        old_rate: oldRate,
+        new_rate: newRate,
+      });
+    });
+
+    var oldLcTotal = Number(context.transaction.lc_total) || 0;
+    var oldGrandTotal = Number(context.transaction.grand_total) || 0;
+    var newLcTotal = Math.max(0, newLogTotal);
+    var newGrandTotal = Math.max(0, oldGrandTotal + (newLcTotal - oldLcTotal));
+    var hasChanges = changes.some(function (change) {
+      return change.old_duration_minutes !== change.new_duration_minutes
+        || change.old_rate !== change.new_rate
+        || (change.new_lc_id && change.new_lc_id !== change.lc_id);
+    }) || oldLcTotal !== newLcTotal || oldGrandTotal !== newGrandTotal;
+
+    if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
+      return {
+        ok: true,
+        success: true,
+        dry_run: true,
+        message: "Preview perubahan durasi LC berhasil dihitung.",
+        changes: changes,
+        old_lc_total: oldLcTotal,
+        new_lc_total: newLcTotal,
+        old_grand_total: oldGrandTotal,
+        new_grand_total: newGrandTotal,
+      };
+    }
+
+    if (!hasChanges) {
+      return {
+        ok: true,
+        success: true,
+        idempotent_replay: true,
+        message: "Durasi LC sudah sesuai dan tidak ada perubahan.",
+        details: serializeTransactionLcEditContext_(context),
+      };
+    }
+
+    var oldSessionValues = {
+      lc_ids: context.session.lc_ids || "",
+      lc_assignments: context.session.lc_assignments || "",
+      updated_at: context.session.updated_at || "",
+    };
+    var updatedTransaction = null;
+
+    try {
+      changes.forEach(function (change) {
+        if (change.new_lc_id && change.new_lc_id !== change.lc_id) {
+          if (context.work_log_headers.lc_id) {
+            context.work_logs_sheet.getRange(change.row_number, context.work_log_headers.lc_id).setValue(change.new_lc_id);
+          }
+          if (context.work_log_headers.lc_name) {
+            context.work_logs_sheet.getRange(change.row_number, context.work_log_headers.lc_name).setValue(change.new_lc_name);
+          }
+        }
+        context.work_logs_sheet
+          .getRange(change.row_number, context.work_log_headers.duration_minutes)
+          .setValue(change.new_duration_minutes);
+        context.work_logs_sheet
+          .getRange(change.row_number, context.work_log_headers.rate)
+          .setValue(change.new_rate);
+      });
+
+      setRowValues_(
+        context.session_sheet,
+        context.session_headers,
+        context.session_row,
+        {
+          lc_ids: changes.map(function (change) { return change.lc_id; }).join(","),
+          lc_assignments: serializeLcAssignments_(changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.new_duration_minutes,
+            };
+          })),
+          updated_at: toJakartaIsoString_(new Date()),
+        }
+      );
+
+      context.transaction_sheet
+        .getRange(context.transaction_row, context.transaction_headers.lc_total)
+        .setValue(newLcTotal);
+      context.transaction_sheet
+        .getRange(context.transaction_row, context.transaction_headers.grand_total)
+        .setValue(newGrandTotal);
+
+      updatedTransaction = getRowObject_(
+        context.transaction_sheet,
+        context.transaction_headers,
+        context.transaction_row
+      );
+    } catch (writeError) {
+      try {
+        changes.forEach(function (change) {
+          context.work_logs_sheet
+            .getRange(change.row_number, context.work_log_headers.duration_minutes)
+            .setValue(change.old_duration_minutes);
+          context.work_logs_sheet
+            .getRange(change.row_number, context.work_log_headers.rate)
+            .setValue(change.old_rate);
+        });
+        setRowValues_(
+          context.session_sheet,
+          context.session_headers,
+          context.session_row,
+          oldSessionValues
+        );
+        context.transaction_sheet
+          .getRange(context.transaction_row, context.transaction_headers.lc_total)
+          .setValue(oldLcTotal);
+        context.transaction_sheet
+          .getRange(context.transaction_row, context.transaction_headers.grand_total)
+          .setValue(oldGrandTotal);
+      } catch (rollbackError) {
+        Logger.log("Rollback edit durasi LC gagal: " + rollbackError.message);
+      }
+      throw writeError;
+    }
+
+    try {
+      appendMasterDataAuditLog_({
+        entity_type: "transaction",
+        entity_id: transactionId,
+        entity_name: context.transaction.room_name || "",
+        action_type: "edit_lc_duration",
+        old_value: {
+          lc_total: oldLcTotal,
+          grand_total: oldGrandTotal,
+          lc_logs: changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.old_duration_minutes,
+              rate: change.old_rate,
+            };
+          }),
+        },
+        new_value: {
+          lc_total: newLcTotal,
+          grand_total: newGrandTotal,
+          lc_logs: changes.map(function (change) {
+            return {
+              lc_id: change.lc_id,
+              duration_minutes: change.new_duration_minutes,
+              rate: change.new_rate,
+            };
+          }),
+        },
+        changed_by: changedBy,
+        note: reason,
+        result: "success",
+      });
+    } catch (auditError) {
+      Logger.log("Audit edit durasi LC gagal: " + auditError.message);
+    }
+
+    clearLcWorkReportCacheForTransaction_(updatedTransaction);
+
+    return {
+      ok: true,
+      success: true,
+      message: "Durasi LC dan total transaksi berhasil diperbarui.",
+      transaction: updatedTransaction,
+      changes: changes,
+      old_lc_total: oldLcTotal,
+      new_lc_total: newLcTotal,
+      old_grand_total: oldGrandTotal,
+      new_grand_total: newGrandTotal,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      success: false,
+      error: error.message || "Gagal memperbarui durasi LC.",
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureDeletedTransactionsSheet_(transactionHeaders) {
+  var archiveHeaders = (transactionHeaders || []).slice();
+  ["deleted_at", "deleted_by", "delete_reason"].forEach(function (header) {
+    if (archiveHeaders.indexOf(header) === -1) {
+      archiveHeaders.push(header);
+    }
+  });
+  return ensureSheetColumns_("DeletedTransactions", archiveHeaders);
+}
+
+function findTransactionClosingReference_(transactionId) {
+  if (!sheetExists_("CashierClosingTransactions")) {
+    return null;
+  }
+
+  return readSheetAsObjects_("CashierClosingTransactions").find(function (row) {
+    return String(row.transaction_id || "").trim() === String(transactionId || "").trim();
+  }) || null;
+}
+
+function restoreStockMovementsForDeletedTransaction_(transactionId, deletedBy, deletedAt) {
+  if (!sheetExists_("StockMovements")) {
+    return [];
+  }
+
+  var allMovements = readSheetAsObjects_("StockMovements");
+  var sourceMovements = allMovements.filter(function (movement) {
+    return String(movement.reference_id || "").trim() === String(transactionId || "").trim()
+      && String(movement.movement_type || "").trim().toLowerCase() === "out"
+      && Number(movement.qty_change) < 0;
+  });
+  var reversalReferenceId = "DELETE-" + transactionId;
+  var requiredByStockItem = {};
+  var alreadyRestoredByStockItem = {};
+
+  sourceMovements.forEach(function (source) {
+    var stockItemId = String(source.stock_item_id || "").trim();
+    requiredByStockItem[stockItemId] = (requiredByStockItem[stockItemId] || 0)
+      + Math.abs(Number(source.qty_change) || 0);
+  });
+  allMovements.forEach(function (movement) {
+    if (
+      String(movement.reference_id || "").trim() === reversalReferenceId
+      && String(movement.movement_type || "").trim().toLowerCase() === "in"
+      && Number(movement.qty_change) > 0
+    ) {
+      var stockItemId = String(movement.stock_item_id || "").trim();
+      alreadyRestoredByStockItem[stockItemId] = (alreadyRestoredByStockItem[stockItemId] || 0)
+        + Number(movement.qty_change);
+    }
+  });
+  var inventoryMap = getInventoryMap_();
+  var restoredMovements = [];
+
+  Object.keys(requiredByStockItem).forEach(function (stockItemId) {
+    var inventory = inventoryMap[stockItemId] || inventoryMap[stockItemId.toLowerCase()];
+    if (!inventory) {
+      throw new Error("Inventory untuk pembalikan stok tidak ditemukan: " + stockItemId);
+    }
+
+    var restoredQty = requiredByStockItem[stockItemId] - (alreadyRestoredByStockItem[stockItemId] || 0);
+    if (restoredQty <= 0) {
+      return;
+    }
+    var stockBefore = toStockNumber_(inventory.stock_qty);
+    var stockAfter = stockBefore + restoredQty;
+    inventory.sheet.getRange(inventory.row_number, inventory.header_map.stock_qty).setValue(stockAfter);
+    if (inventory.header_map.updated_at) {
+      inventory.sheet.getRange(inventory.row_number, inventory.header_map.updated_at).setValue(deletedAt);
+    }
+    inventory.stock_qty = stockAfter;
+
+    var reversal = {
+      movement_id: generateStockMovementId_(),
+      created_at: deletedAt,
+      stock_item_id: inventory.stock_item_id,
+      stock_item_name: inventory.stock_item_name,
+      movement_type: "in",
+      reference_type: "transaction",
+      reference_id: reversalReferenceId,
+      qty_change: restoredQty,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      note: "Pembalikan stok karena transaksi dihapus: " + transactionId,
+      cashier_name: deletedBy,
+    };
+    appendStockMovement_(reversal);
+    restoredMovements.push(reversal);
+  });
+
+  return restoredMovements;
+}
+
+function cancelUnreferencedFnbOrdersForDeletedTransaction_(transaction, remainingTransactions, deletedBy, reason, deletedAt) {
+  var orderIds = parseCommaSeparatedIds_(transaction.fnb_order_ids);
+  if (orderIds.length === 0 || !sheetExists_("FnbOrders")) {
+    return [];
+  }
+
+  var referencedByOtherTransaction = {};
+  (remainingTransactions || []).forEach(function (otherTransaction) {
+    parseCommaSeparatedIds_(otherTransaction.fnb_order_ids).forEach(function (orderId) {
+      referencedByOtherTransaction[orderId] = true;
+    });
+  });
+  var ordersSheet = ensureFnbOrdersSheetColumns_();
+  var orderHeaders = getHeaderMap_(ordersSheet);
+  var cancelledOrderIds = [];
+
+  orderIds.forEach(function (orderId) {
+    if (referencedByOtherTransaction[orderId]) {
+      return;
+    }
+    var rowNumber = findRowByValue_(ordersSheet, orderHeaders, "order_id", orderId);
+    if (!rowNumber) {
+      return;
+    }
+    setRowValues_(ordersSheet, orderHeaders, rowNumber, {
+      order_status: "cancelled",
+      cancel_reason: "Transaksi dihapus owner: " + reason,
+      cancelled_by: deletedBy,
+      cancelled_at: deletedAt,
+      updated_at: deletedAt,
+    });
+    cancelledOrderIds.push(orderId);
+  });
+
+  if (cancelledOrderIds.length > 0 && sheetExists_("LcSalesBonusLogs")) {
+    var bonusSheet = ensureLcSalesBonusLogsSheet_();
+    var bonusHeaders = getHeaderMap_(bonusSheet);
+    var bonusRows = readSheetAsObjects_("LcSalesBonusLogs");
+    bonusRows.forEach(function (bonus, index) {
+      if (
+        cancelledOrderIds.indexOf(String(bonus.order_id || "").trim()) !== -1 &&
+        !String(bonus.voided_at || "").trim()
+      ) {
+        setRowValues_(bonusSheet, bonusHeaders, index + 2, {
+          voided_at: deletedAt,
+          void_reason: "Transaksi dihapus owner: " + reason,
+        });
+      }
+    });
+  }
+
+  return cancelledOrderIds;
+}
+
+function releasePromoForDeletedTransaction_(transactionId, deletedAt) {
+  if (!sheetExists_("PromoMaster")) {
+    return false;
+  }
+
+  var promoSheet = ensurePromoMasterSheet_();
+  var promoHeaders = getHeaderMap_(promoSheet);
+  var promoRows = readSheetAsObjects_("PromoMaster");
+  var released = false;
+  promoRows.forEach(function (promo, index) {
+    if (String(promo.used_in_transaction_id || "").trim() === String(transactionId || "").trim()) {
+      setRowValues_(promoSheet, promoHeaders, index + 2, {
+        used_in_transaction_id: "",
+        used_at: "",
+        status: "active",
+        updated_at: deletedAt,
+      });
+      released = true;
+    }
+  });
+  return released;
+}
+
+function unlinkDeletedTransactionFromSession_(transactionId, deletedAt, reason) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return "";
+  }
+
+  var sheet = ensureRoomSessionsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rows = readSheetAsObjects_(ROOM_SESSIONS_SHEET);
+  var sessionId = "";
+  rows.forEach(function (session, index) {
+    var closedId = String(session.closed_transaction_id || "").trim();
+    var prepayId = String(session.prepayment_transaction_id || "").trim();
+    if (closedId !== transactionId && prepayId !== transactionId) {
+      return;
+    }
+    var updates = {
+      updated_at: deletedAt,
+      note: [String(session.note || "").trim(), "Transaksi dihapus owner: " + reason].filter(Boolean).join(" | "),
+    };
+    if (closedId === transactionId) {
+      updates.closed_transaction_id = "";
+    }
+    if (prepayId === transactionId) {
+      updates.prepayment_transaction_id = "";
+    }
+    setRowValues_(sheet, headerMap, index + 2, updates);
+    sessionId = session.session_id || sessionId;
+  });
+  return sessionId;
+}
+
+function deleteTransaction_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+  var reason = String(request.reason || "").trim();
+  var confirmation = String(request.confirmation || "").trim().toUpperCase();
+
+  if (!transactionId) {
+    return masterBlockedResponse_("transaction_id wajib diisi.", "EMPTY_TRANSACTION_ID");
+  }
+  if (reason.length < 5) {
+    return masterBlockedResponse_("Alasan penghapusan minimal 5 karakter.", "DELETE_REASON_REQUIRED");
+  }
+  if (confirmation !== "HAPUS") {
+    return masterBlockedResponse_("Konfirmasi penghapusan tidak valid.", "DELETE_CONFIRMATION_REQUIRED");
+  }
+
+  var auth = validateAdminPinPayload_(
+    request.owner_pin,
+    "owner",
+    "delete_transaction",
+    request.changed_by || "Owner",
+    true
+  );
+  if (!auth.ok) {
+    return masterBlockedResponse_(auth.message || "PIN owner tidak valid.", auth.block_reason || "INVALID_OWNER_PIN");
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return masterBlockedResponse_("Sistem sedang memproses transaksi lain. Coba lagi sebentar.", "LOCK_BUSY");
+  }
+
+  try {
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getSheetHeaders_(transactionsSheet);
+    var transactionHeaderMap = getHeaderMap_(transactionsSheet);
+    var rowNumber = findRowByValue_(transactionsSheet, transactionHeaderMap, "transaction_id", transactionId);
+    if (!rowNumber) {
+      return masterBlockedResponse_("Transaksi tidak ditemukan atau sudah dihapus.", "TRANSACTION_NOT_FOUND");
+    }
+
+    var transaction = getRowObject_(transactionsSheet, transactionHeaderMap, rowNumber);
+    if (getTransactionAmount_(transaction) < 0) {
+      return masterBlockedResponse_("Transaksi refund tidak dapat dihapus dari menu ini.", "REFUND_DELETE_BLOCKED");
+    }
+
+    var closingReference = findTransactionClosingReference_(transactionId);
+    if (closingReference) {
+      appendMasterDataAuditLog_({
+        entity_type: "transaction",
+        entity_id: transactionId,
+        entity_name: transaction.room_name || transactionId,
+        action_type: "delete_permanent",
+        old_value: transaction,
+        new_value: "",
+        changed_by: auth.employee.employee_name,
+        note: reason,
+        result: "blocked",
+        block_reason: "TRANSACTION_ALREADY_CLOSED",
+      });
+      return masterBlockedResponse_(
+        "Transaksi sudah masuk closing kasir " + (closingReference.closing_id || "") + " dan tidak dapat dihapus.",
+        "TRANSACTION_ALREADY_CLOSED",
+        { closing_id: closingReference.closing_id || "" }
+      );
+    }
+
+    var deletedAt = toJakartaIsoString_(new Date());
+    var deletedBy = auth.employee.employee_name || request.changed_by || "Owner";
+    var remainingTransactions = readSheetAsObjects_("Transactions").filter(function (item) {
+      return String(item.transaction_id || "").trim() !== transactionId;
+    });
+    var transactionOrderIds = parseCommaSeparatedIds_(transaction.fnb_order_ids);
+    var linkedTransactions = remainingTransactions.filter(function (item) {
+      var otherOrderIds = parseCommaSeparatedIds_(item.fnb_order_ids);
+      return transactionOrderIds.some(function (orderId) {
+        return otherOrderIds.indexOf(orderId) !== -1;
+      });
+    });
+    if (linkedTransactions.length > 0) {
+      return masterBlockedResponse_(
+        "Transaksi memiliki transaksi lain yang memakai order F&B yang sama dan tidak dapat dihapus langsung.",
+        "TRANSACTION_HAS_LINKED_TRANSACTION",
+        {
+          linked_transaction_ids: linkedTransactions.map(function (item) {
+            return item.transaction_id || "";
+          }).filter(Boolean),
+        }
+      );
+    }
+    var archiveSheet = ensureDeletedTransactionsSheet_(transactionHeaders);
+    var archiveHeaderMap = getHeaderMap_(archiveSheet);
+    var archivedRowNumber = findRowByValue_(archiveSheet, archiveHeaderMap, "transaction_id", transactionId);
+    if (!archivedRowNumber) {
+      appendObjectRow_(archiveSheet, Object.assign({}, transaction, {
+        deleted_at: deletedAt,
+        deleted_by: deletedBy,
+        delete_reason: reason,
+      }));
+    }
+
+    var restoredMovements = restoreStockMovementsForDeletedTransaction_(transactionId, deletedBy, deletedAt);
+    var cancelledOrderIds = cancelUnreferencedFnbOrdersForDeletedTransaction_(
+      transaction,
+      remainingTransactions,
+      deletedBy,
+      reason,
+      deletedAt
+    );
+    var promoReleased = releasePromoForDeletedTransaction_(transactionId, deletedAt);
+    var sessionId = unlinkDeletedTransactionFromSession_(transactionId, deletedAt, reason);
+
+    transactionsSheet.deleteRow(rowNumber);
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: transaction.room_name || transactionId,
+      action_type: "delete_permanent",
+      old_value: transaction,
+      new_value: {
+        archived_sheet: "DeletedTransactions",
+        restored_stock_movement_count: restoredMovements.length,
+        cancelled_order_ids: cancelledOrderIds,
+        promo_released: promoReleased,
+        session_id: sessionId,
+      },
+      changed_by: deletedBy,
+      note: reason,
+      result: "success",
+      block_reason: "",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi berhasil dihapus dan diarsipkan.",
+      transaction_id: transactionId,
+      archived_sheet: "DeletedTransactions",
+      restored_stock_movement_count: restoredMovements.length,
+      cancelled_order_ids: cancelledOrderIds,
+      promo_released: promoReleased,
+      session_id: sessionId,
+    };
+  } catch (error) {
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: transactionId,
+      action_type: "delete_permanent",
+      old_value: "",
+      new_value: "",
+      changed_by: auth.employee.employee_name || "Owner",
+      note: reason,
+      result: "blocked",
+      block_reason: "DELETE_FAILED: " + error.message,
+    });
+    return masterBlockedResponse_("Penghapusan transaksi gagal: " + error.message, "DELETE_FAILED");
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getInventoryAudits_(status, limit) {
+  ensureInventoryAuditSheets_();
+
+  var normalizedStatus = String(status || "").trim().toLowerCase();
+  var maxRows = Math.max(1, Math.min(Number(limit) || 20, 100));
+  var audits = readSheetAsObjectsOrEmpty_("InventoryAudits")
+    .map(normalizeInventoryAudit_)
+    .filter(function (audit) {
+      return audit.audit_id && (!normalizedStatus || normalizedStatus === "all" || audit.status === normalizedStatus);
+    })
+    .sort(function (first, second) {
+      return new Date(second.started_at || second.submitted_at || 0).getTime() - new Date(first.started_at || first.submitted_at || 0).getTime();
+    })
+    .slice(0, maxRows);
+
+  return {
+    ok: true,
+    success: true,
+    audits: audits,
+    summary: buildInventoryAuditListSummary_(audits),
+  };
+}
+
+function getInventoryAuditDetails_(auditId) {
+  ensureInventoryAuditSheets_();
+
+  var normalizedAuditId = String(auditId || "").trim();
+
+  if (!normalizedAuditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var auditSheet = ensureInventoryAuditsSheet_();
+  var auditHeaderMap = getHeaderMap_(auditSheet);
+  var auditRow = findRowByValue_(auditSheet, auditHeaderMap, "audit_id", normalizedAuditId);
+
+  if (!auditRow) {
+    return {
+      ok: false,
+      success: false,
+      error: "Audit inventory tidak ditemukan.",
+    };
+  }
+
+  return {
+    ok: true,
+    success: true,
+    audit: normalizeInventoryAudit_(getRowObject_(auditSheet, auditHeaderMap, auditRow)),
+    lines: getInventoryAuditLinesByAuditId_(normalizedAuditId),
+  };
+}
+
+function createInventoryAudit_(payload) {
+  var request = payload || {};
+  var actor = String(request.started_by || request.cashier_name || "Operator").trim() || "Operator";
+  var auditType = normalizeInventoryAuditType_(request.audit_type || "full");
+  var scope = String(request.scope || "all").trim() || "all";
+  var note = String(request.note || "").trim();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang memproses audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    ensureInventoryAuditSheets_();
+
+    var activeAudit = findActiveInventoryAudit_();
+    if (activeAudit) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada Stock Opname yang belum selesai: " + activeAudit.audit_id,
+        active_audit: activeAudit,
+      };
+    }
+
+    var inventoryItems = getInventoryItems_().items.filter(function (item) {
+      return isInventoryItemActive_(item.status);
+    });
+
+    if (!inventoryItems.length) {
+      return {
+        ok: false,
+        success: false,
+        error: "Tidak ada item inventory aktif untuk diaudit.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    var auditId = generateInventoryAuditId_();
+    var audit = buildInventoryAuditRow_(auditId, now, auditType, scope, actor, note, inventoryItems.length);
+    appendObjectRow_(ensureInventoryAuditsSheet_(), audit);
+
+    var lineSheet = ensureInventoryAuditLinesSheet_();
+    inventoryItems.forEach(function (item, index) {
+      appendObjectRow_(lineSheet, {
+        audit_line_id: auditId + "-LINE-" + String(index + 1).padStart(3, "0"),
+        audit_id: auditId,
+        stock_item_id: item.stock_item_id,
+        stock_item_name: item.stock_item_name,
+        category: item.category,
+        unit: item.unit,
+        book_qty_snapshot: Number(item.stock_qty) || 0,
+        count_method: "",
+        sealed_container_qty: "",
+        open_container_percentages_json: "",
+        count_qty: "",
+        final_qty: "",
+        difference_qty: "",
+        reason_code: "",
+        note: "",
+        status: "pending",
+        movement_id: "",
+        updated_at: now,
+      });
+    });
+
+    return getInventoryAuditDetails_(auditId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function saveInventoryAuditCounts_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var lines = Array.isArray(request.lines) ? request.lines : [];
+  var actor = String(request.updated_by || request.cashier_name || "Operator").trim() || "Operator";
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang menyimpan audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (["draft", "counting"].indexOf(context.audit.status) === -1) {
+      return {
+        ok: false,
+        success: false,
+        error: "Audit yang sudah disubmit atau diposting tidak bisa diedit.",
+      };
+    }
+
+    updateInventoryAuditLineCounts_(auditId, lines);
+    refreshInventoryAuditSummary_(auditId, {
+      status: "counting",
+      note: context.audit.note,
+      submitted_at: "",
+      submitted_by: "",
+    });
+
+    var result = getInventoryAuditDetails_(auditId);
+    result.message = "Hitungan fisik berhasil disimpan oleh " + actor + ".";
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function submitInventoryAudit_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var actor = String(request.submitted_by || request.cashier_name || "Operator").trim() || "Operator";
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return createLockBusyResponse_("Sistem sedang submit audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (["draft", "counting"].indexOf(context.audit.status) === -1) {
+      return {
+        ok: false,
+        success: false,
+        error: "Status audit tidak bisa disubmit.",
+      };
+    }
+
+    var lines = getInventoryAuditLinesByAuditId_(auditId);
+    var countedItems = lines.filter(function (line) {
+      return line.status !== "pending";
+    }).length;
+
+    if (countedItems !== lines.length) {
+      return {
+        ok: false,
+        success: false,
+        error: "Masih ada item yang belum dihitung. Isi 0 jika stok fisik memang kosong.",
+      };
+    }
+
+    refreshInventoryAuditSummary_(auditId, {
+      status: "submitted",
+      submitted_at: toJakartaIsoString_(new Date()),
+      submitted_by: actor,
+    });
+
+    return getInventoryAuditDetails_(auditId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function approveInventoryAudit_(payload) {
+  var request = payload || {};
+  var auditId = String(request.audit_id || "").trim();
+  var approverName = String(request.approved_by || request.cashier_name || "Owner").trim() || "Owner";
+  var pinResult = validateAdminPinPayload_(
+    request.admin_pin,
+    "manager",
+    "approve_inventory_audit",
+    approverName,
+    true
+  );
+
+  if (!pinResult.success) {
+    return pinResult;
+  }
+
+  if (!auditId) {
+    return {
+      ok: false,
+      success: false,
+      error: "audit_id wajib diisi.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return createLockBusyResponse_("Sistem sedang posting audit stok lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var context = getInventoryAuditContext_(auditId);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (context.audit.status !== "submitted") {
+      return {
+        ok: false,
+        success: false,
+        error: "Audit harus berstatus submitted sebelum approval.",
+      };
+    }
+
+    var now = toJakartaIsoString_(new Date());
+    postInventoryAuditDifferences_(auditId, approverName, now);
+    refreshInventoryAuditSummary_(auditId, {
+      status: "posted",
+      approved_at: now,
+      approved_by: pinResult.employee.employee_name || approverName,
+      posted_at: now,
+      posted_by: pinResult.employee.employee_name || approverName,
+    });
+
+    var result = getInventoryAuditDetails_(auditId);
+    result.message = "Stock Opname berhasil di-approve dan diposting.";
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normalizeInventoryAudit_(audit) {
+  return {
+    audit_id: audit.audit_id || "",
+    operational_date: audit.operational_date || "",
+    audit_type: audit.audit_type || "full",
+    scope: audit.scope || "all",
+    status: String(audit.status || "draft").trim().toLowerCase(),
+    started_at: normalizeFnbOrderDateTime_(audit.started_at),
+    started_by: audit.started_by || "",
+    submitted_at: normalizeFnbOrderDateTime_(audit.submitted_at),
+    submitted_by: audit.submitted_by || "",
+    approved_at: normalizeFnbOrderDateTime_(audit.approved_at),
+    approved_by: audit.approved_by || "",
+    posted_at: normalizeFnbOrderDateTime_(audit.posted_at),
+    posted_by: audit.posted_by || "",
+    note: audit.note || "",
+    total_items: Number(audit.total_items) || 0,
+    counted_items: Number(audit.counted_items) || 0,
+    matched_items: Number(audit.matched_items) || 0,
+    variance_items: Number(audit.variance_items) || 0,
+    shortage_items: Number(audit.shortage_items) || 0,
+    overage_items: Number(audit.overage_items) || 0,
+    absolute_variance_qty: Number(audit.absolute_variance_qty) || 0,
+    net_variance_qty: Number(audit.net_variance_qty) || 0,
+  };
+}
+
+function normalizeInventoryAuditLine_(line) {
+  var bookQty = Number(line.book_qty_snapshot) || 0;
+  var countQty = line.count_qty === "" || line.count_qty === null ? "" : Number(line.count_qty);
+  var finalQty = line.final_qty === "" || line.final_qty === null ? "" : Number(line.final_qty);
+
+  return {
+    audit_line_id: line.audit_line_id || "",
+    audit_id: line.audit_id || "",
+    stock_item_id: line.stock_item_id || "",
+    stock_item_name: line.stock_item_name || "",
+    category: line.category || "",
+    unit: line.unit || "",
+    book_qty_snapshot: bookQty,
+    count_method: line.count_method || "direct",
+    sealed_container_qty: line.sealed_container_qty === "" || line.sealed_container_qty === null
+      ? ""
+      : Number(line.sealed_container_qty),
+    open_container_percentages: parseInventoryAuditOpenPercentages_(line.open_container_percentages_json),
+    count_qty: countQty,
+    final_qty: finalQty,
+    difference_qty: line.difference_qty === "" || line.difference_qty === null ? "" : Number(line.difference_qty),
+    reason_code: line.reason_code || "",
+    note: line.note || "",
+    status: String(line.status || "pending").trim().toLowerCase() || "pending",
+    movement_id: line.movement_id || "",
+    updated_at: normalizeFnbOrderDateTime_(line.updated_at),
+  };
+}
+
+function parseInventoryAuditOpenPercentages_(value) {
+  if (Array.isArray(value)) {
+    return value.map(Number).filter(function (percentage) {
+      return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+    });
+  }
+
+  var normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return [];
+  }
+
+  try {
+    var parsed = JSON.parse(normalizedValue);
+    if (Array.isArray(parsed)) {
+      return parsed.map(Number).filter(function (percentage) {
+        return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+      });
+    }
+  } catch (error) {
+    // Mendukung data lama yang ditulis sebagai daftar dipisahkan koma.
+  }
+
+  return normalizedValue.split(",").map(function (percentage) {
+    return Number(String(percentage).trim());
+  }).filter(function (percentage) {
+    return Number.isFinite(percentage) && percentage >= 0 && percentage <= 100;
+  });
+}
+
+function normalizeInventoryAuditBottleCount_(incoming, itemName) {
+  var sealedQty = toNonNegativeStockQuantity_(incoming.sealed_container_qty);
+  if (sealedQty === null || Math.floor(sealedQty) !== sealedQty) {
+    throw new Error("Jumlah botol penuh " + itemName + " harus bilangan bulat 0 atau lebih.");
+  }
+
+  var percentages = Array.isArray(incoming.open_container_percentages)
+    ? incoming.open_container_percentages
+    : parseInventoryAuditOpenPercentages_(incoming.open_container_percentages_json);
+  var normalizedPercentages = percentages.map(Number);
+
+  if (normalizedPercentages.some(function (percentage) {
+    return !Number.isFinite(percentage) || percentage < 0 || percentage > 100;
+  })) {
+    throw new Error("Persentase botol terbuka " + itemName + " harus antara 0 sampai 100.");
+  }
+
+  var openEquivalentQty = normalizedPercentages.reduce(function (total, percentage) {
+    return total + percentage / 100;
+  }, 0);
+
+  return {
+    count_qty: Number((sealedQty + openEquivalentQty).toFixed(4)),
+    sealed_container_qty: sealedQty,
+    open_container_percentages_json: JSON.stringify(normalizedPercentages),
+  };
+}
+
+function normalizeInventoryAuditType_(value) {
+  var normalizedValue = String(value || "full").trim().toLowerCase();
+  return ["full", "partial"].indexOf(normalizedValue) === -1 ? "full" : normalizedValue;
+}
+
+function buildInventoryAuditRow_(auditId, now, auditType, scope, actor, note, totalItems) {
+  return {
+    audit_id: auditId,
+    operational_date: getOperationalDateString_(now),
+    audit_type: auditType,
+    scope: scope,
+    status: "draft",
+    started_at: now,
+    started_by: actor,
+    submitted_at: "",
+    submitted_by: "",
+    approved_at: "",
+    approved_by: "",
+    posted_at: "",
+    posted_by: "",
+    note: note,
+    total_items: totalItems,
+    counted_items: 0,
+    matched_items: 0,
+    variance_items: 0,
+    shortage_items: 0,
+    overage_items: 0,
+    absolute_variance_qty: 0,
+    net_variance_qty: 0,
+  };
+}
+
+function buildInventoryAuditListSummary_(audits) {
+  return audits.reduce(function (summary, audit) {
+    summary.total_audits += 1;
+    summary[audit.status + "_count"] = (summary[audit.status + "_count"] || 0) + 1;
+    summary.total_variance_items += Number(audit.variance_items) || 0;
+    summary.total_absolute_variance_qty += Number(audit.absolute_variance_qty) || 0;
+    return summary;
+  }, {
+    total_audits: 0,
+    draft_count: 0,
+    counting_count: 0,
+    submitted_count: 0,
+    posted_count: 0,
+    total_variance_items: 0,
+    total_absolute_variance_qty: 0,
+  });
+}
+
+function findActiveInventoryAudit_() {
+  return readSheetAsObjectsOrEmpty_("InventoryAudits")
+    .map(normalizeInventoryAudit_)
+    .find(function (audit) {
+      return audit.audit_id && ["draft", "counting", "submitted"].indexOf(audit.status) !== -1;
+    }) || null;
+}
+
+function getInventoryAuditContext_(auditId) {
+  ensureInventoryAuditSheets_();
+
+  var auditSheet = ensureInventoryAuditsSheet_();
+  var auditHeaderMap = getHeaderMap_(auditSheet);
+  var auditRow = findRowByValue_(auditSheet, auditHeaderMap, "audit_id", auditId);
+
+  if (!auditRow) {
+    return {
+      ok: false,
+      success: false,
+      error: "Audit inventory tidak ditemukan.",
+    };
+  }
+
+  return {
+    ok: true,
+    success: true,
+    sheet: auditSheet,
+    headerMap: auditHeaderMap,
+    rowNumber: auditRow,
+    audit: normalizeInventoryAudit_(getRowObject_(auditSheet, auditHeaderMap, auditRow)),
+  };
+}
+
+function getInventoryAuditLinesByAuditId_(auditId) {
+  return readSheetAsObjectsOrEmpty_("InventoryAuditLines")
+    .map(normalizeInventoryAuditLine_)
+    .filter(function (line) {
+      return String(line.audit_id || "").trim() === String(auditId || "").trim();
+    })
+    .sort(function (first, second) {
+      return String(first.stock_item_name || "").localeCompare(String(second.stock_item_name || ""), "id");
+    });
+}
+
+function updateInventoryAuditLineCounts_(auditId, lines) {
+  var lineSheet = ensureInventoryAuditLinesSheet_();
+  var lineHeaderMap = getHeaderMap_(lineSheet);
+  var lineByItemId = {};
+
+  lines.forEach(function (line) {
+    var stockItemId = String(line.stock_item_id || "").trim();
+    if (stockItemId) {
+      lineByItemId[stockItemId] = line;
+    }
+  });
+
+  if (lineSheet.getLastRow() < 2) {
+    return;
+  }
+
+  var now = toJakartaIsoString_(new Date());
+  for (var rowNumber = 2; rowNumber <= lineSheet.getLastRow(); rowNumber++) {
+    var currentLine = getRowObject_(lineSheet, lineHeaderMap, rowNumber);
+    if (String(currentLine.audit_id || "").trim() !== auditId) {
+      continue;
+    }
+
+    var incoming = lineByItemId[String(currentLine.stock_item_id || "").trim()];
+    if (!incoming || incoming.count_qty === "" || incoming.count_qty === null || incoming.count_qty === undefined) {
+      continue;
+    }
+
+    var countMethod = String(incoming.count_method || "direct").trim().toLowerCase();
+    var bottleCount = countMethod === "bottle_percent"
+      ? normalizeInventoryAuditBottleCount_(incoming, currentLine.stock_item_name)
+      : null;
+    var countQty = bottleCount
+      ? bottleCount.count_qty
+      : toNonNegativeStockQuantity_(incoming.count_qty);
+    if (countQty === null) {
+      throw new Error("Qty fisik " + currentLine.stock_item_name + " harus 0 atau lebih.");
+    }
+
+    var bookQty = Number(currentLine.book_qty_snapshot) || 0;
+    var finalQty = countQty;
+    setRowValues_(lineSheet, lineHeaderMap, rowNumber, {
+      count_method: bottleCount ? "bottle_percent" : "direct",
+      sealed_container_qty: bottleCount ? bottleCount.sealed_container_qty : "",
+      open_container_percentages_json: bottleCount ? bottleCount.open_container_percentages_json : "",
+      count_qty: countQty,
+      final_qty: finalQty,
+      difference_qty: finalQty - bookQty,
+      reason_code: String(incoming.reason_code || "").trim(),
+      note: String(incoming.note || "").trim(),
+      status: "counted",
+      updated_at: now,
+    });
+  }
+}
+
+function refreshInventoryAuditSummary_(auditId, overrides) {
+  var context = getInventoryAuditContext_(auditId);
+  if (!context.ok) {
+    return context;
+  }
+
+  var lines = getInventoryAuditLinesByAuditId_(auditId);
+  var summary = lines.reduce(function (result, line) {
+    var status = String(line.status || "").trim().toLowerCase();
+    var difference = Number(line.difference_qty) || 0;
+
+    if (status !== "pending") {
+      result.counted_items += 1;
+      if (difference === 0) {
+        result.matched_items += 1;
+      } else {
+        result.variance_items += 1;
+        result.absolute_variance_qty += Math.abs(difference);
+        result.net_variance_qty += difference;
+        if (difference < 0) {
+          result.shortage_items += 1;
+        } else {
+          result.overage_items += 1;
+        }
+      }
+    }
+
+    return result;
+  }, {
+    total_items: lines.length,
+    counted_items: 0,
+    matched_items: 0,
+    variance_items: 0,
+    shortage_items: 0,
+    overage_items: 0,
+    absolute_variance_qty: 0,
+    net_variance_qty: 0,
+  });
+
+  setRowValues_(context.sheet, context.headerMap, context.rowNumber, Object.assign(summary, overrides || {}));
+  return getInventoryAuditDetails_(auditId);
+}
+
+function postInventoryAuditDifferences_(auditId, actor, now) {
+  var inventorySheet = ensureInventorySheetColumns_();
+  var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+  var lineSheet = ensureInventoryAuditLinesSheet_();
+  var lineHeaderMap = getHeaderMap_(lineSheet);
+  var lines = getInventoryAuditLinesByAuditId_(auditId);
+
+  lines.forEach(function (line) {
+    var difference = Number(line.difference_qty) || 0;
+    var rowNumber = findInventoryRowByStockItemId_(line.stock_item_id, inventorySheet, inventoryHeaderMap);
+
+    if (!rowNumber) {
+      throw new Error("Item stok audit tidak ditemukan: " + line.stock_item_id);
+    }
+
+    var currentItem = buildInventoryItemFromRow_(inventorySheet, inventoryHeaderMap, rowNumber);
+    if (!isInventoryItemActive_(currentItem.status)) {
+      throw new Error("Item stok tidak aktif: " + currentItem.stock_item_name);
+    }
+
+    var stockBefore = Number(currentItem.stock_qty) || 0;
+    var stockAfter = Number(line.final_qty);
+    if (!isFinite(stockAfter) || stockAfter < 0) {
+      throw new Error("Final qty tidak valid untuk " + line.stock_item_name);
+    }
+
+    var movementId = "";
+    if (stockAfter !== stockBefore) {
+      movementId = generateStockMovementId_();
+      inventorySheet.getRange(rowNumber, inventoryHeaderMap.stock_qty).setValue(stockAfter);
+      if (inventoryHeaderMap.updated_at) {
+        inventorySheet.getRange(rowNumber, inventoryHeaderMap.updated_at).setValue(now);
+      }
+      appendStockMovement_({
+        movement_id: movementId,
+        created_at: now,
+        stock_item_id: currentItem.stock_item_id,
+        stock_item_name: currentItem.stock_item_name,
+        movement_type: "adjustment",
+        reference_type: "stock_audit",
+        reference_id: auditId,
+        qty_change: stockAfter - stockBefore,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        note: buildInventoryAuditMovementNote_(line),
+        cashier_name: actor,
+      });
+    }
+
+    var lineRow = findRowByValue_(lineSheet, lineHeaderMap, "audit_line_id", line.audit_line_id);
+    if (lineRow) {
+      setRowValues_(lineSheet, lineHeaderMap, lineRow, {
+        status: "posted",
+        movement_id: movementId,
+        updated_at: now,
+      });
+    }
+  });
+}
+
+function buildInventoryAuditMovementNote_(line) {
+  var reason = String(line.reason_code || "").trim();
+  var note = String(line.note || "").trim();
+  var parts = ["Stock Opname"];
+
+  if (reason) {
+    parts.push("Reason: " + reason);
+  }
+
+  if (note) {
+    parts.push(note);
+  }
+
+  return parts.join(" - ");
 }
 
 function getAllowedPaymentMethods_() {
@@ -4900,14 +13835,16 @@ function saveCashierClosing_(cashActual, note, cashierName) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return { ok: false, error: "Sistem sedang memproses order F&B lain. Coba lagi sebentar." };
+  }
 
   try {
     var now = new Date();
     var createdAt = toJakartaIsoString_(now);
-    var todayDateString = getJakartaDateString_(now);
+    var operationalDateString = getOperationalDateString_(now);
     var existingClosings = readCashierClosingsOrEmpty_().filter(function (closing) {
-      return normalizeJakartaDateString_(closing.closing_date) === todayDateString;
+      return resolveClosingOperationalDateString_(closing) === operationalDateString;
     });
 
     if (existingClosings.length > 0) {
@@ -4928,7 +13865,7 @@ function saveCashierClosing_(cashActual, note, cashierName) {
 
     var closing = {
       closing_id: generateClosingId_(),
-      closing_date: getJakartaDateString_(now),
+      closing_date: operationalDateString,
       cashier_name: cashierName || "Kasir",
       total_transactions: summary.total_transactions,
       paid_transactions: summary.paid_transactions,
@@ -4946,20 +13883,33 @@ function saveCashierClosing_(cashActual, note, cashierName) {
       created_at: createdAt,
     };
 
-    var sheet = ensureCashierClosingsSheet_();
-    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
-      return String(header).trim();
-    });
-    var rowValues = headers.map(function (header) {
-      return closing[header] !== undefined ? closing[header] : "";
-    });
+    var snapshot = buildCashierClosingSnapshot_(closing, createdAt);
+    var snapshotSheets = ensureCashierClosingSnapshotSheets_();
 
-    sheet.appendRow(rowValues);
+    try {
+      appendCashierClosingSnapshotRows_(snapshotSheets.transactions, snapshot.transactions);
+      appendCashierClosingSnapshotRows_(snapshotSheets.fnb_items, snapshot.fnb_items);
+      appendCashierClosingSnapshotRows_(snapshotSheets.lc_details, snapshot.lc_details);
+
+      var sheet = ensureCashierClosingsSheet_();
+      var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+        return String(header).trim();
+      });
+      var rowValues = headers.map(function (header) {
+        return closing[header] !== undefined ? closing[header] : "";
+      });
+
+      sheet.appendRow(rowValues);
+    } catch (snapshotError) {
+      rollbackCashierClosingSnapshot_(closing.closing_id, snapshotSheets);
+      throw snapshotError;
+    }
 
     return {
       ok: true,
       message: "Closing kasir berhasil disimpan.",
       closing: closing,
+      snapshot_summary: summarizeCashierClosingSnapshot_(snapshot),
     };
   } finally {
     lock.releaseLock();
@@ -4967,9 +13917,12 @@ function saveCashierClosing_(cashActual, note, cashierName) {
 }
 
 function calculateCashierClosingSummary_() {
-  var today = new Date();
+  var periodResult = parseTransactionPeriod_("today", "", "");
   var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
-    return isSameJakartaDate_(transaction.created_at, today);
+    return matchesOperationalPeriod_(
+      resolveTransactionOperationalDateString_(transaction),
+      periodResult
+    );
   });
 
   return transactions.reduce(function (summary, transaction) {
@@ -4984,14 +13937,23 @@ function calculateCashierClosingSummary_() {
       summary.paid_transactions += 1;
       summary.paid_revenue += amount;
 
-      if (paymentMethod === "cash") {
-        summary.cash_transactions += 1;
-        summary.cash_expected += amount;
+      var cashAmount = 0;
+      var transferAmount = 0;
+      if (paymentMethod === "split") {
+        cashAmount = Number(transaction.cash_amount || 0);
+        transferAmount = Number(transaction.transfer_amount || 0);
+      } else if (paymentMethod === "cash") {
+        cashAmount = amount;
+      } else if (paymentMethod === "transfer" || paymentMethod === "qris") {
+        transferAmount = amount;
       }
-
-      if (paymentMethod === "transfer") {
+      if (cashAmount > 0) {
+        summary.cash_transactions += 1;
+        summary.cash_expected += cashAmount;
+      }
+      if (transferAmount > 0) {
         summary.transfer_transactions += 1;
-        summary.transfer_revenue += amount;
+        summary.transfer_revenue += transferAmount;
       }
     }
 
@@ -5015,8 +13977,14 @@ function calculateCashierClosingSummary_() {
   });
 }
 
-function saveFnbOrder_(roomId, items, cashierName, note) {
-  if (!roomId) {
+function saveFnbOrder_(roomId, items, cashierName, note, paymentMethod, paymentStatus, customerName, generalBillId, idempotencyKey) {
+  var normalizedRoomId = String(roomId || "").trim();
+  var isGeneralOrder = normalizedRoomId.toUpperCase() === FNB_GENERAL_ROOM_ID;
+  var normalizedCustomerName = String(customerName || "").trim();
+  var normalizedGeneralBillId = String(generalBillId || "").trim();
+  var normalizedIdempotencyKey = String(idempotencyKey || "").trim();
+
+  if (!normalizedRoomId) {
     return {
       ok: false,
       error: "room_id wajib diisi.",
@@ -5030,36 +13998,107 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
     };
   }
 
+  if (isGeneralOrder && !normalizedCustomerName) {
+    return {
+      ok: false,
+      error: "Nama pemesan wajib diisi untuk order F&B umum.",
+    };
+  }
+
+  if (normalizedIdempotencyKey.length > 160) {
+    return {
+      ok: false,
+      error: "idempotency_key terlalu panjang.",
+    };
+  }
+
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return { ok: false, error: "Sistem sedang memproses order F&B lain. Coba lagi sebentar." };
+  }
 
   try {
-    var roomsSheet = getSheet_("Rooms");
-    var roomsHeaderMap = getHeaderMap_(roomsSheet);
-    var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", roomId);
+    var fnbOrdersSheet = ensureFnbOrdersSheetColumns_();
+    if (normalizedIdempotencyKey) {
+      var fnbOrdersHeaderMap = getHeaderMap_(fnbOrdersSheet);
+      var existingOrderRow = findRowByValue_(
+        fnbOrdersSheet,
+        fnbOrdersHeaderMap,
+        "idempotency_key",
+        normalizedIdempotencyKey
+      );
 
-    if (!rowNumber) {
-      return {
-        ok: false,
-        error: "Ruangan tidak ditemukan.",
-      };
+      if (existingOrderRow) {
+        var existingOrder = getFnbOrderObjectFromRow_(fnbOrdersSheet, existingOrderRow);
+        var existingOrdersWithItems = getFnbOrdersWithItemsByIds_([existingOrder.order_id]);
+        return {
+          ok: true,
+          success: true,
+          message: "Order F&B sudah pernah disimpan.",
+          order: existingOrder,
+          items: existingOrdersWithItems.length > 0 ? existingOrdersWithItems[0].items : [],
+          lc_sales_bonus_logs: [],
+          idempotent_replay: true,
+        };
+      }
     }
 
-    var room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
-    var status = String(room.status || "").trim();
-
-    if (status !== "occupied") {
-      return {
-        ok: false,
-        error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi.",
+    var room = null;
+    if (isGeneralOrder) {
+      room = {
+        room_id: FNB_GENERAL_ROOM_ID,
+        room_name: FNB_GENERAL_ROOM_NAME,
+        start_time: "",
       };
+    } else {
+      var roomsSheet = getSheet_("Rooms");
+      var roomsHeaderMap = getHeaderMap_(roomsSheet);
+      var rowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+      if (!rowNumber) {
+        return {
+          ok: false,
+          error: "Ruangan tidak ditemukan.",
+        };
+      }
+
+      room = getRowObject_(roomsSheet, roomsHeaderMap, rowNumber);
+      var status = String(room.status || "").trim().toLowerCase();
+
+      if (status !== "occupied" && status !== "booked" && status !== "waiting_payment") {
+        return {
+          ok: false,
+          error: "Order F&B hanya bisa disimpan untuk ruangan yang sedang terisi atau sudah dibooking.",
+        };
+      }
+
+      if (status === "occupied" && !room.start_time) {
+        return {
+          ok: false,
+          error: "Sesi ruangan belum memiliki waktu mulai.",
+        };
+      }
     }
 
-    if (!room.start_time) {
-      return {
-        ok: false,
-        error: "Sesi ruangan belum memiliki waktu mulai.",
-      };
+    var isPaid = String(paymentStatus || "").trim().toLowerCase() === "paid";
+    var method = String(paymentMethod || "").trim().toLowerCase();
+
+    if (isGeneralOrder && !isPaid) {
+      if (normalizedGeneralBillId) {
+        var existingBillOrders = readFnbOrdersOrEmpty_().filter(function (existingOrder) {
+          return String(existingOrder.general_bill_id || "").trim() === normalizedGeneralBillId
+            && String(existingOrder.order_status || "").trim().toLowerCase() === "open";
+        });
+        if (existingBillOrders.length === 0) {
+          return { ok: false, error: "Open bill F&B umum tidak ditemukan atau sudah dibayar." };
+        }
+        var existingCustomerName = String(existingBillOrders[0].customer_name || "").trim();
+        if (existingCustomerName && existingCustomerName.toLowerCase() !== normalizedCustomerName.toLowerCase()) {
+          return { ok: false, error: "Nama pemesan tidak cocok dengan open bill yang dipilih." };
+        }
+      } else {
+        normalizedGeneralBillId = generateGeneralFnbBillId_();
+      }
     }
 
     var menuMap = getMenuItemsMap_();
@@ -5072,15 +14111,44 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
     var roomStartTime = room.start_time instanceof Date
       ? toJakartaIsoString_(room.start_time)
       : room.start_time;
+    var duplicateOrder = findRecentDuplicateFnbOrder_(
+      fnbOrdersSheet,
+      fnbOrdersHeaderMap || getHeaderMap_(fnbOrdersSheet),
+      {
+        room_id: room.room_id || "",
+        room_start_time: roomStartTime || "",
+        order_status: isPaid ? "paid" : "open",
+        order_total: orderTotal,
+        cashier_name: cashierName || "Kasir",
+        note: isGeneralOrder
+          ? ((note ? String(note).trim() + " | " : "") + "Order F&B umum")
+          : (note || ""),
+        customer_name: isGeneralOrder ? normalizedCustomerName : "",
+        general_bill_id: isGeneralOrder && !isPaid ? normalizedGeneralBillId : "",
+      },
+      normalizedItems,
+      now
+    );
+
+    if (duplicateOrder) {
+      return duplicateOrder;
+    }
+
     var order = {
       order_id: generateFnbOrderId_(),
       room_id: room.room_id || "",
       room_name: room.room_name || "",
       room_start_time: roomStartTime || "",
-      order_status: "open",
+      order_status: isPaid ? "paid" : "open",
       order_total: orderTotal,
       cashier_name: cashierName || "Kasir",
-      note: note || "",
+      note: isGeneralOrder
+        ? ((note ? String(note).trim() + " | " : "") + "Order F&B umum")
+        : (note || ""),
+      customer_name: isGeneralOrder ? normalizedCustomerName : "",
+      general_bill_id: isGeneralOrder && !isPaid ? normalizedGeneralBillId : "",
+      billed_transaction_id: "",
+      idempotency_key: normalizedIdempotencyKey,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -5093,20 +14161,641 @@ function saveFnbOrder_(roomId, items, cashierName, note) {
         price: item.price,
         quantity: item.quantity,
         subtotal: item.subtotal,
+        bonus_sales_lc: item.bonus_sales_lc,
         created_at: timestamp,
       };
     });
 
-    ensureFnbOrdersSheet_();
     ensureFnbOrderItemsSheet_();
     appendFnbOrder_(order);
     appendFnbOrderItems_(orderItems);
+    var lcSalesBonusLogs = appendAutoLcSalesBonusLogsForFnbOrder_(order, orderItems, cashierName || "Kasir");
+
+    if (isPaid) {
+      var transaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: room.room_id || "",
+        room_name: isGeneralOrder && normalizedCustomerName
+          ? FNB_GENERAL_ROOM_NAME + " - " + normalizedCustomerName
+          : (room.room_name || ""),
+        start_time: "",
+        end_time: timestamp,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: orderTotal,
+        grand_total: orderTotal,
+        fnb_order_ids: order.order_id,
+        payment_method: method || "cash",
+        payment_status: "paid",
+        cashier_name: cashierName || "Kasir",
+        created_at: timestamp,
+        transaction_type: "fnb_addon",
+        customer_name: isGeneralOrder ? normalizedCustomerName : "",
+        general_bill_id: "",
+      };
+      appendTransaction_(transaction);
+
+      var detailedOrder = Object.assign({}, order, { items: orderItems });
+      deductStockForFnbOrders_([detailedOrder], transaction.transaction_id, transaction.cashier_name, timestamp);
+    }
 
     return {
       ok: true,
-      message: "Order F&B berhasil disimpan.",
+      message: isPaid ? "Order F&B berhasil dibayar & disimpan." : "Order F&B berhasil disimpan.",
       order: order,
       items: orderItems,
+      lc_sales_bonus_logs: lcSalesBonusLogs,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function findRecentDuplicateFnbOrder_(ordersSheet, ordersHeaderMap, expectedOrder, normalizedItems, now) {
+  var lastRow = ordersSheet.getLastRow();
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+  var lastColumn = ordersSheet.getLastColumn();
+  var recentRowCount = Math.min(lastRow - 1, 80);
+  var startRow = lastRow - recentRowCount + 1;
+  var rows = ordersSheet.getRange(startRow, 1, recentRowCount, lastColumn).getValues();
+  var expectedFingerprint = buildFnbOrderDuplicateFingerprint_(expectedOrder, normalizedItems);
+  var itemsByOrderId = null;
+
+  for (var index = rows.length - 1; index >= 0; index--) {
+    var rowNumber = startRow + index;
+    var order = getRowObject_(ordersSheet, ordersHeaderMap, rowNumber);
+    var createdAt = order.created_at instanceof Date
+      ? order.created_at
+      : new Date(order.created_at || 0);
+
+    if (isNaN(createdAt.getTime()) || now.getTime() - createdAt.getTime() > FNB_DUPLICATE_REPLAY_WINDOW_MS) {
+      continue;
+    }
+
+    if (!itemsByOrderId) {
+      itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+    }
+
+    var existingItems = (itemsByOrderId[order.order_id] || []).map(function (item) {
+      return {
+        menu_id: item.menu_id,
+        price: Number(item.price) || 0,
+        quantity: Number(item.quantity) || 0,
+        subtotal: Number(item.subtotal) || 0,
+      };
+    });
+    var existingFingerprint = buildFnbOrderDuplicateFingerprint_(order, existingItems);
+
+    if (existingFingerprint === expectedFingerprint) {
+      return {
+        ok: true,
+        success: true,
+        message: "Order F&B sudah tersimpan dari request sebelumnya.",
+        order: order,
+        items: itemsByOrderId[order.order_id] || [],
+        lc_sales_bonus_logs: [],
+        idempotent_replay: true,
+        duplicate_replay: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildFnbOrderDuplicateFingerprint_(order, items) {
+  var normalizedItems = (items || []).map(function (item) {
+    return [
+      String(item.menu_id || "").trim(),
+      String(Number(item.price) || 0),
+      String(Number(item.quantity) || 0),
+      String(Number(item.subtotal) || 0),
+    ].join(":");
+  }).sort().join("|");
+
+  return [
+    String(order.room_id || "").trim(),
+    normalizeFnbOrderDateTime_(order.room_start_time),
+    String(order.order_status || "").trim().toLowerCase(),
+    String(Number(order.order_total) || 0),
+    String(order.cashier_name || "").trim().toLowerCase(),
+    String(order.note || "").trim().toLowerCase(),
+    String(order.customer_name || "").trim().toLowerCase(),
+    String(order.general_bill_id || "").trim(),
+    normalizedItems,
+  ].join("||");
+}
+
+function generateGeneralFnbBillId_() {
+  return "GBILL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function createManualOutageTransaction_(payload) {
+  var request = payload || {};
+  var mode = String(request.mode || "").trim().toLowerCase();
+  var idempotencyKey = String(request.idempotency_key || "").trim();
+  var sourceNote = String(request.source_note || "").trim();
+  var customerName = String(request.customer_name || "").trim();
+  var sourceCashierName = String(request.cashier_name || "").trim() || "Kasir Manual";
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var paymentStatus = String(request.payment_status || "paid").trim().toLowerCase();
+  var durationMinutes = Math.round(Number(request.duration_minutes) || 0);
+  var lcAssignments = Array.isArray(request.lc_assignments) ? request.lc_assignments : [];
+  var requestedItems = Array.isArray(request.fnb_items) ? request.fnb_items : [];
+
+  if (mode !== "room" && mode !== "general_fnb") {
+    return { ok: false, success: false, error: "Mode transaksi manual tidak valid." };
+  }
+  if (!idempotencyKey || idempotencyKey.length > 160) {
+    return { ok: false, success: false, error: "Kunci penyimpanan transaksi tidak valid." };
+  }
+  if (sourceNote.length < 3) {
+    return { ok: false, success: false, error: "Catatan sumber nota minimal 3 karakter." };
+  }
+  if (!getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib cash atau transfer." };
+  }
+  if (paymentStatus !== "paid" && paymentStatus !== "unpaid") {
+    return { ok: false, success: false, error: "Status pembayaran tidak valid." };
+  }
+  if (mode === "general_fnb" && !customerName) {
+    return { ok: false, success: false, error: "Nama pelanggan F&B umum wajib diisi." };
+  }
+
+  var auth = validateAdminPinPayload_(
+    request.owner_pin,
+    "owner",
+    "create_manual_outage_transaction",
+    request.entered_by || "Owner",
+    true
+  );
+  if (!auth.success) {
+    return {
+      ok: false,
+      success: false,
+      error: auth.message,
+      block_reason: auth.block_reason,
+    };
+  }
+
+  var enteredBy = auth.employee && auth.employee.employee_name
+    ? auth.employee.employee_name
+    : String(request.entered_by || "Owner").trim();
+  var startTime = String(request.start_time || "").trim();
+  var startDate = parseJakartaDateTimeValue_(startTime);
+  var requestedOperationalDate = String(request.operational_date || "").trim();
+
+  if (!startDate) {
+    return { ok: false, success: false, error: "Tanggal dan jam transaksi tidak valid." };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedOperationalDate)) {
+    return { ok: false, success: false, error: "Periode operasional transaksi manual wajib diisi." };
+  }
+  var operationalDate = normalizeJakartaDateString_(requestedOperationalDate);
+  if (!operationalDate) {
+    return { ok: false, success: false, error: "Periode operasional transaksi manual tidak valid." };
+  }
+
+  var now = new Date();
+  var ageMs = now.getTime() - startDate.getTime();
+  if (ageMs < -5 * 60000) {
+    return { ok: false, success: false, error: "Waktu transaksi tidak boleh berada di masa depan." };
+  }
+  if (ageMs > 90 * 86400000) {
+    return { ok: false, success: false, error: "Backdate transaksi maksimal 90 hari." };
+  }
+
+  if (mode === "room") {
+    if (durationMinutes < 30 || durationMinutes > 720 || durationMinutes % 30 !== 0) {
+      return {
+        ok: false,
+        success: false,
+        error: "Durasi room wajib 30 menit sampai 12 jam dengan kelipatan 30 menit.",
+      };
+    }
+  } else {
+    durationMinutes = 0;
+    lcAssignments = [];
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      success: false,
+      error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar.",
+    };
+  }
+
+  try {
+    var transactionsSheet = ensureTransactionsSheetColumns_();
+    var transactionHeaders = getHeaderMap_(transactionsSheet);
+    var existingRow = findRowByValue_(
+      transactionsSheet,
+      transactionHeaders,
+      "idempotency_key",
+      idempotencyKey
+    );
+    if (existingRow) {
+      var existingTransaction = getRowObject_(transactionsSheet, transactionHeaders, existingRow);
+      return {
+        ok: true,
+        success: true,
+        idempotent_replay: true,
+        message: "Transaksi manual ini sudah pernah disimpan.",
+        operational_date: resolveTransactionOperationalDateString_(existingTransaction),
+        transaction: existingTransaction,
+      };
+    }
+
+    var room = {
+      room_id: FNB_GENERAL_ROOM_ID,
+      room_name: customerName
+        ? FNB_GENERAL_ROOM_NAME + " - " + customerName
+        : FNB_GENERAL_ROOM_NAME,
+      rate_per_hour: 0,
+    };
+
+    if (mode === "room") {
+      var roomId = String(request.room_id || "").trim();
+      var roomsSheet = getSheet_("Rooms");
+      var roomsHeaders = getHeaderMap_(roomsSheet);
+      var roomRow = findRowByValue_(roomsSheet, roomsHeaders, "room_id", roomId);
+      if (!roomRow) {
+        return { ok: false, success: false, error: "Ruangan tidak ditemukan di master." };
+      }
+      room = getRowObject_(roomsSheet, roomsHeaders, roomRow);
+    }
+
+    var normalizedLcs = [];
+    var seenLcIds = {};
+    if (mode === "room" && lcAssignments.length > 0) {
+      var lcRows = readSheetAsObjects_("LcMaster");
+      var lcMap = {};
+      lcRows.forEach(function (lc) {
+        lcMap[String(lc.lc_id || "").trim()] = lc;
+      });
+
+      for (var lcIndex = 0; lcIndex < lcAssignments.length; lcIndex++) {
+        var requestedLc = lcAssignments[lcIndex] || {};
+        var lcId = String(requestedLc.lc_id || "").trim();
+        var lcDuration = Math.round(Number(requestedLc.duration_minutes) || durationMinutes);
+        var masterLc = lcMap[lcId];
+
+        if (!lcId || !masterLc || String(masterLc.status || "").trim().toLowerCase() !== "active") {
+          return { ok: false, success: false, error: "LC pada nota tidak ditemukan atau tidak aktif." };
+        }
+        if (seenLcIds[lcId]) {
+          return { ok: false, success: false, error: "LC yang sama tidak boleh dipilih dua kali." };
+        }
+        if (lcDuration < 30 || lcDuration > 720 || lcDuration % 30 !== 0) {
+          return {
+            ok: false,
+            success: false,
+            error: "Durasi setiap LC wajib 30 menit sampai 12 jam dengan kelipatan 30 menit.",
+          };
+        }
+
+        seenLcIds[lcId] = true;
+        var lcHourlyRate = Number(masterLc.rate_per_room) || 0;
+        normalizedLcs.push({
+          lc_id: lcId,
+          lc_name: masterLc.lc_name || lcId,
+          duration_minutes: lcDuration,
+          rate_per_hour: lcHourlyRate,
+          rate: calculateLcRateForDuration_(lcDuration, lcHourlyRate),
+        });
+      }
+    }
+
+    var menuMap = getMenuItemsMap_();
+    var normalizedItems = requestedItems.length > 0
+      ? normalizeFnbOrderItems_(requestedItems, menuMap)
+      : [];
+    if (mode === "general_fnb" && normalizedItems.length === 0) {
+      return { ok: false, success: false, error: "Minimal satu item F&B wajib dipilih." };
+    }
+
+    var endDate = new Date(startDate.getTime() + durationMinutes * 60000);
+    var normalizedStartTime = toJakartaIsoString_(startDate);
+    var normalizedEndTime = toJakartaIsoString_(mode === "room" ? endDate : startDate);
+    var transactionId = generateTransactionId_();
+    var sessionId = mode === "room" ? generateRoomSessionId_(room.room_id) : "";
+    var fnbTotal = normalizedItems.reduce(function (sum, item) {
+      return sum + Number(item.subtotal || 0);
+    }, 0);
+    var roomTotal = mode === "room"
+      ? calculateRoomTotal_(durationMinutes, Number(room.rate_per_hour) || 0)
+      : 0;
+    var lcTotal = normalizedLcs.reduce(function (sum, lc) {
+      return sum + Number(lc.rate || 0);
+    }, 0);
+    var fnbOrderIds = [];
+    var detailedOrders = [];
+
+    if (normalizedItems.length > 0) {
+      var orderId = generateFnbOrderId_();
+      var order = {
+        order_id: orderId,
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        room_start_time: normalizedStartTime,
+        order_status: "billed",
+        order_total: fnbTotal,
+        cashier_name: sourceCashierName,
+        note: "Input manual mati listrik | " + sourceNote,
+        customer_name: customerName,
+        general_bill_id: mode === "general_fnb" ? generateGeneralFnbBillId_() : "",
+        billed_transaction_id: transactionId,
+        idempotency_key: idempotencyKey + ":fnb",
+        created_at: normalizedStartTime,
+        updated_at: normalizedEndTime,
+        operational_date: operationalDate,
+      };
+      var orderItems = normalizedItems.map(function (item) {
+        return {
+          order_id: orderId,
+          menu_id: item.menu_id,
+          menu_name: item.menu_name,
+          category: item.category,
+          price: item.price,
+          quantity: item.quantity,
+          subtotal: item.subtotal,
+          bonus_sales_lc: item.bonus_sales_lc,
+          created_at: normalizedStartTime,
+        };
+      });
+
+      appendFnbOrder_(order);
+      appendFnbOrderItems_(orderItems);
+      fnbOrderIds.push(orderId);
+      detailedOrders.push(Object.assign({}, order, { items: orderItems }));
+    }
+
+    var transaction = {
+      transaction_id: transactionId,
+      room_id: room.room_id || "",
+      room_name: room.room_name || "",
+      start_time: normalizedStartTime,
+      end_time: normalizedEndTime,
+      duration_minutes: durationMinutes,
+      rate_per_hour: Number(room.rate_per_hour) || 0,
+      room_total: roomTotal,
+      fnb_total: fnbTotal,
+      lc_total: lcTotal,
+      grand_total: roomTotal + fnbTotal + lcTotal,
+      fnb_order_ids: fnbOrderIds.join(","),
+      transaction_type: mode === "room" ? "session_checkout" : "fnb_general",
+      payment_method: paymentMethod,
+      payment_status: paymentStatus,
+      cashier_name: sourceCashierName,
+      customer_name: customerName,
+      general_bill_id: mode === "general_fnb" && detailedOrders[0]
+        ? detailedOrders[0].general_bill_id
+        : "",
+      created_at: normalizedStartTime,
+      entry_source: "manual_power_outage",
+      source_note: sourceNote,
+      entered_by: enteredBy,
+      idempotency_key: idempotencyKey,
+      operational_date: operationalDate,
+    };
+    appendTransaction_(transaction);
+
+    if (mode === "room") {
+      appendRoomSession_({
+        session_id: sessionId,
+        room_id: room.room_id || "",
+        room_name: room.room_name || "",
+        booking_mode: "manual_power_outage",
+        status: "closed",
+        start_time: normalizedStartTime,
+        scheduled_end_time: normalizedEndTime,
+        end_time: normalizedEndTime,
+        booked_duration_minutes: durationMinutes,
+        package_included_minutes: 0,
+        promotion_free_minutes: 0,
+        billable_room_minutes: durationMinutes,
+        rate_per_hour: Number(room.rate_per_hour) || 0,
+        cashier_name: sourceCashierName,
+        created_at: normalizedStartTime,
+        updated_at: normalizedEndTime,
+        closed_transaction_id: transactionId,
+        idempotency_key: idempotencyKey,
+        legacy_room_start_time: normalizedStartTime,
+        note: "Input manual mati listrik | " + sourceNote,
+        customer_name: customerName,
+        package_id: "",
+        prepayment_transaction_id: "",
+        lc_ids: normalizedLcs.map(function (lc) { return lc.lc_id; }).join(","),
+        lc_assignments: serializeLcAssignments_(normalizedLcs),
+      });
+
+      normalizedLcs.forEach(function (lc) {
+        appendLcWorkLog_({
+          log_id: "LWL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + lc.lc_id + "-" + Math.floor(Math.random() * 1000),
+          session_id: sessionId,
+          lc_id: lc.lc_id,
+          lc_name: lc.lc_name,
+          rate: lc.rate,
+          duration_minutes: lc.duration_minutes,
+          rate_per_hour: lc.rate_per_hour,
+          status: "done",
+          created_at: normalizedStartTime,
+          closed_at: toJakartaIsoString_(new Date(startDate.getTime() + lc.duration_minutes * 60000)),
+          payroll_id: "",
+          operational_date: operationalDate,
+        });
+      });
+    }
+
+    var stockResult = deductStockForFnbOrders_(
+      detailedOrders,
+      transactionId,
+      sourceCashierName,
+      normalizedStartTime,
+      operationalDate
+    );
+
+    if (normalizedLcs.length > 0 && detailedOrders.length > 0) {
+      detailedOrders.forEach(function (order) {
+        (order.items || []).forEach(function (item) {
+          var totalBonus = Number(item.bonus_sales_lc || 0) * Number(item.quantity || 0);
+          if (totalBonus <= 0) {
+            return;
+          }
+          var baseShare = Math.floor(totalBonus / normalizedLcs.length);
+          var remainder = totalBonus - baseShare * normalizedLcs.length;
+          normalizedLcs.forEach(function (lc, index) {
+            var bonusTotal = baseShare + (index < remainder ? 1 : 0);
+            if (bonusTotal <= 0) {
+              return;
+            }
+            appendObjectRow_(ensureLcSalesBonusLogsSheet_(), {
+              bonus_log_id: generateLcFinanceId_("LCBONUS"),
+              operational_date: operationalDate,
+              transaction_id: transactionId,
+              order_id: order.order_id,
+              menu_id: item.menu_id,
+              menu_name: item.menu_name,
+              category: item.category,
+              lc_id: lc.lc_id,
+              lc_name: lc.lc_name,
+              quantity: Number(item.quantity || 0) / normalizedLcs.length,
+              bonus_per_item: Number(item.bonus_sales_lc || 0),
+              bonus_total: bonusTotal,
+              source_status: "manual_power_outage",
+              payroll_id: "",
+              created_at: normalizedEndTime,
+              created_by: enteredBy,
+              voided_at: "",
+              void_reason: "",
+            });
+          });
+        });
+      });
+    }
+
+    appendMasterDataAuditLog_({
+      entity_type: "transaction",
+      entity_id: transactionId,
+      entity_name: room.room_name || customerName || transactionId,
+      action_type: "create_manual_power_outage",
+      old_value: "",
+      new_value: transaction,
+      changed_by: enteredBy,
+      note: sourceNote,
+      result: "success",
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Transaksi manual berhasil disimpan dan siap dicetak.",
+      operational_date: operationalDate,
+      transaction: transaction,
+      fnb_orders: detailedOrders,
+      lc_details: {
+        detail_available: normalizedLcs.length > 0,
+        lc_logs: normalizedLcs,
+        lc_total: lcTotal,
+        work_log_total: lcTotal,
+        billing_adjustment: 0,
+      },
+      stock_movements: stockResult.movements,
+      stock_warnings: stockResult.warnings,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function settleGeneralFnbBill_(payload) {
+  var request = payload || {};
+  var generalBillId = String(request.general_bill_id || "").trim();
+  var paymentMethod = String(request.payment_method || "").trim().toLowerCase();
+  var cashierName = String(request.cashier_name || "Kasir").trim() || "Kasir";
+
+  if (!generalBillId) {
+    return { ok: false, success: false, error: "general_bill_id wajib diisi." };
+  }
+  if (!getAllowedPaymentMethods_()[paymentMethod]) {
+    return { ok: false, success: false, error: "Metode pembayaran wajib cash atau transfer." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, success: false, error: "Sistem sedang memproses transaksi lain. Coba lagi sebentar." };
+  }
+
+  try {
+    var openOrders = readFnbOrdersOrEmpty_().filter(function (order) {
+      return String(order.room_id || "").trim().toUpperCase() === FNB_GENERAL_ROOM_ID
+        && String(order.general_bill_id || "").trim() === generalBillId
+        && String(order.order_status || "").trim().toLowerCase() === "open";
+    });
+
+    if (openOrders.length === 0) {
+      var existingTransaction = readSheetAsObjects_("Transactions").find(function (transaction) {
+        return String(transaction.general_bill_id || "").trim() === generalBillId;
+      });
+      if (existingTransaction) {
+        return {
+          ok: true,
+          success: true,
+          idempotent_replay: true,
+          message: "Tagihan F&B umum sudah pernah dibayar.",
+          transaction: existingTransaction,
+        };
+      }
+      return { ok: false, success: false, error: "Open bill F&B umum tidak ditemukan atau sudah dibayar." };
+    }
+
+    var customerName = String(openOrders[0].customer_name || "").trim();
+    var orderIds = openOrders.map(function (order) { return order.order_id || ""; }).filter(Boolean);
+    var detailedOrders = getFnbOrdersWithItemsByIds_(orderIds);
+    var grandTotal = calculateFnbTotal_(detailedOrders);
+    var now = toJakartaIsoString_(new Date());
+    var transaction = {
+      transaction_id: generateTransactionId_(),
+      room_id: FNB_GENERAL_ROOM_ID,
+      room_name: customerName ? FNB_GENERAL_ROOM_NAME + " - " + customerName : FNB_GENERAL_ROOM_NAME,
+      start_time: openOrders[0].created_at || "",
+      end_time: now,
+      duration_minutes: 0,
+      rate_per_hour: 0,
+      room_total: 0,
+      fnb_total: grandTotal,
+      grand_total: grandTotal,
+      fnb_order_ids: orderIds.join(","),
+      payment_method: paymentMethod,
+      payment_status: "paid",
+      cashier_name: cashierName,
+      created_at: now,
+      transaction_type: "fnb_general",
+      customer_name: customerName,
+      general_bill_id: generalBillId,
+    };
+
+    if (request.dry_run === true || String(request.dry_run || "").trim().toLowerCase() === "true") {
+      return {
+        ok: true,
+        success: true,
+        dry_run: true,
+        message: "Validasi pembayaran open bill berhasil tanpa menyimpan perubahan.",
+        transaction: transaction,
+        orders: detailedOrders,
+      };
+    }
+
+    appendTransaction_(transaction);
+    var stockResult = deductStockForFnbOrders_(detailedOrders, transaction.transaction_id, cashierName, now);
+    var ordersSheet = ensureFnbOrdersSheetColumns_();
+    var orderHeaders = getHeaderMap_(ordersSheet);
+    orderIds.forEach(function (orderId) {
+      var rowNumber = findRowByValue_(ordersSheet, orderHeaders, "order_id", orderId);
+      if (rowNumber) {
+        setRowValues_(ordersSheet, orderHeaders, rowNumber, {
+          order_status: "billed",
+          billed_transaction_id: transaction.transaction_id,
+          updated_at: now,
+        });
+      }
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Tagihan F&B umum berhasil dibayar.",
+      transaction: transaction,
+      orders: detailedOrders,
+      stock_movements: stockResult.movements,
+      stock_warnings: stockResult.warnings,
     };
   } finally {
     lock.releaseLock();
@@ -5137,6 +14826,9 @@ function getOpenFnbOrders_(roomId, roomStartTime) {
         order_total: Number(order.order_total) || 0,
         cashier_name: order.cashier_name || "",
         note: order.note || "",
+        customer_name: order.customer_name || "",
+        general_bill_id: order.general_bill_id || "",
+        billed_transaction_id: order.billed_transaction_id || "",
         created_at: normalizeFnbOrderDateTime_(order.created_at),
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
         items: items,
@@ -5177,7 +14869,9 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
   }
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(2000)) {
+    return { ok: false, error: "Sistem sedang memproses pembatalan order lain. Coba lagi sebentar." };
+  }
 
   try {
     if (!sheetExists_("FnbOrders")) {
@@ -5214,7 +14908,7 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
       };
     }
 
-    if (currentStatus !== "open") {
+    if (currentStatus !== "open" && currentStatus !== "paid") {
       return {
         ok: false,
         error: "Status order F&B tidak bisa dibatalkan.",
@@ -5224,6 +14918,47 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
     var now = toJakartaIsoString_(new Date());
     var reason = String(cancelReason || "").trim() || "Tanpa alasan";
     var user = String(cancelledBy || "").trim() || "Kasir";
+
+    var order = getFnbOrderObjectFromRow_(sheet, rowNumber);
+
+    if (currentStatus === "paid") {
+      var detailedOrders = getFnbOrdersWithItemsByIds_([normalizedOrderId]);
+      var orderTotal = Number(order.order_total) || 0;
+
+      var paymentMethod = "cash";
+      try {
+        var originalTx = readSheetAsObjects_("Transactions").find(function (tx) {
+          return String(tx.fnb_order_ids || "").trim() === normalizedOrderId;
+        });
+        if (originalTx && originalTx.payment_method) {
+          paymentMethod = originalTx.payment_method;
+        }
+      } catch (err) {
+        // Fallback to cash
+      }
+
+      var refundTransaction = {
+        transaction_id: generateTransactionId_(),
+        room_id: order.room_id || "",
+        room_name: order.room_name || "",
+        start_time: "",
+        end_time: now,
+        duration_minutes: 0,
+        rate_per_hour: 0,
+        room_total: 0,
+        fnb_total: -orderTotal,
+        grand_total: -orderTotal,
+        fnb_order_ids: order.order_id,
+        payment_method: paymentMethod,
+        payment_status: "paid",
+        cashier_name: user,
+        created_at: now,
+        transaction_type: "fnb_refund",
+      };
+      appendTransaction_(refundTransaction);
+
+      restoreStockForFnbOrders_(detailedOrders, refundTransaction.transaction_id, user, now);
+    }
 
     sheet.getRange(rowNumber, headerMap.order_status).setValue("cancelled");
     sheet.getRange(rowNumber, headerMap.cancel_reason).setValue(reason);
@@ -5238,6 +14973,58 @@ function cancelFnbOrder_(orderId, cancelReason, cancelledBy) {
       ok: true,
       message: "Order F&B berhasil dibatalkan.",
       order: getFnbOrderObjectFromRow_(sheet, rowNumber),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cancelGeneralFnbBill_(generalBillId, cancelReason, cancelledBy) {
+  var normalizedBillId = String(generalBillId || "").trim();
+  if (!normalizedBillId) {
+    return { ok: false, error: "general_bill_id wajib diisi." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return { ok: false, error: "Sistem sedang memproses pembatalan order lain. Coba lagi sebentar." };
+  }
+
+  try {
+    if (!sheetExists_("FnbOrders")) {
+      return { ok: false, error: "Data FnbOrders tidak ditemukan." };
+    }
+
+    var sheet = ensureFnbOrdersSheetColumns_();
+    var headerMap = getHeaderMap_(sheet);
+    var data = sheet.getDataRange().getValues();
+    var now = getCurrentTimestamp_();
+    var reason = String(cancelReason || "").trim() || "Dibatalkan kasir";
+    var user = String(cancelledBy || "").trim() || "Kasir";
+    var cancelledCount = 0;
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var rowBillId = String(row[headerMap.general_bill_id - 1] || "").trim();
+      var rowStatus = String(row[headerMap.order_status - 1] || "").trim().toLowerCase();
+      if (rowBillId === normalizedBillId && rowStatus === "open") {
+        var rowNum = i + 1;
+        sheet.getRange(rowNum, headerMap.order_status).setValue("cancelled");
+        if (headerMap.cancel_reason) sheet.getRange(rowNum, headerMap.cancel_reason).setValue(reason);
+        if (headerMap.cancelled_by) sheet.getRange(rowNum, headerMap.cancelled_by).setValue(user);
+        if (headerMap.cancelled_at) sheet.getRange(rowNum, headerMap.cancelled_at).setValue(now);
+        if (headerMap.updated_at) sheet.getRange(rowNum, headerMap.updated_at).setValue(now);
+        cancelledCount++;
+      }
+    }
+
+    if (cancelledCount === 0) {
+      return { ok: false, error: "Tagihan F&B umum tidak ditemukan atau sudah dibatalkan/dibayar." };
+    }
+
+    return {
+      ok: true,
+      message: "Tagihan " + normalizedBillId + " (" + cancelledCount + " order) berhasil dibatalkan."
     };
   } finally {
     lock.releaseLock();
@@ -5295,6 +15082,9 @@ function getTodayFnbOrdersByPeriod_(status, roomId, period, startDate, endDate) 
         order_total: Number(order.order_total) || 0,
         cashier_name: order.cashier_name || "",
         note: order.note || "",
+        customer_name: order.customer_name || "",
+        general_bill_id: order.general_bill_id || "",
+        billed_transaction_id: order.billed_transaction_id || "",
         created_at: normalizeFnbOrderDateTime_(order.created_at),
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
         cancel_reason: order.cancel_reason || "",
@@ -5373,7 +15163,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
     };
   }
 
-  if (normalizedReferenceType && ["transaction", "manual_adjustment"].indexOf(normalizedReferenceType) === -1) {
+  if (normalizedReferenceType && ["transaction", "manual_adjustment", "goods_receipt", "stock_audit"].indexOf(normalizedReferenceType) === -1) {
     return {
       ok: false,
       error: "Jenis referensi mutasi stok tidak dikenal.",
@@ -5392,7 +15182,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
     .filter(function (movement) {
       var movementTypeValue = String(movement.movement_type || "").trim().toLowerCase();
       var referenceTypeValue = String(movement.reference_type || "").trim().toLowerCase();
-      var operationalDate = getOperationalDateString_(movement.created_at);
+      var operationalDate = resolveStockMovementOperationalDateString_(movement);
 
       return (
         matchesOperationalPeriod_(operationalDate, periodResult) &&
@@ -5415,6 +15205,7 @@ function getTodayStockMovementsByPeriod_(stockItemId, movementType, referenceTyp
         stock_after: Number(movement.stock_after) || 0,
         note: movement.note || "",
         cashier_name: movement.cashier_name || "",
+        operational_date: resolveStockMovementOperationalDateString_(movement),
       };
     })
     .sort(function (first, second) {
@@ -5480,7 +15271,7 @@ function getTodayFnbSalesReportByPeriod_(period, startDate, endDate) {
       var operationalDate = resolveFnbOrderOperationalDateString_(order);
 
       if (
-        orderStatus === "billed" &&
+        (orderStatus === "billed" || orderStatus === "paid") &&
         orderId &&
         matchesOperationalPeriod_(operationalDate, periodResult)
       ) {
@@ -5780,10 +15571,12 @@ function getOpenFnbOrdersForSession_(roomId, roomStartTime) {
 
   return readFnbOrdersOrEmpty_()
     .filter(function (order) {
+      var status = String(order.order_status || "").trim().toLowerCase();
+      var isUnbilled = status === "open" || (status === "billed" && !String(order.billed_transaction_id || "").trim());
       return (
         String(order.room_id || "").trim() === String(roomId || "").trim() &&
         normalizeFnbOrderDateTime_(order.room_start_time) === normalizedStartTime &&
-        String(order.order_status || "").trim() === "open"
+        isUnbilled
       );
     })
     .map(function (order) {
@@ -5796,6 +15589,9 @@ function getOpenFnbOrdersForSession_(roomId, roomStartTime) {
         order_total: Number(order.order_total) || 0,
         cashier_name: order.cashier_name || "",
         note: order.note || "",
+        customer_name: order.customer_name || "",
+        general_bill_id: order.general_bill_id || "",
+        billed_transaction_id: order.billed_transaction_id || "",
         created_at: normalizeFnbOrderDateTime_(order.created_at),
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
       };
@@ -5845,6 +15641,9 @@ function getFnbOrdersWithItemsByIds_(orderIds) {
         order_total: Number(order.order_total) || 0,
         cashier_name: order.cashier_name || "",
         note: order.note || "",
+        customer_name: order.customer_name || "",
+        general_bill_id: order.general_bill_id || "",
+        billed_transaction_id: order.billed_transaction_id || "",
         created_at: normalizeFnbOrderDateTime_(order.created_at),
         updated_at: normalizeFnbOrderDateTime_(order.updated_at),
         items: itemsByOrderId[orderId] || [],
@@ -5858,7 +15657,7 @@ function calculateFnbTotal_(orders) {
   }, 0);
 }
 
-function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
+function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now, operationalDate) {
   if (!fnbOrders || fnbOrders.length === 0) {
     return {
       movements: [],
@@ -5905,6 +15704,7 @@ function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
       stock_after: stockAfter,
       note: "F&B billed dari transaksi " + transactionId,
       cashier_name: cashierName || "Kasir",
+      operational_date: normalizeJakartaDateString_(operationalDate),
     };
 
     appendStockMovement_(movement);
@@ -5921,6 +15721,49 @@ function deductStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
     movements: movements,
     warnings: warnings,
   };
+}
+
+function restoreStockForFnbOrders_(fnbOrders, transactionId, cashierName, now) {
+  if (!fnbOrders || fnbOrders.length === 0) {
+    return;
+  }
+
+  var stockPlan = calculateStockRequirementsFromFnbOrders_(fnbOrders);
+  var inventoryMap = getInventoryMap_();
+
+  stockPlan.requirements.forEach(function (requirement) {
+    var inventory = inventoryMap[requirement.stock_item_id];
+
+    if (!inventory) {
+      return;
+    }
+
+    var stockBefore = toStockNumber_(inventory.stock_qty);
+    var stockAfter = stockBefore + requirement.required_qty;
+
+    inventory.sheet.getRange(inventory.row_number, inventory.header_map.stock_qty).setValue(stockAfter);
+
+    if (inventory.header_map.updated_at) {
+      inventory.sheet.getRange(inventory.row_number, inventory.header_map.updated_at).setValue(now);
+    }
+
+    var movement = {
+      movement_id: generateStockMovementId_(),
+      created_at: now,
+      stock_item_id: inventory.stock_item_id,
+      stock_item_name: inventory.stock_item_name,
+      movement_type: "in",
+      reference_type: "transaction",
+      reference_id: transactionId,
+      qty_change: requirement.required_qty,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      note: "F&B refund dari pembatalan transaksi " + transactionId,
+      cashier_name: cashierName || "Kasir",
+    };
+
+    appendStockMovement_(movement);
+  });
 }
 
 function calculateStockRequirementsFromFnbOrders_(fnbOrders) {
@@ -6038,7 +15881,7 @@ function getInventoryMap_() {
       return map;
     }
 
-    map[stockItemId] = {
+    var invObj = {
       sheet: sheet,
       header_map: headerMap,
       row_number: index + 2,
@@ -6048,6 +15891,9 @@ function getInventoryMap_() {
       min_stock: Number(item.min_stock) || 0,
       status: item.status || "",
     };
+
+    map[stockItemId] = invObj;
+    map[String(stockItemId).trim().toLowerCase()] = invObj;
 
     return map;
   }, {});
@@ -6113,6 +15959,10 @@ function getFnbOrderObjectFromRow_(sheet, rowNumber) {
     order_total: Number(order.order_total) || 0,
     cashier_name: order.cashier_name || "",
     note: order.note || "",
+    customer_name: order.customer_name || "",
+    general_bill_id: order.general_bill_id || "",
+    billed_transaction_id: order.billed_transaction_id || "",
+    idempotency_key: order.idempotency_key || "",
     created_at: normalizeFnbOrderDateTime_(order.created_at),
     updated_at: normalizeFnbOrderDateTime_(order.updated_at),
     cancel_reason: order.cancel_reason || "",
@@ -6189,6 +16039,10 @@ function generateStockMovementId_() {
   return "MOV-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
 }
 
+function generateInventoryAuditId_() {
+  return "SO-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
 function runFnbV23BInventoryIdentityDryRun() {
   var result = migrateFnbV23BInventoryIdentity_({
     dry_run: true,
@@ -6221,7 +16075,13 @@ function restoreFnbV23BInventoryQaArchive_() {
   var output = buildFnbV23BInventoryQaArchiveOutput_();
 
   try {
-    lock.waitLock(10000);
+    if (!lock.tryLock(2000)) {
+      return buildFnbV23BInventoryQaArchiveErrorOutput_(
+        "LOCK_BUSY",
+        "Sistem sedang memproses perubahan lain. Coba lagi sebentar.",
+        output
+      );
+    }
     lockAcquired = true;
 
     return executeFnbV23BInventoryQaArchiveRestore_(output);
@@ -6327,6 +16187,18 @@ function buildFnbV23BInventoryQaArchiveOutput_() {
       restored_rows: [],
     },
   };
+}
+
+function buildFnbV23BInventoryQaArchiveErrorOutput_(code, message, output) {
+  var result = output || buildFnbV23BInventoryQaArchiveOutput_();
+
+  result.ok = false;
+  result.abort_reason = code || "ERROR";
+  if (result.validation && Array.isArray(result.validation.errors)) {
+    result.validation.errors.push(String(message || "Sistem sedang memproses perubahan lain. Coba lagi sebentar."));
+  }
+
+  return result;
 }
 
 function buildFnbV23BInventoryQaArchiveRows_() {
@@ -6471,7 +16343,13 @@ function importFnbV24Package_(config) {
   var output;
 
   try {
-    lock.waitLock(10000);
+    if (!lock.tryLock(2000)) {
+      return buildFnbV24PackageImportErrorOutput_(
+        importConfig,
+        output,
+        new Error("Sistem sedang memproses perubahan lain. Coba lagi sebentar.")
+      );
+    }
     lockAcquired = true;
 
     output = collectFnbV24PackageImportPlan_(importConfig);
@@ -7062,7 +16940,13 @@ function migrateFnbV23BInventoryIdentity_(config) {
   var output;
 
   try {
-    lock.waitLock(10000);
+    if (!lock.tryLock(2000)) {
+      return buildFnbV23BInventoryIdentityErrorOutput_(
+        migrationConfig,
+        output,
+        new Error("Sistem sedang memproses perubahan lain. Coba lagi sebentar.")
+      );
+    }
     lockAcquired = true;
 
     output = collectFnbV23BInventoryIdentityPlan_(migrationConfig);
@@ -7628,7 +17512,10 @@ function ensureFnbOrdersSheetColumns_() {
 }
 
 function ensureFnbOrderItemsSheet_() {
-  return ensureSheetWithHeaders_("FnbOrderItems", FNB_ORDER_ITEMS_HEADERS);
+  return ensureSheetHasHeaders_(
+    ensureSheetWithHeaders_("FnbOrderItems", FNB_ORDER_ITEMS_HEADERS),
+    FNB_ORDER_ITEMS_HEADERS
+  );
 }
 
 function ensureMenuStockColumns_() {
@@ -7637,7 +17524,7 @@ function ensureMenuStockColumns_() {
     return String(header).trim();
   });
 
-  MENU_STOCK_HEADERS.forEach(function (header) {
+  MENU_MASTER_HEADERS.concat(MENU_STOCK_HEADERS).forEach(function (header) {
     if (headers.indexOf(header) === -1) {
       sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
       headers.push(header);
@@ -7679,6 +17566,10 @@ function ensurePackageDetailSheet_() {
   return ensureSheetColumns_("PackageDetail", PACKAGE_DETAIL_HEADERS);
 }
 
+function ensureRoomSessionsSheet_() {
+  return ensureSheetColumns_(ROOM_SESSIONS_SHEET, ROOM_SESSION_HEADERS);
+}
+
 function ensureRecipeBomSheet_() {
   return ensureSheetColumns_("RecipeBom", RECIPE_BOM_HEADERS);
 }
@@ -7703,6 +17594,19 @@ function ensureStockMovementsSheet_() {
   });
 
   return sheet;
+}
+
+function ensureInventoryAuditsSheet_() {
+  return ensureSheetColumns_("InventoryAudits", INVENTORY_AUDIT_HEADERS);
+}
+
+function ensureInventoryAuditLinesSheet_() {
+  return ensureSheetColumns_("InventoryAuditLines", INVENTORY_AUDIT_LINE_HEADERS);
+}
+
+function ensureInventoryAuditSheets_() {
+  ensureInventoryAuditsSheet_();
+  ensureInventoryAuditLinesSheet_();
 }
 
 function ensureRoomsBookingColumns_() {
@@ -7782,8 +17686,469 @@ function normalizeFnbOrderItems_(items, menuMap) {
       price: price,
       quantity: quantity,
       subtotal: price * quantity,
+      bonus_sales_lc: Number(menuItem.bonus_sales_lc || menuItem.bonus_per_item) || 0,
     };
   });
+}
+
+function ensureCashierClosingSnapshotSheets_() {
+  return {
+    transactions: ensureSheetWithHeaders_("CashierClosingTransactions", CASHIER_CLOSING_TRANSACTIONS_HEADERS),
+    fnb_items: ensureSheetWithHeaders_("CashierClosingFnbItems", CASHIER_CLOSING_FNB_ITEMS_HEADERS),
+    lc_details: ensureSheetWithHeaders_("CashierClosingLcDetails", CASHIER_CLOSING_LC_DETAILS_HEADERS),
+  };
+}
+
+function ensureReceiptPrintLogsSheet_() {
+  return ensureSheetColumns_("ReceiptPrintLogs", RECEIPT_PRINT_LOGS_HEADERS);
+}
+
+function generateReceiptPrintLogId_() {
+  return "RPL-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd-HHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function logReceiptPrint_(payload) {
+  var request = payload || {};
+  var transactionId = String(request.transaction_id || "").trim();
+
+  if (!transactionId) {
+    return {
+      ok: false,
+      success: false,
+      error: "transaction_id wajib diisi.",
+    };
+  }
+
+  var transactionsSheet = ensureTransactionsSheetColumns_();
+  var transactionsHeaderMap = getHeaderMap_(transactionsSheet);
+  var transactionRowNumber = findRowByValue_(transactionsSheet, transactionsHeaderMap, "transaction_id", transactionId);
+
+  if (!transactionRowNumber) {
+    return {
+      ok: false,
+      success: false,
+      transaction_id: transactionId,
+      error: "Transaksi tidak ditemukan.",
+    };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return createLockBusyResponse_("Sistem sedang mencatat cetak struk lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var sheet = ensureReceiptPrintLogsSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    var existingCount = countRowsByValue_(sheet, headerMap, "transaction_id", transactionId);
+    var sequence = existingCount + 1;
+    var now = toJakartaIsoString_(new Date());
+    var printType = String(request.print_type || "browser").trim().toLowerCase();
+
+    if (["browser", "thermal"].indexOf(printType) === -1) {
+      printType = "browser";
+    }
+
+    var logEntry = {
+      print_log_id: generateReceiptPrintLogId_(),
+      transaction_id: transactionId,
+      print_sequence: sequence,
+      is_reprint: sequence > 1,
+      print_type: printType,
+      cashier_name: String(request.cashier_name || "Kasir").trim() || "Kasir",
+      printed_at: now,
+      note: String(request.note || "").trim(),
+    };
+
+    appendObjectRow_(sheet, logEntry);
+
+    return {
+      ok: true,
+      success: true,
+      log: logEntry,
+      transaction_id: transactionId,
+      print_sequence: sequence,
+      is_reprint: sequence > 1,
+      reprint_number: Math.max(0, sequence - 1),
+      printed_at: now,
+      cashier_name: logEntry.cashier_name,
+      print_type: printType,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function countRowsByValue_(sheet, headerMap, columnName, value) {
+  var column = headerMap[columnName];
+
+  if (!column) {
+    return 0;
+  }
+
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return 0;
+  }
+
+  var values = sheet.getRange(2, column, lastRow - 1, 1).getValues();
+  var expectedValue = String(value || "").trim();
+  var count = 0;
+
+  values.forEach(function (row) {
+    if (String(row[0] || "").trim() === expectedValue) {
+      count += 1;
+    }
+  });
+
+  return count;
+}
+
+function appendCashierClosingSnapshotRows_(sheet, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  var values = rows.map(function (row) {
+    return headers.map(function (header) {
+      return row[header] !== undefined ? row[header] : "";
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+}
+
+function buildCashierClosingSnapshot_(closing, snapshotAt) {
+  var closingId = String(closing.closing_id || "").trim();
+  var operationalDate = String(closing.closing_date || "").trim();
+  var roomSessions = sheetExists_(ROOM_SESSIONS_SHEET)
+    ? readSheetAsObjects_(ROOM_SESSIONS_SHEET)
+    : [];
+  var sessionsById = {};
+  var sessionsByTransactionId = {};
+
+  roomSessions.forEach(function (session) {
+    var sessionId = String(session.session_id || "").trim();
+    if (sessionId) {
+      sessionsById[sessionId] = session;
+    }
+    [session.closed_transaction_id, session.prepayment_transaction_id].forEach(function (transactionId) {
+      var normalizedTransactionId = String(transactionId || "").trim();
+      if (normalizedTransactionId) {
+        sessionsByTransactionId[normalizedTransactionId] = session;
+      }
+    });
+  });
+
+  var transactions = readSheetAsObjects_("Transactions").filter(function (transaction) {
+    return resolveTransactionOperationalDateString_(transaction) === operationalDate;
+  });
+  var transactionIdByOrderId = {};
+  var transactionRows = transactions.map(function (transaction, index) {
+    var transactionId = String(transaction.transaction_id || "").trim();
+    var session = sessionsByTransactionId[transactionId] || {};
+
+    parseCommaSeparatedIds_(transaction.fnb_order_ids).forEach(function (orderId) {
+      transactionIdByOrderId[orderId] = transactionId;
+    });
+
+    return {
+      closing_transaction_id: closingId + "-TX-" + String(index + 1),
+      closing_id: closingId,
+      transaction_id: transactionId,
+      transaction_type: transaction.transaction_type || "session_checkout",
+      session_id: session.session_id || "",
+      room_id: transaction.room_id || session.room_id || "",
+      room_name: transaction.room_name || session.room_name || "",
+      start_time: transaction.start_time || session.start_time || "",
+      end_time: transaction.end_time || session.end_time || "",
+      duration_minutes: Number(transaction.duration_minutes) || Number(session.booked_duration_minutes) || 0,
+      room_total: Number(transaction.room_total) || 0,
+      fnb_total: Number(transaction.fnb_total) || 0,
+      lc_total: Number(transaction.lc_total) || 0,
+      promo_code: transaction.promo_code || "",
+      promo_discount: Number(transaction.promo_discount) || 0,
+      grand_total: getTransactionAmount_(transaction),
+      fnb_order_ids: transaction.fnb_order_ids || "",
+      payment_method: transaction.payment_method || "",
+      payment_status: transaction.payment_status || "",
+      cashier_name: transaction.cashier_name || "",
+      transaction_created_at: transaction.created_at || "",
+      snapshot_at: snapshotAt,
+    };
+  });
+
+  var fnbItemRows = [];
+  if (sheetExists_("FnbOrders") && sheetExists_("FnbOrderItems")) {
+    var itemsByOrderId = groupFnbOrderItemsByOrderId_(readFnbOrderItemsOrEmpty_());
+    readFnbOrdersOrEmpty_().filter(function (order) {
+      return resolveFnbOrderOperationalDateString_(order) === operationalDate;
+    }).forEach(function (order) {
+      var orderId = String(order.order_id || "").trim();
+      (itemsByOrderId[orderId] || []).forEach(function (item) {
+        fnbItemRows.push({
+          closing_fnb_item_id: closingId + "-FNB-" + String(fnbItemRows.length + 1),
+          closing_id: closingId,
+          transaction_id: transactionIdByOrderId[orderId] || "",
+          order_id: orderId,
+          room_id: order.room_id || "",
+          room_name: order.room_name || "",
+          order_status: order.order_status || "",
+          menu_id: item.menu_id || "",
+          menu_name: item.menu_name || "",
+          category: item.category || "",
+          price: Number(item.price) || 0,
+          quantity: Number(item.quantity) || 0,
+          subtotal: Number(item.subtotal) || 0,
+          order_created_at: order.created_at || "",
+          snapshot_at: snapshotAt,
+        });
+      });
+    });
+  }
+
+  var lcDetailRows = [];
+  if (sheetExists_("LcWorkLogs")) {
+    readSheetAsObjects_("LcWorkLogs").filter(function (workLog) {
+      return resolveLcWorkLogOperationalDateString_(workLog) === operationalDate;
+    }).forEach(function (workLog) {
+      var sessionId = String(workLog.session_id || "").trim();
+      var session = sessionsById[sessionId] || {};
+      var endTime = workLog.closed_at || session.end_time || "";
+
+      lcDetailRows.push({
+        closing_lc_detail_id: closingId + "-LC-" + String(lcDetailRows.length + 1),
+        closing_id: closingId,
+        entry_type: "work",
+        log_id: workLog.log_id || "",
+        bonus_log_id: "",
+        transaction_id: session.closed_transaction_id || session.prepayment_transaction_id || "",
+        order_id: "",
+        session_id: sessionId,
+        room_id: session.room_id || "",
+        room_name: session.room_name || "",
+        lc_id: workLog.lc_id || "",
+        lc_name: workLog.lc_name || "",
+        start_time: workLog.created_at || session.start_time || "",
+        end_time: endTime,
+        duration_minutes: inferLcWorkLogDurationMinutes_(workLog) || calculateClosingDurationMinutes_(workLog.created_at || session.start_time, endTime || snapshotAt),
+        work_status: workLog.status || (endTime ? "closed" : "active"),
+        rate: Number(workLog.rate) || 0,
+        menu_name: "",
+        quantity: 0,
+        bonus_per_item: 0,
+        bonus_total: 0,
+        snapshot_at: snapshotAt,
+      });
+    });
+  }
+
+  if (sheetExists_("LcSalesBonusLogs")) {
+    readSheetAsObjects_("LcSalesBonusLogs").filter(function (bonusLog) {
+      var bonusDate = String(bonusLog.operational_date || "").trim()
+        || normalizeLcFinanceOperationalDate_(bonusLog.created_at);
+      return bonusDate === operationalDate && !String(bonusLog.voided_at || "").trim();
+    }).forEach(function (bonusLog) {
+      var orderId = String(bonusLog.order_id || "").trim();
+      lcDetailRows.push({
+        closing_lc_detail_id: closingId + "-LC-" + String(lcDetailRows.length + 1),
+        closing_id: closingId,
+        entry_type: "bonus",
+        log_id: "",
+        bonus_log_id: bonusLog.bonus_log_id || "",
+        transaction_id: bonusLog.transaction_id || transactionIdByOrderId[orderId] || "",
+        order_id: orderId,
+        session_id: "",
+        room_id: "",
+        room_name: "",
+        lc_id: bonusLog.lc_id || "",
+        lc_name: bonusLog.lc_name || "",
+        start_time: bonusLog.created_at || "",
+        end_time: bonusLog.created_at || "",
+        duration_minutes: 0,
+        work_status: bonusLog.source_status || "recorded",
+        rate: 0,
+        menu_name: bonusLog.menu_name || "",
+        quantity: Number(bonusLog.quantity) || 0,
+        bonus_per_item: Number(bonusLog.bonus_per_item) || 0,
+        bonus_total: Number(bonusLog.bonus_total) || 0,
+        snapshot_at: snapshotAt,
+      });
+    });
+  }
+
+  return {
+    transactions: transactionRows,
+    fnb_items: fnbItemRows,
+    lc_details: lcDetailRows,
+  };
+}
+
+function calculateClosingDurationMinutes_(startTime, endTime) {
+  var start = new Date(startTime);
+  var end = new Date(endTime);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    return 0;
+  }
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+}
+
+function summarizeCashierClosingSnapshot_(snapshot) {
+  var transactionSummary = snapshot.transactions.reduce(function (summary, row) {
+    summary.room_total += Number(row.room_total) || 0;
+    summary.fnb_total += Number(row.fnb_total) || 0;
+    summary.lc_total += Number(row.lc_total) || 0;
+    summary.promo_discount += Number(row.promo_discount) || 0;
+    summary.grand_total += Number(row.grand_total) || 0;
+    if (String(row.transaction_type || "").trim().toLowerCase() === "session_checkout") {
+      summary.room_sessions += 1;
+      summary.room_duration_minutes += Number(row.duration_minutes) || 0;
+    }
+    return summary;
+  }, {
+    room_total: 0,
+    fnb_total: 0,
+    lc_total: 0,
+    promo_discount: 0,
+    grand_total: 0,
+    room_sessions: 0,
+    room_duration_minutes: 0,
+  });
+
+  var lcSummary = snapshot.lc_details.reduce(function (summary, row) {
+    var entryType = String(row.entry_type || "").trim().toLowerCase();
+    if (entryType === "work") {
+      summary.assignment_count += 1;
+      if (isClosingLcWorkCompleted_(row)) {
+        summary.room_earning_total += Number(row.rate) || 0;
+        summary.completed_duration_minutes += Number(row.duration_minutes) || 0;
+      } else if (String(row.work_status || "").trim().toLowerCase() === "active") {
+        summary.active_assignment_count += 1;
+      }
+    } else if (entryType === "bonus") {
+      summary.sales_bonus_total += Number(row.bonus_total) || 0;
+    }
+    return summary;
+  }, {
+    assignment_count: 0,
+    active_assignment_count: 0,
+    completed_duration_minutes: 0,
+    room_earning_total: 0,
+    sales_bonus_total: 0,
+  });
+
+  lcSummary.total_lc_obligation = lcSummary.room_earning_total + lcSummary.sales_bonus_total;
+  return {
+    transactions: transactionSummary,
+    lc: lcSummary,
+  };
+}
+
+function isClosingLcWorkCompleted_(row) {
+  var status = String((row && row.work_status) || "").trim().toLowerCase();
+  if (["done", "closed", "paid"].indexOf(status) !== -1) {
+    return true;
+  }
+  return !status && Boolean(row && row.end_time);
+}
+
+function rollbackCashierClosingSnapshot_(closingId, sheets) {
+  [sheets.transactions, sheets.fnb_items, sheets.lc_details].forEach(function (sheet) {
+    deleteSheetRowsByColumnValue_(sheet, "closing_id", closingId);
+  });
+}
+
+function deleteSheetRowsByColumnValue_(sheet, columnName, value) {
+  var headerMap = getHeaderMap_(sheet);
+  var column = headerMap[columnName];
+  if (!column || sheet.getLastRow() < 2) {
+    return;
+  }
+  var values = sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getValues();
+  for (var index = values.length - 1; index >= 0; index -= 1) {
+    if (String(values[index][0] || "").trim() === String(value || "").trim()) {
+      sheet.deleteRow(index + 2);
+    }
+  }
+}
+
+function getCashierClosingDetails_(closingId) {
+  var normalizedClosingId = String(closingId || "").trim();
+  if (!normalizedClosingId) {
+    return { ok: false, success: false, error: "closing_id wajib diisi." };
+  }
+
+  var closing = readCashierClosingsOrEmpty_().filter(function (row) {
+    return String(row.closing_id || "").trim() === normalizedClosingId;
+  })[0];
+  if (!closing) {
+    return { ok: false, success: false, error: "Data closing tidak ditemukan." };
+  }
+
+  var snapshot = {
+    transactions: sheetExists_("CashierClosingTransactions")
+      ? readSheetAsObjects_("CashierClosingTransactions").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+    fnb_items: sheetExists_("CashierClosingFnbItems")
+      ? readSheetAsObjects_("CashierClosingFnbItems").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+    lc_details: sheetExists_("CashierClosingLcDetails")
+      ? readSheetAsObjects_("CashierClosingLcDetails").filter(function (row) {
+          return String(row.closing_id || "").trim() === normalizedClosingId;
+        })
+      : [],
+  };
+
+  return {
+    ok: true,
+    success: true,
+    closing_id: normalizedClosingId,
+    snapshot_available: snapshot.transactions.length > 0,
+    transactions: snapshot.transactions,
+    fnb_items: snapshot.fnb_items,
+    lc_details: snapshot.lc_details,
+    summary: summarizeCashierClosingSnapshot_(snapshot),
+  };
+}
+
+function validateCashierClosingSnapshot_() {
+  var now = new Date();
+  var snapshotAt = toJakartaIsoString_(now);
+  var operationalDate = getOperationalDateString_(now);
+  var snapshot = buildCashierClosingSnapshot_({
+    closing_id: "VALIDATION-" + Utilities.formatDate(now, "Asia/Jakarta", "yyyyMMdd-HHmmss"),
+    closing_date: operationalDate,
+  }, snapshotAt);
+  var snapshotSummary = summarizeCashierClosingSnapshot_(snapshot);
+  var closingSummary = calculateCashierClosingSummary_();
+  var issues = [];
+
+  if (snapshot.transactions.length !== Number(closingSummary.total_transactions || 0)) {
+    issues.push("TRANSACTION_COUNT_MISMATCH");
+  }
+  if (Math.abs(Number(snapshotSummary.transactions.grand_total || 0) - Number(closingSummary.total_revenue || 0)) > 0.01) {
+    issues.push("GRAND_TOTAL_MISMATCH");
+  }
+
+  return {
+    ok: issues.length === 0,
+    success: issues.length === 0,
+    status: issues.length === 0 ? "ready" : "invalid",
+    operational_date: operationalDate,
+    counts: {
+      transactions: snapshot.transactions.length,
+      fnb_items: snapshot.fnb_items.length,
+      lc_details: snapshot.lc_details.length,
+    },
+    summary: snapshotSummary,
+    issues: issues,
+  };
 }
 
 function appendFnbOrder_(order) {
@@ -7999,8 +18364,39 @@ function toJakartaIsoString_(date) {
   return Utilities.formatDate(date, "Asia/Jakarta", "yyyy-MM-dd'T'HH:mm:ssXXX");
 }
 
+function createLockBusyResponse_(message) {
+  var text = String(message || "Sistem sedang memproses perubahan lain. Coba lagi sebentar.").trim();
+
+  return {
+    ok: false,
+    success: false,
+    error: text,
+    message: text,
+  };
+}
+
+function isDevShortSessionRequest_(payload) {
+  var request = payload || {};
+  return DEV_SHORT_SESSION_ENABLED === true && request.dev_test_duration === true;
+}
+
+function getMinimumSessionMinutes_(payload) {
+  if (isDevShortSessionRequest_(payload)) {
+    return Math.max(1, Number(DEV_MIN_SESSION_MINUTES) || 1);
+  }
+
+  return MIN_SESSION_MINUTES;
+}
+
+function getMinimumSessionErrorMessage_(payload) {
+  return "Durasi minimal " + getMinimumSessionMinutes_(payload) + " menit.";
+}
+
 function generateTransactionId_() {
-  return "TRX-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
+  const prefix = "TRX-";
+  const uuidPart = Utilities.getUuid().slice(0, 8).toUpperCase(); // 8 karakter unik
+  const ts = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmssSSS"); // hingga milidetik
+  return `${prefix}${ts}-${uuidPart}`;
 }
 
 function appendTransaction_(transaction) {
@@ -8008,11 +18404,112 @@ function appendTransaction_(transaction) {
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) {
     return String(header).trim();
   });
+
+  // Pastikan transaction_id unik; jika duplikat, buat yang baru
+  var idIndex = headers.indexOf('transaction_id');
+  if (idIndex !== -1 && transaction['transaction_id']) {
+    var existingIds = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getValues()
+                       .flat()
+                       .map(String);
+    if (existingIds.includes(transaction['transaction_id'])) {
+      // Ganti dengan ID baru yang unik
+      transaction['transaction_id'] = generateTransactionId_();
+    }
+  }
+
   var rowValues = headers.map(function (header) {
     return transaction[header] !== undefined ? transaction[header] : "";
   });
 
   sheet.appendRow(rowValues);
+}
+
+function generateRoomSessionId_(roomId) {
+  var safeRoomId = String(roomId || "ROOM").trim().replace(/[^A-Za-z0-9-]/g, "");
+
+  return safeRoomId + "-SESSION-" + Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMddHHmmss") + "-" + Math.floor(Math.random() * 1000);
+}
+
+function appendRoomSession_(session) {
+  appendObjectRow_(ensureRoomSessionsSheet_(), session);
+}
+
+function buildPreparedSessionNote_(paymentMethod, note) {
+  var userNote = String(note || "").trim();
+  var parts = ["Postpaid booking; payment due at checkout"];
+
+  if (userNote) {
+    parts.push(userNote);
+  }
+
+  return parts.join(" | ");
+}
+
+function findLatestRoomSessionForRoom_(roomId, statuses) {
+  if (!sheetExists_(ROOM_SESSIONS_SHEET)) {
+    return null;
+  }
+
+  var normalizedRoomId = String(roomId || "").trim();
+  var allowedStatuses = {};
+
+  (statuses || []).forEach(function (status) {
+    allowedStatuses[String(status || "").trim().toLowerCase()] = true;
+  });
+
+  var sheet = ensureRoomSessionsSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var values = sheet.getDataRange().getValues();
+  var headers = values.length > 0
+    ? values[0].map(function (header) {
+      return String(header).trim();
+    })
+    : [];
+  var latest = null;
+
+  values.slice(1).forEach(function (row, index) {
+    var isEmptyRow = row.every(function (cell) {
+      return cell === "" || cell === null;
+    });
+
+    if (isEmptyRow) {
+      return;
+    }
+
+    var session = {};
+
+    headers.forEach(function (header, headerIndex) {
+      if (header) {
+        session[header] = normalizeCellValue_(header, row[headerIndex]);
+      }
+    });
+
+    var matchesRoom = String(session.room_id || "").trim() === normalizedRoomId;
+    var normalizedStatus = String(session.status || "").trim().toLowerCase();
+
+    if (!matchesRoom || !allowedStatuses[normalizedStatus]) {
+      return;
+    }
+
+    var updatedAt = session.updated_at || session.created_at || "";
+    var updatedTime = new Date(updatedAt).getTime();
+
+    if (!latest || updatedTime >= latest.updatedTime) {
+      latest = {
+        session: session,
+        rowNumber: index + 2,
+        updatedTime: isNaN(updatedTime) ? 0 : updatedTime,
+      };
+    }
+  });
+
+  if (!latest) {
+    return null;
+  }
+
+  latest.sheet = sheet;
+  latest.headerMap = headerMap;
+  return latest;
 }
 
 function ensureTransactionsSheetColumns_() {
@@ -8032,13 +18529,17 @@ function ensureTransactionsSheetColumns_() {
 }
 
 function getTransactionAmount_(transaction) {
-  var grandTotal = Number(transaction.grand_total) || 0;
-
-  if (grandTotal > 0) {
-    return grandTotal;
+  var rawGrandTotal = transaction ? transaction.grand_total : "";
+  if (rawGrandTotal !== "" && rawGrandTotal !== null && rawGrandTotal !== undefined) {
+    var grandTotal = Number(rawGrandTotal);
+    if (isFinite(grandTotal)) {
+      return grandTotal;
+    }
   }
 
-  return Number(transaction.room_total) || 0;
+  return (Number(transaction.room_total) || 0)
+    + (Number(transaction.fnb_total) || 0)
+    + (Number(transaction.lc_total) || 0);
 }
 
 function calculateDurationMinutes_(startTime, endTime) {
@@ -8052,21 +18553,33 @@ function calculateDurationMinutes_(startTime, endTime) {
 function resolveSessionBilling_(room, startDate, endDate) {
   var bookedDurationMinutes = Number(room.booked_duration_minutes) || 0;
   var ratePerHour = Number(room.rate_per_hour) || 0;
+  var diffMs = endDate.getTime() - startDate.getTime();
+  var physicalMinutes = Math.max(0, Math.ceil(diffMs / 60000));
+  var GRACE_PERIOD_MINUTES = 5;
 
-  if (isFinite(bookedDurationMinutes) && bookedDurationMinutes > 0) {
-    return {
-      duration_minutes: bookedDurationMinutes,
-      room_total: calculateRoomTotal_(bookedDurationMinutes, ratePerHour),
-      billing_basis: "booked_duration",
-    };
+  // Aturan Happy Song Karaoke: Tidak main hitungan menit.
+  // 1. Durasi sewa yang dipilih (booked_duration_minutes) adalah minimal yang ditagihkan.
+  // 2. Durasi fisik dibulatkan ke atas per jam penuh jika overtime melebihi batas toleransi (grace period 5 menit).
+  var totalMinutes;
+  var billableHours;
+
+  if (bookedDurationMinutes > 0) {
+    if (physicalMinutes <= bookedDurationMinutes + GRACE_PERIOD_MINUTES) {
+      totalMinutes = bookedDurationMinutes;
+      billableHours = Math.ceil(bookedDurationMinutes / 60);
+    } else {
+      billableHours = Math.ceil(physicalMinutes / 60);
+      totalMinutes = Math.max(bookedDurationMinutes, billableHours * 60);
+    }
+  } else {
+    billableHours = Math.max(1, Math.ceil(physicalMinutes / 60));
+    totalMinutes = billableHours * 60;
   }
 
-  var actualDurationMinutes = calculateDurationMinutes_(startDate, endDate);
-
   return {
-    duration_minutes: actualDurationMinutes,
-    room_total: calculateRoomTotal_(actualDurationMinutes, ratePerHour),
-    billing_basis: "actual_duration",
+    duration_minutes: totalMinutes,
+    room_total: billableHours * ratePerHour,
+    billing_basis: bookedDurationMinutes > 0 ? "booked_duration" : "actual_duration",
   };
 }
 
@@ -8093,12 +18606,27 @@ function healthCheck_() {
 }
 
 function normalizeCellValue_(header, value) {
-  if (value === "") {
+  if (value === "" || value === null || value === undefined) {
     return null;
   }
 
   if (NUMERIC_FIELDS[header]) {
-    var numberValue = Number(value);
+    if (typeof value === "number") {
+      return value;
+    }
+    
+    var str = String(value).replace(/[Rp\s]/gi, "");
+    if (/^\d{1,3}(\.\d{3})+$/.test(str)) {
+      str = str.replace(/\./g, "");
+    } else if (/^\d{1,3}(,\d{3})+$/.test(str)) {
+      str = str.replace(/,/g, "");
+    } else if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(str)) {
+      str = str.replace(/\./g, "").replace(/,/g, ".");
+    } else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(str)) {
+      str = str.replace(/,/g, "");
+    }
+    
+    var numberValue = Number(str);
     return isNaN(numberValue) ? value : numberValue;
   }
 
@@ -8107,6 +18635,16 @@ function normalizeCellValue_(header, value) {
 
 function getRoomFromRow_(sheet, headerMap, rowNumber) {
   var room = getRowObject_(sheet, headerMap, rowNumber);
+  
+  var lcIds = "";
+  try {
+    var activeSession = findLatestRoomSessionForRoom_(room.room_id || "", ["starting", "active", "closing"]);
+    if (activeSession && activeSession.session) {
+      lcIds = activeSession.session.lc_ids || "";
+    }
+  } catch (err) {
+    // Safe fallback
+  }
 
   return {
     room_id: room.room_id || "",
@@ -8118,5 +18656,643 @@ function getRoomFromRow_(sheet, headerMap, rowNumber) {
     rate_per_hour: room.rate_per_hour || 0,
     tv_device_id: room.tv_device_id || "",
     updated_at: room.updated_at || null,
+    lc_ids: lcIds,
   };
 }
+
+function deleteOpenFnbOrdersForPrepay_(roomId) {
+  var ordersSheet = getSheet_("FnbOrders");
+  if (!ordersSheet) return;
+  var ordersHeaderMap = getHeaderMap_(ordersSheet);
+  var itemsSheet = getSheet_("FnbOrderItems");
+  if (!itemsSheet) return;
+  var itemsHeaderMap = getHeaderMap_(itemsSheet);
+  
+  var orders = readSheetAsObjects_("FnbOrders");
+  var orderIdsToDelete = [];
+  
+  for (var i = 0; i < orders.length; i++) {
+    var order = orders[i];
+    if (
+      String(order.room_id || "").trim() === String(roomId || "").trim() &&
+      !order.room_start_time &&
+      String(order.order_status || "").trim() === "open"
+    ) {
+      orderIdsToDelete.push(order.order_id);
+    }
+  }
+  
+  if (orderIdsToDelete.length === 0) return;
+  
+  // Delete from FnbOrders
+  var ordersData = ordersSheet.getDataRange().getValues();
+  for (var r = ordersData.length - 1; r >= 1; r--) {
+    var id = String(ordersData[r][ordersHeaderMap.order_id - 1] || "").trim();
+    if (orderIdsToDelete.indexOf(id) !== -1) {
+      ordersSheet.deleteRow(r + 1);
+    }
+  }
+  
+  // Delete from FnbOrderItems
+  var itemsData = itemsSheet.getDataRange().getValues();
+  for (var r = itemsData.length - 1; r >= 1; r--) {
+    var id = String(itemsData[r][itemsHeaderMap.order_id - 1] || "").trim();
+    if (orderIdsToDelete.indexOf(id) !== -1) {
+      itemsSheet.deleteRow(r + 1);
+    }
+  }
+}
+
+function markFnbOrdersAsPaid_(orderIds, now) {
+  if (!orderIds || orderIds.length === 0) {
+    return;
+  }
+
+  var sheet = getSheet_("FnbOrders");
+  var headerMap = getHeaderMap_(sheet);
+
+  orderIds.forEach(function (orderId) {
+    var rowNumber = findRowByValue_(sheet, headerMap, "order_id", orderId);
+
+    if (!rowNumber) {
+      throw new Error("Order F&B tidak ditemukan: " + orderId);
+    }
+
+    sheet.getRange(rowNumber, headerMap.order_status).setValue("paid");
+
+    if (headerMap.updated_at) {
+      sheet.getRange(rowNumber, headerMap.updated_at).setValue(now);
+    }
+  });
+}
+
+function syncPrepaidFnbOrdersStartTime_(roomId, startTime) {
+  var sheet = getSheet_("FnbOrders");
+  if (!sheet) return;
+  
+  var headerMap = getHeaderMap_(sheet);
+  var orders = readSheetAsObjects_("FnbOrders");
+  
+  orders.forEach(function (order, index) {
+    if (
+      String(order.room_id || "").trim() === String(roomId || "").trim() &&
+      !order.room_start_time
+    ) {
+      var rowRowNum = index + 2;
+      sheet.getRange(rowRowNum, headerMap.room_start_time).setValue(startTime);
+      sheet.getRange(rowRowNum, headerMap.updated_at).setValue(startTime);
+    }
+  });
+}
+
+function getPromos_() {
+  ensurePromoMasterSheet_();
+  var promos = readSheetAsObjects_("PromoMaster");
+  return {
+    ok: true,
+    success: true,
+    promos: promos
+  };
+}
+
+function savePromo_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var type = String(payload.type || "promo").trim().toLowerCase(); // "promo" atau "voucher"
+  var discountType = String(payload.discount_type || "percentage").trim().toLowerCase(); // "percentage" atau "nominal"
+  var discountValue = Number(payload.discount_value) || 0;
+  
+  if (!code) {
+    return { ok: false, success: false, error: "Kode promosi wajib diisi." };
+  }
+  if (discountValue <= 0) {
+    return { ok: false, success: false, error: "Nilai potongan diskon wajib lebih dari 0." };
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return { ok: false, success: false, error: "Sistem sedang sibuk. Coba lagi sebentar." };
+  }
+
+  try {
+    var sheet = ensurePromoMasterSheet_();
+    var headerMap = getHeaderMap_(sheet);
+    
+    // Cek duplikasi kode
+    var existing = readSheetAsObjects_("PromoMaster");
+    var isDuplicate = existing.some(function(p) {
+      return String(p.code || "").trim().toUpperCase() === code;
+    });
+    if (isDuplicate) {
+      return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" sudah terdaftar." };
+    }
+
+    var promo = {
+      code: code,
+      type: type,
+      discount_type: discountType,
+      discount_value: discountValue,
+      status: "active",
+      used_in_transaction_id: "",
+      used_at: "",
+      created_at: toJakartaIsoString_(new Date())
+    };
+
+    appendObjectRow_(sheet, promo);
+    return {
+      ok: true,
+      success: true,
+      message: "Kode promosi berhasil ditambahkan.",
+      promo: promo
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updatePromoStatus_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var status = String(payload.status || "active").trim().toLowerCase(); // "active" atau "inactive"
+  
+  if (!code) {
+    return { ok: false, success: false, error: "Kode wajib ditentukan." };
+  }
+
+  var sheet = ensurePromoMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "code", code);
+  
+  if (!rowNumber) {
+    return { ok: false, success: false, error: "Kode promosi tidak ditemukan." };
+  }
+
+  sheet.getRange(rowNumber, headerMap.status).setValue(status);
+  return {
+    ok: true,
+    success: true,
+    message: "Status promo berhasil diperbarui."
+  };
+}
+
+function deletePromo_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  if (!code) {
+    return { ok: false, success: false, error: "Kode wajib ditentukan." };
+  }
+
+  var sheet = ensurePromoMasterSheet_();
+  var headerMap = getHeaderMap_(sheet);
+  var rowNumber = findRowByValue_(sheet, headerMap, "code", code);
+  
+  if (!rowNumber) {
+    return { ok: false, success: false, error: "Kode promosi tidak ditemukan." };
+  }
+
+  sheet.deleteRow(rowNumber);
+  return {
+    ok: true,
+    success: true,
+    message: "Kode promosi berhasil dihapus permanen."
+  };
+}
+
+function validatePromoCode_(payload) {
+  var code = String(payload.code || "").trim().toUpperCase();
+  var roomTotal = Number(payload.room_total) || 0;
+
+  if (!code) {
+    return { ok: false, success: false, error: "Kode promo/voucher wajib diisi." };
+  }
+
+  ensurePromoMasterSheet_();
+  var promos = readSheetAsObjects_("PromoMaster");
+  var foundPromo = null;
+  
+  for (var i = 0; i < promos.length; i++) {
+    if (String(promos[i].code || "").trim().toUpperCase() === code) {
+      foundPromo = promos[i];
+      break;
+    }
+  }
+
+  if (!foundPromo) {
+    return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" tidak terdaftar." };
+  }
+
+  var currentTxId = String(payload.transaction_id || "").trim();
+  var promoStatus = String(foundPromo.status || "").trim().toLowerCase();
+  var usedTxId = String(foundPromo.used_in_transaction_id || "").trim();
+
+  if (promoStatus !== "active" && (!currentTxId || usedTxId !== currentTxId)) {
+    return { ok: false, success: false, error: "Kode promo/voucher \"" + code + "\" sedang dinonaktifkan." };
+  }
+
+  // Cek jika tipe voucher sekali pakai dan sudah terpakai
+  if (String(foundPromo.type || "").trim().toLowerCase() === "voucher") {
+    if (usedTxId !== "" && (!currentTxId || usedTxId !== currentTxId)) {
+      return { ok: false, success: false, error: "Voucher \"" + code + "\" sudah digunakan di transaksi " + usedTxId };
+    }
+  }
+
+  // Hitung diskon
+  var discount = 0;
+  var val = Number(foundPromo.discount_value) || 0;
+  
+  if (String(foundPromo.discount_type || "").trim().toLowerCase() === "percentage") {
+    discount = Math.ceil((val / 100) * roomTotal);
+  } else {
+    discount = val;
+  }
+
+  // Batasi agar diskon tidak melebihi total sewa room
+  if (discount > roomTotal) {
+    discount = roomTotal;
+  }
+
+  return {
+    ok: true,
+    success: true,
+    code: foundPromo.code,
+    type: foundPromo.type,
+    discount_type: foundPromo.discount_type,
+    discount_value: foundPromo.discount_value,
+    discount: discount
+  };
+}
+
+function normalizeCompareDate_(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    var y = val.getFullYear();
+    var m = String(val.getMonth() + 1);
+    if (m.length < 2) m = "0" + m;
+    var d = String(val.getDate());
+    if (d.length < 2) d = "0" + d;
+    return y + "-" + m + "-" + d;
+  }
+  var clean = String(val).trim();
+  if (clean.indexOf("T") !== -1) {
+    return clean.split("T")[0];
+  }
+  if (clean.indexOf(" ") !== -1) {
+    return clean.split(" ")[0];
+  }
+  return clean;
+}
+
+function correctActiveRoomDuration_(roomId, targetDurationMinutes, cashierName, note) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return createLockBusyResponse_("Sistem sedang memproses transaksi lain. Coba lagi sebentar.");
+  }
+
+  try {
+    var normalizedRoomId = String(roomId || "").trim();
+    var duration = Number(targetDurationMinutes);
+
+    if (!normalizedRoomId) {
+      return { ok: false, success: false, error: "room_id wajib diisi." };
+    }
+
+    if (isNaN(duration) || duration <= 0) {
+      return { ok: false, success: false, error: "target_duration_minutes wajib berupa angka bulat positif." };
+    }
+
+    var roomsSheet = ensureRoomsMasterColumns_();
+    var roomsHeaderMap = getHeaderMap_(roomsSheet);
+    var roomRowNumber = findRowByValue_(roomsSheet, roomsHeaderMap, "room_id", normalizedRoomId);
+
+    if (!roomRowNumber) {
+      return { ok: false, success: false, error: "Ruangan tidak ditemukan: " + normalizedRoomId };
+    }
+
+    var roomObj = getRowObject_(roomsSheet, roomsHeaderMap, roomRowNumber);
+    var startTime = roomObj.start_time;
+
+    if (!startTime) {
+      return { ok: false, success: false, error: "Ruangan tidak memiliki sesi aktif." };
+    }
+
+    var newScheduledEndTime = addMinutesToJakartaIsoString_(startTime, duration);
+    var nowIso = toJakartaIsoString_(new Date());
+
+    // Update Rooms sheet
+    setRowValues_(roomsSheet, roomsHeaderMap, roomRowNumber, {
+      booked_duration_minutes: duration,
+      scheduled_end_time: newScheduledEndTime,
+      updated_at: nowIso,
+    });
+
+    // Update RoomSessions sheet if available
+    if (sheetExists_(ROOM_SESSIONS_SHEET)) {
+      var latestSession = findLatestRoomSessionForRoom_(normalizedRoomId, ["starting", "active", "closing"]);
+      if (latestSession && latestSession.session && latestSession.rowNumber) {
+        var updatePayload = {
+          booked_duration_minutes: duration,
+          scheduled_end_time: newScheduledEndTime,
+          updated_at: nowIso,
+        };
+        if (latestSession.session.booking_mode === FNB_V25A_BOOKING_MODE_REGULAR) {
+          updatePayload.billable_room_minutes = duration;
+        }
+        setRowValues_(latestSession.sheet, latestSession.headerMap, latestSession.rowNumber, updatePayload);
+      }
+    }
+
+    // Append RoomTimeLog
+    try {
+      appendRoomTimeLog_({
+        log_id: generateRoomTimeLogId_(),
+        room_id: normalizedRoomId,
+        room_name: roomObj.room_name || normalizedRoomId,
+        action_type: "duration_correction",
+        previous_duration: roomObj.booked_duration_minutes || "",
+        new_duration: duration,
+        cashier_name: cashierName || "Kasir",
+        note: note || "Koreksi durasi room oleh operator",
+        created_at: nowIso,
+      });
+    } catch (logErr) {
+      // Safe fallback
+    }
+
+    return {
+      ok: true,
+      success: true,
+      code: "DURATION_CORRECTED",
+      message: "Durasi " + (roomObj.room_name || normalizedRoomId) + " berhasil dikoreksi menjadi " + duration + " menit (" + (duration / 60) + " jam).",
+      room: {
+        room_id: normalizedRoomId,
+        room_name: roomObj.room_name,
+        booked_duration_minutes: duration,
+        scheduled_end_time: newScheduledEndTime,
+        updated_at: nowIso,
+      },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function initializeStockFromJul31_(payload) {
+  var user = String(payload && payload.cashier_name || "Owner").trim() || "Owner";
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return createLockBusyResponse_("Sistem sedang memproses data lain. Coba lagi.");
+  }
+
+  try {
+    var inventorySheet = ensureInventorySheetColumns_();
+    var inventoryHeaderMap = getHeaderMap_(inventorySheet);
+    var stockMovementsSheet = ensureStockMovementsSheet_();
+    var stockMovementsHeaderMap = getHeaderMap_(stockMovementsSheet);
+
+    var inventoryRows = readSheetAsObjects_("Inventory");
+    var existingMovements = readSheetAsObjects_("StockMovements");
+
+    // Group sales out movements by stock_item_id
+    var salesOutByItemId = {};
+    existingMovements.forEach(function (m) {
+      var refType = String(m.reference_type || "").trim();
+      var movType = String(m.movement_type || "").trim().toLowerCase();
+      if (refType === "transaction" || movType === "out") {
+        var sId = String(m.stock_item_id || "").trim();
+        if (sId) {
+          salesOutByItemId[sId] = (salesOutByItemId[sId] || 0) + Math.abs(Number(m.qty_change) || 0);
+        }
+      }
+    });
+
+    var jul31Timestamp = "2026-07-31T00:00:00+07:00";
+    var createdCount = 0;
+    var updatedCount = 0;
+
+    inventoryRows.forEach(function (item) {
+      var sId = String(item.stock_item_id || item.item_id || "").trim();
+      var sName = String(item.stock_item_name || item.item_name || sId).trim();
+      if (!sId) return;
+
+      var initialStockQty = Number(item.stock_qty) || 0;
+      var totalOutQty = salesOutByItemId[sId] || 0;
+      var currentNetStock = initialStockQty - totalOutQty;
+
+      // Check if an initial_stock movement already exists for this item on 31 Jul
+      var existingInitMove = existingMovements.find(function (m) {
+        return String(m.stock_item_id || "").trim() === sId && String(m.reference_type || "").trim() === "initial_stock";
+      });
+
+      if (!existingInitMove) {
+        var movementId = "MOV-20260731-000000-" + sId;
+        var initMovement = {
+          movement_id: movementId,
+          created_at: jul31Timestamp,
+          stock_item_id: sId,
+          stock_item_name: sName,
+          movement_type: "in",
+          reference_type: "initial_stock",
+          reference_id: "INIT-20260731",
+          qty_change: initialStockQty,
+          stock_before: 0,
+          stock_after: initialStockQty,
+          note: "Stok Awal Saldo per 31 Juli 2026",
+          cashier_name: user,
+        };
+        appendStockMovement_(initMovement);
+        createdCount++;
+      } else {
+        var rowNum = findRowByValue_(stockMovementsSheet, stockMovementsHeaderMap, "movement_id", existingInitMove.movement_id);
+        if (rowNum) {
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.qty_change).setValue(initialStockQty);
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.stock_after).setValue(initialStockQty);
+          stockMovementsSheet.getRange(rowNum, stockMovementsHeaderMap.created_at).setValue(jul31Timestamp);
+        }
+        updatedCount++;
+      }
+
+      // Update Inventory.stock_qty to currentNetStock (initial stock - total sales out)
+      var invRowNum = findInventoryRowByStockItemId_(sId, inventorySheet, inventoryHeaderMap);
+      if (invRowNum) {
+        inventorySheet.getRange(invRowNum, inventoryHeaderMap.stock_qty).setValue(currentNetStock);
+        if (inventoryHeaderMap.updated_at) {
+          inventorySheet.getRange(invRowNum, inventoryHeaderMap.updated_at).setValue(toJakartaIsoString_(new Date()));
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      success: true,
+      message: "Stok Awal per 31 Juli 2026 berhasil disinkronkan dan saldo stok diperbarui.",
+      created_initial_movements: createdCount,
+      updated_initial_movements: updatedCount,
+      total_items_processed: inventoryRows.length,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getOperationalAnalytics_(params) {
+  params = params || {};
+  var period = String(params.period || "today").trim();
+  var startDate = String(params.start_date || "").trim();
+  var endDate = String(params.end_date || "").trim();
+  var compareTo = String(params.compare_to || "previous_period").trim();
+  var roomFilter = String(params.room_filter || "all").trim();
+
+  var curResult = getTransactionsByPeriod_(period, startDate, endDate);
+  var curTrx = (curResult && curResult.transactions) ? curResult.transactions : [];
+
+  var rooms = readSheetAsObjects_("Rooms") || [];
+  var totalRoomsCount = Math.max(1, rooms.length || 1);
+  var operationalHoursPerDay = 18;
+  var durationDays = (curResult && curResult.daysCount) ? curResult.daysCount : 1;
+  var availableRoomHours = totalRoomsCount * operationalHoursPerDay * durationDays;
+
+  // Filter by room if specified
+  if (roomFilter && roomFilter !== "all") {
+    curTrx = curTrx.filter(function(t) { return t.room_id === roomFilter; });
+  }
+
+  var curRevenue = 0;
+  var curRoomRev = 0;
+  var curFnbRev = 0;
+  var curLcRev = 0;
+  var curDiscounts = 0;
+  var curCash = 0;
+  var curTransfer = 0;
+  var curExtSessions = 0;
+  var curLcSessions = 0;
+
+  var hourlyMap = {};
+  for (var h = 0; h < 24; h++) {
+    hourlyMap[h] = { hour: h, revenue: 0, hours: 0, sessions: 0 };
+  }
+
+  var roomMap = {};
+
+  curTrx.forEach(function(t) {
+    if (String(t.payment_status || "").toLowerCase() === "paid") {
+      var gTotal = Number(t.grand_total || 0);
+      var rTotal = Number(t.room_total || 0);
+      var fTotal = Number(t.fnb_total || 0);
+      var lTotal = Number(t.lc_total || 0);
+      var disc = Number(t.promo_discount || 0) + Number(t.manual_discount || 0) + Number(t.room_discount_amount || 0);
+      var dur = Number(t.duration_minutes || 0);
+
+      curRevenue += gTotal;
+      curRoomRev += rTotal;
+      curFnbRev += fTotal;
+      curLcRev += lTotal;
+      curDiscounts += disc;
+      curCash += Number(t.cash_amount || 0);
+      curTransfer += Number(t.transfer_amount || 0);
+
+      if (dur > 120) curExtSessions++;
+      if (lTotal > 0) curLcSessions++;
+
+      // Hourly bin
+      var sTime = t.start_time ? new Date(t.start_time) : new Date();
+      var sHour = sTime.getHours();
+      if (hourlyMap[sHour]) {
+        hourlyMap[sHour].revenue += gTotal;
+        hourlyMap[sHour].hours += (dur / 60);
+        hourlyMap[sHour].sessions += 1;
+      }
+
+      // Room bin
+      var rId = t.room_id || "unknown";
+      if (!roomMap[rId]) {
+        roomMap[rId] = {
+          room_id: rId,
+          room_name: t.room_name || rId,
+          total_sessions: 0,
+          total_hours: 0,
+          total_room_revenue: 0,
+          total_grand_revenue: 0,
+          extended_sessions: 0
+        };
+      }
+      roomMap[rId].total_sessions++;
+      roomMap[rId].total_hours += (dur / 60);
+      roomMap[rId].total_room_revenue += rTotal;
+      roomMap[rId].total_grand_revenue += gTotal;
+      if (dur > 120) roomMap[rId].extended_sessions++;
+    }
+  });
+
+  var curTrxCount = curTrx.filter(function(t) { return String(t.payment_status || "").toLowerCase() === "paid"; }).length;
+  var curRevPah = availableRoomHours > 0 ? Math.round(curRoomRev / availableRoomHours) : 0;
+  var curAov = curTrxCount > 0 ? Math.round(curRevenue / curTrxCount) : 0;
+  var curExtRate = curTrxCount > 0 ? Math.round((curExtSessions / curTrxCount) * 1000) / 10 : 0;
+  var curLcRate = curTrxCount > 0 ? Math.round((curLcSessions / curTrxCount) * 1000) / 10 : 0;
+
+  var hourlySequence = [];
+  for (var i = 0; i < 24; i++) {
+    var hourIndex = (10 + i) % 24;
+    var bin = hourlyMap[hourIndex] || { revenue: 0, hours: 0, sessions: 0 };
+    hourlySequence.push({
+      hour: hourIndex,
+      hourLabel: (hourIndex < 10 ? "0" : "") + hourIndex + ":00",
+      currentRevenue: bin.revenue,
+      compareRevenue: 0,
+      currentRoomHours: Math.round(bin.hours * 10) / 10,
+      compareRoomHours: 0,
+      currentSessions: bin.sessions,
+      compareSessions: 0
+    });
+  }
+
+  var roomLeaderboard = Object.keys(roomMap).map(function(k) {
+    var r = roomMap[k];
+    var maxPossible = operationalHoursPerDay * durationDays;
+    return {
+      room_id: r.room_id,
+      room_name: r.room_name,
+      total_sessions: r.total_sessions,
+      total_hours: Math.round(r.total_hours * 10) / 10,
+      occupancy_rate_percent: maxPossible > 0 ? Math.min(100, Math.round((r.total_hours / maxPossible) * 1000) / 10) : 0,
+      total_room_revenue: r.total_room_revenue,
+      total_grand_revenue: r.total_grand_revenue,
+      extension_rate_percent: r.total_sessions > 0 ? Math.round((r.extended_sessions / r.total_sessions) * 1000) / 10 : 0
+    };
+  }).sort(function(a, b) { return b.total_hours - a.total_hours; });
+
+  return {
+    ok: true,
+    success: true,
+    filters: {
+      period: period,
+      startDate: (curResult && curResult.startDate) ? curResult.startDate : "",
+      endDate: (curResult && curResult.endDate) ? curResult.endDate : "",
+      compareTo: compareTo,
+      compareStartDate: "",
+      compareEndDate: "",
+      roomFilter: roomFilter,
+      durationDays: durationDays
+    },
+    kpi: {
+      totalRevenue: { current: curRevenue, compare: 0, deltaPercent: 0 },
+      revPah: { current: curRevPah, compare: 0, deltaPercent: 0, availableHours: availableRoomHours },
+      avgSpendPerRoom: { current: curAov, compare: 0, deltaPercent: 0 },
+      fnbGrossMargin: { currentPercent: 65.0, grossSales: curFnbRev, grossProfit: curFnbRev * 0.65, totalHpp: curFnbRev * 0.35 },
+      roomExtensionRate: { currentPercent: curExtRate, comparePercent: 0, deltaPercent: 0, extendedSessions: curExtSessions, totalSessions: curTrxCount },
+      lcAttachmentRate: { currentPercent: curLcRate, comparePercent: 0, deltaPercent: 0, lcSessions: curLcSessions, totalSessions: curTrxCount },
+      discountLeakage: { current: curDiscounts, compare: 0, deltaPercent: 0 }
+    },
+    revenueComposition: {
+      roomTotal: curRoomRev,
+      fnbTotal: curFnbRev,
+      lcTotal: curLcRev,
+      discounts: curDiscounts,
+      netRevenue: curRevenue
+    },
+    paymentBreakdown: {
+      cash: curCash,
+      transfer: curTransfer
+    },
+    hourlyTraffic: hourlySequence,
+    roomLeaderboard: roomLeaderboard,
+    fnbLeaderboard: []
+  };
+}
+

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Inti jalur C: jendela melayang non-fokus di atas aplikasi lain. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Perintah dari bridge dikirim lewat `am start-foreground-service`, jadi service wajib
+         memenuhi kontrak foreground service (startForeground dalam 5 detik). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:label="TV Notify"
+        android:supportsRtl="false">
+
+        <service
+            android:name=".OverlayService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menampilkan pengingat sisa waktu di layar TV ruangan" />
+        </service>
+
+    </application>
+
+</manifest>

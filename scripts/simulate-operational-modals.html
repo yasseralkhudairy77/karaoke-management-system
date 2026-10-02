@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>Simulasi Modal Operasional</title>
+</head>
+<body>
+  <pre id="result">RUNNING</pre>
+  <iframe
+    id="app"
+    src="../index.html"
+    title="Aplikasi uji"
+    style="width: 1280px; height: 720px; border: 0"
+  ></iframe>
+  <script>
+    const resultElement = document.getElementById("result");
+    const frame = document.getElementById("app");
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    frame.addEventListener("load", async () => {
+      try {
+        const app = frame.contentWindow;
+        const doc = frame.contentDocument;
+        const ui = app.__karaokeUiTest;
+        const results = {};
+
+        ui.showFloatingToast("Simulasi toast tetap terlihat", "success");
+        const toast = doc.querySelector(".floating-toast");
+        results.toastVisible = Boolean(toast && app.getComputedStyle(toast).display !== "none");
+        results.toastContainerFixed = app.getComputedStyle(
+          doc.querySelector(".floating-toast-container")
+        ).position === "fixed";
+
+        ui.openActionConfirmation({
+          title: "Modal Pertama",
+          details: [["Total", "Rp 100.000"]],
+          onConfirm: async () => {},
+        });
+        ui.openActionConfirmation({
+          title: "Modal Pengganti",
+          details: [["Total", "Rp 200.000"]],
+          onConfirm: async () => {},
+        });
+        const overlay = doc.querySelector(".action-confirmation-overlay");
+        const dialog = doc.querySelector(".action-confirmation-dialog");
+        const rect = dialog.getBoundingClientRect();
+        results.singleModalOnly = doc.querySelectorAll(".action-confirmation-overlay").length === 1;
+        results.latestModalWins = doc.querySelector(".action-confirmation-title").textContent === "Modal Pengganti";
+        results.modalFixed = app.getComputedStyle(overlay).position === "fixed";
+        results.modalInsideViewport = rect.top >= 0
+          && rect.left >= 0
+          && rect.bottom <= frame.clientHeight
+          && rect.right <= frame.clientWidth;
+        ui.closeActionConfirmation();
+
+        app.__modalSimulationConfirmCount = 0;
+        ui.openActionConfirmation({
+          title: "Validasi Alasan",
+          field: {
+            label: "Alasan",
+            required: true,
+            minLength: 5,
+            errorMessage: "Alasan minimal 5 karakter.",
+          },
+          onConfirm: async () => {
+            app.__modalSimulationConfirmCount += 1;
+            await wait(250);
+          },
+        });
+        ui.updateActionConfirmationField("x");
+        doc.querySelector(".action-confirmation-button--warning").click();
+        await wait(30);
+        results.shortReasonBlocked = app.__modalSimulationConfirmCount === 0
+          && Boolean(doc.querySelector(".action-confirmation-overlay"));
+
+        ui.updateActionConfirmationField("alasan valid");
+        const confirmButton = doc.querySelector(".action-confirmation-button--warning");
+        confirmButton.click();
+        confirmButton.click();
+        await wait(30);
+        results.busyStateVisible = doc.querySelector(".action-confirmation-button--warning")
+          ?.textContent === "Memproses...";
+        results.doubleClickBlocked = app.__modalSimulationConfirmCount === 1;
+        await wait(300);
+        results.modalClosesAfterSuccess = !doc.querySelector(".action-confirmation-overlay");
+
+        ui.openActionResult({
+          tone: "success",
+          title: "Order Tersimpan",
+          message: "Simulasi hasil transaksi.",
+          details: [["ID Order", "FNB-TEST-001"]],
+        });
+        results.resultModalVisible = doc.querySelector(".action-confirmation-title")
+          ?.textContent === "Order Tersimpan";
+        doc.querySelector(".action-confirmation-button--success").click();
+        await wait(30);
+        results.resultModalCloses = !doc.querySelector(".action-confirmation-overlay");
+
+        frame.style.width = "390px";
+        frame.style.height = "844px";
+        ui.openActionConfirmation({
+          title: "Simulasi Mobile",
+          details: [["Total", "Rp 200.000"]],
+          onConfirm: async () => {},
+        });
+        await wait(30);
+        const mobileDialog = doc.querySelector(".action-confirmation-dialog");
+        const mobileButtons = doc.querySelectorAll(".action-confirmation-button");
+        const mobileRect = mobileDialog.getBoundingClientRect();
+        results.mobileDialogFits = mobileRect.left >= 0
+          && mobileRect.right <= frame.clientWidth
+          && mobileRect.bottom <= frame.clientHeight;
+        results.mobileButtonsStacked = mobileButtons.length === 2
+          && mobileButtons[1].getBoundingClientRect().top > mobileButtons[0].getBoundingClientRect().top;
+        results.mobileToastAnchored = app.getComputedStyle(
+          doc.querySelector(".floating-toast-container")
+        ).bottom === "12px";
+        ui.closeActionConfirmation();
+
+        frame.style.width = "1280px";
+        frame.style.height = "720px";
+        await ui.openFnbOrderPreview();
+        await wait(30);
+        const fnbDialogText = doc.querySelector(".action-confirmation-dialog")?.innerText || "";
+        const normalizedFnbDialogText = fnbDialogText.replace(/\s+/g, " ");
+        results.fnbReviewModalVisible = doc.querySelector(".action-confirmation-title")
+          ?.textContent === "Periksa Order F&B";
+        results.fnbReviewShowsTarget = fnbDialogText.includes("Ruangan Simulasi");
+        results.fnbReviewShowsItems = fnbDialogText.includes("2x Minuman Simulasi");
+        results.fnbReviewShowsTotal = normalizedFnbDialogText.includes("Rp 50.000");
+        results.fnbReviewShowsBillingMode = fnbDialogText.includes("Masuk tagihan room");
+        ui.closeActionConfirmation();
+
+        const failed = Object.entries(results)
+          .filter((entry) => entry[1] !== true)
+          .map((entry) => entry[0]);
+        resultElement.textContent = JSON.stringify({ results, failed });
+        document.body.dataset.status = failed.length ? "FAILED" : "PASSED";
+      } catch (error) {
+        resultElement.textContent = JSON.stringify({
+          results: {},
+          failed: ["simulation_exception"],
+          error: error.message,
+        });
+        document.body.dataset.status = "FAILED";
+      }
+    });
+  </script>
+</body>
+</html>
