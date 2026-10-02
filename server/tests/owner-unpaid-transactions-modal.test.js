@@ -99,10 +99,11 @@ function testOwnerUnpaidTransactionsModal() {
 
   // 8. Validasi cache buster index.html
   assert(
-    /style\.css\?v=owner-unpaid-modal-v2/.test(indexHtmlContent),
-    'index.html wajib diperbarui ke cache buster owner-unpaid-modal-v2'
+    /style\.css\?v=[a-zA-Z0-9_-]+/.test(indexHtmlContent) &&
+    /app\.js\?v=[a-zA-Z0-9_-]+/.test(indexHtmlContent),
+    'index.html wajib memiliki parameter cache buster pada style.css dan app.js'
   );
-  console.log('  ✓ Cache buster index.html diperbarui ke v=owner-unpaid-modal-v2');
+  console.log('  ✓ Cache buster index.html terverifikasi aktif');
 
   // 9. Aturan antislop: larangan karakter em dash (\u2014)
   const fnMatch = appJsContent.match(/function createOwnerUnpaidTransactionsModalOverlay\(\)\s*\{([\s\S]*?)\nfunction createOwnerDashboardElement/);

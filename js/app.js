@@ -23414,6 +23414,137 @@ function createMasterCategoryField({ label = "Kategori", field = "category", hel
   return wrapper;
 }
 
+function getSortedPackageCategories() {
+  const categories = new Set();
+  (packages || []).forEach((pkg) => {
+    const cat = String(pkg?.package_category || "").trim();
+    if (cat) {
+      categories.add(cat);
+    }
+  });
+  return Array.from(categories).sort((a, b) => a.localeCompare(b, "id", { sensitivity: "base" }));
+}
+
+function createMasterPackageCategoryField({ label = "Kategori", field = "package_category", helper = "" }) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "master-form-field add-package-category-field";
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "master-form-label";
+  labelElement.textContent = label;
+
+  const categories = getSortedPackageCategories();
+  const currentVal = String(masterDataForm?.values?.[field] || "").trim();
+  const isExisting = categories.includes(currentVal);
+  const selectVal = isExisting ? currentVal : (currentVal ? "__custom__" : (categories[0] || "__custom__"));
+
+  const select = document.createElement("select");
+  select.className = "master-form-input";
+
+  if (categories.length > 0) {
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = "-- Pilih Kategori Paket --";
+    select.appendChild(defaultOpt);
+
+    categories.forEach((cat) => {
+      const opt = document.createElement("option");
+      opt.value = cat;
+      opt.textContent = cat;
+      if (cat === selectVal) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "+ Tambah Kategori Baru (Ketik Manual)...";
+  if (selectVal === "__custom__" || categories.length === 0) customOpt.selected = true;
+  select.appendChild(customOpt);
+
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.className = "master-form-input add-package-custom-category-input";
+  customInput.placeholder = "Ketik nama kategori baru (contoh: PAKET TWIN, VIP)...";
+  customInput.style.marginTop = "6px";
+  customInput.style.display = (selectVal === "__custom__" || categories.length === 0) ? "block" : "none";
+  customInput.value = isExisting ? "" : currentVal;
+
+  select.addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (val === "__custom__") {
+      customInput.style.display = "block";
+      customInput.focus();
+      updateMasterDataForm(field, customInput.value.trim());
+    } else {
+      customInput.style.display = "none";
+      updateMasterDataForm(field, val);
+    }
+  });
+
+  customInput.addEventListener("input", (e) => {
+    updateMasterDataForm(field, e.target.value.trim());
+  });
+
+  wrapper.append(labelElement, select, customInput);
+
+  if (helper) {
+    const helperElement = document.createElement("span");
+    helperElement.className = "master-form-helper";
+    helperElement.textContent = helper;
+    wrapper.appendChild(helperElement);
+  }
+
+  return wrapper;
+}
+
+function formatRupiahInput(value) {
+  if (value === "" || value === null || value === undefined) return "";
+  const numeric = String(value).replace(/\D/g, "");
+  if (!numeric) return "";
+  return `Rp ${Number(numeric).toLocaleString("id-ID")}`;
+}
+
+function parseRupiahInput(value) {
+  if (value === "" || value === null || value === undefined) return 0;
+  return Number(String(value).replace(/\D/g, "")) || 0;
+}
+
+function createMasterCurrencyField({ label, field, helper = "" }) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "master-form-field";
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "master-form-label";
+  labelElement.textContent = label;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.inputMode = "numeric";
+  input.className = "master-form-input master-form-currency-input";
+  input.placeholder = "Contoh: Rp 1.950.000";
+
+  const currentVal = masterDataForm?.values?.[field];
+  input.value = formatRupiahInput(currentVal);
+
+  input.addEventListener("input", () => {
+    const formatted = formatRupiahInput(input.value);
+    input.value = formatted;
+    updateMasterDataForm(field, formatted);
+  });
+
+  wrapper.append(labelElement, input);
+
+  if (helper) {
+    const helperElement = document.createElement("span");
+    helperElement.className = "master-form-helper";
+    helperElement.textContent = helper;
+    wrapper.appendChild(helperElement);
+  }
+
+  return wrapper;
+}
+
 function createMenuBundleComponentsEditor() {
   const section = document.createElement("section");
   section.className = "menu-bundle-editor";
@@ -23447,36 +23578,94 @@ function createMenuBundleComponentsEditor() {
     return section;
   }
 
+  const sortedInventoryItems = (inventoryItems || [])
+    .filter((item) => String(item.status || "").toLowerCase() === "active")
+    .slice()
+    .sort((a, b) => {
+      const nameA = String(a.stock_item_name || a.stock_item_id || "").toLowerCase();
+      const nameB = String(b.stock_item_name || b.stock_item_id || "").toLowerCase();
+      return nameA.localeCompare(nameB, "id", { sensitivity: "base" });
+    });
+
   const list = document.createElement("div");
   list.className = "menu-bundle-component-list";
   components.forEach((component, index) => {
     const row = document.createElement("div");
     row.className = "menu-bundle-component-row";
 
-    const itemField = document.createElement("label");
+    const itemField = document.createElement("div");
     itemField.className = "master-form-field";
+
     const itemLabel = document.createElement("span");
     itemLabel.className = "master-form-label";
-    itemLabel.textContent = "Item Inventory";
+    itemLabel.textContent = "Item Inventory (A-Z)";
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "master-form-input bundle-item-search-input";
+    searchInput.placeholder = "🔍 Cari item (A-Z)...";
+    searchInput.style.fontSize = "12px";
+    searchInput.style.padding = "2px 8px";
+    searchInput.style.minHeight = "32px";
+    searchInput.style.marginBottom = "4px";
+
     const itemSelect = document.createElement("select");
     itemSelect.className = "master-form-input";
     itemSelect.dataset.action = "update-menu-bundle-component";
     itemSelect.dataset.index = String(index);
     itemSelect.dataset.field = "item_id";
-    const emptyOption = document.createElement("option");
-    emptyOption.value = "";
-    emptyOption.textContent = "-- Pilih Item --";
-    itemSelect.appendChild(emptyOption);
-    inventoryItems
-      .filter((item) => String(item.status || "").toLowerCase() === "active")
-      .forEach((item) => {
+
+    const renderItemOptions = (query = "") => {
+      const trimmed = query.trim().toLowerCase();
+      itemSelect.innerHTML = "";
+
+      const filtered = sortedInventoryItems.filter((item) => {
+        if (!trimmed) return true;
+        const name = String(item.stock_item_name || "").toLowerCase();
+        const id = String(item.stock_item_id || "").toLowerCase();
+        const cat = String(item.category || "").toLowerCase();
+        return name.includes(trimmed) || id.includes(trimmed) || cat.includes(trimmed);
+      });
+
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = trimmed
+        ? `-- Pilih Item (${filtered.length} ditemukan) --`
+        : `-- Pilih Item (${sortedInventoryItems.length} item A-Z) --`;
+      itemSelect.appendChild(emptyOption);
+
+      const selectedId = component.item_id || "";
+      if (selectedId && !filtered.some((it) => it.stock_item_id === selectedId)) {
+        const foundSelected = (inventoryItems || []).find((it) => it.stock_item_id === selectedId);
+        if (foundSelected) {
+          const selectedOpt = document.createElement("option");
+          selectedOpt.value = foundSelected.stock_item_id;
+          selectedOpt.textContent = `[Terpilih] ${foundSelected.stock_item_name || foundSelected.stock_item_id} (${foundSelected.unit || "unit"})`;
+          selectedOpt.selected = true;
+          itemSelect.appendChild(selectedOpt);
+        }
+      }
+
+      filtered.forEach((item) => {
         const option = document.createElement("option");
         option.value = item.stock_item_id || "";
         option.textContent = `${item.stock_item_name || item.stock_item_id} (${item.unit || "unit"})`;
+        if (item.stock_item_id === selectedId) {
+          option.selected = true;
+        }
         itemSelect.appendChild(option);
       });
-    itemSelect.value = component.item_id || "";
-    itemField.append(itemLabel, itemSelect);
+
+      itemSelect.value = selectedId;
+    };
+
+    renderItemOptions("");
+
+    searchInput.addEventListener("input", (e) => {
+      renderItemOptions(e.target.value);
+    });
+
+    itemField.append(itemLabel, searchInput, itemSelect);
 
     const qtyField = document.createElement("label");
     qtyField.className = "master-form-field";
@@ -23660,10 +23849,10 @@ function createMasterDataFormElement() {
 
     grid.append(
       createMasterField({ label: "Nama Paket", field: "package_name" }),
-      createMasterField({
+      createMasterPackageCategoryField({
         label: "Kategori",
         field: "package_category",
-        helper: isFnbBundle ? "Contoh: Twin Package, Beer Bucket, Combo Snack." : "Contoh: Batavia, VIP, Executive."
+        helper: isFnbBundle ? "Pilih kategori atau ketik baru. Contoh: Twin Package, Beer Bucket." : "Pilih kategori atau ketik baru. Contoh: Batavia, VIP, Executive."
       }),
       createMasterField({
         label: "Tipe Paket",
@@ -23673,7 +23862,7 @@ function createMasterDataFormElement() {
           ["room_fnb_bundle", "Paket Room All-In (Room + F&B + LC)"],
         ],
       }),
-      createMasterField({ label: "Harga Jual", field: "selling_price", type: "number" })
+      createMasterCurrencyField({ label: "Harga Jual", field: "selling_price", helper: "Format otomatis Rupiah. Contoh: Rp 1.950.000" })
     );
 
     if (!isFnbBundle) {
@@ -27838,7 +28027,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
       package_name: values.package_name || "",
       package_category: values.package_category || "",
       package_type: values.package_type || "room_fnb_bundle",
-      selling_price: Number(values.selling_price),
+      selling_price: parseRupiahInput(values.selling_price),
       duration_minutes: isFnbBundle ? 0 : Number(values.duration_minutes || 60),
       included_lc_count: isFnbBundle ? 0 : Number(values.included_lc_count || 0),
       included_lc_duration_minutes: isFnbBundle ? 0 : Number(values.included_lc_duration_minutes || 0),
@@ -28006,7 +28195,7 @@ function getSensitiveMasterDataAction() {
       return "deactivate_package";
     }
 
-    if ((Number(original.selling_price) || 0) !== (Number(values.selling_price) || 0)) {
+    if (parseRupiahInput(original.selling_price) !== parseRupiahInput(values.selling_price)) {
       return "edit_package_price";
     }
 
