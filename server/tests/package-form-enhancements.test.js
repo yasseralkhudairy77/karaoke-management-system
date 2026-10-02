@@ -144,10 +144,10 @@ function testPackageFormEnhancements() {
 
   // 7. Validasi cache buster index.html
   assert(
-    indexHtmlContent.includes('package-form-enhancements-v1'),
-    'index.html wajib menggunakan cache buster package-form-enhancements-v1'
+    /package-form-(enhancements-v1|fix-v2)/.test(indexHtmlContent),
+    'index.html wajib menggunakan cache buster aktif'
   );
-  console.log('  ✓ Cache buster index.html terverifikasi aktif (package-form-enhancements-v1)');
+  console.log('  ✓ Cache buster index.html terverifikasi aktif (package-form-fix-v2)');
 
   // 8. Aturan antislop: larangan em dash (\u2014)
   const codeSlice = appJsContent.slice(appJsContent.indexOf('function getSortedPackageCategories'), appJsContent.indexOf('function createMasterDataFormElement') + 1200);

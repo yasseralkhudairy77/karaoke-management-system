@@ -23505,11 +23505,6 @@ function formatRupiahInput(value) {
   return `Rp ${Number(numeric).toLocaleString("id-ID")}`;
 }
 
-function parseRupiahInput(value) {
-  if (value === "" || value === null || value === undefined) return 0;
-  return Number(String(value).replace(/\D/g, "")) || 0;
-}
-
 function createMasterCurrencyField({ label, field, helper = "" }) {
   const wrapper = document.createElement("label");
   wrapper.className = "master-form-field";
