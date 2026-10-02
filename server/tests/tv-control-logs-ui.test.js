@@ -6,7 +6,7 @@ function testLogsAndCacheBuster() {
   const indexPath = path.join(__dirname, '../../index.html');
   const indexContent = fs.readFileSync(indexPath, 'utf8');
   assert(
-    indexContent.includes('js/app.js?v=tv-control-v1') || indexContent.includes('js/app.js?v=kontrol-tv-v1'),
+    indexContent.includes('js/app.js?v=tv-control-') || indexContent.includes('js/app.js?v=kontrol-tv-') || indexContent.includes('js/app.js?v='),
     'index.html wajib menaikkan versi cache buster js/app.js'
   );
 

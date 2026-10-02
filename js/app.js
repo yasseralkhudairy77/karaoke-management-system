@@ -26308,7 +26308,7 @@ function createTvControlSectionElement() {
   section.className = "master-section tv-control-section";
 
   const header = document.createElement("div");
-  header.className = "master-section-header";
+  header.className = "master-section-header tv-header-row";
 
   const titleGroup = document.createElement("div");
   const title = document.createElement("h3");
@@ -26321,14 +26321,14 @@ function createTvControlSectionElement() {
   titleGroup.append(title, subtitle);
 
   const toolbar = document.createElement("div");
-  toolbar.className = "master-form-actions";
+  toolbar.className = "master-form-actions tv-control-toolbar";
   toolbar.style.marginTop = "0";
 
   const addBtn = document.createElement("button");
   addBtn.className = "master-button primary";
   addBtn.type = "button";
   addBtn.dataset.action = "add-tv-device";
-  addBtn.textContent = "+ Tambah / Konfigurasi Ruangan Baru";
+  addBtn.textContent = "+ Tambah / Konfigurasi Ruangan";
 
   const checkAllBtn = document.createElement("button");
   checkAllBtn.className = "master-button secondary";
@@ -26376,28 +26376,25 @@ function createTvControlSectionElement() {
 
   if (ruanganAdbMati.length > 0) {
     const adbBanner = document.createElement("div");
-    adbBanner.className = "tv-adb-warning-banner";
-    adbBanner.style.padding = "10px 14px";
-    adbBanner.style.marginBottom = "14px";
-    adbBanner.style.background = "rgba(245,158,11,0.12)";
-    adbBanner.style.border = "1px solid rgba(245,158,11,0.35)";
-    adbBanner.style.borderRadius = "6px";
-    adbBanner.style.fontSize = "12px";
-    adbBanner.style.color = "#fcd34d";
-    adbBanner.style.lineHeight = "1.5";
+    adbBanner.className = "tv-alert-card";
 
-    const judul = document.createElement("strong");
-    judul.textContent = `${ruanganAdbMati.length} ruangan belum bisa dikendalikan (ADB mati): `;
-    adbBanner.appendChild(judul);
-    adbBanner.appendChild(document.createTextNode(
-      ruanganAdbMati.map((r) => `${r.room_name || r.room_id} (${r.room_id})`).join(", ")
-    ));
+    const headerEl = document.createElement("div");
+    headerEl.className = "tv-alert-header";
+    headerEl.innerHTML = `<span>⚠️</span><strong>${ruanganAdbMati.length} Ruangan Belum Bisa Dikendalikan (ADB Mati)</strong>`;
+    adbBanner.appendChild(headerEl);
+
+    const chipsEl = document.createElement("div");
+    chipsEl.className = "tv-room-chips";
+    ruanganAdbMati.forEach((r) => {
+      const chip = document.createElement("span");
+      chip.className = "tv-room-chip";
+      chip.textContent = `${r.room_name || r.room_id} (${r.room_id})`;
+      chipsEl.appendChild(chip);
+    });
+    adbBanner.appendChild(chipsEl);
 
     const penjelasan = document.createElement("p");
-    penjelasan.style.margin = "6px 0 0";
-    // Jujur soal sebabnya: ADB yang tidak menjawab bisa berarti TV-nya memang mati, atau
-    // TV menyala tetapi ADB/port 5555 tidak aktif. Dua keadaan itu tampak sama dari sini,
-    // jadi jangan mengklaim salah satunya.
+    penjelasan.className = "tv-alert-desc";
     penjelasan.textContent = "Selama keadaan ini, perintah sistem (menyalakan/mematikan TV, peringatan sisa waktu, uji ADB) tidak akan pernah sampai ke ruangan itu. Penyebabnya bisa dua: TV-nya memang sedang mati, atau TV menyala tetapi ADB di TV tidak aktif. Untuk TV yang MENYALA, kerjakan langkah 8b TROUBLESHOOTING ADB di panduan di bawah, lalu tekan Uji ADB lagi.";
     adbBanner.appendChild(penjelasan);
 
@@ -26406,25 +26403,25 @@ function createTvControlSectionElement() {
 
   if (ruanganMenungguIzin.length > 0) {
     const izinBanner = document.createElement("div");
-    izinBanner.className = "tv-auth-warning-banner";
-    izinBanner.style.padding = "10px 14px";
-    izinBanner.style.marginBottom = "14px";
-    izinBanner.style.background = "rgba(217,119,6,0.14)";
-    izinBanner.style.border = "1px solid rgba(217,119,6,0.40)";
-    izinBanner.style.borderRadius = "6px";
-    izinBanner.style.fontSize = "12px";
-    izinBanner.style.color = "#fdba74";
-    izinBanner.style.lineHeight = "1.5";
+    izinBanner.className = "tv-alert-card auth";
 
-    const judulIzin = document.createElement("strong");
-    judulIzin.textContent = `${ruanganMenungguIzin.length} ruangan menunggu izin ADB ditekan di layar TV: `;
-    izinBanner.appendChild(judulIzin);
-    izinBanner.appendChild(document.createTextNode(
-      ruanganMenungguIzin.map((r) => `${r.room_name || r.room_id} (${r.room_id})`).join(", ")
-    ));
+    const headerEl = document.createElement("div");
+    headerEl.className = "tv-alert-header";
+    headerEl.innerHTML = `<span>🔑</span><strong>${ruanganMenungguIzin.length} Ruangan Menunggu Izin ADB Ditekan di Layar TV</strong>`;
+    izinBanner.appendChild(headerEl);
+
+    const chipsEl = document.createElement("div");
+    chipsEl.className = "tv-room-chips";
+    ruanganMenungguIzin.forEach((r) => {
+      const chip = document.createElement("span");
+      chip.className = "tv-room-chip";
+      chip.textContent = `${r.room_name || r.room_id} (${r.room_id})`;
+      chipsEl.appendChild(chip);
+    });
+    izinBanner.appendChild(chipsEl);
 
     const penjelasanIzin = document.createElement("p");
-    penjelasanIzin.style.margin = "6px 0 0";
+    penjelasanIzin.className = "tv-alert-desc";
     penjelasanIzin.textContent = "Pemicu izin sudah dikirim ke TV itu. Yang belum: orang di ruangan menekan OK/Allow pada pertanyaan \"Izinkan penelusuran USB?\" di layar TV. Setelah ditekan, tekan Uji ADB pada baris ruangan itu; kartu harus berubah menjadi TERSAMBUNG.";
     izinBanner.appendChild(penjelasanIzin);
 
@@ -26433,7 +26430,7 @@ function createTvControlSectionElement() {
 
   if (isLoadingTvRoomOverview) {
     const loadingBanner = document.createElement("div");
-    loadingBanner.style.padding = "8px 14px";
+    loadingBanner.style.padding = "10px 14px";
     loadingBanner.style.marginBottom = "14px";
     loadingBanner.style.background = "rgba(59,130,246,0.12)";
     loadingBanner.style.border = "1px solid rgba(59,130,246,0.25)";
@@ -26444,7 +26441,7 @@ function createTvControlSectionElement() {
     section.appendChild(loadingBanner);
   } else if (tvRoomOverviewError) {
     const errorBanner = document.createElement("div");
-    errorBanner.style.padding = "8px 14px";
+    errorBanner.style.padding = "10px 14px";
     errorBanner.style.marginBottom = "14px";
     errorBanner.style.background = "rgba(239,68,68,0.12)";
     errorBanner.style.border = "1px solid rgba(239,68,68,0.25)";
@@ -26480,7 +26477,7 @@ function createTvControlSectionElement() {
     : sourceList;
 
   const tableWrapper = document.createElement("div");
-  tableWrapper.className = "master-table-wrapper";
+  tableWrapper.className = "master-table-wrapper tv-table-container";
 
   const table = document.createElement("table");
   table.className = "master-table tv-control-table";
@@ -26509,24 +26506,32 @@ function createTvControlSectionElement() {
       const tr = document.createElement("tr");
 
       const tdRoom = document.createElement("td");
-      tdRoom.innerHTML = `<strong>${escapeHtml(r.room_name || r.room_id)}</strong><br><small style="color:#9ca3af;">${escapeHtml(r.room_id)}</small>`;
+      tdRoom.className = "tv-cell-room";
+      const rName = document.createElement("span");
+      rName.className = "tv-cell-room-name";
+      rName.textContent = r.room_name || r.room_id;
+      const rCode = document.createElement("span");
+      rCode.className = "tv-cell-room-code";
+      rCode.textContent = r.room_id;
+      tdRoom.append(rName, rCode);
 
       const tdDev = document.createElement("td");
       if (r.has_device === false) {
         tdDev.innerHTML = `<span style="color:#9ca3af;font-style:italic;">- (Belum diatur)</span>`;
       } else {
-        tdDev.textContent = r.device_name || r.tv_device_id || "-";
+        const devSpan = document.createElement("span");
+        devSpan.className = "tv-cell-dev";
+        devSpan.textContent = r.device_name || r.tv_device_id || "-";
+        tdDev.appendChild(devSpan);
       }
 
       const tdType = document.createElement("td");
       const typeBadge = document.createElement("span");
       if (r.has_device === false) {
-        typeBadge.className = "status-badge";
-        typeBadge.style.fontSize = "11px";
+        typeBadge.className = "tv-pill muted";
         typeBadge.textContent = "Belum diatur";
       } else {
-        typeBadge.className = r.control_type === "mock" ? "status-badge" : "status-badge active";
-        typeBadge.style.fontSize = "11px";
+        typeBadge.className = r.control_type === "mock" ? "tv-pill neutral" : "tv-pill success";
         typeBadge.textContent = r.control_type || "middleware";
       }
       tdType.appendChild(typeBadge);
@@ -26540,47 +26545,37 @@ function createTvControlSectionElement() {
       const tdAdb = document.createElement("td");
       const adbBadge = document.createElement("span");
       if (r.has_device === false) {
-        adbBadge.className = "status-badge";
+        adbBadge.className = "tv-pill muted";
         adbBadge.textContent = "-";
       } else if (r.control_type === "mock") {
-        adbBadge.className = "status-badge";
-        adbBadge.textContent = "Mock";
+        adbBadge.className = "tv-pill neutral";
+        adbBadge.innerHTML = `<span class="tv-pill-dot abu"></span>Mock`;
       } else if (r.device_connected) {
-        adbBadge.className = "status-badge active";
-        adbBadge.textContent = "Tersambung";
+        adbBadge.className = "tv-pill success";
+        adbBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Tersambung`;
       } else if (r.waiting_authorization === true) {
-        adbBadge.className = "status-badge";
-        adbBadge.style.background = "#d97706";
-        adbBadge.style.color = "#fff";
-        adbBadge.textContent = "Menunggu Izin di TV";
+        adbBadge.className = "tv-pill warning";
+        adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Menunggu Izin`;
         adbBadge.title = "Dialog izin sudah dikirim. Tekan OK/Allow di layar TV ruangan itu, lalu Uji ADB.";
       } else if (r.tv_state === "perlu-adb") {
-        // DULU baris ini menulis "Terputus" untuk SETIAP ruangan yang belum tersambung, dan itulah
-        // laporan palsu yang berulang: TV yang cuma perlu port ADB dibuka di layarnya terlihat
-        // sama dengan TV yang benar-benar mati. Sekarang dibedakan memakai status hidup dari
-        // bridge (tv_state), yang dihitung dari pemeriksaan port, bukan dari catatan uji kemarin.
-        adbBadge.className = "status-badge";
-        adbBadge.style.background = "#d97706";
-        adbBadge.style.color = "#fff";
-        adbBadge.textContent = "TV perlu diaktifkan";
+        adbBadge.className = "tv-pill warning";
+        adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Perlu Diaktifkan`;
         adbBadge.title = "TV menjawab di jaringan, tetapi port ADB (5555) belum terbuka. Aktifkan Opsi pengembang -> Penelusuran USB / Network debugging di TV itu.";
       } else if (r.tv_state === "tidak-ada") {
-        adbBadge.className = "status-badge inactive";
-        adbBadge.textContent = "TV tidak tersambung";
+        adbBadge.className = "tv-pill danger";
+        adbBadge.innerHTML = `<span class="tv-pill-dot merah"></span>Tidak Tersambung`;
         adbBadge.title = "TV tidak menjawab di jaringan. Periksa daya/listrik TV dan kabel jaringannya.";
       } else {
-        adbBadge.className = "status-badge";
-        adbBadge.textContent = "Belum diperiksa";
+        adbBadge.className = "tv-pill neutral";
+        adbBadge.innerHTML = `<span class="tv-pill-dot abu"></span>Belum Dicek`;
       }
       tdAdb.appendChild(adbBadge);
 
-      // Catatan riwayat pemeriksaan terakhir: diberi label "uji terakhir" supaya tidak tertukar
-      // dengan status hidup di atasnya.
       if (r.last_check_result || r.last_check_message) {
         const lastCheckDiv = document.createElement("div");
         lastCheckDiv.style.fontSize = "10px";
         lastCheckDiv.style.color = "#9ca3af";
-        lastCheckDiv.style.marginTop = "3px";
+        lastCheckDiv.style.marginTop = "4px";
         lastCheckDiv.style.lineHeight = "1.2";
         let timeText = "";
         if (r.last_checked_at) {
@@ -26590,7 +26585,7 @@ function createTvControlSectionElement() {
           } catch (_e) {}
         }
         const msg = r.last_check_message || (r.last_check_result === "connected" ? "Terhubung ke ADB" : r.last_check_result);
-        lastCheckDiv.textContent = timeText ? `Uji terakhir ${timeText}: ${msg}` : `Uji terakhir: ${msg}`;
+        lastCheckDiv.textContent = timeText ? `Uji ${timeText}: ${msg}` : `Uji: ${msg}`;
         lastCheckDiv.title = `Pemeriksaan terakhir: ${r.last_checked_at || "-"}`;
         tdAdb.appendChild(lastCheckDiv);
       }
@@ -26598,21 +26593,19 @@ function createTvControlSectionElement() {
       const tdScreen = document.createElement("td");
       const screenBadge = document.createElement("span");
       if (r.has_device === false) {
-        screenBadge.className = "status-badge";
+        screenBadge.className = "tv-pill muted";
         screenBadge.textContent = "-";
       } else if (r.wakefulness === "Awake") {
-        screenBadge.className = "status-badge active";
-        screenBadge.textContent = "Menyala";
+        screenBadge.className = "tv-pill success";
+        screenBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Menyala`;
       } else if (r.wakefulness === "Asleep") {
-        screenBadge.className = "status-badge inactive";
-        screenBadge.textContent = "Tidur";
+        screenBadge.className = "tv-pill muted";
+        screenBadge.innerHTML = `<span class="tv-pill-dot abu"></span>Tidur`;
       } else if (r.wakefulness === "Dreaming" || r.wakefulness === "Dozing") {
-        screenBadge.className = "status-badge";
-        screenBadge.style.background = "#d97706";
-        screenBadge.style.color = "#fff";
-        screenBadge.textContent = "Screensaver";
+        screenBadge.className = "tv-pill warning";
+        screenBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Screensaver`;
       } else {
-        screenBadge.className = "status-badge";
+        screenBadge.className = "tv-pill muted";
         screenBadge.textContent = "-";
       }
       tdScreen.appendChild(screenBadge);
@@ -26620,15 +26613,15 @@ function createTvControlSectionElement() {
       const tdArp = document.createElement("td");
       const arpBadge = document.createElement("span");
       if (r.mac_matches_arp === "cocok") {
-        arpBadge.className = "status-badge active";
+        arpBadge.className = "tv-pill success";
         arpBadge.title = r.arp_mac || "";
-        arpBadge.textContent = "Cocok";
+        arpBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Cocok`;
       } else if (r.mac_matches_arp === "beda") {
-        arpBadge.className = "status-badge inactive";
+        arpBadge.className = "tv-pill danger";
         arpBadge.title = `ARP: ${r.arp_mac || "tidak diketahui"}`;
-        arpBadge.textContent = "Beda";
+        arpBadge.innerHTML = `<span class="tv-pill-dot merah"></span>Beda`;
       } else {
-        arpBadge.className = "status-badge";
+        arpBadge.className = "tv-pill muted";
         arpBadge.textContent = "-";
       }
       tdArp.appendChild(arpBadge);
@@ -26636,68 +26629,64 @@ function createTvControlSectionElement() {
       const tdIssue = document.createElement("td");
       if (!Array.isArray(r.masalah) || r.masalah.length === 0) {
         const okSpan = document.createElement("span");
-        okSpan.style.color = "#10b981";
-        okSpan.style.fontSize = "12px";
-        okSpan.textContent = "Normal";
+        okSpan.className = "tv-pill success";
+        okSpan.innerHTML = `<span class="tv-pill-dot hijau"></span>Normal`;
         tdIssue.appendChild(okSpan);
       } else {
         r.masalah.forEach((m) => {
-          const mBadge = document.createElement("div");
-          mBadge.className = "status-badge inactive";
-          mBadge.style.display = "block";
-          mBadge.style.marginBottom = "2px";
-          mBadge.style.fontSize = "11px";
+          const mBadge = document.createElement("span");
+          mBadge.className = "tv-pill danger tv-issue-pill";
           mBadge.textContent = m;
           tdIssue.appendChild(mBadge);
         });
       }
 
       const tdActions = document.createElement("td");
-      const btnGroup = document.createElement("div");
-      btnGroup.className = "master-row-actions";
-      btnGroup.style.display = "flex";
-      btnGroup.style.flexWrap = "wrap";
-      btnGroup.style.gap = "4px";
+      tdActions.className = "tv-action-col";
 
       if (r.has_device === false) {
         const addDevBtn = document.createElement("button");
-        addDevBtn.className = "master-button primary";
+        addDevBtn.className = "tv-action-btn btn-wake";
+        addDevBtn.style.width = "100%";
         addDevBtn.type = "button";
         addDevBtn.dataset.action = "add-tv-device";
         addDevBtn.dataset.roomId = r.room_id;
         addDevBtn.textContent = "+ Tambah Perangkat";
-        btnGroup.appendChild(addDevBtn);
+        tdActions.appendChild(addDevBtn);
       } else {
+        const grid = document.createElement("div");
+        grid.className = "tv-action-grid";
+
         const checkBtn = document.createElement("button");
-        checkBtn.className = "master-button secondary";
+        checkBtn.className = "tv-action-btn";
         checkBtn.type = "button";
         checkBtn.dataset.action = "check-tv-device";
         checkBtn.dataset.roomId = r.room_id;
         checkBtn.textContent = "Cek";
 
         const wakeBtn = document.createElement("button");
-        wakeBtn.className = "master-button";
+        wakeBtn.className = "tv-action-btn btn-wake";
         wakeBtn.type = "button";
         wakeBtn.dataset.action = "wake-tv-device";
         wakeBtn.dataset.roomId = r.room_id;
         wakeBtn.textContent = "Nyalakan";
 
         const sleepBtn = document.createElement("button");
-        sleepBtn.className = "master-button secondary";
+        sleepBtn.className = "tv-action-btn btn-sleep";
         sleepBtn.type = "button";
         sleepBtn.dataset.action = "sleep-tv-device";
         sleepBtn.dataset.roomId = r.room_id;
         sleepBtn.textContent = "Matikan";
 
         const testBtn = document.createElement("button");
-        testBtn.className = "master-button secondary";
+        testBtn.className = "tv-action-btn btn-test";
         testBtn.type = "button";
         testBtn.dataset.action = "test-tv-device";
         testBtn.dataset.roomId = r.room_id;
         testBtn.textContent = "Uji ADB";
 
         const notifyBtn = document.createElement("button");
-        notifyBtn.className = "master-button secondary";
+        notifyBtn.className = "tv-action-btn";
         notifyBtn.type = "button";
         notifyBtn.dataset.action = "notify-tv-device";
         notifyBtn.dataset.roomId = r.room_id;
@@ -26705,16 +26694,16 @@ function createTvControlSectionElement() {
         notifyBtn.textContent = "Pesan";
 
         const editBtn = document.createElement("button");
-        editBtn.className = "master-button";
+        editBtn.className = "tv-action-btn";
         editBtn.type = "button";
         editBtn.dataset.action = "edit-tv-device";
         editBtn.dataset.roomId = r.room_id;
         editBtn.textContent = "Edit";
 
-        // Tombol "Minta Izin ADB": pemicu dialog izin di layar TV. Hanya berarti untuk TV yang
-        // BENAR-BENAR menyala tetapi ADB-nya belum menerima perintah dari sistem.
+        grid.append(checkBtn, wakeBtn, sleepBtn, testBtn, notifyBtn, editBtn);
+
         const izinBtn = document.createElement("button");
-        izinBtn.className = "master-button secondary";
+        izinBtn.className = "tv-action-btn btn-full";
         izinBtn.type = "button";
         izinBtn.dataset.action = "request-tv-authorization";
         izinBtn.dataset.roomId = r.room_id;
@@ -26723,26 +26712,24 @@ function createTvControlSectionElement() {
         if (r.waiting_authorization === true) {
           izinBtn.title = "Pemicu sudah dikirim dan TV sedang menunggu tombol OK/Allow di layarnya.";
         }
+        grid.appendChild(izinBtn);
 
-        btnGroup.append(checkBtn, wakeBtn, sleepBtn, testBtn, izinBtn, notifyBtn, editBtn);
-
-        // Tombol "Pasang Peringatan" (APK overlay bawaan sistem POS).
-        // Hanya ditawarkan bila perangkatnya benar-benar terhubung DAN overlay-nya belum lengkap.
-        // Tombol yang pasti gagal lebih buruk daripada tidak ada tombol.
         const overlayBelumLengkap = r.overlay_installed !== true || r.overlay_allowed !== true;
         if (r.device_connected === true && overlayBelumLengkap) {
           const overlayBtn = document.createElement("button");
-          overlayBtn.className = "master-button primary";
+          overlayBtn.className = "tv-action-btn btn-full";
+          overlayBtn.style.borderColor = "rgba(16, 185, 129, 0.4)";
+          overlayBtn.style.color = "#6ee7b7";
           overlayBtn.type = "button";
           overlayBtn.dataset.action = "install-tv-overlay";
           overlayBtn.dataset.roomId = r.room_id;
           overlayBtn.dataset.roomName = r.room_name || r.room_id;
           overlayBtn.textContent = "Pasang Peringatan";
-          btnGroup.appendChild(overlayBtn);
+          grid.appendChild(overlayBtn);
         }
-      }
 
-      tdActions.appendChild(btnGroup);
+        tdActions.appendChild(grid);
+      }
 
       tr.append(tdRoom, tdDev, tdType, tdIp, tdMac, tdAdb, tdScreen, tdArp, tdIssue, tdActions);
       tbody.appendChild(tr);
