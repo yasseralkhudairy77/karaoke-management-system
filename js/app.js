@@ -23545,6 +23545,33 @@ function createMasterCurrencyField({ label, field, helper = "" }) {
   return wrapper;
 }
 
+function isInventoryItemAvailableForPackage(item) {
+  if (!item || !item.stock_item_id) {
+    return false;
+  }
+  const rawStatus = String(item.status || "active").trim().toLowerCase();
+  if (
+    rawStatus === "inactive" ||
+    rawStatus === "nonaktif" ||
+    rawStatus === "non-aktif" ||
+    rawStatus === "tidak aktif" ||
+    rawStatus === "disabled" ||
+    rawStatus === "archived" ||
+    rawStatus === "deleted"
+  ) {
+    return false;
+  }
+  if (item.is_active === false || item.is_active === 0 || item.is_active === "false" || item.is_active === "0") {
+    return false;
+  }
+  const id = String(item.stock_item_id || "").trim();
+  const cat = String(item.category || "").trim().toLowerCase();
+  if (id.startsWith("PKG-") || cat === "paket" || cat === "package") {
+    return false;
+  }
+  return true;
+}
+
 function createMenuBundleComponentsEditor() {
   const section = document.createElement("section");
   section.className = "menu-bundle-editor";
@@ -23579,7 +23606,7 @@ function createMenuBundleComponentsEditor() {
   }
 
   const sortedInventoryItems = (inventoryItems || [])
-    .filter((item) => String(item.status || "").toLowerCase() === "active")
+    .filter(isInventoryItemAvailableForPackage)
     .slice()
     .sort((a, b) => {
       const nameA = String(a.stock_item_name || a.stock_item_id || "").toLowerCase();
@@ -23638,9 +23665,12 @@ function createMenuBundleComponentsEditor() {
       if (selectedId && !filtered.some((it) => it.stock_item_id === selectedId)) {
         const foundSelected = (inventoryItems || []).find((it) => it.stock_item_id === selectedId);
         if (foundSelected) {
+          const isAct = isInventoryItemAvailableForPackage(foundSelected);
           const selectedOpt = document.createElement("option");
           selectedOpt.value = foundSelected.stock_item_id;
-          selectedOpt.textContent = `[Terpilih] ${foundSelected.stock_item_name || foundSelected.stock_item_id} (${foundSelected.unit || "unit"})`;
+          selectedOpt.textContent = isAct
+            ? `[Terpilih] ${foundSelected.stock_item_name || foundSelected.stock_item_id} (${foundSelected.unit || "unit"})`
+            : `⚠️ [NON-AKTIF / TIDAK TERSEDIA] ${foundSelected.stock_item_name || foundSelected.stock_item_id} (${foundSelected.unit || "unit"})`;
           selectedOpt.selected = true;
           itemSelect.appendChild(selectedOpt);
         }
@@ -28099,6 +28129,16 @@ async function submitMasterDataForm() {
     const componentIds = components.map((component) => component.item_id).filter(Boolean);
     if (new Set(componentIds).size !== componentIds.length) {
       showInlineNotice("Item inventory yang sama tidak boleh ditambahkan dua kali dalam satu paket.", "error");
+      return;
+    }
+
+    const inactiveComp = components.find((component) => {
+      const found = (inventoryItems || []).find((it) => it.stock_item_id === component.item_id);
+      return found && !isInventoryItemAvailableForPackage(found);
+    });
+    if (inactiveComp) {
+      const invName = (inventoryItems || []).find((it) => it.stock_item_id === inactiveComp.item_id)?.stock_item_name || inactiveComp.item_id;
+      showInlineNotice(`Komponen paket '${invName}' berstatus inaktif. Hapus atau ganti item tersebut sebelum menyimpan paket.`, "error");
       return;
     }
   }

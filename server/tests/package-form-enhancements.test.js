@@ -72,19 +72,46 @@ function testPackageFormEnhancements() {
   );
   console.log('  ✓ Card paket terintegrasi dengan dropdown kategori dan auto-format rupiah');
 
-  // 4. Validasi komponen isi paket F&B: sorting A-Z dan search input
+  // 4. Validasi komponen isi paket F&B: sorting A-Z, search input, dan filter ketat inaktif
   assert(
-    appJsContent.includes('const sortedInventoryItems = (inventoryItems || [])') &&
+    appJsContent.includes('function isInventoryItemAvailableForPackage(item)'),
+    'js/app.js wajib memiliki helper isInventoryItemAvailableForPackage untuk menyaring item inaktif'
+  );
+  assert(
+    appJsContent.includes('.filter(isInventoryItemAvailableForPackage)') &&
     appJsContent.includes('nameA.localeCompare(nameB, "id", { sensitivity: "base" })'),
-    'createMenuBundleComponentsEditor wajib mengurutkan item inventory secara alfabetis A-Z'
+    'createMenuBundleComponentsEditor wajib mengurutkan item inventory secara alfabetis A-Z dan menyaring item inaktif'
   );
   assert(
     appJsContent.includes('bundle-item-search-input'),
     'createMenuBundleComponentsEditor wajib menyediakan input pencarian item (bundle-item-search-input)'
   );
-  console.log('  ✓ Komponen F&B bundle dilengkapi sorting A-Z dan search input');
 
-  // 5. Validasi parseRupiahInput pada submitMasterDataForm & validasi sensitif
+  // Uji logika isInventoryItemAvailableForPackage
+  function checkAvailable(item) {
+    if (!item || !item.stock_item_id) return false;
+    const rawStatus = String(item.status || "active").trim().toLowerCase();
+    if (
+      rawStatus === "inactive" ||
+      rawStatus === "nonaktif" ||
+      rawStatus === "non-aktif" ||
+      rawStatus === "tidak aktif" ||
+      rawStatus === "disabled"
+    ) return false;
+    if (item.is_active === false || item.is_active === 0 || item.is_active === "false") return false;
+    const id = String(item.stock_item_id || "").trim();
+    const cat = String(item.category || "").trim().toLowerCase();
+    if (id.startsWith("PKG-") || cat === "paket" || cat === "package") return false;
+    return true;
+  }
+
+  assert.strictEqual(checkAvailable({ stock_item_id: 'BEE-01', status: 'active' }), true, 'Item aktif harus diterima');
+  assert.strictEqual(checkAvailable({ stock_item_id: 'BEE-02', status: 'inactive' }), false, 'Item inactive harus ditolak');
+  assert.strictEqual(checkAvailable({ stock_item_id: 'BEE-03', status: 'nonaktif' }), false, 'Item nonaktif harus ditolak');
+  assert.strictEqual(checkAvailable({ stock_item_id: 'PKG-01', status: 'active' }), false, 'Item PKG- harus ditolak dari komponen');
+  console.log('  ✓ Helper isInventoryItemAvailableForPackage memfilter item inaktif dan paket palsu dengan sempurna');
+
+  // 5. Validasi parseRupiahInput pada submitMasterDataForm & validasi penolakan item inaktif
   assert(
     appJsContent.includes('selling_price: parseRupiahInput(values.selling_price)'),
     'submitMasterDataForm wajib membersihkan selling_price dengan parseRupiahInput'
@@ -93,7 +120,11 @@ function testPackageFormEnhancements() {
     appJsContent.includes('parseRupiahInput(original.selling_price) !== parseRupiahInput(values.selling_price)'),
     'Validasi harga paket sensitif wajib menggunakan parseRupiahInput'
   );
-  console.log('  ✓ Payload submitMasterDataForm dan pengecekan sensitif harga paket menggunakan parseRupiahInput');
+  assert(
+    appJsContent.includes('berstatus inaktif. Hapus atau ganti item tersebut sebelum menyimpan paket.'),
+    'submitMasterDataForm wajib memblokir penyimpanan paket yang mengandung item inaktif'
+  );
+  console.log('  ✓ Payload submitMasterDataForm dan proteksi penolakan item inaktif terverifikasi');
 
   // 6. Validasi CSS styling
   assert(
