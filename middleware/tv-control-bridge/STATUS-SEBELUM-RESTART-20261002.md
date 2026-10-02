@@ -68,3 +68,13 @@ seperti bridge, supaya restart PC tidak lagi mematikan kasir.
 
     C:\HappySong\happy-song-local  branch feat/tv-bridge-schedule-integration, ter-push sampai
     1f75376 (indikator lampu + TV, hijau neon). Mirror middleware/ sudah sinkron.
+
+## Sesi percakapan ini (untuk dibuka kembali setelah restart)
+
+    @session:default/20261002_082346_541f95
+
+Judul: "Cek TV 9 di tv bridge". Isi lengkap keputusan dan bukti hari ini ada di sesi itu; catatan
+kunci juga sudah ditulis ke berkas-berkas di folder bridge dan ke repo POS.
+
+Setelah restart, pekerjaan hari ini bisa diverifikasi ulang tanpa membuka sesi: ikuti checklist di
+bagian atas catatan ini.
