@@ -31791,11 +31791,12 @@ function createAddLcModalOverlay() {
   overlay.style.left = "0";
   overlay.style.width = "100%";
   overlay.style.height = "100%";
-  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.backgroundColor = "rgba(4, 7, 12, 0.88)";
+  overlay.style.backdropFilter = "blur(6px)";
   overlay.style.display = "flex";
   overlay.style.justifyContent = "center";
   overlay.style.alignItems = "center";
-  overlay.style.zIndex = "1000";
+  overlay.style.zIndex = "15000";
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card";
@@ -31804,6 +31805,12 @@ function createAddLcModalOverlay() {
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
   formEl.style.gap = "16px";
+  formEl.style.backgroundColor = "#1c150e";
+  formEl.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  formEl.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  formEl.style.borderRadius = "12px";
+  formEl.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25)";
+  formEl.style.color = "var(--text, #f6ead2)";
 
   const title = document.createElement("h3");
   title.className = "font-title";
@@ -31930,11 +31937,12 @@ function createEditLcModalOverlay() {
   overlay.style.left = "0";
   overlay.style.width = "100%";
   overlay.style.height = "100%";
-  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.backgroundColor = "rgba(4, 7, 12, 0.88)";
+  overlay.style.backdropFilter = "blur(6px)";
   overlay.style.display = "flex";
   overlay.style.justifyContent = "center";
   overlay.style.alignItems = "center";
-  overlay.style.zIndex = "1000";
+  overlay.style.zIndex = "15000";
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card";
@@ -31943,6 +31951,12 @@ function createEditLcModalOverlay() {
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
   formEl.style.gap = "16px";
+  formEl.style.backgroundColor = "#1c150e";
+  formEl.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  formEl.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  formEl.style.borderRadius = "12px";
+  formEl.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25)";
+  formEl.style.color = "var(--text, #f6ead2)";
 
   const title = document.createElement("h3");
   title.className = "font-title";
@@ -32070,11 +32084,12 @@ function createDeleteLcModalOverlay() {
   overlay.style.left = "0";
   overlay.style.width = "100%";
   overlay.style.height = "100%";
-  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.backgroundColor = "rgba(4, 7, 12, 0.88)";
+  overlay.style.backdropFilter = "blur(6px)";
   overlay.style.display = "flex";
   overlay.style.justifyContent = "center";
   overlay.style.alignItems = "center";
-  overlay.style.zIndex = "1000";
+  overlay.style.zIndex = "15000";
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card";
@@ -32083,6 +32098,12 @@ function createDeleteLcModalOverlay() {
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
   formEl.style.gap = "16px";
+  formEl.style.backgroundColor = "#1c150e";
+  formEl.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  formEl.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  formEl.style.borderRadius = "12px";
+  formEl.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25)";
+  formEl.style.color = "var(--text, #f6ead2)";
 
   const title = document.createElement("h3");
   title.className = "font-title";
@@ -32199,11 +32220,12 @@ function createBulkUpdateLcRateModalOverlay() {
   overlay.style.left = "0";
   overlay.style.width = "100%";
   overlay.style.height = "100%";
-  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.backgroundColor = "rgba(4, 7, 12, 0.88)";
+  overlay.style.backdropFilter = "blur(6px)";
   overlay.style.display = "flex";
   overlay.style.justifyContent = "center";
   overlay.style.alignItems = "center";
-  overlay.style.zIndex = "1005";
+  overlay.style.zIndex = "15000";
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card";
@@ -32212,6 +32234,12 @@ function createBulkUpdateLcRateModalOverlay() {
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
   formEl.style.gap = "16px";
+  formEl.style.backgroundColor = "#1c150e";
+  formEl.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  formEl.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  formEl.style.borderRadius = "12px";
+  formEl.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25)";
+  formEl.style.color = "var(--text, #f6ead2)";
 
   const title = document.createElement("h3");
   title.className = "font-title";
@@ -32315,62 +32343,114 @@ async function executeBulkUpdateLcRate(ratePerHour, adminPin) {
 
 function createLcDetailLogsOverlay() {
   const overlay = document.createElement("div");
-  overlay.className = "admin-pin-modal-overlay";
+  overlay.className = "admin-pin-modal-overlay lc-detail-modal-overlay";
   overlay.style.position = "fixed";
   overlay.style.top = "0";
   overlay.style.left = "0";
   overlay.style.width = "100%";
   overlay.style.height = "100%";
-  overlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+  overlay.style.backgroundColor = "rgba(4, 7, 12, 0.88)";
+  overlay.style.backdropFilter = "blur(6px)";
   overlay.style.display = "flex";
   overlay.style.justifyContent = "center";
   overlay.style.alignItems = "center";
-  overlay.style.zIndex = "1000";
+  overlay.style.zIndex = "15000";
+  overlay.style.padding = "16px";
+  overlay.style.boxSizing = "border-box";
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      selectedLcDetailForLogs = null;
+      renderRooms();
+    }
+  };
 
   const formEl = document.createElement("div");
-  formEl.className = "admin-pin-modal erp-card";
+  formEl.className = "admin-pin-modal erp-card lc-detail-modal-card";
   formEl.style.width = "920px";
-  formEl.style.maxWidth = "90%";
+  formEl.style.maxWidth = "96%";
   formEl.style.maxHeight = "90vh";
   formEl.style.overflowY = "auto";
   formEl.style.padding = "24px";
   formEl.style.display = "flex";
   formEl.style.flexDirection = "column";
   formEl.style.gap = "16px";
+  formEl.style.backgroundColor = "#1c150e";
+  formEl.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+  formEl.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  formEl.style.borderRadius = "12px";
+  formEl.style.boxShadow = "0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.3)";
+  formEl.style.color = "var(--text, #f6ead2)";
+  formEl.style.boxSizing = "border-box";
+
+  const headerRow = document.createElement("div");
+  headerRow.style.display = "flex";
+  headerRow.style.justifyContent = "space-between";
+  headerRow.style.alignItems = "center";
+  headerRow.style.borderBottom = "1px solid rgba(226, 184, 92, 0.25)";
+  headerRow.style.paddingBottom = "12px";
 
   const title = document.createElement("h3");
   title.className = "font-title";
   title.style.margin = "0";
+  title.style.fontSize = "1.25rem";
+  title.style.color = "var(--gold-strong, #ffd77a)";
   title.textContent = `Rincian Pendapatan LC - ${selectedLcDetailForLogs.lc_name}`;
 
-  const infoText = document.createElement("p");
+  const closeIconBtn = document.createElement("button");
+  closeIconBtn.type = "button";
+  closeIconBtn.style.background = "transparent";
+  closeIconBtn.style.border = "none";
+  closeIconBtn.style.color = "var(--muted, #9ca3af)";
+  closeIconBtn.style.fontSize = "22px";
+  closeIconBtn.style.cursor = "pointer";
+  closeIconBtn.style.padding = "0 6px";
+  closeIconBtn.style.lineHeight = "1";
+  closeIconBtn.setAttribute("aria-label", "Tutup modal");
+  closeIconBtn.innerHTML = "&times;";
+  closeIconBtn.onclick = () => {
+    selectedLcDetailForLogs = null;
+    renderRooms();
+  };
+  headerRow.append(title, closeIconBtn);
+
+  const infoText = document.createElement("div");
   infoText.style.margin = "0";
-  infoText.style.fontSize = "14px";
-  infoText.style.color = "var(--muted)";
+  infoText.style.fontSize = "13px";
+  infoText.style.lineHeight = "1.5";
+  infoText.style.color = "#fed7aa";
+  infoText.style.background = "rgba(226, 184, 92, 0.08)";
+  infoText.style.padding = "10px 14px";
+  infoText.style.borderRadius = "8px";
+  infoText.style.border = "1px solid rgba(226, 184, 92, 0.25)";
   infoText.textContent = `${selectedLcDetailForLogs.lc_id} · ${selectedLcDetailForLogs.total_sessions} sesi · ${formatLcReportDuration(getLcReportDurationMinutes(selectedLcDetailForLogs))} kerja · Gaji Room ${formatCurrency(selectedLcDetailForLogs.room_earning_total ?? selectedLcDetailForLogs.total_earnings)} + Bonus ${formatCurrency(selectedLcDetailForLogs.sales_bonus_total || 0)} = Total ${formatCurrency(selectedLcDetailForLogs.gross_earning_total ?? selectedLcDetailForLogs.total_earnings)}`;
 
   const workTitle = document.createElement("h4");
   workTitle.style.margin = "4px 0 0";
+  workTitle.style.fontSize = "14px";
+  workTitle.style.color = "var(--gold, #d4af37)";
   workTitle.textContent = "Riwayat Sesi & Gaji Room";
 
   const tableWrapper = document.createElement("div");
-  tableWrapper.className = "table-responsive";
-  tableWrapper.style.maxHeight = "300px";
+  tableWrapper.className = "table-responsive master-table-wrapper";
+  tableWrapper.style.maxHeight = "280px";
   tableWrapper.style.overflowY = "auto";
+  tableWrapper.style.border = "1px solid rgba(226, 184, 92, 0.2)";
+  tableWrapper.style.borderRadius = "8px";
+  tableWrapper.style.background = "rgba(10, 8, 6, 0.85)";
 
   const table = document.createElement("table");
-  table.className = "erp-table";
+  table.className = "erp-table master-table";
   table.style.width = "100%";
   table.style.borderCollapse = "collapse";
 
   const thead = document.createElement("thead");
   thead.innerHTML = `
     <tr>
-      <th>ID Log</th>
-      <th>ID Sesi Room</th>
-      <th>Tarif (Rp)</th>
-      <th>Status Kerja</th>
-      <th>Waktu Mulai</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">ID Log</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">ID Sesi Room</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Tarif (Rp)</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Status Kerja</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Waktu Mulai</th>
     </tr>
   `;
   table.appendChild(thead);
@@ -32380,7 +32460,7 @@ function createLcDetailLogsOverlay() {
   
   if (logs.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--muted);">Tidak ada riwayat sesi.</td>`;
+    tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--muted); padding: 16px;">Tidak ada riwayat sesi.</td>`;
     tbody.appendChild(tr);
   } else {
     logs.forEach(log => {
@@ -32388,11 +32468,11 @@ function createLcDetailLogsOverlay() {
       const statusDisplay = getLcWorkStatusDisplay(log.status, Boolean(log.is_upfront || log.upfront_transaction_id));
 
       tr.innerHTML = `
-        <td><small>${log.log_id}</small></td>
-        <td><small>${log.session_id || log.room_name || "-"}</small></td>
-        <td>${formatCurrency(log.rate)}</td>
-        <td><span class="${statusDisplay.className}">${statusDisplay.text}</span></td>
-        <td><small>${formatDateTimeLabel(log.created_at)}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${log.log_id}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${log.session_id || log.room_name || "-"}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${formatCurrency(log.rate)}</td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><span class="${statusDisplay.className}">${statusDisplay.text}</span></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${formatDateTimeLabel(log.created_at)}</small></td>
       `;
       tbody.appendChild(tr);
     });
@@ -32402,26 +32482,31 @@ function createLcDetailLogsOverlay() {
 
   const bonusTitle = document.createElement("h4");
   bonusTitle.style.margin = "4px 0 0";
+  bonusTitle.style.fontSize = "14px";
+  bonusTitle.style.color = "var(--gold, #d4af37)";
   bonusTitle.textContent = "Bonus Penjualan Minuman / F&B";
 
   const bonusTableWrapper = document.createElement("div");
-  bonusTableWrapper.className = "table-responsive";
-  bonusTableWrapper.style.maxHeight = "260px";
+  bonusTableWrapper.className = "table-responsive master-table-wrapper";
+  bonusTableWrapper.style.maxHeight = "240px";
   bonusTableWrapper.style.overflowY = "auto";
+  bonusTableWrapper.style.border = "1px solid rgba(226, 184, 92, 0.2)";
+  bonusTableWrapper.style.borderRadius = "8px";
+  bonusTableWrapper.style.background = "rgba(10, 8, 6, 0.85)";
 
   const bonusTable = document.createElement("table");
-  bonusTable.className = "erp-table";
+  bonusTable.className = "erp-table master-table";
   bonusTable.style.width = "100%";
   bonusTable.style.borderCollapse = "collapse";
   bonusTable.innerHTML = `
     <thead>
       <tr>
-        <th>Waktu</th>
-        <th>Menu</th>
-        <th>Order</th>
-        <th style="text-align:center;">Qty Bagian LC</th>
-        <th>Bonus / Item</th>
-        <th>Total Bonus</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Waktu</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Menu</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Order</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase; text-align:center;">Qty Bagian LC</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Bonus / Item</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Total Bonus</th>
       </tr>
     </thead>
   `;
@@ -32430,18 +32515,18 @@ function createLcDetailLogsOverlay() {
   const bonusLogs = selectedLcDetailForLogs.sales_bonus_logs || [];
   if (bonusLogs.length === 0) {
     const emptyBonusRow = document.createElement("tr");
-    emptyBonusRow.innerHTML = `<td colspan="6" style="text-align:center; color:var(--muted);">Tidak ada bonus penjualan pada periode ini.</td>`;
+    emptyBonusRow.innerHTML = `<td colspan="6" style="text-align:center; color:var(--muted); padding: 16px;">Tidak ada bonus penjualan pada periode ini.</td>`;
     bonusTbody.appendChild(emptyBonusRow);
   } else {
     bonusLogs.forEach((bonusLog) => {
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td><small>${formatDateTimeLabel(bonusLog.created_at)}</small></td>
-        <td><strong>${escapeHtml(bonusLog.menu_name || bonusLog.menu_id || "-")}</strong></td>
-        <td><small>${escapeHtml(bonusLog.order_id || bonusLog.transaction_id || "-")}</small></td>
-        <td style="text-align:center;">${Number(bonusLog.quantity || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
-        <td>${formatCurrency(bonusLog.bonus_per_item || 0)}</td>
-        <td><strong>${formatCurrency(bonusLog.bonus_total || 0)}</strong></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${formatDateTimeLabel(bonusLog.created_at)}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><strong>${escapeHtml(bonusLog.menu_name || bonusLog.menu_id || "-")}</strong></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${escapeHtml(bonusLog.order_id || bonusLog.transaction_id || "-")}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align:center;">${Number(bonusLog.quantity || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${formatCurrency(bonusLog.bonus_per_item || 0)}</td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><strong>${formatCurrency(bonusLog.bonus_total || 0)}</strong></td>
       `;
       bonusTbody.appendChild(row);
     });
@@ -32453,6 +32538,8 @@ function createLcDetailLogsOverlay() {
   actions.style.display = "flex";
   actions.style.justifyContent = "flex-end";
   actions.style.gap = "8px";
+  actions.style.borderTop = "1px solid rgba(226, 184, 92, 0.2)";
+  actions.style.paddingTop = "12px";
 
   const printSlipBtn = document.createElement("button");
   printSlipBtn.type = "button";
@@ -32478,7 +32565,7 @@ function createLcDetailLogsOverlay() {
   };
   actions.append(printSlipBtn, closeBtn);
 
-  formEl.append(title, infoText, workTitle, tableWrapper, bonusTitle, bonusTableWrapper, actions);
+  formEl.append(headerRow, infoText, workTitle, tableWrapper, bonusTitle, bonusTableWrapper, actions);
   overlay.appendChild(formEl);
   return overlay;
 }

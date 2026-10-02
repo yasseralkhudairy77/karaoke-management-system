@@ -14367,3 +14367,68 @@ select.action-confirmation-input option {
   background: rgba(245, 158, 11, 0.22);
   color: #fff;
 }
+
+/* ==========================================================================
+   ERP & LC MODAL OVERLAYS (SOLID LUXURY BACKGROUND - NOT TRANSPARENT)
+   ========================================================================== */
+.admin-pin-modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(4, 7, 12, 0.88) !important;
+  backdrop-filter: blur(6px) !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  z-index: 15000 !important;
+  padding: 16px !important;
+  box-sizing: border-box !important;
+}
+
+.admin-pin-modal.erp-card,
+.erp-card {
+  background: #1c150e !important;
+  background: linear-gradient(180deg, #241c14 0%, #17110b 100%) !important;
+  border: 1px solid rgba(226, 184, 92, 0.35) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 215, 122, 0.25) !important;
+  color: var(--text, #f6ead2) !important;
+  box-sizing: border-box !important;
+}
+
+.admin-pin-modal .table-responsive {
+  border: 1px solid rgba(226, 184, 92, 0.2);
+  border-radius: 8px;
+  background: rgba(10, 8, 6, 0.7);
+  overflow-x: auto;
+}
+
+.admin-pin-modal .erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.admin-pin-modal .erp-table th {
+  padding: 10px 12px;
+  background: rgba(226, 184, 92, 0.12);
+  color: var(--gold-strong, #ffd77a);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-bottom: 2px solid rgba(226, 184, 92, 0.25);
+  white-space: nowrap;
+}
+
+.admin-pin-modal .erp-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text, #f6ead2);
+}
+
+.admin-pin-modal .erp-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
