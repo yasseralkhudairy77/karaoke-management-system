@@ -48,6 +48,7 @@ $Tabel = @(
   @{ Rel = 'src/tvProbe.js';               Terkunci = $false }
   @{ Rel = 'HANDOVER-2026-09-24.md';        Terkunci = $true }
   @{ Rel = 'HANDOVER-2026-09-25.md';        Terkunci = $true }
+  @{ Rel = 'HANDOVER-2026-10-02-pemicu-dan-lampu.md'; Terkunci = $true }
   @{ Rel = 'HASIL-UJI-OVERLAY-TV.md';       Terkunci = $false }
   @{ Rel = 'tv-notify-overlay/app/build.gradle'; Terkunci = $false }
   @{ Rel = 'tv-notify-overlay/app/src/main/AndroidManifest.xml'; Terkunci = $false }
