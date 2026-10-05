@@ -118,4 +118,27 @@ assert(
   'modal Edit wajib mengingatkan saat pilihan Tidak dipilih'
 );
 
+// Kejujuran kolom ADB: "Tersambung" tidak boleh dibaca sebagai keadaan sekarang bila TV sudah
+// hilang dari jaringan - halaman Kontrol TV pernah tampil "Tersambung" padahal kartu merah.
+assert(
+  controller.includes('tv_connected_now') && controller.includes('runtime_last_connect_at'),
+  'POS wajib memisahkan sambungan sekarang dan waktu sambungan terakhir'
+);
+assert(
+  appJs.includes('Terakhir tersambung'),
+  'UI wajib menulis kapan terakhir tersambung, bukan hanya kata Tersambung'
+);
+assert(
+  /tv_connected_now === false/.test(appJs),
+  'UI wajib membedakan sambungan yang masih hidup dari jejak lama'
+);
+assert(
+  appJs.includes('TV_CONTROL_REFRESH_MS') && /setInterval\(\(\) => \{[\s\S]{0,200}halamanKontrolTvSedangDibuka/.test(appJs),
+  'halaman Kontrol TV wajib menyegarkan diri sendiri'
+);
+assert(
+  appJs.includes('modalTvSedangTerbuka') && appJs.includes('isUserBusy()'),
+  'penyegaran otomatis wajib ditahan saat modal terbuka / orang sedang mengetik'
+);
+
 console.log('✓ Sakelar "Matikan TV otomatis" terverifikasi di bridge, POS, dan aplikasi.');

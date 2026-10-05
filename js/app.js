@@ -26925,6 +26925,21 @@ function printTvControlGuide() {
   }
 }
 
+/**
+ * Jam:menit dalam waktu setempat dari stempel waktu ISO. Dipakai untuk menulis KAPAN sebuah
+ * sambungan terakhir berhasil - tanpa itu, kata "Tersambung" bisa dibaca sebagai keadaan
+ * sekarang padahal itu jejak lama (kejadian nyata: halaman Kontrol TV dibuka sekali lalu
+ * tampilannya membeku, sementara TV sudah tidak menjawab lagi).
+ */
+function formatJamTersambung(isoLike) {
+  if (!isoLike) return "";
+  try {
+    return new Date(isoLike).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (_e) {
+    return "";
+  }
+}
+
 function createTvControlSectionElement() {
   const section = document.createElement("section");
   section.className = "master-section tv-control-section";
@@ -27173,8 +27188,21 @@ function createTvControlSectionElement() {
         adbBadge.className = "tv-pill neutral";
         adbBadge.innerHTML = `<span class="tv-pill-dot abu"></span>Mock`;
       } else if (r.device_connected) {
-        adbBadge.className = "tv-pill success";
-        adbBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Tersambung`;
+        // Angka ini adalah JEJAK sambungan yang pernah berhasil, bukan keadaan sekarang:
+        // bridge tidak menghapusnya saat TV hilang dari jaringan (sengaja, supaya ketahuan
+        // kapan terakhir berhasil). Karena itu waktunya ditulis dan warnanya kuning bila
+        // pemeriksaan terakhir sudah tidak menemukan TV-nya - lihat cabang di bawah.
+        const terakhir = formatJamTersambung(r.runtime_last_connect_at);
+        if (r.tv_connected_now === false) {
+          adbBadge.className = "tv-pill warning";
+          adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Terakhir tersambung${terakhir ? ` ${terakhir}` : ""}`;
+          adbBadge.title = "TV ini sempat tersambung, tetapi pada pemeriksaan terakhir tidak menjawab lagi. "
+            + "Lihat kolom Masalah dan status lampu di kartu ruangan.";
+        } else {
+          adbBadge.className = "tv-pill success";
+          adbBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Tersambung${terakhir ? ` ${terakhir}` : ""}`;
+          adbBadge.title = "Bridge sedang bisa mengirim perintah ke TV ini.";
+        }
       } else if (r.waiting_authorization === true) {
         adbBadge.className = "tv-pill warning";
         adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Menunggu Izin`;
@@ -39471,6 +39499,36 @@ if (dashboardShell) {
 }
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
+
+// Penyegaran otomatis halaman Kontrol TV. Tanpa ini, halaman itu membeku pada keadaan saat
+// dibuka: kartu ruangan menyegarkan diri tiap 10 detik, tetapi daftar Kontrol TV tidak -
+// sehingga bisa menampilkan "Tersambung" berjam-jam setelah TV-nya hilang dari jaringan.
+const TV_CONTROL_REFRESH_MS = 15000;
+
+function halamanKontrolTvSedangDibuka() {
+  return isOperatorLoggedIn()
+    && activeDashboardTab === "settings"
+    && activeSettingsSubTab === "tv_control";
+}
+
+function modalTvSedangTerbuka() {
+  return Boolean(tvDeviceModalState && tvDeviceModalState.isOpen)
+    || Boolean(tvNotifyModalState && tvNotifyModalState.isOpen);
+}
+
+setInterval(() => {
+  if (!halamanKontrolTvSedangDibuka()) return;
+  // Jangan sentuh apa pun selagi orang mengisi PIN di modal atau sedang mengetik.
+  if (isUserBusy() || modalTvSedangTerbuka()) return;
+  if (document.hidden) return;
+  loadTvControlOverview({ force: true, silent: true });
+}, TV_CONTROL_REFRESH_MS);
+
+// Begitu jendela kembali aktif (operator balik ke aplikasi), segarkan segera.
+window.addEventListener("focus", () => {
+  if (!halamanKontrolTvSedangDibuka() || isUserBusy() || modalTvSedangTerbuka()) return;
+  loadTvControlOverview({ force: true, silent: true });
+});
 
 // Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
 setInterval(async () => {

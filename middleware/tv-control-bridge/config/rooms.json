@@ -21,7 +21,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
+            "autoPowerOff": false,
             "notes": ""
         },
         {
@@ -90,8 +90,8 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
-            "notes": "ETHERNET statis 192.168.1.104 sejak 2026-09-22 (diset di menu TV: Ethernet > Setelan IP). MAC = NIC kabel (WoL OK). Wi-Fi TV tidak terpakai."
+            "autoPowerOff": false,
+            "notes": ""
         },
         {
             "id": "room-05",
@@ -113,7 +113,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
+            "autoPowerOff": false,
             "notes": ""
         },
         {
@@ -136,7 +136,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
+            "autoPowerOff": false,
             "notes": ""
         },
         {
@@ -159,7 +159,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
+            "autoPowerOff": false,
             "notes": ""
         },
         {
@@ -182,7 +182,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": false,
+            "autoPowerOff": true,
             "notes": ""
         },
         {

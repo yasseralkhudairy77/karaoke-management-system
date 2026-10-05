@@ -475,6 +475,13 @@ async function getTvRoomOverview(req, res) {
       let wakefulness = null;
       let arpMac = '';
       let hasConnectionField = false;
+      // `runtime.connected` TIDAK dihapus bridge saat TV hilang dari jaringan (sengaja: supaya
+      // ketahuan kapan terakhir berhasil tersambung). Jadi nilai itu bukan "keadaan sekarang".
+      // Dua field di bawah memisahkan keduanya supaya UI bisa menulis jujur:
+      //   tv_connected_now       = pada pemeriksaan terakhir bridge, TV benar-benar tersambung
+      //   runtime_last_connect_at = kapan sambungan terakhir berhasil (untuk ditulis waktunya)
+      let tvConnectedNow = false;
+      let runtimeLastConnectAt = '';
 
       if (bRoom) {
         if (bRoom.runtime && typeof bRoom.runtime.connected === 'boolean') {
@@ -486,6 +493,8 @@ async function getTvRoomOverview(req, res) {
         }
         wakefulness = bRoom.wakefulness || (bRoom.runtime && bRoom.runtime.wakefulness) || null;
         arpMac = bRoom.arpMac || (bRoom.runtime && bRoom.runtime.arpMac) || '';
+        tvConnectedNow = Boolean(bRoom.runtime && bRoom.runtime.connected === true);
+        runtimeLastConnectAt = (bRoom.runtime && bRoom.runtime.lastConnectAt) || '';
       }
 
       // Cadangan: jika bRoom ada tapi field status connected tidak ada dan bridge aktif,
@@ -571,6 +580,9 @@ async function getTvRoomOverview(req, res) {
         notes,
         // Sakelar "Matikan TV otomatis" per ruangan - dipakai UI untuk menampilkan statusnya.
         auto_power_off: autoPowerOff,
+        // Pemisah antara "sedang tersambung" dan "terakhir tersambung pukul berapa".
+        tv_connected_now: tvConnectedNow,
+        runtime_last_connect_at: runtimeLastConnectAt,
         middleware_url: middlewareUrl,
         bridge_url: bridgeConfig.url,
         bridge_reachable: bridgeReachable,
