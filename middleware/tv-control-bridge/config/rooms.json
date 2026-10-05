@@ -21,6 +21,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -43,6 +44,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -65,6 +67,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -87,6 +90,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": "ETHERNET statis 192.168.1.104 sejak 2026-09-22 (diset di menu TV: Ethernet > Setelan IP). MAC = NIC kabel (WoL OK). Wi-Fi TV tidak terpakai."
         },
         {
@@ -109,6 +113,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -131,6 +136,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -153,6 +159,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -175,6 +182,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -194,6 +202,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": false,
+            "autoPowerOff": true,
             "notes": "Ruangan kosong: nomor POS ROOM-009 sebenarnya adalah ruangan EXECUTIVE, yang TV-nya terpasang pada entri room-13. Jangan pakai entri ini; alias ROOM-009 dipindahkan ke room-13 pada 2026-09-25."
         },
         {
@@ -214,6 +223,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": false,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -234,6 +244,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": false,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -254,6 +265,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": false,
+            "autoPowerOff": true,
             "notes": ""
         },
         {
@@ -278,6 +290,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": ""
         }
     ],
@@ -299,6 +312,7 @@
             "wolIntervalMs": 100,
             "defaultSleepKeycode": 223,
             "enabled": true,
+            "autoPowerOff": true,
             "notes": "Lab Android box target, outside production rooms"
         }
     ]
