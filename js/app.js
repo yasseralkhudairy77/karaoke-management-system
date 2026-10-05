@@ -26186,6 +26186,18 @@ function createTvDeviceModalElement() {
   `;
   form.appendChild(wolField);
 
+  const autoOffField = document.createElement("label");
+  autoOffField.className = "master-form-field";
+  autoOffField.innerHTML = `
+    <span class="master-form-label">Matikan TV otomatis saat waktu habis</span>
+    <select class="master-form-input" data-prop="autoPowerOff">
+      <option value="true"${modal.autoPowerOff === false ? "" : " selected"}>Aktif - TV ditidurkan saat waktu billing habis</option>
+      <option value="false"${modal.autoPowerOff === false ? " selected" : ""}>Tidak - TV dibiarkan menyala, staf mematikan sendiri</option>
+    </select>
+    <small style="color:#9ca3af;font-size:11px;">Peringatan sisa waktu di layar TV tetap berjalan walau pilihan ini Tidak.</small>
+  `;
+  form.appendChild(autoOffField);
+
   const notesField = document.createElement("label");
   notesField.className = "master-form-field";
   notesField.style.gridColumn = "1 / -1";
@@ -37319,6 +37331,7 @@ async function handleRoomAction(event) {
       tvMac: "",
       adbPort: 5555,
       wolBroadcast: "192.168.1.255",
+      autoPowerOff: true,
       notes: "",
       status: "active",
       adminPin: "",
@@ -37350,6 +37363,9 @@ async function handleRoomAction(event) {
       isCapturing: false,
       adbPort: item?.adb_port || 5555,
       wolBroadcast: item?.wol_broadcast || "192.168.1.255",
+      // Bawaan AKTIF: perangkat yang belum punya nilai (payload lama / bridge belum terjangkau)
+      // diperlakukan sama seperti perilaku sekarang.
+      autoPowerOff: item?.auto_power_off !== false,
       notes: item?.notes || "",
       status: item?.status || "active",
       adminPin: "",
@@ -37488,6 +37504,7 @@ async function handleRoomAction(event) {
         tv_mac: m.tvMac ? m.tvMac.trim() : "",
         adb_port: m.adbPort ? Number(m.adbPort) : 5555,
         wol_broadcast: m.wolBroadcast ? m.wolBroadcast.trim() : "192.168.1.255",
+        auto_power_off: m.autoPowerOff === false || m.autoPowerOff === "false" ? false : true,
         notes: m.notes ? m.notes.trim() : "",
         status: m.status || "active",
         admin_pin: m.adminPin.trim()

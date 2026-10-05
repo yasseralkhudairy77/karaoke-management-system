@@ -46,6 +46,8 @@ $Tabel = @(
   @{ Rel = 'src/roomConfig.js';             Terkunci = $false }
   @{ Rel = 'src/tvEventLog.js';             Terkunci = $false }
   @{ Rel = 'src/tvProbe.js';               Terkunci = $false }
+  # Uji terisolasi sakelar "matikan TV otomatis" (tanpa menyentuh TV venue).
+  @{ Rel = 'scripts-uji/uji-auto-power-off.js'; Terkunci = $false }
   @{ Rel = 'HANDOVER-2026-09-24.md';        Terkunci = $true }
   @{ Rel = 'HANDOVER-2026-09-25.md';        Terkunci = $true }
   @{ Rel = 'HANDOVER-2026-10-02-pemicu-dan-lampu.md'; Terkunci = $true }

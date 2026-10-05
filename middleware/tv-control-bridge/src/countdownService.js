@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { sleepRoom, wakeRoom, sendOverlay, getTvPowerState } = require('./adbService');
 const { recordEvent } = require('./tvEventLog');
+const { getRoom } = require('./roomConfig');
 
 /**
  * Jadwal peringatan per ruangan: T-15 dan T-5 lewat overlay di layar TV, lalu T-0
@@ -86,6 +87,14 @@ function defaultMessageForOffset(offsetSeconds, targetName) {
     subtext: 'Hubungi kasir untuk memperpanjang',
     seconds: 20,
   };
+}
+
+function autoPowerOffEnabled(room) {
+  // Ruangan harus ada di config; kalau tidak ada (mis. perangkat uji), biarkan perilaku lama.
+  if (!room) {
+    return true;
+  }
+  return room.autoPowerOff !== false;
 }
 
 function normalizeWarnings(options = {}, targetName) {
@@ -243,6 +252,31 @@ async function runFinalSequence(record) {
   await sleep(record.graceSeconds * 1000);
 
   if (record.state === 'canceled') {
+    return;
+  }
+
+  // Sakelar "matikan TV otomatis" dari Pengaturan -> Kontrol TV: peringatan T-15/T-5/T-0
+  // tetap dikirim (staf ruangan perlu tahu waktunya habis), tetapi TV TIDAK ditidurkan.
+  // Dibaca di sini, bukan saat jadwal dipasang, supaya perubahan sakelar ikut berlaku
+  // untuk jadwal yang sedang berjalan.
+  if (!autoPowerOffEnabled(getRoom(record.targetId))) {
+    record.tvWasPoweredOff = false;
+    record.state = 'completed';
+    record.completedAt = new Date().toISOString();
+    record.lastError = null;
+    pushHistory(record, {
+      action: 'tidur_dilewati',
+      ok: true,
+      detail: 'matikan TV otomatis sedang DIMATIKAN untuk ruangan ini; peringatan tetap dikirim, TV tidak ditidurkan',
+    });
+    recordEvent({
+      action: 'tidur_dilewati',
+      roomId: record.targetId,
+      roomName: record.targetName,
+      ok: true,
+      detail: 'matikan TV otomatis dimatikan di pengaturan ruangan',
+    });
+    persist();
     return;
   }
 
@@ -694,6 +728,26 @@ function restoreSchedules() {
     }
 
     countdowns.set(key, record);
+
+    // Ruangan yang "matikan TV otomatis"-nya DIMATIKAN: jangan pernah melanjutkan jadwal
+    // peniduran setelah restart bridge, walau berkas jadwal masih menyimpannya. Tanpa ini,
+    // TV bisa mati diam-diam padahal staf sudah mematikan fiturnya di pengaturan.
+    if (!autoPowerOffEnabled(getRoom(record.targetId))) {
+      record.state = 'stale_skipped';
+      pushHistory(record, {
+        action: 'tidur_dilewati',
+        ok: true,
+        detail: 'bridge restart, tetapi matikan TV otomatis dimatikan untuk ruangan ini - TV tidak ditidurkan',
+      });
+      recordEvent({
+        action: 'tidur_dilewati',
+        roomId: record.targetId,
+        roomName: record.targetName,
+        ok: true,
+        detail: 'dipulihkan saat restart bridge dengan fitur mati otomatis dimatikan',
+      });
+      continue;
+    }
 
     if (record.endsAtMs > now) {
       record.state = 'running';

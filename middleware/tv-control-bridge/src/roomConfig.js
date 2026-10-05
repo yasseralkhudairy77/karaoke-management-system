@@ -42,6 +42,9 @@ function normalizeRoom(rawRoom = {}, index = 0) {
   const wolIntervalMs = Number(rawRoom.wolIntervalMs || process.env.WOL_INTERVAL_MS || 100);
   const defaultSleepKeycode = Number(rawRoom.defaultSleepKeycode || process.env.DEFAULT_SLEEP_KEYCODE || 223);
   const enabled = rawRoom.enabled !== false;
+  // Sakelar fitur "matikan TV otomatis saat waktu billing habis". Bawaan AKTIF supaya
+  // perilaku lama tidak berubah; hanya ruangan yang sengaja dimatikan yang berbeda.
+  const autoPowerOff = rawRoom.autoPowerOff !== false;
   const notes = rawRoom.notes ? String(rawRoom.notes).trim() : '';
   const aliases = parseCsvList(rawRoom.aliases);
 
@@ -60,6 +63,7 @@ function normalizeRoom(rawRoom = {}, index = 0) {
     wolIntervalMs,
     defaultSleepKeycode,
     enabled,
+    autoPowerOff,
     notes,
   };
 }

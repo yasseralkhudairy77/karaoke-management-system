@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS tv_devices (
     last_checked_at TIMESTAMPTZ,
     last_check_result VARCHAR(30),
     last_check_message TEXT,
+    -- Sakelar per ruangan (Pengaturan -> Kontrol TV): TRUE = TV ditidurkan otomatis saat
+    -- waktu billing habis. Bawaan TRUE supaya perilaku lama tidak berubah.
+    auto_power_off BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -74,6 +77,7 @@ ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS notes            TEXT;
 ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_checked_at  TIMESTAMPTZ;
 ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_result VARCHAR(30);
 ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_message TEXT;
+ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS auto_power_off BOOLEAN DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS tv_displays (
     display_id VARCHAR(50) PRIMARY KEY,
