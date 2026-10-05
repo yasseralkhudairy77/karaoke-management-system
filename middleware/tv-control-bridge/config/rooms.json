@@ -182,7 +182,7 @@
             "wolIntervalMs": 250,
             "defaultSleepKeycode": 223,
             "enabled": true,
-            "autoPowerOff": true,
+            "autoPowerOff": false,
             "notes": ""
         },
         {

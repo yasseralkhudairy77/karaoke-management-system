@@ -26195,6 +26195,9 @@ function createTvDeviceModalElement() {
       <option value="false"${modal.autoPowerOff === false ? " selected" : ""}>Tidak - TV dibiarkan menyala, staf mematikan sendiri</option>
     </select>
     <small style="color:#9ca3af;font-size:11px;">Peringatan sisa waktu di layar TV tetap berjalan walau pilihan ini Tidak.</small>
+    ${modal.autoPowerOff === false
+      ? '<small style="color:#fca5a5;font-size:11px;font-weight:600;">TV ruangan ini TIDAK akan dimatikan otomatis saat waktu billing habis. Staf yang mematikannya sendiri.</small>'
+      : ''}
   `;
   form.appendChild(autoOffField);
 
@@ -27246,6 +27249,19 @@ function createTvControlSectionElement() {
       tdArp.appendChild(arpBadge);
 
       const tdIssue = document.createElement("td");
+      // Penanda fitur "Matikan TV otomatis": hanya ruangan yang fiturnya DIMATIKAN yang diberi
+      // label. Ruangan dengan perilaku biasa tidak ditandai, supaya yang menyimpang justru yang
+      // paling terlihat - bukan sebaliknya (kalau semua ditandai, tidak ada yang menonjol).
+      if (r.auto_power_off === false && r.has_device !== false) {
+        const offBadge = document.createElement("span");
+        offBadge.className = "tv-pill danger tv-issue-pill";
+        offBadge.textContent = "Tidak dimatikan otomatis";
+        offBadge.title = "Fitur Matikan TV otomatis sedang NONAKTIF untuk ruangan ini. "
+          + "Waktu billing habis: TV TIDAK ditidurkan sendiri. "
+          + "Peringatan sisa waktu di layar TV tetap berjalan. "
+          + "Ubah di tombol Edit pada baris ini (butuh PIN admin).";
+        tdIssue.appendChild(offBadge);
+      }
       if (!Array.isArray(r.masalah) || r.masalah.length === 0) {
         const okSpan = document.createElement("span");
         okSpan.className = "tv-pill success";

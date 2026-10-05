@@ -103,4 +103,19 @@ assert(
   'label sakelar wajib memakai bahasa yang dipahami staf venue'
 );
 
+// Indikator: ruangan yang fiturnya dimatikan harus LANGSUNG terlihat di daftar Kontrol TV,
+// kalau tidak staf hanya melihat TV yang tetap menyala dan mengira sistemnya rusak.
+assert(
+  appJs.includes('Tidak dimatikan otomatis'),
+  'baris Kontrol TV wajib menandai ruangan yang TV-nya tidak dimatikan otomatis'
+);
+assert(
+  /auto_power_off === false && r\.has_device !== false/.test(appJs),
+  'penanda hanya untuk ruangan yang fiturnya dimatikan dan memang punya perangkat'
+);
+assert(
+  appJs.includes('TIDAK akan dimatikan otomatis saat waktu billing habis'),
+  'modal Edit wajib mengingatkan saat pilihan Tidak dipilih'
+);
+
 console.log('✓ Sakelar "Matikan TV otomatis" terverifikasi di bridge, POS, dan aplikasi.');
