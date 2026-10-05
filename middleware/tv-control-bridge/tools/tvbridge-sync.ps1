@@ -18,7 +18,14 @@
 # rahasia dan limbah tidak.
 # ---------------------------------------------------------------------------
 
-param([ValidateSet('periksa', 'sync')][string]$Mode = 'periksa')
+# Sejak 2026-10-05 folder KERJA (C:\karaoke-tv-bridge) bukan lagi yang dijalankan: yang dijalankan
+# adalah salinan repo ini. Karena itu mode 'sync' dimatikan secara bawaan - menyalin dari folder
+# lama berisiko menimpa kode yang sedang berjalan dengan berkas lama. Pakai -IzinkanTulis kalau
+# benar-benar perlu menyalin dari folder lama.
+param(
+  [ValidateSet('periksa', 'sync')][string]$Mode = 'periksa',
+  [switch]$IzinkanTulis
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -100,7 +107,7 @@ foreach ($item in $Tabel) {
   if (-not (Test-Path $src)) { $hilang += $rel; continue }
   if ((Sidik $src) -eq (Sidik $dst)) { $sama += $rel; continue }
   $beda += $rel
-  if ($Mode -eq 'sync') {
+  if ($Mode -eq 'sync' -and $IzinkanTulis) {
     $dir = Split-Path -Parent $dst
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     Copy-Item -LiteralPath $src -Destination $dst -Force
