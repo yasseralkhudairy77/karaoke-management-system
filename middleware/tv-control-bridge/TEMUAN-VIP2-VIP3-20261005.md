@@ -77,6 +77,54 @@ tidak bisa mengambil alamat lamanya -> tampil "tidak tersambung" padahal TV seha
 5. Perangkat lain yang sekarang memegang `.6`/`.16`/`.14` tidak perlu dikejar: begitu TV
    memakai alamat baru yang direservasi, tabrakan ini hilang sendiri.
 
+
+## Koreksi & catatan penting (dikonfirmasi pemilik sistem)
+
+- PC kasir memang menyambung ke jaringan lewat **Wi-Fi**, bukan kabel. Antarmuka Ethernet-nya
+  "Media disconnected" sesuai rencana - **BUKAN gejala kerusakan jaringan**. (Sempat saya
+  laporkan sebagai indikasi awal; itu keliru dan sudah dicoret.)
+- Karena pemindaian dan paket Wake-on-LAN dikirim dari Wi-Fi pada LAN yang sama, keduanya tetap
+  sampai ke seluruh LAN kabel. Kesimpulan "MAC TV tidak ada di seluruh 192.168.1.0/24" tetap sah.
+
+## Satu celah yang belum tertutup
+
+Pemindaian menyisir **192.168.1.0/24** saja. Bila sebuah TV memegang setelan statis di subnet
+lain (mis. sisa alamat box uji 10.43.x, atau salah netmask), TV itu tetap hidup di jaringan
+tetapi tidak akan menjawab ping ini dan MAC-nya tidak akan terlihat.
+
+Cara memastikannya hanya dari layar TV, bukan dari PC:
+    Setelan -> Jaringan -> (Ethernet) -> lihat "IP address" yang benar-benar dipakai.
+
+- Kalau alamatnya 192.168.1.6 / 192.168.1.16 -> TV bertabrakan dengan perangkat lain yang
+  sekarang memakai alamat itu (dua perangkat satu alamat, keduanya saling memutus).
+- Kalau alamatnya bukan 192.168.1.x -> itu sebabnya TV tak terlihat; betulkan ke blok .101-.113.
+- Kalau alamatnya kosong / "tidak tersambung" / tanpa IP -> kabel atau port switch-nya.
+
+## Hasil uji Wake-on-LAN (2026-10-05, dari PC kasir lewat Wi-Fi)
+
+Paket WoL dikirim ke MAC kabel kedua TV, lalu ARP dipantau 60 detik:
+
+    VIP-2 (74:81:9a:ff:6a:a5) -> MAC tetap tidak muncul (yang terlihat ca:b2:54:e4:68:44)
+    VIP-3 (9c:53:85:00:b3:ab) -> MAC tetap tidak muncul (yang terlihat 38:b1:db:f3:16:6b)
+
+Catatan perilaku: WoL baru berguna bila TV sebelumnya dimatikan dengan benar (tombol mati /
+mode standby). Kalau TV terputus dari listrik (saklar/colokan), NIC-nya mati total dan WoL
+tidak akan membangunkannya.
+
+## Pemindaian penuh 192.168.1.1-254 (setelah sweep)
+
+Perangkat yang menjawab, hanya 6:
+
+    192.168.1.1     28-6d-da-7d-e9-00   router/gateway
+    192.168.1.4     62-66-e8-9b-47-38   bukan TV (MAC acak: ponsel/laptop)
+    192.168.1.6     ca-b2-54-e4-68-44   bukan TV (MAC acak) - alamat "VIP-2" dibajak
+    192.168.1.15    44-0f-b4-bb-1e-9e   Android TV "TV Ruang Keluarga" (tidak terdaftar)
+    192.168.1.16    38-b1-db-f3-16-6b   bukan TV (MAC acak) - alamat "VIP-3" dibajak
+    192.168.1.104   74-81-9a-ff-72-be   Android TV "VIP 4" (satu-satunya TV terdaftar yang online)
+
+MAC TV VIP-2 dan VIP-3 tidak ada di alamat mana pun. Jejak sambungan bridge juga menunjukkan
+keduanya BELUM PERNAH berhasil tersambung hari ini (VIP-4 pukul 15:39, VIP-8 pernah pukul 15:07).
+
 ## Lembar serah-terima untuk yang memegang router
 
     Reservasi DHCP (MAC -> IP), netmask 255.255.255.0, gateway 192.168.1.1
