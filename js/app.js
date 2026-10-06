@@ -19684,6 +19684,14 @@ function formatClosingClock(value) {
   }).format(date).replace(".", ":");
 }
 
+function formatOperationalDateId(isoDate) {
+  const parts = String(isoDate || "").split("-");
+  if (parts.length !== 3) {
+    return String(isoDate || "-");
+  }
+  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
 function formatClosingDate(value) {
   const normalized = String(value || "").trim().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized || "-";
@@ -33443,7 +33451,7 @@ function createTransactionsSubNavElement() {
   ];
 
   if (getCurrentOperatorRole() === "owner") {
-    transactionTabs.push(["manual", "Input Manual", "Masukkan transaksi backdate saat operasional mati listrik"]);
+    transactionTabs.push(["manual", "Input Manual (Mati Listrik)", "Masukkan transaksi backdate saat operasional mati listrik"]);
   }
 
   transactionTabs.forEach(([key, label, description]) => {
@@ -33541,7 +33549,7 @@ function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDr
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   return {
     operationalDate: date,
-    label: formatClosingDate(date),
+    label: formatOperationalDateId(date),
   };
 }
 
@@ -33566,7 +33574,7 @@ function createManualTransactionPanelElement() {
   panel.className = "manual-transaction-panel";
   panel.innerHTML = `
     <header class="manual-transaction-heading">
-      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus owner. Semua harga diambil dari data master.</p></div>
+      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus pemilik. Semua harga diambil dari data master.</p></div>
       <span class="manual-transaction-owner-badge">OWNER</span>
     </header>
     <div class="manual-transaction-mode">
@@ -33574,7 +33582,7 @@ function createManualTransactionPanelElement() {
       <button type="button" data-action="set-manual-transaction-mode" data-mode="general_fnb">F&amp;B Umum</button>
     </div>
     <div class="manual-transaction-fields">
-      <label><span>Tanggal Nota / Periode</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
+      <label><span>Tanggal Nota</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
       <label><span>Jam Mulai</span><input type="time" data-action="update-manual-transaction" data-field="time"></label>
       <label><span>Metode Bayar</span><select data-action="update-manual-transaction" data-field="payment_method"></select></label>
       <label><span>Status</span><select data-action="update-manual-transaction" data-field="payment_status"></select></label>
@@ -33617,7 +33625,7 @@ function createManualTransactionPanelElement() {
   setValue("customer_name", draft.customer_name);
   setValue("cashier_name", draft.cashier_name);
   setValue("source_note", draft.source_note);
-  fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Cash"], ["transfer", "Transfer"]], draft.payment_method);
+  fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Tunai"], ["transfer", "Transfer"]], draft.payment_method);
   fillManualSelect(panel.querySelector("[data-field='payment_status']"), [["paid", "Lunas"], ["unpaid", "Belum Dibayar"]], draft.payment_status);
   const operationalPeriod = getManualTransactionOperationalPeriod(draft);
   const operationalPeriodBox = panel.querySelector(".manual-operational-period");
@@ -33625,7 +33633,7 @@ function createManualTransactionPanelElement() {
     const title = document.createElement("strong");
     title.textContent = `Masuk periode operasional ${operationalPeriod.label}`;
     const detail = document.createElement("span");
-    detail.textContent = "Khusus input manual, Tanggal Nota menjadi periode tujuan owner. Cutoff tetap berlaku untuk transaksi otomatis.";
+    detail.textContent = "Khusus input manual, tanggal nota menjadi periode tujuan pemilik. Cutoff tetap berlaku untuk transaksi otomatis.";
     operationalPeriodBox.append(title, detail);
   } else {
     operationalPeriodBox.textContent = "Isi tanggal nota dan jam mulai untuk melihat periode operasional.";
@@ -33653,7 +33661,7 @@ function createManualTransactionPanelElement() {
     roomFields.remove();
     lcDetail.remove();
   }
-  panel.querySelector(".manual-customer-label").textContent = draft.mode === "room" ? "Nama Tamu / Tuan" : "Nama Pelanggan";
+  panel.querySelector(".manual-customer-label").textContent = draft.mode === "room" ? "Nama Tamu" : "Nama Pelanggan";
 
   const menuSelect = panel.querySelector("[data-field='selected_menu_id']");
   fillManualSelect(
