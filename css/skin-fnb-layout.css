@@ -446,12 +446,26 @@
 
 .rooms-tab-grid {
   gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  /* TIGA kartu per baris, sesuai permintaan: baris yang konsisten dan kartu
+     yang lega (sekitar 400px di layar kasir 1366px). */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-content: start;
   /* Kartu terisi jauh lebih tinggi (rincian F&B + estimasi tagihan). Jangan
      regangkan kartu kosong mengikutinya — biarkan setiap kartu setinggi isinya
      supaya kartu kosong tetap ringkas, bukan kotak besar berisi ruang kosong. */
   align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .rooms-tab-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .rooms-tab-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Ruangan KOSONG: TV yang mati/tidak tersambung itu WAJAR (tidak ada tamu),
@@ -625,32 +639,30 @@
   flex-shrink: 1;
 }
 
-/* --- P7: kartu TERISI punya jauh lebih banyak isi (rincian sesi, pengingat,
-   hitung mundur, estimasi tagihan, 8 tombol). Diberi dua kolom grid supaya
-   barisnya tidak membungkus dan tingginya turun — tanpa mengubah urutan apa pun. */
-.room-card.occupied {
-  grid-column: span 2;
-}
+/* --- P7 (dibatalkan): kartu TERISI sempat diberi 2 kolom grid. Hasilnya saat ada
+   kamar terisi, satu baris hanya tampak 2 kartu — Yasser tidak menginginkan itu.
+   Sekarang kartu terisi menempati 1 kolom seperti kartu lain, jadi setiap baris
+   SELALU 3 kartu. Tombol aksinya tetap 1 kolom penuh (P3) supaya label panjang
+   tidak terpotong. */
 
-@media (max-width: 900px) {
-  .room-card.occupied {
-    grid-column: span 2;
-  }
-}
-
-@media (max-width: 640px) {
-  .room-card.occupied {
-    grid-column: auto;
-  }
-}
-
-/* Kartu TERISI kini lebar (2 kolom), jadi kepala kartu boleh satu baris lagi —
-   menghemat tinggi tanpa menghilangkan apa pun. */
+/* Kartu TERISI juga selebar kartu lain (~400px), jadi kepala kartu boleh satu
+   baris — menghemat tinggi tanpa menghilangkan apa pun. */
 .room-card.occupied .room-topline-main {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* Karena kartu kini ~400px, tombol aksi boleh dua kolom lagi (label tetap muat:
+   terukur 2 kolom pada 397px = ~190px per tombol, sedangkan label terpanjang
+   "Pindah Room" butuh 116px). Ini memangkas tinggi kartu terisi ~130px. */
+.room-card.occupied .room-actions-occupied {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.room-card.occupied .room-actions-occupied > [data-action="toggle-session"] {
+  grid-column: 1 / -1 !important;
 }
 
 .room-card.occupied .room-name {
