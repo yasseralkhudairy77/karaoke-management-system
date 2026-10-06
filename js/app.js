@@ -14734,7 +14734,7 @@ function createTodayFnbToolbarElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-today-fnb-orders";
   refreshButton.disabled = isLoadingTodayFnbOrders;
-  refreshButton.textContent = isLoadingTodayFnbOrders ? "Memuat..." : "Refresh Riwayat F&B";
+  refreshButton.textContent = isLoadingTodayFnbOrders ? "Memuat..." : "Muat Ulang Riwayat F&B";
 
   actions.appendChild(refreshButton);
   toolbar.append(statusFilter, roomFilter, actions);
