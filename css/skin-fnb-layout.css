@@ -678,6 +678,37 @@
   min-height: 42px !important;
 }
 
+/* ---------------------------------------------------------------- P8 ------ */
+/* Indikator TV dipindah ke POJOK KANAN ATAS setiap kartu (permintaan Yasser).
+   Sebelumnya ia menempel di kiri, di bawah nama ruangan. */
+.app-tab-panel--rooms .room-card {
+  position: relative;
+}
+
+.app-tab-panel--rooms .room-card .tv-indicator {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  margin: 0;
+  order: 0;
+}
+
+/* Beri ruang di kanan baris nama supaya nama panjang tidak menabrak badge TV. */
+.app-tab-panel--rooms .room-card .room-topline-main {
+  padding-right: 60px;
+}
+
+/* Kartu yang tidak punya TV tidak perlu ruang itu. */
+.app-tab-panel--rooms .room-card:not(:has(.tv-indicator)) .room-topline-main {
+  padding-right: 0;
+}
+
+@media (max-width: 720px) {
+  .app-tab-panel--rooms .room-card .room-topline-main {
+    padding-right: 56px;
+  }
+}
+
 /* --- R4: ringkasan okupansi (sekaligus filter). */
 .rooms-summary {
   grid-column: 1 / -1;
