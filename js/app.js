@@ -31124,7 +31124,7 @@ function createLcMasterSubTabElement() {
   bulkBtn.style.display = "inline-flex";
   bulkBtn.style.alignItems = "center";
   bulkBtn.style.gap = "6px";
-  bulkBtn.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+  bulkBtn.textContent = "Ubah Tarif Semua LC";
   bulkBtn.onclick = () => {
     const activeLcs = Array.isArray(lcs) ? lcs.filter(l => l.status === "active") : [];
     const sampleRate = activeLcs.length > 0 ? (Number(activeLcs[0].rate_per_hour || activeLcs[0].rate_per_room) || 130000) : 130000;
@@ -31172,7 +31172,7 @@ function createLcMasterSubTabElement() {
       <th>ID LC</th>
       <th>Nama Panggilan</th>
       <th>Tarif / Jam</th>
-      <th>Status Keaktifan</th>
+      <th>Status</th>
       <th>Ketersediaan</th>
       <th style="text-align: center;">Aksi</th>
     </tr>
@@ -31205,9 +31205,11 @@ function createLcMasterSubTabElement() {
       <td>${formatCurrency(lc.rate_per_room)}</td>
       <td><span class="${statusClass}">${statusText}</span></td>
       <td><span class="${availClass}">${availText}</span></td>
-      <td style="text-align: center; display: flex; justify-content: center; gap: 8px;">
+      <td class="lc-actions-cell">
+        <div class="lc-actions-group">
         <button type="button" class="erp-btn erp-btn-secondary btn-edit-lc" style="padding: 4px 8px; font-size: 12px;" data-id="${lc.lc_id}">Edit</button>
-        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" style="padding: 4px 8px; font-size: 12px; background-color: var(--color-danger); color: #fff;" data-id="${lc.lc_id}">Hapus</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" data-id="${lc.lc_id}">Hapus</button>
+        </div>
       </td>
     `;
 
@@ -31239,7 +31241,7 @@ function createLcMasterSubTabElement() {
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "erp-btn erp-btn-secondary";
-    prevBtn.textContent = "«";
+    prevBtn.textContent = "Sebelumnya";
     prevBtn.disabled = lcMasterPage === 1;
     prevBtn.onclick = () => {
       lcMasterPage--;
@@ -31248,12 +31250,12 @@ function createLcMasterSubTabElement() {
 
     const label = document.createElement("span");
     label.style.fontSize = "14px";
-    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages}`;
+    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages} (${lcs.length} data)`;
 
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.className = "erp-btn erp-btn-secondary";
-    nextBtn.textContent = "»";
+    nextBtn.textContent = "Berikutnya";
     nextBtn.disabled = lcMasterPage === totalPages;
     nextBtn.onclick = () => {
       lcMasterPage++;
@@ -31415,7 +31417,7 @@ function createLcReportsSubTabElement() {
   printThermalBtn.style.padding = "8px 16px";
   printThermalBtn.style.alignSelf = "flex-end";
   printThermalBtn.style.fontWeight = "bold";
-  printThermalBtn.textContent = "🖨️ Cetak Rekap (58mm)";
+  printThermalBtn.textContent = "Cetak Rekap (58mm)";
   printThermalBtn.disabled = isLoadingLcWorkReports || lcWorkReports.length === 0;
   printThermalBtn.onclick = async () => {
     const sortedReports = getSortedLcWorkReports();
@@ -31520,7 +31522,7 @@ function createLcReportsSubTabElement() {
       <td><strong>${formatCurrency(rep.gross_earning_total ?? rep.total_earnings)}</strong></td>
       <td style="text-align: center; display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
         <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
-        <button type="button" class="erp-btn erp-btn-secondary btn-print-lc-slip" style="padding: 4px 8px; font-size: 12px;">🖨️ Cetak Slip</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-print-lc-slip" style="padding: 4px 8px; font-size: 12px;">Cetak Slip</button>
       </td>
     `;
 
@@ -31556,7 +31558,7 @@ function createLcReportsSubTabElement() {
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "erp-btn erp-btn-secondary";
-    prevBtn.textContent = "«";
+    prevBtn.textContent = "Sebelumnya";
     prevBtn.disabled = lcReportsPage === 1;
     prevBtn.onclick = () => {
       lcReportsPage--;
@@ -31570,7 +31572,7 @@ function createLcReportsSubTabElement() {
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.className = "erp-btn erp-btn-secondary";
-    nextBtn.textContent = "»";
+    nextBtn.textContent = "Berikutnya";
     nextBtn.disabled = lcReportsPage === totalPages;
     nextBtn.onclick = () => {
       lcReportsPage++;
@@ -31820,7 +31822,7 @@ function createLcFinanceSubTabElement() {
   refreshBtn.className = "erp-btn erp-btn-secondary";
   refreshBtn.style.padding = "8px 12px";
   refreshBtn.disabled = isLoadingLcFinance;
-  refreshBtn.textContent = isLoadingLcFinance ? "Memuat..." : "Refresh";
+  refreshBtn.textContent = isLoadingLcFinance ? "Memuat..." : "Segarkan";
   refreshBtn.onclick = () => loadLcFinanceSummary();
 
   toolbar.append(titleGroup, refreshBtn);
@@ -31838,8 +31840,8 @@ function createLcFinanceSubTabElement() {
   metricGrid.style.gap = "12px";
   metricGrid.append(
     createLcFinanceMetric("Saldo Petty Cash", summary.petty_cash_balance, true),
-    createLcFinanceMetric("Cash In Hari Ini", summary.petty_cash_in_total),
-    createLcFinanceMetric("Cash Out Hari Ini", summary.petty_cash_out_total),
+    createLcFinanceMetric("Kas Masuk Hari Ini", summary.petty_cash_in_total),
+    createLcFinanceMetric("Kas Keluar Hari Ini", summary.petty_cash_out_total),
     createLcFinanceMetric("Kasbon LC Hari Ini", summary.cash_advance_total),
     createLcFinanceMetric("Bonus Sales LC Hari Ini", summary.sales_bonus_total)
   );
@@ -31906,8 +31908,8 @@ function createLcFinanceSubTabElement() {
   const pettyType = document.createElement("select");
   pettyType.className = "duration-payment-select";
   pettyType.innerHTML = `
-    <option value="cash_in" ${pettyCashForm.entry_type === "cash_in" ? "selected" : ""}>Cash In</option>
-    <option value="cash_out" ${pettyCashForm.entry_type === "cash_out" ? "selected" : ""}>Cash Out</option>
+    <option value="cash_in" ${pettyCashForm.entry_type === "cash_in" ? "selected" : ""}>Kas Masuk</option>
+    <option value="cash_out" ${pettyCashForm.entry_type === "cash_out" ? "selected" : ""}>Kas Keluar</option>
   `;
   pettyType.onchange = (event) => {
     pettyCashForm.entry_type = event.target.value;
@@ -32126,7 +32128,7 @@ function createLcPayrollSubTabElement() {
 
   summaryBox.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Net Payout Payroll:</span>
+      <span style="font-size:12px; color:var(--muted)">Gaji Bersih Payroll:</span>
       <strong style="font-size:18px; color:var(--gold)">${formatCurrency(totalAmount)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32134,7 +32136,7 @@ function createLcPayrollSubTabElement() {
       <strong style="font-size:18px;">${formatCurrency(totalRoomEarning)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Bonus Sales:</span>
+      <span style="font-size:12px; color:var(--muted)">Bonus Penjualan:</span>
       <strong style="font-size:18px;">${formatCurrency(totalSalesBonus)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32146,11 +32148,11 @@ function createLcPayrollSubTabElement() {
       <strong style="font-size:18px;">${formatCurrency(totalCashAdvanceOutstanding)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Gross Earning:</span>
+      <span style="font-size:12px; color:var(--muted)">Penghasilan Bruto:</span>
       <strong style="font-size:18px;">${formatCurrency(totalGross)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Total Sesi / Job:</span>
+      <span style="font-size:12px; color:var(--muted)">Total Sesi:</span>
       <strong style="font-size:18px;">${totalSessions} Sesi</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32180,10 +32182,10 @@ function createLcPayrollSubTabElement() {
           <th>Tarif per Jam</th>
           <th style="text-align: center;">Total Sesi Pending</th>
           <th>Gaji Room</th>
-          <th>Bonus Sales</th>
+          <th>Bonus Penjualan</th>
           <th>Kasbon</th>
           <th>Sisa Kasbon</th>
-          <th>Net Payout</th>
+          <th>Gaji Bersih</th>
         </tr>
       </thead>
       <tbody>
@@ -32222,7 +32224,7 @@ function createLcPayrollSubTabElement() {
           ["Periode", `${lcPayrollStartDate || "-"} s/d ${lcPayrollEndDate || "-"}`],
           ["Jumlah LC", `${lcPayrollPendingReports.length} LC`],
           ["Total Sesi", `${lcPayrollPendingReports.reduce((sum, report) => sum + (Number(report.total_sessions) || 0), 0)} sesi`],
-          ["Net Payout", formatCurrency(totalAmount)],
+          ["Gaji Bersih", formatCurrency(totalAmount)],
         ],
         confirmLabel: "Proses Pembayaran",
         cancelLabel: "Periksa Lagi",
@@ -32261,7 +32263,7 @@ function createLcPayrollSubTabElement() {
         <tr>
           <th>ID Payroll</th>
           <th>Periode Kerja</th>
-          <th>Net Payout</th>
+          <th>Gaji Bersih</th>
           <th style="text-align: center;">Total Sesi</th>
           <th style="text-align: center;">LC Terbayar</th>
           <th>Tanggal Diproses</th>
@@ -32463,7 +32465,7 @@ function createLcSlipModalOverlay() {
   printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
   printBtn.style.padding = "8px 16px";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "🖨️ Cetak Slip (58mm)";
+  printBtn.textContent = "Cetak Slip (58mm)";
   printBtn.onclick = async () => {
     await printThermalText(formattedSlipText);
   };
@@ -32701,7 +32703,7 @@ function createEditLcModalOverlay() {
   statusField.style.flexDirection = "column";
   statusField.style.gap = "4px";
   statusField.innerHTML = `
-    <label style="font-size: 12px; color: var(--muted);">Status Keaktifan:</label>
+    <label style="font-size: 12px; color: var(--muted);">Status:</label>
     <select class="duration-payment-select text-select-status" style="width: 100%;">
       <option value="active" ${editLcForm.status === "active" ? "selected" : ""}>Aktif</option>
       <option value="inactive" ${editLcForm.status === "inactive" ? "selected" : ""}>Tidak Aktif</option>
@@ -32847,10 +32849,7 @@ function createDeleteLcModalOverlay() {
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
-  deleteBtn.className = "erp-btn";
-  deleteBtn.style.backgroundColor = "var(--color-danger)";
-  deleteBtn.style.color = "#fff";
-  deleteBtn.style.fontWeight = "bold";
+  deleteBtn.className = "erp-btn lc-danger-btn";
   deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen (Manager)";
   deleteBtn.disabled = isDeletingLc;
   deleteBtn.onclick = () => {
@@ -32962,7 +32961,7 @@ function createBulkUpdateLcRateModalOverlay() {
   title.style.display = "flex";
   title.style.alignItems = "center";
   title.style.gap = "8px";
-  title.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+  title.textContent = "Ubah Tarif Semua LC";
 
   const desc = document.createElement("p");
   desc.style.margin = "0";

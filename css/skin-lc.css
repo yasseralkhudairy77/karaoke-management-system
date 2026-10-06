@@ -1,0 +1,382 @@
+/* ============================================================================
+   LC (LADY COMPANION) — desain ulang. Dimuat SETELAH style.css.
+
+   Akar masalah "norak" yang terukur (audit 2026-10-06):
+     L1. Modul LC memakai ULANG kelas milik editor durasi kamar
+         (`.duration-payment-select`, `.duration-custom-input`) yang di style.css
+         ditulis untuk latar terang: background rgba(255,255,255,0.94) + teks
+         #132238. Akibatnya 10 kotak isian/pilihan di LC tampil PUTIH di tema
+         gelap — ini temuan paling mencolok.
+     L2. Panel `.lc-panel.erp-card` memakai !important dari aturan warisan:
+         latar gradien #241c14 -> #17110b + kotak bayangan 0 24px 70px + kilau
+         `0 0 1px rgba(255,215,122,.25)` — efek "kaca mewah" yang tidak dipakai
+         modul Ruangan/F&B yang sudah dirapikan.
+     L3. Sub-tab LC: tombol aktif diberi latar EMAS PENUH + teks gelap, sehingga
+         lebih keras daripada penanda tab aktif di modul lain.
+     L4. Tombol aksi tabel kecil dan bergaya lama (42x27 px): "Edit" (44x27) dan
+         "Cetak Slip"; juga "⚡" pada tombol Ubah Tarif.
+     L5. Tabel memakai `.erp-table` dengan kepala bergaris bawah 2px tebal dan
+         semua tajuk berwarna emas — berat, dan tidak selaras dengan tabel Stok.
+     L6. Paginasi "«"/"»" tanpa label, tinggi 37 px.
+
+   Prinsip: palet 100% token tema; emas hanya untuk aksi utama; kotak isian
+   selalu gelap; tanpa gradien permukaan; tanpa efek kilau.
+   ============================================================================ */
+
+/* ------------------------------------------------- L1: kotak isian & pilihan */
+.app-tab-panel--lc .duration-payment-select,
+.app-tab-panel--lc .duration-custom-input {
+  min-height: 42px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  outline: none;
+}
+
+.app-tab-panel--lc .duration-payment-select option {
+  background: #1a1410;
+  color: var(--text);
+}
+
+.app-tab-panel--lc .duration-custom-input::placeholder {
+  color: var(--muted);
+}
+
+.app-tab-panel--lc .duration-payment-select:focus-visible,
+.app-tab-panel--lc .duration-custom-input:focus-visible {
+  border-color: rgba(255, 215, 122, 0.6);
+  box-shadow: var(--focus-ring);
+}
+
+/* ------------------------------------------------------- L2: panel & kartu */
+.app-tab-panel--lc .lc-panel.erp-card {
+  background: var(--surface) !important;
+  background-image: none !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-soft) !important;
+  padding: var(--panel-padding);
+}
+
+/* Kartu di dalam LC (di Kasbon/Payroll) — dulu gradien + bayangan pekat. */
+.app-tab-panel--lc .erp-card {
+  background: rgba(255, 255, 255, 0.025) !important;
+  background-image: none !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: none !important;
+}
+
+.app-tab-panel--lc .erp-card h3,
+.app-tab-panel--lc .erp-card h4 {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.app-tab-panel--lc .lc-title {
+  font-size: 1.24rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.app-tab-panel--lc .lc-subtitle {
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 72ch;
+}
+
+.app-tab-panel--lc .lc-header {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* -------------------------------------------------------------- L3: sub-tab */
+.app-tab-panel--lc .lc-sub-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border) !important;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.025);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.app-tab-panel--lc .lc-sub-nav .erp-btn {
+  min-height: 38px;
+  padding: 0 16px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-pill);
+  background: transparent !important;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  box-shadow: none;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.app-tab-panel--lc .lc-sub-nav .erp-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.app-tab-panel--lc .lc-sub-nav .erp-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.app-tab-panel--lc .lc-sub-nav .erp-btn.active,
+.app-tab-panel--lc .lc-sub-nav .erp-btn.active:hover {
+  background: rgba(255, 215, 122, 0.14) !important;
+  color: var(--gold-strong) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.42);
+}
+
+/* ------------------------------------------------------------- L4: tombol */
+.app-tab-panel--lc .erp-btn-primary {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  border-color: rgba(255, 215, 122, 0.62);
+  color: #1a130b;
+  font-weight: 900;
+  box-shadow: none;
+}
+
+.app-tab-panel--lc .erp-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.app-tab-panel--lc .erp-btn-primary:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--muted);
+  filter: none;
+}
+
+.app-tab-panel--lc .erp-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.app-tab-panel--lc .erp-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--gold-strong);
+}
+
+/* Tombol aksi per baris (dulu 42x27 px, terlalu kecil untuk disentuh). */
+.app-tab-panel--lc .erp-table .btn-edit-lc,
+.app-tab-panel--lc .erp-table .btn-print-lc-slip,
+.app-tab-panel--lc .erp-table .erp-btn {
+  min-height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+  border-radius: var(--radius-sm) !important;
+  border: 1px solid var(--border) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+}
+
+.app-tab-panel--lc .erp-table .btn-edit-lc:hover,
+.app-tab-panel--lc .erp-table .btn-print-lc-slip:hover,
+.app-tab-panel--lc .erp-table .erp-btn:hover {
+  border-color: var(--gold-strong) !important;
+  background: rgba(255, 215, 122, 0.12) !important;
+  color: var(--gold-strong) !important;
+}
+
+/* -------------------------------------------------------------- L5: tabel */
+.app-tab-panel--lc .table-responsive {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(10, 8, 6, 0.35);
+}
+
+.app-tab-panel--lc .erp-table {
+  font-size: 0.88rem;
+}
+
+.app-tab-panel--lc .erp-table th {
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-tab-panel--lc .erp-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.app-tab-panel--lc .erp-table tbody tr:hover td {
+  background: rgba(255, 215, 122, 0.045);
+}
+
+/* Angka uang: rata kanan + angka tabular supaya mudah dibandingkan. */
+.app-tab-panel--lc .erp-table td:has(+ td) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----------------------------------------------------------- L6: paginasi */
+.app-tab-panel--lc .erp-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.app-tab-panel--lc .erp-pagination .erp-btn {
+  min-height: 34px !important;
+  min-width: 38px;
+  padding: 0 12px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--text) !important;
+  font-weight: 800 !important;
+}
+
+.app-tab-panel--lc .erp-pagination .erp-btn:hover:not(:disabled) {
+  border-color: var(--gold-strong) !important;
+  background: rgba(255, 215, 122, 0.12) !important;
+}
+
+.app-tab-panel--lc .erp-pagination span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------- status & lencana */
+/* Lencana status per baris tabel (aktif/non-aktif) → palet status aplikasi. */
+.app-tab-panel--lc .erp-table .status-badge {
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+/* Kartu ringkasan angka (Kasbon & Payroll): angka tabular + label rapi. */
+.app-tab-panel--lc .lc-finance-subtab strong,
+.app-tab-panel--lc .lc-payroll-subtab strong {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .app-tab-panel--lc .lc-sub-nav {
+    width: 100%;
+  }
+
+  .app-tab-panel--lc .lc-sub-nav .erp-btn {
+    flex: 1 1 auto;
+  }
+}
+/* -------------------------------------------------------------------------
+   Tombol merusak (Hapus) di LC.
+   Sebelumnya memakai `var(--color-danger)` yang TIDAK PERNAH didefinisikan di
+   tema, sehingga tombol Hapus kehilangan latarnya dan latar `#fff` pun tak
+   berguna. Sekarang memakai merah status aplikasi.
+   ------------------------------------------------------------------------- */
+.app-tab-panel--lc .erp-table .btn-delete-lc,
+.app-tab-panel--lc .erp-table .lc-danger-btn,
+.app-tab-panel--lc .lc-danger-btn {
+  border: 1px solid rgba(255, 61, 104, 0.45) !important;
+  background: rgba(255, 61, 104, 0.14) !important;
+  color: #ffd7df !important;
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+}
+
+.app-tab-panel--lc .erp-table .btn-delete-lc:hover,
+.app-tab-panel--lc .erp-table .lc-danger-btn:hover:not(:disabled),
+.app-tab-panel--lc .lc-danger-btn:hover:not(:disabled) {
+  background: rgba(255, 61, 104, 0.24) !important;
+  border-color: rgba(255, 61, 104, 0.7) !important;
+}
+
+/* -------------------------------------------------------------------------
+   Lencana status tabel Master LC.
+   Kelas `.badge`, `.badge-success`, dan `.badge-danger` TIDAK PERNAH
+   didefinisikan di style.css, sehingga kolom "Status" dan "Ketersediaan"
+   hanya tampil sebagai teks polos tanpa penanda warna. Sekarang memakai palet
+   status aplikasi.
+   ------------------------------------------------------------------------- */
+.app-tab-panel--lc .erp-table .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.app-tab-panel--lc .erp-table .badge-success {
+  border-color: rgba(24, 199, 135, 0.45);
+  background: rgba(24, 199, 135, 0.14);
+  color: #c9ffe8;
+}
+
+.app-tab-panel--lc .erp-table .badge-danger {
+  border-color: rgba(255, 61, 104, 0.5);
+  background: rgba(255, 61, 104, 0.14);
+  color: #ffd7df;
+}
+
+.app-tab-panel--lc .erp-table .badge-warning {
+  border-color: rgba(255, 193, 102, 0.5);
+  background: rgba(255, 193, 102, 0.14);
+  color: #ffe8bf;
+}
+
+/* Kolom "Tarif / Jam" rata kanan supaya angka mudah dibandingkan. */
+.app-tab-panel--lc .erp-table th:nth-child(3),
+.app-tab-panel--lc .erp-table td:nth-child(3) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sel aksi: <div> pembungkus, BUKAN display:flex pada <td> (dulu itu merusak
+   tata letak kolom tabel). */
+.app-tab-panel--lc .lc-actions-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.app-tab-panel--lc .lc-actions-group {
+  display: inline-flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Paginasi LC: label tombol kini berupa kata, bukan lambang "«"/"»" yang ambigu. */
+.app-tab-panel--lc .erp-pagination .erp-btn {
+  min-width: 0;
+  padding: 0 14px !important;
+  font-size: 0.8rem !important;
+}
