@@ -1,0 +1,404 @@
+/* ============================================================================
+   LAPORAN — desain ulang. Dimuat SETELAH style.css.
+
+   Akar masalah "norak" yang terukur (audit 2026-10-06):
+     R1. Sub-tab Laporan berupa EMPAT KARTU besar (300x102 px) berisi judul +
+         satu paragraf penjelasan, semuanya berjudul EMAS. Akibatnya keempat tab
+         saling bersaing dan tab aktif hanya dibedakan garis tepi emas setipis
+         tab lain.
+     R2. Sub-tab memakai gradien permukaan + transform mengangkat (translateY -2px)
+         saat disorot — efek "kartu melayang" yang tidak dipakai modul lain.
+     R3. Panel Ikhtisar memakai gradien radial emas + gradien linier gelap, dan
+         EMPAT dari enam kartu metrik juga bergradien; kartu "Total Penjualan"
+         bergradien emas. Total 12 gradien di satu tab.
+     R4. Filter periode dibungkus kotak berbingkai bergradien, sehingga muncul
+         garis bingkai ganda (kotak + tiap pil).
+     R5. Tombol "Refresh Dashboard", "Refresh Laporan Room" masih Inggris; kartu
+         memakai istilah "Paid Revenue", "Unpaid Revenue", "Revenue Room/F&B",
+         "Total Session", "Room Occupied/Available", "Occupancy Rate",
+         "Revenue/Jam", dan judul "Room Occupancy & Utilization". Filter "Custom".
+     R6. Emoji 🔍 pada kartu yang bisa diklik.
+     R7. Tombol periode/laporan memakai HIJAU (rgba(92,213,155)) — warna warisan
+         yang tidak dipakai modul lain.
+     R8. Nilai uang tidak memakai angka tabular sehingga sulit dibandingkan.
+
+   Prinsip: permukaan polos (tanpa gradien/efek melayang), emas hanya untuk aksi
+   & angka utama, hijau hanya untuk status, semua label berbahasa Indonesia.
+   ============================================================================ */
+
+/* ------------------------------------------------------- R1/R2: sub-tab */
+.app-tab-panel--reports .reports-subnav {
+  gap: var(--space-2);
+}
+
+.app-tab-panel--reports .reports-subnav-button {
+  min-height: 76px;
+  padding: 14px 16px;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  background-image: none;
+  box-shadow: none;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.app-tab-panel--reports .reports-subnav-button:hover {
+  border-color: rgba(255, 215, 122, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  background-image: none;
+  transform: none;
+}
+
+.app-tab-panel--reports .reports-subnav-button:active {
+  transform: none;
+}
+
+/* Judul tab tidak lagi semuanya emas: hanya tab aktif yang menonjol. */
+.app-tab-panel--reports .reports-subnav-label {
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.app-tab-panel--reports .reports-subnav-button.active {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+  background-image: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.3);
+}
+
+.app-tab-panel--reports .reports-subnav-button.active .reports-subnav-label {
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--reports .reports-subnav-button.active .reports-subnav-description {
+  color: var(--text);
+}
+
+.app-tab-panel--reports .reports-subnav-active-badge {
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  background: rgba(255, 215, 122, 0.16);
+  color: var(--gold-strong);
+  border: 1px solid rgba(255, 215, 122, 0.42);
+}
+
+.app-tab-panel--reports .reports-subnav-description {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------ R3: panel & kartu metrik */
+.app-tab-panel--reports .finance-overview,
+.app-tab-panel--reports .owner-dashboard,
+.app-tab-panel--reports .room-occupancy,
+.app-tab-panel--reports .fnb-sales-report-panel,
+.app-tab-panel--reports .cashier-closing-history,
+.app-tab-panel--reports .room-usage-report {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  background-image: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.app-tab-panel--reports .finance-overview-header,
+.app-tab-panel--reports .owner-dashboard-header,
+.app-tab-panel--reports .room-occupancy-header {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.app-tab-panel--reports .finance-overview-title,
+.app-tab-panel--reports .owner-dashboard-title,
+.app-tab-panel--reports .room-occupancy-title {
+  color: var(--text);
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.app-tab-panel--reports .finance-overview-subtitle,
+.app-tab-panel--reports .room-occupancy-subtitle,
+.app-tab-panel--reports .finance-overview-detail,
+.app-tab-panel--reports .finance-checklist-detail,
+.app-tab-panel--reports .finance-checklist-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+/* Kotak catatan tanggal operasional: polos, tanpa bingkai emas. */
+.app-tab-panel--reports .finance-overview-note,
+.app-tab-panel--reports .owner-dashboard-note,
+.app-tab-panel--reports .room-occupancy-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.app-tab-panel--reports .finance-overview-grid,
+.app-tab-panel--reports .owner-dashboard-grid,
+.app-tab-panel--reports .room-occupancy-summary {
+  gap: var(--space-3);
+}
+
+/* Kartu metrik: permukaan polos, satu bentuk untuk semuanya. Warna status
+   dibawa oleh LABEL, bukan oleh gradien kartu. */
+.app-tab-panel--reports .finance-overview-card,
+.app-tab-panel--reports .finance-overview-card--gold,
+.app-tab-panel--reports .owner-dashboard-card,
+.app-tab-panel--reports .room-occupancy-summary-card,
+.app-tab-panel--reports .fnb-sales-report-summary-card {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  background-image: none;
+  box-shadow: none;
+}
+
+.app-tab-panel--reports .finance-overview-card {
+  min-height: 116px;
+  padding: var(--space-3) var(--space-4);
+  gap: 6px;
+}
+
+.app-tab-panel--reports .finance-overview-card--gold {
+  border-color: rgba(255, 215, 122, 0.3);
+}
+
+.app-tab-panel--reports .finance-overview-card--success {
+  border-color: rgba(24, 199, 135, 0.28);
+}
+
+.app-tab-panel--reports .finance-overview-card--warning {
+  border-color: rgba(255, 150, 60, 0.4);
+}
+
+.app-tab-panel--reports .finance-overview-label,
+.app-tab-panel--reports .finance-checklist-label,
+.app-tab-panel--reports .transaction-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+}
+
+/* Angka uang: netral + angka tabular supaya bisa dibandingkan cepat. */
+.app-tab-panel--reports .finance-overview-value,
+.app-tab-panel--reports .transaction-value,
+.app-tab-panel--reports .owner-dashboard-card-value {
+  color: var(--text);
+  font-size: clamp(1.15rem, 2.2vw, 1.6rem);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hanya kartu utama yang angkanya diberi warna emas; sisanya netral. */
+.app-tab-panel--reports .finance-overview-card--gold .finance-overview-value {
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--reports .finance-overview-card--warning .finance-overview-value {
+  color: #ffd9b0;
+}
+
+.app-tab-panel--reports .finance-overview-card--success .finance-overview-value {
+  color: var(--text);
+}
+
+/* Label kartu mewarisi warna statusnya supaya tidak perlu gradien. */
+.app-tab-panel--reports .finance-overview-card--success .finance-overview-label {
+  color: #c9ffe8;
+}
+
+.app-tab-panel--reports .finance-overview-card--warning .finance-overview-label {
+  color: #ffd9b0;
+}
+
+/* ---------------------------------------------------- R4: filter periode */
+.app-tab-panel--reports .owner-report-period-filter,
+.app-tab-panel--reports .period-filter.owner-report-period-filter {
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.025);
+  background-image: none;
+}
+
+.app-tab-panel--reports .owner-report-period-filter .period-filter-button,
+.app-tab-panel--reports .period-filter-button {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  box-shadow: none;
+  outline: none;
+}
+
+.app-tab-panel--reports .owner-report-period-filter .period-filter-button:hover,
+.app-tab-panel--reports .period-filter-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.app-tab-panel--reports .owner-report-period-filter .period-filter-button.active,
+.app-tab-panel--reports .period-filter-button.active {
+  border-color: transparent;
+  background: rgba(255, 215, 122, 0.14);
+  color: var(--gold-strong);
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.42);
+}
+
+/* --------------------------------------------------------------- R7: tombol */
+/* Tombol laporan: dari hijau warisan → netral, dengan emas hanya untuk aksi
+   utama. */
+.app-tab-panel--reports .owner-dashboard-button,
+.app-tab-panel--reports .room-usage-report-button,
+.app-tab-panel--reports .fnb-sales-report-button,
+.app-tab-panel--reports .cashier-closing-button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-weight: 800;
+  box-shadow: none;
+}
+
+.app-tab-panel--reports .owner-dashboard-button:hover:not(:disabled),
+.app-tab-panel--reports .room-usage-report-button:hover:not(:disabled),
+.app-tab-panel--reports .fnb-sales-report-button:hover:not(:disabled),
+.app-tab-panel--reports .cashier-closing-button:hover:not(:disabled) {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+  color: var(--gold-strong);
+}
+
+/* Tombol cetak/terapkan filter di laporan F&B. */
+.app-tab-panel--reports .erp-btn-primary,
+.app-tab-panel--reports .erp-btn-solid-gold,
+.app-tab-panel--reports .period-filter-apply-button {
+  min-height: 40px;
+  border: 1px solid rgba(255, 215, 122, 0.62);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  background-image: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
+  font-weight: 900;
+  box-shadow: none;
+}
+
+/* --------------------------------------------------------------- R5: tabel */
+.app-tab-panel--reports .room-occupancy-table-wrap,
+.app-tab-panel--reports table {
+  border-color: var(--border);
+}
+
+.app-tab-panel--reports th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-tab-panel--reports td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.app-tab-panel--reports tbody tr:hover td {
+  background: rgba(255, 215, 122, 0.045);
+}
+
+/* Angka pada tabel laporan: angka tabular. */
+.app-tab-panel--reports td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------- R7b: kotak isian laporan */
+.app-tab-panel--reports .duration-custom-input,
+.app-tab-panel--reports .duration-payment-select,
+.app-tab-panel--reports .custom-date-input {
+  min-height: 40px;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.045) !important;
+  color: var(--text) !important;
+  font-size: 0.86rem !important;
+  font-weight: 700 !important;
+}
+
+.app-tab-panel--reports .duration-custom-input::placeholder {
+  color: var(--muted) !important;
+}
+
+.app-tab-panel--reports .duration-payment-select option {
+  background: #1a1410;
+  color: var(--text);
+}
+
+.app-tab-panel--reports .duration-custom-input:focus-visible,
+.app-tab-panel--reports .duration-payment-select:focus-visible {
+  border-color: rgba(255, 215, 122, 0.6) !important;
+  box-shadow: var(--focus-ring);
+}
+
+/* --------------------------------------------------------- R8: paginasi */
+.app-tab-panel--reports .pagination-info {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.app-tab-panel--reports .pagination-button {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.app-tab-panel--reports .pagination-button:hover:not(:disabled) {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+}
+
+@media (max-width: 900px) {
+  .app-tab-panel--reports .reports-subnav[data-tab-count="4"],
+  .app-tab-panel--reports .reports-subnav[data-tab-count="3"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-tab-panel--reports .owner-report-period-filter .period-filter-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* Penajaman: tab aktif diberi aksen emas di tepi kiri supaya langsung terlihat,
+   tanpa kembali ke efek gradien/melayang. */
+.app-tab-panel--reports .reports-subnav-button.active {
+  border-left: 3px solid var(--gold-strong);
+  padding-left: 14px;
+}
+
+/* "Belum Tutup Shift" adalah LENCANA STATUS, bukan tombol. Dulu bentuknya
+   nyaris sama dengan tombol "Preview Cetak" di sebelahnya. */
+.app-tab-panel--reports .finance-overview-actions .status-badge,
+.app-tab-panel--reports .owner-dashboard-header .status-badge {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 193, 102, 0.5);
+  background: rgba(255, 193, 102, 0.14);
+  color: #ffe8bf;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: default;
+}

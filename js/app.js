@@ -530,7 +530,7 @@ const TRANSACTION_PERIOD_OPTIONS = [
   ["last7days", "7 Shift"],
   ["thisMonth", "Bulan Ini"],
   ["all", "Semua"],
-  ["custom", "Custom"],
+  ["custom", "Kustom"],
 ];
 const REPORT_SUB_TABS = [
   {
@@ -1180,7 +1180,7 @@ const ROOM_USAGE_PERIOD_OPTIONS = [
   ["last7days", "7 Shift"],
   ["thisMonth", "Bulan Ini"],
   ["all", "Semua"],
-  ["custom", "Custom"],
+  ["custom", "Kustom"],
 ];
 
 function isUserBusy() {
@@ -16472,7 +16472,7 @@ function createRoomUsageReportPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-room-usage-report";
   refreshButton.disabled = isLoadingRoomUsageReport || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingRoomUsageReport ? "Memuat..." : "Refresh Laporan Room";
+  refreshButton.textContent = isLoadingRoomUsageReport ? "Memuat..." : "Segarkan Laporan Room";
 
   actions.appendChild(refreshButton);
   header.append(titleGroup, actions);
@@ -16751,11 +16751,11 @@ function createRoomOccupancySummaryElement(summary) {
     ["Total Room Aktif", `${summary.activeRoomCount} room`],
     ["Total Jam Tersedia", formatHours(summary.totalAvailableHours)],
     ["Total Jam Terpakai", formatDurationMinutesAndHours(summary.totalUsedMinutes)],
-    ["Occupancy Rate", formatPercent(summary.occupancyRate)],
+    ["Tingkat Okupansi", formatPercent(summary.occupancyRate)],
     ["Room Terproduktif", productiveLabel],
     ["Room Terendah Pemakaian", lowestLabel],
-    ["Revenue per Jam", formatCurrency(summary.revenuePerUsedHour)],
-    ["Total Session", `${summary.totalSessions} sesi`],
+    ["Pendapatan per Jam", formatCurrency(summary.revenuePerUsedHour)],
+    ["Total Sesi", `${summary.totalSessions} sesi`],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("article");
     card.className = "room-occupancy-summary-card";
@@ -16785,7 +16785,7 @@ function createRoomOccupancyTableElement(rows) {
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
 
-  ["Room", "Session", "Durasi", "Revenue", "Utilization", "Revenue/Jam", "Status"].forEach((labelText) => {
+  ["Room", "Sesi", "Durasi", "Pendapatan", "Pemakaian", "Pendapatan/Jam", "Status"].forEach((labelText) => {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = labelText;
@@ -16849,7 +16849,7 @@ function createRoomOccupancyElement() {
   const title = document.createElement("h2");
   title.className = "room-occupancy-title";
   title.id = "room-occupancy-title";
-  title.textContent = "Room Occupancy & Utilization";
+  title.textContent = "Pemakaian & Okupansi Room";
 
   const subtitle = document.createElement("p");
   subtitle.className = "room-occupancy-subtitle";
@@ -16862,7 +16862,7 @@ function createRoomOccupancyElement() {
   const summary = buildRoomOccupancySummary(rows);
 
   if (isLoadingRoomUsageReport) {
-    section.append(header, createStateMessage("Memuat occupancy room..."));
+    section.append(header, createStateMessage("Memuat pemakaian room..."));
     return section;
   }
 
@@ -17139,7 +17139,7 @@ function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral
 
     const hint = document.createElement("span");
     hint.className = "finance-card-action-hint";
-    hint.textContent = "🔍 Lihat Rincian";
+    hint.textContent = "Lihat Rincian";
     card.appendChild(hint);
   }
 
@@ -17441,7 +17441,7 @@ function createFinanceOverviewElement() {
   const title = document.createElement("h2");
   title.className = "finance-overview-title";
   title.id = "finance-overview-title";
-  title.textContent = `Ringkasan Keuangan Owner - ${getOwnerReportPeriodTitleSuffix()}`;
+  title.textContent = `Ringkasan Keuangan - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "finance-overview-subtitle";
@@ -17868,7 +17868,7 @@ function createOwnerDashboardElement() {
   const title = document.createElement("h2");
   title.className = "owner-dashboard-title";
   title.id = "owner-dashboard-title";
-  title.textContent = `Dashboard Owner - ${getOwnerReportPeriodTitleSuffix()}`;
+  title.textContent = `Ikhtisar Pemilik - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "owner-dashboard-subtitle";
@@ -17881,7 +17881,7 @@ function createOwnerDashboardElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-owner-dashboard";
   refreshButton.disabled = isLoadingOwnerDashboard || isLoadingOwnerReport || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Refresh Dashboard";
+  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Segarkan Dashboard";
 
   header.append(titleGroup, refreshButton);
 
@@ -17914,27 +17914,27 @@ function createOwnerDashboardElement() {
       detail: `${Number(summary.total_sessions) || 0} sesi tercatat`,
     },
     {
-      label: "Paid Revenue",
+      label: "Sudah Dibayar",
       value: formatCurrency(summary.paid_revenue),
-      badgeText: "Paid",
+      badgeText: "Lunas",
       badgeTone: "success",
     },
     {
-      label: "Revenue Room",
+      label: "Penjualan Room",
       value: formatCurrency(summary.total_room_revenue),
     },
     {
-      label: "Revenue F&B",
+      label: "Penjualan F&B",
       value: formatCurrency(summary.total_fnb_revenue),
     },
     {
-      label: "Unpaid Revenue",
+      label: "Belum Dibayar",
       value: formatCurrency(summary.unpaid_revenue),
-      badgeText: "Unpaid",
+      badgeText: "Belum Lunas",
       badgeTone: Number(summary.unpaid_revenue) > 0 ? "warning" : "success",
     },
     {
-      label: "Total Session",
+      label: "Total Sesi",
       value: `${Number(summary.total_sessions) || 0} sesi`,
     },
     {
@@ -17966,7 +17966,7 @@ function createOwnerDashboardElement() {
   grid.appendChild(createOwnerDashboardListCard({
     label: "Sesi Aktif",
     value: `${activeSessions.length} room`,
-    badgeText: activeSessions.length > 0 ? "Room Occupied" : "Room Available",
+    badgeText: activeSessions.length > 0 ? "Room Terpakai" : "Room Kosong",
     badgeTone: activeSessions.length > 0 ? "danger" : "success",
     items: activeSessions,
     emptyText: "Semua room available.",
@@ -18038,7 +18038,7 @@ function createTodayFnbSalesReportPanelElement() {
     ["yesterday", "Kemarin"],
     ["last7days", "7 Hari Terakhir"],
     ["thismonth", "Bulan Ini"],
-    ["custom", "Pilih Tanggal (Custom)"],
+    ["custom", "Pilih Tanggal (Kustom)"],
   ].forEach(([val, lbl]) => {
     const opt = document.createElement("option");
     opt.value = val;
@@ -18124,7 +18124,7 @@ function createTodayFnbSalesReportPanelElement() {
   const statusLbl = document.createElement("label");
   statusLbl.style.fontSize = "12px";
   statusLbl.style.fontWeight = "bold";
-  statusLbl.textContent = "Status Order:";
+  statusLbl.textContent = "Status Pesanan:";
   const statusSelect = document.createElement("select");
   statusSelect.className = "duration-custom-input";
   [
@@ -19274,7 +19274,7 @@ function createCashierClosingHistoryElement() {
   const title = document.createElement("h3");
   title.className = "cashier-closing-history-title";
   title.id = "cashier-closing-history-title";
-  title.textContent = `Riwayat Closing - ${getTransactionPeriodTitleSuffix()}`;
+  title.textContent = `Riwayat Tutup Kasir - ${getTransactionPeriodTitleSuffix()}`;
 
   header.appendChild(title);
 
