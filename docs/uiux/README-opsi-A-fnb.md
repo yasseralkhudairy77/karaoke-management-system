@@ -40,6 +40,14 @@ Uji interaksi (Chrome headless, kasir 1366x768):
 - Chip kategori "Beer" → 2 kartu tampil, chip aktif berpindah.
 - Cakupan uji: data diambil dari server lokal yang sedang berjalan (bukan mock).
 
+## Catatan tinggi baris
+
+Kartu **paket F&B** punya satu baris keterangan isi paket, sehingga tingginya
+239px vs 212px kartu biasa — dan baris yang memuatnya ikut lebih tinggi.
+Semua kartu di dalam satu baris tetap sama tinggi, tidak ada yang terpotong.
+Kalau ingin benar-benar rata 212px, baris isi paket perlu dipotong menjadi satu
+baris berelipsis (butuh keputusan: informasi paket jadi tidak utuh).
+
 ## Yang BELUM dikerjakan (Opsi A tahap berikutnya, butuh keputusan)
 
 - Merapikan data kategori (gabungan "roko/rokok/Rokok", "ci") — menyentuh data master,
