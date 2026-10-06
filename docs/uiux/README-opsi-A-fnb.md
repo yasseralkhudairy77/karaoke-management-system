@@ -92,6 +92,51 @@ Catatan: pada tampilan ujung, terlihat chip duplikat apa adanya dari data master
 "ci", "minuman" vs "Minuman", "roko"/"rokok"/"Rokok". Ini bukti tambahan bahwa
 pembersihan data kategori memang perlu (butuh izin karena mengubah data master).
 
+## Langkah 5 (2026-10-06) — temuan Yasser pada kartu status terisi
+
+Keluhan: pada kartu "Menunggu Mulai" tombol Batal terpotong (ikon X tidak
+proporsional); kartu terisi terlalu ramping sehingga badge "Tagihan Berjalan"
+(ungu) terpotong separuh; tombol "Tambah Waktu", "Ubah Paket", "Pindah Room" ikut
+terpotong.
+
+Penyebab yang terukur (halaman uji markup identik, tanpa menyentuh data):
+
+- Grid aksi 2 kolom pada kartu selebar 238px hanya memberi **102px** per tombol,
+  padahal label butuh sampai **120px** ("Tambah Waktu" 120px, "Pindah Room" 116px,
+  "Ubah Paket" 109px). Ikon emoji di dalam tombol memakan ~20px lagi.
+- `.room-card { overflow: hidden }` membuat semua yang meluber terlihat
+  "kepotong separuh" — termasuk baris label+nilai yang memakai `white-space: nowrap`
+  (terukur scrollWidth 237 > clientWidth 212 di dashboard asli).
+- Kartu "Menunggu Mulai"/"Booking" juga memakai grid 2 kolom, sehingga tombol
+  kedua (Batal / Batalkan Booking) keluar dari kartu.
+
+Perbaikan:
+
+| # | Perubahan | Bukti |
+|---|-----------|-------|
+| P1 | Kartu tidak lagi memotong isinya (`overflow: visible`) | — |
+| P2 | Tombol aksi: ikon dilepas, label boleh 2 baris, min 44px, `min-width: 0` | tombol punya 227px (dulu 102px) |
+| P3 | Kartu Menunggu Mulai/Booking/Cleaning/Menunggu Bayar: aksi 1 kolom penuh | "Batal" & "Batalkan Booking" masuk kartu |
+| P4 | Badge sub-baris tidak dipenggal (elipsis bila perlu) | "Tagihan Berjalan" terbaca penuh |
+| P5 | Rincian F&B / panel estimasi `min-width: 0` | tidak lagi memaksa kartu melebar |
+| P6 | Baris label+nilai boleh membungkus (bukan meluber) | elemen meluber: **0** (dulu 5 di kartu asli) |
+| P7 | Kartu TERISI diberi **2 kolom** grid (isi jauh lebih banyak) | tinggi 775→700px, lebar 238→489px, kepala kembali 1 baris |
+
+Bukti ukur akhir (1366x768):
+- Halaman uji, 8 status kartu: **0 masalah terpotong** (dulu 4 label terpotong
+  mendatar di kartu terisi + 1 tombol keluar kartu di kartu Menunggu Mulai).
+- Dashboard asli dengan 1 kamar terisi: **0 elemen terpotong/meluber**
+  (dulu 5 di kartu terisi).
+- Kartu kosong tetap 238x216 dan seluruh 9 kartu terlihat.
+
+Catatan jujur: kartu terisi tetap **700px** (lebih tinggi dari layar 768px dikurangi
+header), jadi untuk kamar yang sedang terisi kasir tetap perlu menggulir sedikit
+untuk melihat tombol "Pindah Room"/"Free Gift". Ini konsekuensi dari banyaknya
+isi (rincian sesi + hitung mundur + estimasi tagihan + 8 tombol); memendekkannya
+lagi berarti menyembunyikan informasi. Kalau Yasser mau, langkah lanjutnya adalah
+memindahkan tombol sekunder (Koreksi Jam / Free Gift / Ubah Paket / Pindah Room)
+ke satu menu "⋮ Aksi lain" sehingga kartu terisi bisa turun ke ~450px.
+
 ## Yang BELUM dikerjakan (butuh keputusan)
 
 - Merapikan data kategori (gabungan "roko/rokok/Rokok", "ci") — menyentuh data master,
