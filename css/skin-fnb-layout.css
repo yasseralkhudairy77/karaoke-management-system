@@ -1,0 +1,277 @@
+/* ============================================================================
+   UIUX F&B LAYOUT — Opsi A  (Happy Song POS)
+   Lapisan tambahan, dimuat SETELAH style.css. Hanya menimpa berkas ini, tidak
+   mengubah style.css sehingga bisa dibalik: hapus <link> di index.html.
+
+   Isi:
+     A1. Sub-tab F&B: 4 kartu 92px -> bilah tab ringkas + penanda aktif
+     A2. Bilah alat (cari + kategori) dibuat sticky di atas daftar menu
+     A3. Kepadatan daftar menu: 3 -> 4 kolom @1366px, kartu rata bawah
+     A4. Ronanya fokus keyboard chip kategori & kotak cari
+     A5. Tombol "+ Tambah" satu-satunya aksi utama (tanpa aksen emas ganda)
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- A1 ------ */
+/* Bilah tab, bukan empat kartu besar. Tinggi 92px -> 52px. */
+.app-tab-panel--fnb > .fnb-subnav {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 2px;
+  padding: 0 0 0 2px;
+  border-bottom: 1px solid var(--gold-smoke);
+  background: transparent;
+}
+
+.app-tab-panel--fnb > .fnb-subnav .fnb-subnav-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 6px 16px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.app-tab-panel--fnb > .fnb-subnav .fnb-subnav-button:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+}
+
+.app-tab-panel--fnb > .fnb-subnav .fnb-subnav-button:focus-visible {
+  outline: 2px solid var(--gold-strong);
+  outline-offset: -2px;
+  color: var(--text);
+}
+
+.app-tab-panel--fnb > .fnb-subnav .fnb-subnav-button.active {
+  border-bottom-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.07);
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--fnb > .fnb-subnav .fnb-subnav-label {
+  color: inherit;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+/* ---------------------------------------------------------------- A2 ------ */
+/* Bilah filter menempel: chip kategori + kotak cari selalu bisa dipakai walau
+   sudah menggulir jauh ke dalam daftar. Offset dihitung dari tinggi header
+   sungguhan (117px) supaya tetap benar kalau header berubah. */
+.app-tab-panel--fnb.active {
+  --fnb-header-h: 117px;
+  --fnb-filter-h: 44px;
+}
+
+.app-tab-panel--fnb.active .menu-category-filter {
+  position: sticky;
+  top: var(--fnb-header-h);
+  z-index: 4;
+  height: var(--fnb-filter-h);
+  align-items: center;
+  padding: 0 12px 0 0;
+  background: linear-gradient(180deg, rgba(20, 15, 10, 0.98) 72%, rgba(20, 15, 10, 0.9));
+  backdrop-filter: blur(10px);
+}
+
+.app-tab-panel--fnb.active .menu-toolbar {
+  position: sticky;
+  top: calc(var(--fnb-header-h) + var(--fnb-filter-h));
+  z-index: 3;
+  gap: 10px;
+  padding: 8px 0 10px;
+  background: linear-gradient(180deg, rgba(20, 15, 10, 0.97) 70%, rgba(20, 15, 10, 0.86));
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--gold-smoke);
+}
+
+/* Jarak antar blok di dalam panel menu. */
+.app-tab-panel--fnb.active .menu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* CATATAN (dihapus dengan sengaja): sempat dicoba membuat daftar menu bergulir
+   di dalam panel bertinggi tetap. Hasil ukur: baris grid ikut menyusut sehingga
+   kartu jadi 22px. Karena itu daftar menu tetap memakai gulir halaman biasa —
+   chip kategori + kotak cari menempel di atas, keranjang menempel di kanan,
+   jadi ketiganya tetap bisa dipakai walau sudah menggulir jauh. */
+
+/* Kategori tidak lagi memakan 320px (7 baris): satu baris, geser mendatar. */
+.app-tab-panel--fnb.active .menu-category-filter {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.app-tab-panel--fnb.active .menu-category-filter::-webkit-scrollbar {
+  display: none;
+}
+
+.app-tab-panel--fnb.active .menu-category-filter .menu-category-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  scroll-snap-align: start;
+  border-radius: var(--radius-pill, 999px);
+}
+
+/* ---------------------------------------------------------------- A3 ------ */
+/* Baris harus lurus. Kartu disusun flex (jumlah anak boleh 5 atau 6: item
+   biasa vs item berstok/bin paket) sehingga tidak ada bidang yang terpotong;
+   grid-auto-rows: 1fr menyamakan tinggi kartu di dalam satu baris. */
+.app-tab-panel--fnb.active .menu-list {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+  padding-bottom: 24px;
+}
+
+@media (max-width: 1100px) {
+  .app-tab-panel--fnb.active .menu-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.app-tab-panel--fnb.active .menu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  height: auto;
+  padding: 10px;
+}
+
+/* "AKTIF" adalah keadaan normal: menandainya di setiap kartu hanya menambah
+   bising dan 36px tinggi per baris. Yang perlu ditandai adalah pengecualian
+   (Tidak Aktif, Stok Habis) — itu tetap tampil. Balikkan dengan satu baris ini
+   dihapus. */
+.app-tab-panel--fnb.active .menu-card .menu-status.active {
+  display: none;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-stock-badge,
+.app-tab-panel--fnb.active .menu-card .menu-status {
+  align-self: start;
+  padding: 3px 8px;
+  min-height: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.app-tab-panel--fnb.active .menu-search {
+  min-height: 44px;
+}
+
+/* Jarak antar-blok tetap rapi walau jumlah anak kartu berbeda (5 atau 6). */
+.app-tab-panel--fnb.active .menu-card > * {
+  margin: 0;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-bundle-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8rem;
+}
+
+.app-tab-panel--fnb.active .menu-card .menu-price {
+  align-self: end;
+  font-size: 1.05rem;
+}
+
+/* Kartu yang lebih rendah ikut mengisi ruang: tanpa ini, kartu rendah
+   mengapung di tengah baris. */
+.app-tab-panel--fnb.active .menu-card > * {
+  align-self: start;
+}
+
+.app-tab-panel--fnb.active .menu-card > .menu-add-button {
+  align-self: end;
+}
+
+/* ---------------------------------------------------------------- A4 ------ */
+.app-tab-panel--fnb.active .menu-category-filter .menu-category-button:focus-visible {
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 2px;
+}
+
+.app-tab-panel--fnb.active .menu-search:focus-visible {
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 2px;
+  border-color: var(--gold-strong);
+}
+
+/* ---------------------------------------------------------------- A5 ------ */
+/* Satu aksi utama per kartu: tombol "+ Tambah". Kartu menjadi satu bidang
+   datar yang jelas, bukan kotak bergaris di dalam kotak bergaris. */
+.app-tab-panel--fnb.active .menu-card {
+  border-color: rgba(226, 184, 92, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012)),
+    rgba(13, 10, 7, 0.55);
+}
+
+.app-tab-panel--fnb.active .menu-card:hover {
+  border-color: rgba(255, 215, 122, 0.4);
+}
+
+.app-tab-panel--fnb.active .menu-category-chip {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+}
+
+.app-tab-panel--fnb.active .menu-category-chip.favorite {
+  border-color: rgba(255, 215, 122, 0.35);
+  background: rgba(255, 215, 122, 0.12);
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--fnb.active .menu-stock-badge,
+.app-tab-panel--fnb.active .menu-status {
+  border-color: transparent;
+}
+
+.app-tab-panel--fnb.active .menu-card:hover .menu-add-button,
+.app-tab-panel--fnb.active .menu-add-button:focus-visible {
+  filter: brightness(1.06);
+}
+
+/* Kotak pesan (memuat / kosong / tidak ditemukan) harus membentang penuh,
+   tidak terjepit di kolom pertama grid. */
+.app-tab-panel--fnb.active .menu-list .state-message {
+  grid-column: 1 / -1;
+}

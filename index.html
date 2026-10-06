@@ -7,7 +7,15 @@
     <link rel="icon" href="data:," />
 
     <!-- Style utama untuk dashboard statis yang siap dipakai di GitHub Pages. -->
-    <link rel="stylesheet" href="css/style.css?v=tv-adb-jujur" />
+        <link rel="stylesheet" href="css/style.css?v=tv-adb-jujur" />
+
+        <!--
+          Opsi A: perapihan tata letak menu F&B (bilah sub-tab, bilah alat sticky,
+          kepadatan daftar, fokus keyboard). Dimuat SETELAH style.css karena sifatnya
+          menimpa. Untuk membalik perubahan ini cukup hapus baris <link> di bawah —
+          tidak ada berkas lain yang perlu disentuh.
+        -->
+        <link rel="stylesheet" href="css/skin-fnb-layout.css?v=1" />
   </head>
   <body>
     <!-- Header aplikasi tetap statis agar konteks halaman jelas sebelum JavaScript selesai dimuat. -->
