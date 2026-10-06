@@ -279,7 +279,275 @@
   grid-column: 1 / -1;
 }
 
-/* ---------------------------------------------------------------- A7 ------ */
+/* ============================================================================
+   RUANGAN — arah desain baru (langkah 4). Dimuat SETELAH style.css.
+   Prinsip: kartu "Kosong" jadi NETRAL (warna disimpan untuk status yang butuh
+   perhatian), kontras teks dinaikkan di seluruh kartu, nama ruangan tidak
+   terpotong, badge TV bisa dibaca, kartu lebih padat, dan ada ringkasan
+   okupansi yang bisa diklik untuk menyaring.
+   ========================================================================== */
+
+/* --- R1: kontras. Kartu berwarna dulu memakai teks putih di atas gradien
+   terang (#35b779) -> rasio 2,1-2,6 (gagal WCAG). Sekarang gradiennya digelapkan
+   supaya teks mendapat >= 4,5:1 di SELURUH kartu, bukan hanya di sisi gelap. */
+.app-tab-panel--rooms {
+  --room-ink: #ffffff;
+  --room-ink-dim: rgba(255, 255, 255, 0.9);
+}
+
+/* --- R1b: "Kosong" = keadaan normal, jadi NETRAL. Warna disimpan untuk status
+   yang benar-benar butuh perhatian (terisi, menunggu bayar, perbaikan), supaya
+   kasir bisa menyapu layar dengan mata. Garis aksen kiri tetap memberi kode
+   warna tanpa menerangi seluruh bidang. */
+.room-card.available {
+  background: linear-gradient(160deg, rgba(30, 36, 32, 0.96), rgba(16, 20, 18, 0.96));
+  border-left: 4px solid #3f9d6f;
+  box-shadow: var(--shadow-panel);
+}
+
+.room-card.available .room-status {
+  background: rgba(63, 157, 111, 0.22);
+  color: #b9f3d3;
+}
+
+.room-card.occupied {
+  background: linear-gradient(160deg, #7d2f2c, #4a1a18);
+  border-left: 4px solid #e0715f;
+  box-shadow: var(--shadow-panel);
+}
+
+.room-card.occupied.time-warning {
+  background: linear-gradient(160deg, #8a5320, #4d2c10);
+  border-left-color: #f0b84f;
+}
+
+.room-card.occupied.time-expired {
+  background: linear-gradient(160deg, #6f1a30, #3d0c19);
+  border-left-color: #ff5c8a;
+}
+
+.room-card.booked,
+.room-card.paid-waiting-start {
+  background: linear-gradient(160deg, #2c4a75, #17293f);
+  border-left: 4px solid #6aa6ff;
+}
+
+.room-card.waiting-payment {
+  background: linear-gradient(160deg, #7a570f, #442f06);
+  border-left: 4px solid #f0b84f;
+}
+
+.room-card.cleaning {
+  background: linear-gradient(160deg, #6d5312, #3f2f07);
+  border-left: 4px solid #dba742;
+}
+
+.room-card.maintenance {
+  background: linear-gradient(160deg, #6d5210, #3d2d06);
+  border-left: 4px solid #f0b84f;
+}
+
+.room-card,
+.room-card .room-name,
+.room-card .timer,
+.room-card .room-status,
+.room-card .rate,
+.room-card .meta-label,
+.room-card .room-booking-label,
+.room-card .room-booking-value {
+  color: var(--room-ink);
+}
+
+.room-card .meta-label,
+.room-card .room-booking-label {
+  color: var(--room-ink-dim);
+}
+
+/* --- R2: nama ruangan tidak boleh terpotong ("STANDAR 1" -> "STAND…").
+   Nama mengambil barisnya sendiri; badge status turun ke baris kedua. */
+.room-card .room-topline-main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.room-card .room-name {
+  width: 100%;
+  font-size: 1.22rem;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.room-card .room-status {
+  order: 2;
+}
+
+.app-tab-panel--rooms .tv-indicator {
+  order: 3;
+  margin-left: 0;
+}
+
+/* --- R3: badge TV yang benar-benar terbaca. Titik + "TV" dulu 1,08:1 di atas
+   kartu hijau. Sekarang berbentuk pil berlatar gelap dengan tulisan yang jelas,
+   jadi bentuknya tidak lagi bisa tertukar dengan tombol. */
+.app-tab-panel--rooms .tv-indicator {
+  background: rgba(6, 8, 12, 0.82);
+  border-color: rgba(255, 255, 255, 0.22);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.app-tab-panel--rooms .tv-indicator-dot {
+  width: 9px;
+  height: 9px;
+}
+
+/* --- R6: kartu lebih padat supaya sembilan ruangan muat tanpa menggulir.
+   Untuk ruangan KOSONG, "Durasi sesi 00:00:00" tidak memberi informasi apa pun
+   (tidak ada sesi berjalan) — jadi tidak ditampilkan; yang tersisa justru yang
+   berguna: nama, status, tarif, dan tombol. */
+.room-card {
+  min-height: 0;
+  padding: 14px;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.room-card.available .meta-label,
+.room-card.available .timer {
+  display: none;
+}
+
+.room-card .room-meta {
+  gap: 5px;
+}
+
+.room-card .timer {
+  font-size: 1.9rem;
+  line-height: 1.15;
+}
+
+.room-card .meta-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.room-card .rate {
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.room-card .room-actions {
+  margin-top: auto;
+}
+
+.rooms-tab-grid {
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  align-content: start;
+}
+
+/* Ruangan KOSONG: TV yang mati/tidak tersambung itu WAJAR (tidak ada tamu),
+   jadi badge TV-nya dibuat redup supaya merahnya tidak berebut perhatian.
+   Di ruangan terisi/booked, badge tetap penuh karena di situ TV memang penting. */
+.app-tab-panel--rooms .room-card.available .tv-indicator {
+  opacity: 0.6;
+}
+
+.app-tab-panel--rooms .room-card.available .tv-indicator-dot {
+  box-shadow: none;
+}
+
+/* --- R4: ringkasan okupansi (sekaligus filter). */
+.rooms-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.rooms-summary-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.rooms-summary-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.rooms-summary-value {
+  font-size: 1.05rem;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.rooms-summary-card:hover,
+.rooms-summary-card:focus-visible {
+  border-color: var(--gold-strong);
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 2px;
+}
+
+.rooms-summary-card.active {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.14);
+}
+
+.rooms-summary-card.active .rooms-summary-label,
+.rooms-summary-card.active .rooms-summary-value {
+  color: var(--gold-strong);
+}
+
+.rooms-summary-card.tone-danger .rooms-summary-value {
+  color: #ff9a90;
+}
+
+.rooms-summary-card.tone-warning .rooms-summary-value {
+  color: #ffd08a;
+}
+
+.rooms-summary-card.tone-info .rooms-summary-value {
+  color: #9dc4ff;
+}
+
+/* Hitungan nol = tidak ada yang perlu dilihat. Dibuat redup dengan SENGAJA
+   supaya mata kasir langsung tertuju ke angka yang bukan nol. */
+.rooms-summary-card.is-zero {
+  opacity: 0.55;
+}
+
+.rooms-summary-card.is-zero .rooms-summary-value {
+  color: var(--muted);
+}
+
+/* Ruangan KOSONG: TV mati itu wajar, jadi titiknya netral (bukan merah) —
+   merah hanya untuk status yang benar-benar perlu ditindak. */
+.app-tab-panel--rooms .room-card.available .tv-indicator {
+  color: #cbd5e1;
+  background: rgba(6, 8, 12, 0.6);
+  border-color: rgba(255, 255, 255, 0.16);
+  opacity: 1;
+}
+
+.app-tab-panel--rooms .room-card.available .tv-indicator-dot {
+  background: #8a94a6;
+  box-shadow: none;
+}
 /* Deretan kategori bisa digeser tanpa mouse: tombol panah ‹ › di kiri/kanan,
    plus dukungan roda mouse (ditangani di app.js). Dulu chip terakhir "Anggur"
    seperti jadi ujungnya karena tidak ada tanda apa pun bahwa ada isi di kanan. */

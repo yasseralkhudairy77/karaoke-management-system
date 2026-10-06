@@ -1060,6 +1060,7 @@ let selectedFnbMenuForLogs = null;
 let fnbReportPrintPreviewVisible = false;
 let fnbReportThermalPreviewVisible = false;
 let roomsLoading = false;
+let roomStatusFilter = "all";
 let menuLoading = false;
 let selectedFbRoomId = "";
 let fnbOrderMode = "room";
@@ -33834,6 +33835,62 @@ function createReportsSubTabContentElement() {
   return wrapper;
 }
 
+function createRoomSummaryElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "rooms-summary";
+  wrapper.setAttribute("aria-label", "Ringkasan status ruangan");
+
+  const counts = new Map();
+  rooms.forEach((room) => {
+    const key = VALID_ROOM_STATUS_KEYS.has(room.status) ? room.status : "unknown";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+
+  const total = rooms.length;
+  const totalCard = document.createElement("button");
+  totalCard.type = "button";
+  totalCard.className = roomStatusFilter === "all" ? "rooms-summary-card active" : "rooms-summary-card";
+  totalCard.dataset.action = "filter-rooms-status";
+  totalCard.dataset.status = "all";
+  totalCard.setAttribute("aria-pressed", String(roomStatusFilter === "all"));
+  totalCard.innerHTML = `<span class="rooms-summary-label">Semua Ruangan</span><span class="rooms-summary-value">${total}</span>`;
+  wrapper.appendChild(totalCard);
+
+  const order = ["occupied", "waiting_payment", "paid_waiting_start", "booked", "cleaning", "maintenance", "available"];
+  order.forEach((status) => {
+    const count = counts.get(status) || 0;
+    // Hanya tampilkan status yang benar-benar ada, supaya baris ringkasan tidak
+    // penuh nol saat venue sedang lengang.
+    if (count === 0 && status !== "available" && status !== "occupied") {
+      return;
+    }
+    const card = document.createElement("button");
+        card.type = "button";
+        const tone = getRoomStatusTone(status);
+        card.className = [
+          "rooms-summary-card",
+          `tone-${tone}`,
+          count === 0 ? "is-zero" : "",
+          roomStatusFilter === status ? "active" : "",
+        ].filter(Boolean).join(" ");
+    card.dataset.action = "filter-rooms-status";
+    card.dataset.status = status;
+    card.setAttribute("aria-pressed", String(roomStatusFilter === status));
+    card.innerHTML = `<span class="rooms-summary-label">${getStatusLabel(status)}</span><span class="rooms-summary-value">${count}</span>`;
+    wrapper.appendChild(card);
+  });
+
+  return wrapper;
+}
+
+function getFilteredRooms() {
+  if (!roomStatusFilter || roomStatusFilter === "all") {
+    return rooms;
+  }
+
+  return rooms.filter((room) => (VALID_ROOM_STATUS_KEYS.has(room.status) ? room.status : "unknown") === roomStatusFilter);
+}
+
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
@@ -33846,20 +33903,27 @@ function appendDashboardTabContent(panel, tabKey) {
       }
 
       const roomsContainer = document.createElement("div");
-      roomsContainer.className = "rooms-tab-grid";
+            roomsContainer.className = "rooms-tab-grid";
 
-      if (roomsLoading) {
-        roomsContainer.appendChild(createStateMessage("Memuat data ruangan..."));
-      } else {
-        rooms.forEach((room) => {
-          roomsContainer.appendChild(createRoomCard(room));
-        });
-      }
+            if (roomsLoading) {
+              roomsContainer.appendChild(createStateMessage("Memuat data ruangan..."));
+            } else {
+              panel.appendChild(createRoomSummaryElement());
 
-      panel.appendChild(roomsContainer);
-      break;
-    }
-    case "fnb": {
+              const visibleRooms = getFilteredRooms();
+              if (visibleRooms.length === 0) {
+                roomsContainer.appendChild(createStateMessage("Tidak ada ruangan dengan status ini."));
+              } else {
+                visibleRooms.forEach((room) => {
+                  roomsContainer.appendChild(createRoomCard(room));
+                });
+              }
+            }
+
+            panel.appendChild(roomsContainer);
+            break;
+          }
+          case "fnb": {
         // Insert sub-navigation for F&B
         panel.appendChild(createFnbSubNavElement());
         // Render content based on selected sub-tab
@@ -37302,6 +37366,13 @@ async function handleRoomAction(event) {
   const card = button.closest(".room-card");
   const action = button.dataset.action;
   const roomId = card?.dataset.roomId;
+
+  if (action === "filter-rooms-status") {
+    const next = button.dataset.status || "all";
+    roomStatusFilter = roomStatusFilter === next && next !== "all" ? "all" : next;
+    renderRooms();
+    return;
+  }
 
   if (action === "toggle-transaction-menu") {
     event.stopPropagation();
