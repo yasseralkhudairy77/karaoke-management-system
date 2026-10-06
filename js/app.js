@@ -14943,14 +14943,14 @@ function createInventoryPanelElement() {
   const title = document.createElement("h2");
   title.className = "inventory-title";
   title.id = "inventory-title";
-  title.textContent = "Material Management & Stok";
+  title.textContent = "Stok & Material F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "inventory-subtitle";
   if (getCurrentOperatorRole() === "inventory") {
     subtitle.textContent = "Posisi fisik barang di rak & kulkas. Untuk input barang masuk harian dari supplier, silakan gunakan menu Catat Barang Masuk.";
   } else {
-    subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
+    subtitle.textContent = "Katalog barang, posisi fisik di rak & kulkas, serta penyesuaian stok secara real-time.";
   }
 
   const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
@@ -14965,7 +14965,7 @@ function createInventoryPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory";
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
+  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "Segarkan Data";
 
   actions.append(refreshButton);
 
@@ -14975,7 +14975,7 @@ function createInventoryPanelElement() {
     addButton.type = "button";
     addButton.dataset.action = "open-add-inventory-item-modal";
     addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-    addButton.textContent = "+ Tambah Item F&B Baru";
+    addButton.textContent = "Tambah Barang Baru";
     addButton.style.marginLeft = "8px";
     actions.append(addButton);
   }
@@ -14988,7 +14988,7 @@ function createInventoryPanelElement() {
   const searchInput = document.createElement("input");
   searchInput.className = "inventory-search-input erp-search-input";
   searchInput.type = "search";
-  searchInput.placeholder = "🔍 Cari barang: nama material, SKU/kode, kategori, status (misal: Jack Daniels, Anggur, Rendah)...";
+  searchInput.placeholder = "Cari barang: nama, kode SKU, kategori, atau status (misal: Jack Daniels, Anggur, Rendah)...";
   searchInput.value = inventorySearchQuery;
   searchInput.dataset.action = "search-inventory";
   searchInput.setAttribute("aria-label", "Cari stok barang");
@@ -15000,7 +15000,7 @@ function createInventoryPanelElement() {
     const clearBtn = document.createElement("button");
     clearBtn.className = "inventory-button erp-btn-secondary";
     clearBtn.type = "button";
-    clearBtn.textContent = "✕ Reset";
+    clearBtn.textContent = "Bersihkan";
     clearBtn.style.cssText = "padding: 8px 14px; border-radius: 8px;";
     clearBtn.onclick = () => setInventorySearchQuery("");
     searchToolbar.appendChild(clearBtn);
@@ -15014,7 +15014,7 @@ function createInventoryPanelElement() {
   if (!API_BASE_URL.trim()) {
     tableContainer.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
   } else if (isLoadingInventory) {
-    tableContainer.appendChild(createStateMessage("Memuat katalog stok SAP/Odoo ERP..."));
+    tableContainer.appendChild(createStateMessage("Memuat katalog stok..."));
   } else if (inventoryItems.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
@@ -15023,7 +15023,7 @@ function createInventoryPanelElement() {
   } else if (filteredInventory.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.style.cssText = "padding: 24px; text-align: center; color: #aaa;";
+    empty.style.cssText = "padding: 24px; text-align: center;";
     empty.textContent = `Barang dengan kata kunci "${inventorySearchQuery}" tidak ditemukan.`;
     tableContainer.appendChild(empty);
   } else {
@@ -15087,10 +15087,10 @@ function createInventorySummaryElement() {
   grid.className = "inventory-summary erp-kpi-grid";
 
   [
-    ["Total SKU Material", Number(summary.total_items) || 0, "neutral"],
-    ["Stok Safe / Normal", Number(summary.safe_items) || 0, "success"],
-    ["Alert Stok Rendah", Number(summary.low_items) || 0, "warning"],
-    ["Stok Out / Minus", Number(summary.negative_items) || 0, "critical"],
+    ["Total Barang", Number(summary.total_items) || 0, "neutral"],
+    ["Stok Aman", Number(summary.safe_items) || 0, "success"],
+    ["Stok Rendah", Number(summary.low_items) || 0, "warning"],
+    ["Stok Kosong / Minus", Number(summary.negative_items) || 0, "critical"],
   ].forEach(([labelText, valueText, tone]) => {
     const card = document.createElement("div");
     card.className = `inventory-summary-card erp-kpi-card tone-${tone}`;
@@ -15119,11 +15119,11 @@ function createInventoryErpTableElement(sourceItems = null) {
   const thead = document.createElement("thead");
   thead.innerHTML = `
     <tr>
-      <th>SKU / Item Code</th>
-      <th>Nama Material</th>
+      <th>Kode SKU</th>
+      <th>Nama Barang</th>
       <th>Kategori</th>
-      <th>Stok Aktual</th>
-      <th>Min. Stok</th>
+      <th>Stok Tersedia</th>
+      <th>Stok Minimum</th>
       <th>Status</th>
       ${canAdjustStock ? '<th style="text-align: right;">Aksi</th>' : ''}
     </tr>
@@ -15162,7 +15162,7 @@ function createInventoryErpTableElement(sourceItems = null) {
       editBtn.className = "erp-btn-rename-trigger";
       editBtn.type = "button";
       editBtn.title = `Ubah nama "${item.stock_item_name || item.stock_item_id}"`;
-      editBtn.innerHTML = "✏️";
+      editBtn.textContent = "Ubah";
 
       const startInlineEdit = () => {
         nameWrapper.style.display = "none";
@@ -15337,7 +15337,7 @@ function createInventoryErpTableElement(sourceItems = null) {
       const adjustBtn = document.createElement("button");
       adjustBtn.className = "erp-quick-adjust-btn";
       adjustBtn.type = "button";
-      adjustBtn.textContent = "Adjust / Restock";
+      adjustBtn.textContent = "Sesuaikan Stok";
       adjustBtn.onclick = () => {
         updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
         focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -15393,7 +15393,7 @@ function createStockAdjustmentPanelElement() {
   const form = document.createElement("div");
   form.className = "stock-adjustment-form";
 
-  const itemField = createStockAdjustmentFieldElement("Item Stok");
+  const itemField = createStockAdjustmentFieldElement("Barang");
   const itemSelect = document.createElement("select");
   itemSelect.className = "stock-adjustment-select stock-adjustment-item";
   itemSelect.dataset.action = "update-stock-adjustment-item";
@@ -15401,7 +15401,7 @@ function createStockAdjustmentPanelElement() {
 
   const emptyItemOption = document.createElement("option");
   emptyItemOption.value = "";
-  emptyItemOption.textContent = "Pilih item stok";
+  emptyItemOption.textContent = "Pilih barang";
   itemSelect.appendChild(emptyItemOption);
 
   const sortedAdjustmentItems = [...(inventoryItems || [])].sort((a, b) => {
@@ -15427,9 +15427,9 @@ function createStockAdjustmentPanelElement() {
   typeSelect.disabled = !API_BASE_URL.trim() || isSavingStockAdjustment;
 
   [
-    ["restock", "Tambah Stok (Restock)"],
-    ["set_stock", "Koreksi Stok Aktual"],
-    ["initial_stock", "👑 Revisi Stok Awal (Otorisasi Owner)"],
+    ["restock", "Tambah Stok (Barang Masuk)"],
+    ["set_stock", "Koreksi Jumlah Stok"],
+    ["initial_stock", "Revisi Stok Awal (Otorisasi Owner)"],
   ].forEach(([value, labelText]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -15535,7 +15535,7 @@ function createLastStockAdjustmentElement(adjustment) {
     ["Stok Sebelum", Number(movement.stock_before) || 0],
     ["Stok Sesudah", Number(movement.stock_after) || 0],
     ["Perubahan", Number(movement.qty_change) || 0],
-    ["Jenis Movement", getStockMovementTypeLabel(movement.movement_type)],
+    ["Jenis Perubahan", getStockMovementTypeLabel(movement.movement_type)],
     ["Catatan", movement.note || "-"],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
@@ -15600,7 +15600,7 @@ function getTodayStockMovementReferenceLabel(referenceType) {
   }
 
   if (referenceType === "stock_audit") {
-    return "Stock Opname";
+    return "Cek Fisik";
   }
 
   return referenceType || "-";
@@ -15718,7 +15718,7 @@ function createInboundGoodsPanelElement() {
 
   const title = document.createElement("h2");
   title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
-  title.innerHTML = `<span style="font-size: 26px;">📥</span> Catat Barang Masuk (Penerimaan dari Supplier)`;
+  title.textContent = "Catat Barang Masuk";
 
   const subtitle = document.createElement("p");
   subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
@@ -15733,7 +15733,7 @@ function createInboundGoodsPanelElement() {
 
   const docTitle = document.createElement("h3");
   docTitle.style.cssText = "margin: 0 0 16px 0; font-size: 15px; font-weight: 700; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.5px;";
-  docTitle.textContent = "📄 1. Informasi Surat Jalan & Toko / Distributor";
+  docTitle.textContent = "1. Informasi Surat Jalan & Toko / Distributor";
   docCard.appendChild(docTitle);
 
   const infoGrid = document.createElement("div");
@@ -15791,10 +15791,11 @@ function createInboundGoodsPanelElement() {
 
   const itemsTitle = document.createElement("h3");
   itemsTitle.style.cssText = "margin: 0; font-size: 15px; font-weight: 700; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px;";
-  itemsTitle.textContent = "📦 2. Rincian Barang yang Diterima";
+  itemsTitle.textContent = "2. Rincian Barang yang Diterima";
 
   const itemCountBadge = document.createElement("span");
   itemCountBadge.style.cssText = "background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.3);";
+  itemCountBadge.className = "inbound-row-count-badge";
   itemCountBadge.textContent = `${inboundGoodsForm.items.length} Baris Barang`;
 
   itemsHeader.append(itemsTitle, itemCountBadge);
@@ -15895,10 +15896,8 @@ function createInboundGoodsPanelElement() {
     const delBtn = document.createElement("button");
     delBtn.type = "button";
     delBtn.title = "Hapus baris ini";
-    delBtn.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; width: 34px; height: 34px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s;";
-    delBtn.innerHTML = "✕";
-    delBtn.onmouseenter = () => { delBtn.style.background = "#ef4444"; delBtn.style.color = "#fff"; };
-    delBtn.onmouseleave = () => { delBtn.style.background = "rgba(239, 68, 68, 0.1)"; delBtn.style.color = "#ef4444"; };
+    delBtn.className = "inbound-row-delete-btn";
+    delBtn.textContent = "Hapus";
     delBtn.onclick = () => {
       if (inboundGoodsForm.items.length > 1) {
         inboundGoodsForm.items.splice(index, 1);
@@ -15937,8 +15936,8 @@ function createInboundGoodsPanelElement() {
   submitBtn.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 16px 24px; border-radius: 10px; background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: 800; font-size: 16px; border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35); transition: transform 0.15s, box-shadow 0.15s;";
   submitBtn.disabled = isSavingInboundGoods;
   submitBtn.innerHTML = isSavingInboundGoods
-    ? `<span>⏳</span> Menyimpan ke Database Gudang...`
-    : `<span style="font-size: 18px;">📥</span> Simpan & Masukkan ke Stok Gudang`;
+    ? "Menyimpan ke Database Gudang..."
+    : "Simpan & Masukkan ke Stok Gudang";
 
   submitBtn.onmouseenter = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "translateY(-1px)"; };
   submitBtn.onmouseleave = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "none"; };
@@ -16010,7 +16009,7 @@ function createStockConsumptionPanelElement() {
 
   const title = document.createElement("h2");
   title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
-  title.innerHTML = `<span style="font-size: 26px;">📤</span> Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)`;
+  title.textContent = "Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)";
 
   const subtitle = document.createElement("p");
   subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
@@ -16104,7 +16103,7 @@ function createTodayStockMovementToolbarElement() {
     ["transaction", "Transaksi"],
     ["goods_receipt", "Barang Masuk"],
     ["manual_adjustment", "Manual Adjustment"],
-    ["stock_audit", "Stock Opname"],
+    ["stock_audit", "Cek Fisik"],
   ].forEach(([referenceType, labelText]) => {
     const button = document.createElement("button");
     button.className = referenceType === stockMovementReferenceFilter
@@ -16125,7 +16124,7 @@ function createTodayStockMovementToolbarElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-stock-movements";
   refreshButton.disabled = isLoadingStockMovements || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingStockMovements ? "Memuat..." : "Refresh Mutasi Stok";
+  refreshButton.textContent = isLoadingStockMovements ? "Memuat..." : "Segarkan Mutasi";
 
   actions.appendChild(refreshButton);
   toolbar.append(itemFilter, typeFilter, referenceFilter, actions);
@@ -20548,11 +20547,11 @@ function createStockSubNavElement() {
   nav.setAttribute("aria-label", "Sub menu stok");
 
   [
-    ["position", "📦 Sisa Stok di Rak"],
-    ["inbound", "📥 Catat Barang Masuk"],
-    ["consumption", "📤 Barang Keluar (Penjualan)"],
-    ["movements", "📋 Riwayat Keluar-Masuk"],
-    ["opname", "📝 Cek Fisik (Stock Opname)"],
+    ["position", "Sisa Stok di Rak"],
+    ["inbound", "Catat Barang Masuk"],
+    ["consumption", "Barang Keluar (Penjualan)"],
+    ["movements", "Riwayat Keluar-Masuk"],
+    ["opname", "Cek Fisik (Opname)"],
   ].forEach(([key, label]) => {
     const button = document.createElement("button");
     button.className = key === activeStockSubTab ? "stock-subnav-button active" : "stock-subnav-button";
@@ -20578,7 +20577,7 @@ function createInventoryAuditPanelElement() {
   const title = document.createElement("h2");
   title.className = "stock-movements-title";
   title.id = "inventory-audit-title";
-  title.textContent = "Stock Opname Outlet";
+  title.textContent = "Cek Fisik Stok (Opname)";
 
   const subtitle = document.createElement("p");
   subtitle.className = "stock-movements-subtitle";
@@ -20594,14 +20593,14 @@ function createInventoryAuditPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory-audits";
   refreshButton.disabled = isLoadingInventoryAudits || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventoryAudits ? "Memuat..." : "Refresh";
+  refreshButton.textContent = isLoadingInventoryAudits ? "Memuat..." : "Segarkan";
 
   const newButton = document.createElement("button");
   newButton.className = "stock-movements-button";
   newButton.type = "button";
   newButton.dataset.action = "create-inventory-audit";
   newButton.disabled = isSavingInventoryAudit || isLoadingInventoryAudits || !API_BASE_URL.trim();
-  newButton.textContent = isSavingInventoryAudit ? "Memproses..." : "+ Mulai Stock Opname";
+  newButton.textContent = isSavingInventoryAudit ? "Memproses..." : "Mulai Cek Fisik";
 
   actions.append(refreshButton, newButton);
   header.append(titleGroup, actions);
@@ -20626,10 +20625,10 @@ function createInventoryAuditSummaryElement() {
   grid.className = "stock-movements-summary inventory-audit-summary";
 
   [
-    ["Total Item", Number(summary.total_items) || 0],
+    ["Total Barang", Number(summary.total_items) || 0],
     ["Sudah Dihitung", Number(summary.counted_items) || 0],
-    ["Item Berbeda", Number(summary.variance_items) || 0],
-    ["Total Beda Absolut", Number(summary.absolute_variance_qty) || 0],
+    ["Barang Berbeda", Number(summary.variance_items) || 0],
+    ["Total Selisih", Number(summary.absolute_variance_qty) || 0],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "stock-movements-summary-card";
@@ -20654,16 +20653,16 @@ function createInventoryAuditWorkspaceElement() {
   wrapper.className = "inventory-audit-workspace";
 
   if (!API_BASE_URL.trim()) {
-    wrapper.appendChild(createStateMessage("Stock Opname hanya tersedia saat terhubung ke server."));
+    wrapper.appendChild(createStateMessage("Cek fisik stok hanya tersedia saat terhubung ke server."));
     return wrapper;
   }
 
   wrapper.appendChild(createInventoryAuditListElement());
 
   if (isLoadingInventoryAudits && !selectedInventoryAudit) {
-    wrapper.appendChild(createStateMessage("Memuat data Stock Opname..."));
+    wrapper.appendChild(createStateMessage("Memuat data cek fisik..."));
   } else if (!selectedInventoryAudit) {
-    wrapper.appendChild(createStateMessage("Belum ada Stock Opname dipilih. Klik Mulai Stock Opname untuk audit baru."));
+    wrapper.appendChild(createStateMessage("Belum ada sesi cek fisik dipilih. Klik Mulai Cek Fisik untuk memulai."));
   } else {
     wrapper.appendChild(createInventoryAuditDetailElement());
   }
@@ -20677,7 +20676,7 @@ function createInventoryAuditListElement() {
 
   const title = document.createElement("h3");
   title.className = "stock-adjustment-title";
-  title.textContent = "Riwayat Opname";
+  title.textContent = "Riwayat Cek Fisik";
   aside.appendChild(title);
 
   if (inventoryAudits.length === 0) {
@@ -20945,14 +20944,14 @@ function createInventoryAuditActionsElement() {
   submitButton.type = "button";
   submitButton.dataset.action = "submit-inventory-audit";
   submitButton.disabled = isSavingInventoryAudit || !["draft", "counting"].includes(status);
-  submitButton.textContent = "Submit ke Pemeriksa";
+  submitButton.textContent = "Kirim ke Pemeriksa";
 
   const approveButton = document.createElement("button");
   approveButton.className = "stock-adjustment-button";
   approveButton.type = "button";
   approveButton.dataset.action = "approve-inventory-audit";
   approveButton.disabled = isSavingInventoryAudit || status !== "submitted";
-  approveButton.textContent = "Approve & Posting";
+  approveButton.textContent = "Setujui & Terapkan";
 
   actions.append(saveButton, submitButton, approveButton);
   return actions;
@@ -20976,10 +20975,10 @@ function getInventoryAuditReasonOptions() {
 
 function getInventoryAuditStatusLabel(status) {
   const labels = {
-    draft: "Draft",
-    counting: "Counting",
-    submitted: "Menunggu Approval",
-    posted: "Posted",
+    draft: "Draf",
+    counting: "Sedang Dihitung",
+    submitted: "Menunggu Persetujuan",
+    posted: "Sudah Diterapkan",
   };
 
   return labels[status] || status || "-";
