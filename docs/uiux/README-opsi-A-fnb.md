@@ -48,12 +48,39 @@ Semua kartu di dalam satu baris tetap sama tinggi, tidak ada yang terpotong.
 Kalau ingin benar-benar rata 212px, baris isi paket perlu dipotong menjadi satu
 baris berelipsis (butuh keputusan: informasi paket jadi tidak utuh).
 
-## Yang BELUM dikerjakan (Opsi A tahap berikutnya, butuh keputusan)
+## Langkah 2 (dikerjakan pada 2026-10-06) — emoji dihapus, bahasa diseragamkan
+
+Berbeda dari langkah 1, langkah ini menyentuh `js/app.js` (teks label + markup chip
+kategori + sub-tab) dan `css/skin-fnb-layout.css` (penanda status).
+
+| # | Sebelum | Sesudah |
+|---|---------|---------|
+| 8 | 27 emoji sebagai ikon di panel F&B (🛒 📜 📊 📋 ⭐ 🍔 🍺 🚬 …) + 🖨️/🧾 di tombol laporan | 0 emoji. Chip kategori jadi teks + hitungan; sub-tab jadi teks; tombol laporan jadi teks. Nama kategori tetap punya `aria-label` ("Beer (14 item)") supaya pembaca layar tidak kehilangan info |
+| 9 | Label campur: Open, Billed, Refresh Order F&B, Open Order F&B, Total F&B Open, Open Bill, Postpaid | Indonesia: Belum Dibayar, Sudah Ditagih, Muat Ulang Antrean, Antrean Pesanan F&B, Total Nilai F&B, Tagihan Berjalan, Bayar Nanti |
+| 10 | Badge status tanpa penanda visual | Titik warna 6px (hijau/kuning/merah) di badge — hanya di panel F&B |
+| 11 | Watermark logo tembus di belakang label sub-tab (terlihat sebagai bercak) | Bilah sub-tab diberi latar tipis |
+
+Bukti ukur (Chrome headless, 1366x768, data dari server lokal):
+
+- Sisa emoji di keempat sub-tab F&B: **0** (sebelum: 27 di tab Pesan Menu).
+- Sisa label Inggris di panel F&B: **0**.
+- Titik status muncul pada 10 badge di Riwayat F&B dan 10 di Laporan Penjualan;
+  badge "Aktif" di kartu menu tetap disembunyikan (sengaja).
+- Tab lain tidak berubah: dengan skin aktif maupun tidak, jumlah titik baru di
+  Ruangan, Transaksi, Stok, Laporan = 0/0 (dibatasi ke panel F&B).
+- Interaksi setelah perubahan markup: chip "Beer" → 14 kartu beer, `aria-label`
+  "Beer (14 item)"; klik "+ Tambah" → Total Order F&B Rp 0 → Rp 750.000.
+- `node --check js/app.js` lolos (sintaks).
+
+## Yang BELUM dikerjakan (butuh keputusan)
 
 - Merapikan data kategori (gabungan "roko/rokok/Rokok", "ci") — menyentuh data master,
   bukan tampilan.
-- Mengganti emoji sebagai ikon dengan SVG (Lucide/Heroicons).
-- Merapikan bahasa campur ("Open Order F&B", "Total Order", "Billed").
+- Emoji di modul lain yang belum jadi lingkup langkah 2 (Pengeluaran, Stok, LC, Analisa,
+  tombol cetak di beberapa tempat) — masih terhitung ~200 kemunculan di `app.js`;
+  pola penggantiannya sudah terbukti berhasil, tinggal diterapkan per modul.
+- Merapikan sisa istilah Inggris di modul lain (mis. label "Paid"/"Unpaid" di kartu
+  ringkasan Laporan).
 
 Dicatat juga: percobaan membuat daftar menu bergulir di dalam panel bertinggi tetap
 **dibatalkan** karena hasil ukur menunjukkan baris grid menyusut (kartu jadi 22px);

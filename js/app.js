@@ -564,7 +564,7 @@ const ROOM_STATUS_CONFIG = {
     className: "available",
     tone: "success",
     buttonLabel: "Buat Booking",
-    buttonIcon: "📖",
+    buttonIcon: "",
   },
   occupied: {
     label: "Terisi",
@@ -5678,7 +5678,7 @@ function buildFnbOrderPayload(idempotencyKey) {
 function getFnbOrderPaymentLabel() {
   const labels = {
     room_bill: "Masuk tagihan room",
-    general_bill: "Open bill pelanggan",
+    general_bill: "Tagihan berjalan pelanggan",
     cash: "Cash - langsung lunas",
     transfer: "Transfer / QRIS - langsung lunas",
   };
@@ -6701,7 +6701,7 @@ function getSessionButtonLabel(status) {
 }
 
 function getSessionButtonIcon(status) {
-  return ROOM_STATUS_CONFIG[status]?.buttonIcon || "📖";
+  return ROOM_STATUS_CONFIG[status]?.buttonIcon || "";
 }
 
 function getPaymentStatusLabel(status) {
@@ -10416,7 +10416,7 @@ function createRoomLiveEstimatedBillingElement(room) {
   header.innerHTML = `
     <span class="live-billing-title">💰 Estimasi Tagihan</span>
     <span class="live-billing-badge ${data.isUpfrontPaid ? "is-upfront" : "is-open-bill"}">
-      ${data.isUpfrontPaid ? "🟢 Lunas di Muka" : "🟣 Open Bill"}
+      ${data.isUpfrontPaid ? "Lunas di Muka" : "Tagihan Berjalan"}
     </span>
   `;
   container.appendChild(header);
@@ -10604,7 +10604,7 @@ function createRoomCard(room) {
       openBillBadge.style.borderRadius = "4px";
       openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
       openBillBadge.style.fontWeight = "bold";
-      openBillBadge.textContent = "Open Bill";
+      openBillBadge.textContent = "Tagihan Berjalan";
       subRow.appendChild(openBillBadge);
     }
     topLine.appendChild(subRow);
@@ -12687,7 +12687,7 @@ function createExtendSelectionElement(room) {
   paymentField.style.fontSize = "12px";
   paymentField.style.color = "#a78bfa";
   paymentField.style.textAlign = "center";
-  paymentField.textContent = "ℹ️ Biaya tambahan waktu akan ditagihkan saat checkout (Open Bill).";
+  paymentField.textContent = "Biaya tambahan waktu akan ditagihkan saat checkout (tagihan berjalan).";
 
   const noteField = document.createElement("div");
   noteField.className = "extend-note-field";
@@ -13362,7 +13362,8 @@ function createMenuCategoryFilterElement() {
       button.setAttribute("aria-selected", String(value === menuCategoryFilter));
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
-      button.innerHTML = `<span class="category-tab-icon">${icon}</span><span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
+            button.setAttribute("aria-label", `${labelText} (${getFnbMenuCategoryCount(value)} item)`);
+            button.innerHTML = `<span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
       filter.appendChild(button);
     }
   );
@@ -13637,7 +13638,7 @@ function createGeneralFnbBillControlElement() {
   const billLabel = document.createElement("label");
   billLabel.className = "transaction-label";
   billLabel.setAttribute("for", "generalFnbBillSelect");
-  billLabel.textContent = "Open Bill Pelanggan";
+  billLabel.textContent = "Tagihan Berjalan Pelanggan";
 
   const billSelect = document.createElement("select");
   billSelect.className = "fb-room-select";
@@ -13852,7 +13853,7 @@ function createFbPaymentMethodElement() {
   if (!isGeneralOrder) {
     const roomBillOpt = document.createElement("option");
     roomBillOpt.value = "room_bill";
-    roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
+    roomBillOpt.textContent = "Tagihan Berjalan (Masuk Tagihan Room)";
     if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
     select.appendChild(roomBillOpt);
   }
@@ -13860,7 +13861,7 @@ function createFbPaymentMethodElement() {
   if (isGeneralOrder) {
     const generalBillOpt = document.createElement("option");
     generalBillOpt.value = "general_bill";
-    generalBillOpt.textContent = "Postpaid (Open Bill Pelanggan)";
+    generalBillOpt.textContent = "Bayar Nanti (Tagihan Berjalan Pelanggan)";
     if (fnbOrderPaymentMethod === "general_bill") generalBillOpt.selected = true;
     select.appendChild(generalBillOpt);
   }
@@ -13957,7 +13958,7 @@ function createLastFnbOrderElement(order, items) {
     if (order?.order_id) {
       printButton.dataset.fnbOrderId = order.order_id;
     }
-    printButton.textContent = "🖨️ Cetak Struk Transaksi Ini";
+    printButton.textContent = "Cetak Struk Transaksi Ini";
 
     actions.appendChild(printButton);
     saved.appendChild(actions);
@@ -13968,11 +13969,11 @@ function createLastFnbOrderElement(order, items) {
 
 function getFnbOrderStatusLabel(status) {
   if (status === "open") {
-    return "Open";
+    return "Belum Dibayar";
   }
 
   if (status === "billed") {
-    return "Billed";
+    return "Sudah Ditagih";
   }
 
   if (status === "paid") {
@@ -14021,7 +14022,7 @@ function createFbOrderActionsElement() {
   const isPostpaid = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "general_bill";
   saveButton.textContent = isSavingFnbOrder
     ? "Memproses..."
-    : isPostpaid ? "Simpan ke Open Bill" : "Bayar & Kirim Order";
+    : isPostpaid ? "Simpan ke Tagihan" : "Bayar & Kirim Order";
 
   actions.append(clearButton, saveButton);
 
@@ -14204,7 +14205,7 @@ function requestCancelGeneralFnbBill(generalBillId) {
   if (!generalBillId || isCancellingFnbOrder || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14272,7 +14273,7 @@ async function settleGeneralFnbBill(generalBillId) {
   if (!generalBillId || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14298,7 +14299,7 @@ async function executeSettleGeneralFnbBill(generalBillId) {
   if (!generalBillId || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14352,7 +14353,7 @@ function createOpenFnbOrdersPanelElement() {
   const title = document.createElement("h2");
   title.className = "open-fnb-title";
   title.id = "open-fnb-title";
-  title.textContent = "Open Order F&B";
+  title.textContent = "Antrean Pesanan F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "open-fnb-subtitle";
@@ -14404,7 +14405,7 @@ function createOpenFnbSummaryElement(summary) {
   [
     ["Total Order", Number(summary.total_orders) || 0],
     ["Total Item", Number(summary.total_items) || 0],
-    ["Total F&B Open", formatCurrency(summary.total_amount)],
+        ["Total Nilai F&B", formatCurrency(summary.total_amount)],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "open-fnb-summary-card";
@@ -14431,7 +14432,7 @@ function createOpenFnbFilterNoteElement() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    note.textContent = "Menampilkan semua order F&B yang masih open.";
+    note.textContent = "Menampilkan semua pesanan F&B yang belum selesai (belum ditagih maupun sudah ditagih).";
   } else if (isFbOrderRoomSelectable(selectedRoom)) {
     note.textContent = `Menampilkan order untuk sesi: ${selectedRoom.room_name}`;
   } else {
@@ -14450,7 +14451,7 @@ function createOpenFnbActionsElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-open-fnb-orders";
   refreshButton.disabled = isLoadingOpenFnbOrders;
-  refreshButton.textContent = isLoadingOpenFnbOrders ? "Memuat..." : "Refresh Order F&B";
+  refreshButton.textContent = isLoadingOpenFnbOrders ? "Memuat..." : "Muat Ulang Antrean";
 
   actions.appendChild(refreshButton);
 
@@ -14658,13 +14659,13 @@ function createTodayFnbSummaryElement(summary) {
   grid.className = "today-fnb-summary";
 
   [
-    ["Total Order", Number(summary.total_orders) || 0],
-    ["Open", Number(summary.open_orders) || 0],
-    ["Billed", Number(summary.billed_orders) || 0],
-    ["Dibatalkan", Number(summary.cancelled_orders) || 0],
-    ["Nilai Batal", formatCurrency(summary.cancelled_amount)],
-    ["Total F&B", formatCurrency(summary.total_amount)],
-  ].forEach(([labelText, valueText]) => {
+      ["Total Order", Number(summary.total_orders) || 0],
+      ["Belum Dibayar", Number(summary.open_orders) || 0],
+      ["Sudah Ditagih", Number(summary.billed_orders) || 0],
+      ["Dibatalkan", Number(summary.cancelled_orders) || 0],
+      ["Nilai Batal", formatCurrency(summary.cancelled_amount)],
+      ["Total Nilai F&B", formatCurrency(summary.total_amount)],
+    ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "today-fnb-summary-card";
 
@@ -14691,11 +14692,11 @@ function createTodayFnbToolbarElement() {
   statusFilter.className = "today-fnb-filter";
 
   [
-    ["all", "Semua"],
-    ["open", "Open"],
-    ["billed", "Billed"],
-    ["cancelled", "Dibatalkan"],
-  ].forEach(([status, labelText]) => {
+      ["all", "Semua"],
+      ["open", "Belum Dibayar"],
+      ["billed", "Sudah Ditagih"],
+      ["cancelled", "Dibatalkan"],
+    ].forEach(([status, labelText]) => {
     const button = document.createElement("button");
     button.className = status === todayFnbOrderStatusFilter
       ? "today-fnb-filter-button active"
@@ -18086,8 +18087,8 @@ function createTodayFnbSalesReportPanelElement() {
   const statusSelect = document.createElement("select");
   statusSelect.className = "duration-custom-input";
   [
-    ["billed", "Hanya Billed / Lunas"],
-    ["all", "Semua (Termasuk Open)"],
+    ["billed", "Hanya Sudah Ditagih / Lunas"],
+        ["all", "Semua (Termasuk Belum Dibayar)"],
   ].forEach(([val, lbl]) => {
     const opt = document.createElement("option");
     opt.value = val;
@@ -18119,7 +18120,7 @@ function createTodayFnbSalesReportPanelElement() {
   printThermalBtn.style.padding = "8px 16px";
   printThermalBtn.style.alignSelf = "flex-end";
   printThermalBtn.style.fontWeight = "bold";
-  printThermalBtn.textContent = "🧾 Cetak Struk (58mm)";
+  printThermalBtn.textContent = "Cetak Struk (58mm)";
   printThermalBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
   printThermalBtn.onclick = () => {
     fnbReportThermalPreviewVisible = true;
@@ -18132,7 +18133,7 @@ function createTodayFnbSalesReportPanelElement() {
   printBtn.style.padding = "8px 16px";
   printBtn.style.alignSelf = "flex-end";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "🖨️ Download / Cetak PDF";
+  printBtn.textContent = "Download / Cetak PDF";
   printBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
   printBtn.onclick = () => {
     showFnbReportPrintPreview();
@@ -18242,7 +18243,7 @@ function createFnbCategorySummaryElement(categorySummary = []) {
     const label = document.createElement("span");
     label.style.fontSize = "11px";
     label.style.color = "var(--muted)";
-    label.textContent = `${FNB_CATEGORY_ICONS[cat.category] || "📦"} ${cat.category}`;
+    label.textContent = `${FNB_CATEGORY_ICONS[cat.category] || ""} ${cat.category}`.trim();
 
     const value = document.createElement("strong");
     value.style.fontSize = "13px";
@@ -18628,7 +18629,7 @@ function createFnbReportPrintPreviewElement() {
         <div style="font-size: 9.5px; color: #333; display: flex; flex-direction: column; gap: 4px;">
           ${packageSales.length > 0 ? packageSales.map((pkg) => `
             <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 2px;">
-              <span>📦 <strong>${Number(pkg.quantity_sold ?? pkg.quantity ?? 1)}x</strong> ${escapeHtml(pkg.menu_name || "-")}</span>
+              <span><strong>${Number(pkg.quantity_sold ?? pkg.quantity ?? 1)}x</strong> ${escapeHtml(pkg.menu_name || "-")}</span>
               <strong style="color: #047857;">${formatCurrency(pkg.gross_sales ?? pkg.subtotal ?? 0)}</strong>
             </div>
           `).join("") : `<p style="margin: 0; color: #64748b; font-style: italic;">Tidak ada paket room/F&B terjual (semua pesanan satuan).</p>`}
@@ -18910,7 +18911,7 @@ function createFnbPhysicalConsumptionSectionElement(items = []) {
   title.style.display = "flex";
   title.style.alignItems = "center";
   title.style.gap = "8px";
-  title.innerHTML = `<span>📦</span> Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)`;
+  title.innerHTML = `Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)`;
 
   const subtitle = document.createElement("p");
   subtitle.style.fontSize = "12px";
@@ -19083,7 +19084,7 @@ function getOpenFnbEmptyMessage() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    return "Belum ada open order F&B.";
+    return "Belum ada pesanan F&B yang belum selesai.";
   }
 
   if (!isFbOrderRoomSelectable(selectedRoom)) {
@@ -33365,11 +33366,11 @@ function createFnbSubNavElement() {
   wrapper.setAttribute("aria-label", "Sub menu F&B");
 
   [
-    ["order", "🛒 Pesan Menu", "Input order F&B baru untuk room"],
-    ["open", "⏳ Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
-    ["history", "📜 Riwayat F&B", "Lihat seluruh transaksi pesanan F&B"],
-    ["report", "📊 Laporan Penjualan", "Rekapitulasi penjualan barang F&B dan cetak laporan"],
-  ].forEach(([key, label, description]) => {
+      ["order", "Pesan Menu", "Input order F&B baru untuk room"],
+      ["open", "Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
+      ["history", "Riwayat F&B", "Lihat seluruh transaksi pesanan F&B"],
+      ["report", "Laporan Penjualan", "Rekapitulasi penjualan barang F&B dan cetak laporan"],
+    ].forEach(([key, label, description]) => {
     const button = document.createElement("button");
     button.className = activeFnbSubTab === key
       ? "fnb-subnav-button active"
@@ -33397,8 +33398,8 @@ function createTransactionsSubNavElement() {
   wrapper.setAttribute("aria-label", "Sub menu Transaksi");
 
   const transactionTabs = [
-    ["history", "📑 Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
-    ["closing", "💵 Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
+    ["history", "Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
+    ["closing", "Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
   ];
 
   if (getCurrentOperatorRole() === "owner") {

@@ -19,7 +19,9 @@
   gap: 2px;
   padding: 0 0 0 2px;
   border-bottom: 1px solid var(--gold-smoke);
-  background: transparent;
+  /* Latar tipis: tanpa ini, watermark logo di latar halaman tembus dan terlihat
+     seperti bercak di belakang label tab. */
+  background: linear-gradient(180deg, rgba(20, 15, 10, 0.92), rgba(20, 15, 10, 0.72));
 }
 
 .app-tab-panel--fnb > .fnb-subnav .fnb-subnav-button {
@@ -106,7 +108,8 @@
    chip kategori + kotak cari menempel di atas, keranjang menempel di kanan,
    jadi ketiganya tetap bisa dipakai walau sudah menggulir jauh. */
 
-/* Kategori tidak lagi memakan 320px (7 baris): satu baris, geser mendatar. */
+/* Kategori tidak lagi memakan 320px (7 baris): satu baris, geser mendatar,
+   dengan tepi kanan memudar sebagai petunjuk masih ada chip di sebelah kanan. */
 .app-tab-panel--fnb.active .menu-category-filter {
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -274,4 +277,45 @@
    tidak terjepit di kolom pertama grid. */
 .app-tab-panel--fnb.active .menu-list .state-message {
   grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------- A6 ------ */
+/* Penanda status: emoji diganti titik warna (tanpa aset, tidak bisa rusak oleh
+   font emoji Windows). DIBATASI ke panel F&B saja supaya tab lain tidak
+   berubah sama sekali. Badge yang memang punya titik sendiri (mis. kartu
+   ruangan) tidak terkena karena hanya badge tanpa elemen ::before yang dapat
+   titik baru. */
+.app-tab-panel--fnb.active .status-badge::before,
+.app-tab-panel--fnb.active .room-status::before,
+.app-tab-panel--fnb.active .inventory-status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(246, 234, 210, 0.72);
+}
+
+.app-tab-panel--fnb.active .status-badge.success::before,
+.app-tab-panel--fnb.active .room-status.status-badge.success::before,
+.app-tab-panel--fnb.active .inventory-status.safe::before {
+  background: #35b779;
+}
+
+.app-tab-panel--fnb.active .status-badge.warning::before,
+.app-tab-panel--fnb.active .room-status.status-badge.warning::before,
+.app-tab-panel--fnb.active .inventory-status.low::before {
+  background: #f0b84f;
+}
+
+.app-tab-panel--fnb.active .status-badge.danger::before,
+.app-tab-panel--fnb.active .status-badge.error::before,
+.app-tab-panel--fnb.active .room-status.status-badge.danger::before {
+  background: #ff8a9a;
+}
+
+/* Kartu menu normal sudah punya titik harga/status sendiri; titik di badge
+   "Aktif" akan jadi bising, dan badge itu memang disembunyikan (A3). */
+.app-tab-panel--fnb.active .menu-card .menu-status::before {
+  display: none;
 }
