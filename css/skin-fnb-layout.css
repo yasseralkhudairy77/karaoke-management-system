@@ -279,6 +279,55 @@
   grid-column: 1 / -1;
 }
 
+/* ---------------------------------------------------------------- A7 ------ */
+/* Deretan kategori bisa digeser tanpa mouse: tombol panah ‹ › di kiri/kanan,
+   plus dukungan roda mouse (ditangani di app.js). Dulu chip terakhir "Anggur"
+   seperti jadi ujungnya karena tidak ada tanda apa pun bahwa ada isi di kanan. */
+.app-tab-panel--fnb.active .menu-category-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-tab-panel--fnb.active .menu-category-bar .menu-category-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-tab-panel--fnb.active .menu-category-scroll {
+  flex: 0 0 auto;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--gold-smoke);
+  border-radius: 50%;
+  background: rgba(13, 10, 7, 0.9);
+  color: var(--gold-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.app-tab-panel--fnb.active .menu-category-bar.has-overflow .menu-category-scroll {
+  display: inline-flex;
+}
+
+.app-tab-panel--fnb.active .menu-category-scroll:hover,
+.app-tab-panel--fnb.active .menu-category-scroll:focus-visible {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.14);
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 2px;
+}
+
+.app-tab-panel--fnb.active .menu-category-scroll.is-disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
 /* ---------------------------------------------------------------- A6 ------ */
 /* Penanda status: emoji diganti titik warna (tanpa aset, tidak bisa rusak oleh
    font emoji Windows). DIBATASI ke panel F&B saja supaya tab lain tidak

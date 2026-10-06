@@ -13343,6 +13343,25 @@ function createMenuPanelElement() {
 }
 
 function createMenuCategoryFilterElement() {
+  const wrap = document.createElement("div");
+  wrap.className = "menu-category-bar";
+
+  const scrollLeftButton = document.createElement("button");
+  scrollLeftButton.type = "button";
+  scrollLeftButton.className = "menu-category-scroll";
+  scrollLeftButton.dataset.action = "scroll-menu-categories";
+  scrollLeftButton.dataset.direction = "-1";
+  scrollLeftButton.setAttribute("aria-label", "Geser kategori ke kiri");
+  scrollLeftButton.textContent = "‹";
+
+  const scrollRightButton = document.createElement("button");
+  scrollRightButton.type = "button";
+  scrollRightButton.className = "menu-category-scroll";
+  scrollRightButton.dataset.action = "scroll-menu-categories";
+  scrollRightButton.dataset.direction = "1";
+  scrollRightButton.setAttribute("aria-label", "Geser kategori ke kanan");
+  scrollRightButton.textContent = "›";
+
   const filter = document.createElement("div");
   filter.className = "menu-category-filter";
   filter.setAttribute("aria-label", "Filter kategori Menu F&B");
@@ -13351,7 +13370,6 @@ function createMenuCategoryFilterElement() {
   getMenuCategories().forEach(
     (value) => {
       const labelText = FNB_CATEGORY_LABELS[value] || value;
-      const icon = FNB_CATEGORY_ICONS[value] || "🏷️";
       const button = document.createElement("button");
       button.className =
         value === menuCategoryFilter
@@ -13362,13 +13380,43 @@ function createMenuCategoryFilterElement() {
       button.setAttribute("aria-selected", String(value === menuCategoryFilter));
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
-            button.setAttribute("aria-label", `${labelText} (${getFnbMenuCategoryCount(value)} item)`);
-            button.innerHTML = `<span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
+      button.setAttribute("aria-label", `${labelText} (${getFnbMenuCategoryCount(value)} item)`);
+      button.innerHTML = `<span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
       filter.appendChild(button);
     }
   );
 
-  return filter;
+  // Roda mouse juga menggeser deretan kategori ke kanan/kiri (tanpa shift).
+  filter.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+      return;
+    }
+    const maxScroll = filter.scrollWidth - filter.clientWidth;
+    if (maxScroll <= 0) {
+      return;
+    }
+    const next = filter.scrollLeft + event.deltaY;
+    if ((next > 0 && next < maxScroll)) {
+      event.preventDefault();
+      filter.scrollLeft = next;
+    }
+  }, { passive: false });
+
+  // Tombol panah hanya tampil bila memang ada isi yang tersembunyi.
+  const syncScrollButtons = () => {
+    const maxScroll = filter.scrollWidth - filter.clientWidth;
+    const hasOverflow = maxScroll > 4;
+    wrap.classList.toggle("has-overflow", hasOverflow);
+    scrollLeftButton.classList.toggle("is-disabled", !hasOverflow || filter.scrollLeft <= 2);
+    scrollRightButton.classList.toggle("is-disabled", !hasOverflow || filter.scrollLeft >= maxScroll - 2);
+  };
+  filter.addEventListener("scroll", syncScrollButtons, { passive: true });
+  requestAnimationFrame(syncScrollButtons);
+  window.setTimeout(syncScrollButtons, 300);
+
+  wrap.append(scrollLeftButton, filter, scrollRightButton);
+
+  return wrap;
 }
 
 function createMenuSpiritFilterElement() {
@@ -38410,6 +38458,16 @@ async function handleRoomAction(event) {
 
   if (action === "apply-transaction-custom-period") {
     await applyTransactionCustomPeriod();
+    return;
+  }
+
+  if (action === "scroll-menu-categories") {
+    const bar = button.closest(".menu-category-bar");
+    const list = bar?.querySelector(".menu-category-filter");
+    if (list) {
+      const direction = Number(button.dataset.direction) || 1;
+      list.scrollBy({ left: direction * Math.max(240, list.clientWidth * 0.6), behavior: "smooth" });
+    }
     return;
   }
 

@@ -72,6 +72,26 @@ Bukti ukur (Chrome headless, 1366x768, data dari server lokal):
   "Beer (14 item)"; klik "+ Tambah" → Total Order F&B Rp 0 → Rp 750.000.
 - `node --check js/app.js` lolos (sintaks).
 
+## Langkah 3 (2026-10-06) — deretan kategori bisa digeser (keluhan Yasser)
+
+Keluhan: di panel "Cari cepat, pilih kategori..." deretan kategori seperti berhenti
+di "Anggur" — tidak ada tanda apa pun bahwa masih ada 17 kategori di sebelah kanan
+(24 chip total, lebar 3.070px vs ruang 765px → 2.330px tersembunyi).
+
+| # | Sebelum | Sesudah |
+|---|---------|---------|
+| 12 | Deretan chip bisa digeser tapi tanpa petunjuk & tanpa cara menggeser dengan mouse | Tombol panah bulat ‹ › di kiri/kanan deretan; otomatis tampil hanya bila ada isi tersembunyi, dan meredup saat sudah di ujung. Roda mouse juga menggeser (tanpa perlu Shift) |
+
+Bukti ukur (Chrome headless, 1366x768):
+- Awal: panah kiri meredup, panah kanan menyala; geser maksimum 2.330px.
+- Klik panah kanan → bergeser 473px; klik sampai ujung → 2.330px, panah kanan meredup.
+- Klik panah kiri → mundur ke 1.883px; roda mouse (deltaY 300) → 1.883 → 2.163px.
+- Chip terakhir ("rokok") tercapai, bisa diklik, filter jalan (2 kartu tampil).
+
+Catatan: pada tampilan ujung, terlihat chip duplikat apa adanya dari data master —
+"ci", "minuman" vs "Minuman", "roko"/"rokok"/"Rokok". Ini bukti tambahan bahwa
+pembersihan data kategori memang perlu (butuh izin karena mengubah data master).
+
 ## Yang BELUM dikerjakan (butuh keputusan)
 
 - Merapikan data kategori (gabungan "roko/rokok/Rokok", "ci") — menyentuh data master,
