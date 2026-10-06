@@ -7252,15 +7252,12 @@ async function loadTodayExpenses() {
   }
 }
 
-function createExpenseMetricCard(title, value, type, icon) {
+function createExpenseMetricCard(title, value, type) {
   const card = document.createElement("div");
   card.className = `expense-metric-card expense-metric-card--${type}`;
   card.innerHTML = `
-    <div class="expense-metric-icon">${icon}</div>
-    <div class="expense-metric-content">
-      <span class="expense-metric-title">${title}</span>
-      <strong class="expense-metric-value">${value}</strong>
-    </div>
+    <span class="expense-metric-title">${title}</span>
+    <strong class="expense-metric-value">${value}</strong>
   `;
   return card;
 }
@@ -7278,9 +7275,9 @@ function createExpensesPanelElement() {
   const voidedCount = todayExpenses.filter(e => e.is_voided).length;
 
   metricsRow.append(
-    createExpenseMetricCard("Total Kas Keluar", formatCurrency(totalAmount), "total-spent", "💸"),
-    createExpenseMetricCard("Transaksi Pengeluaran", `${activeCount} item aktif`, "active-count", "🧾"),
-    createExpenseMetricCard("Dibatalkan (Void)", `${voidedCount} item`, "voided-count", "🚫")
+    createExpenseMetricCard("Total Kas Keluar", formatCurrency(totalAmount), "total-spent"),
+    createExpenseMetricCard("Pengeluaran Aktif", `${activeCount} transaksi`, "active-count"),
+    createExpenseMetricCard("Dibatalkan", `${voidedCount} transaksi`, "voided-count")
   );
 
   container.appendChild(metricsRow);
@@ -7296,7 +7293,7 @@ function createExpensesPanelElement() {
   const formHeader = document.createElement("div");
   formHeader.className = "expenses-card-header";
   formHeader.innerHTML = `
-    <h3 class="expenses-card-title">📝 Catat Pengeluaran Kas Baru</h3>
+    <h3 class="expenses-card-title">Catat Pengeluaran Kas Baru</h3>
     <p class="expenses-card-subtitle">Pengeluaran tunai otomatis memotong target uang fisik kas laci saat closing.</p>
   `;
   formCard.appendChild(formHeader);
@@ -7345,7 +7342,7 @@ function createExpensesPanelElement() {
 
     <div class="expenses-form-actions">
       <button type="submit" class="expenses-submit-button" id="btnSaveExpense" ${isSavingExpense ? "disabled" : ""}>
-        ${isSavingExpense ? "Menyimpan..." : "💾 Simpan & Cetak Slip"}
+        ${isSavingExpense ? "Menyimpan..." : "Simpan Pengeluaran"}
       </button>
     </div>
   `;
@@ -7388,11 +7385,11 @@ function createExpensesPanelElement() {
   tableHeader.className = "expenses-card-header expenses-table-header";
   tableHeader.innerHTML = `
     <div class="expenses-table-header-info">
-      <h3 class="expenses-card-title">📜 Riwayat Pengeluaran Kas Hari Ini</h3>
+      <h3 class="expenses-card-title">Riwayat Pengeluaran Kas Hari Ini</h3>
       <p class="expenses-card-subtitle">Daftar pengeluaran pada tanggal operasional aktif.</p>
     </div>
     <button type="button" class="expenses-refresh-button" id="btnRefreshExpenses" title="Muat ulang data pengeluaran">
-      🔄 Segarkan
+      Segarkan
     </button>
   `;
   tableHeader.querySelector("#btnRefreshExpenses")?.addEventListener("click", async () => {
@@ -7407,7 +7404,7 @@ function createExpensesPanelElement() {
     const emptyMsg = document.createElement("div");
     emptyMsg.className = "expenses-empty-state";
     emptyMsg.innerHTML = `
-      <div class="expenses-empty-icon">💸</div>
+      <div class="expenses-empty-icon" aria-hidden="true"></div>
       <p class="expenses-empty-title">Belum ada pengeluaran kas hari ini.</p>
       <p class="expenses-empty-desc">Gunakan form di samping untuk mencatat pengeluaran operasional kasir.</p>
     `;
@@ -7462,13 +7459,9 @@ function createExpensesPanelElement() {
             : '<span class="expense-status-badge active">Aktif</span>'}
         </td>
         <td class="text-center expense-actions-cell">
-          <button type="button" class="expense-btn-action expense-btn-print" title="Cetak Slip Bukti Pengeluaran" data-expense-id="${item.expense_id}">
-            🖨️
-          </button>
+          <button type="button" class="expense-btn-action expense-btn-print" title="Cetak slip bukti pengeluaran" data-expense-id="${item.expense_id}">Cetak</button>
           ${!item.is_voided
-            ? `<button type="button" class="expense-btn-action expense-btn-void" title="Batalkan Pengeluaran Ini" data-expense-id="${item.expense_id}">
-                ❌
-              </button>`
+            ? `<button type="button" class="expense-btn-action expense-btn-void" title="Batalkan pengeluaran ini" data-expense-id="${item.expense_id}">Batalkan</button>`
             : ""}
         </td>
       `;

@@ -1,0 +1,369 @@
+/* ============================================================================
+   PENGELUARAN — desain ulang (langkah 6). Dimuat SETELAH style.css.
+
+   Akar masalah "norak" yang terukur:
+     - modul ini memakai PALET KEDUA yang tidak dipakai modul lain:
+       --surface-2, #9e988f, #ff6b6b, #a0a0a0, hijau terang #2ecc71 dengan
+       glow (0 0 6px) -> bertabrakan dengan tema venue (gelap + emas).
+     - 8 emoji dipakai sebagai ikon (💸 🧾 🚫 📝 📜 💾 🔄 🖨️ ❌), ukuran 2-3rem,
+       dan emoji besar di keadaan kosong.
+     - semua label form berwarna emas + semua input bergaris emas -> tidak ada
+       hierarki; semua terlihat sama penting.
+     - nilai uang ditampilkan MERAH (#ff6b6b) walau hanya Rp 0 -> terbaca
+       seperti peringatan.
+
+   Prinsip baru: pakai token tema (emas sebagai AKSEN saja, teks netral),
+   satu keluarga bentuk (radius 10px), tanpa emoji, dan angka netral.
+   ========================================================================== */
+
+/* --- Kartu ringkasan: tanpa ikon emoji, label di atas, nilai besar di bawah. */
+.expense-metric-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.expense-metric-icon {
+  display: none;
+}
+
+.expense-metric-title {
+  order: 1;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.expense-metric-value {
+  order: 2;
+  font-size: 1.5rem;
+  font-weight: 900;
+  line-height: 1.1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Angka = netral, satu aturan untuk ketiganya. Warna hanya untuk status, bukan
+   hiasan. */
+.expense-metric-card--total-spent .expense-metric-value,
+.expense-metric-card--active-count .expense-metric-value,
+.expense-metric-card--voided-count .expense-metric-value {
+  color: var(--text);
+}
+
+/* --- Kartu umum */
+.expenses-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  padding: 20px;
+}
+
+.expenses-card-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.expenses-card-title {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 1.08rem;
+  font-weight: 850;
+}
+
+.expenses-card-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/* --- Form: label netral (bukan emas semua), input satu gaya */
+.expenses-form {
+  gap: 12px;
+}
+
+.expenses-form-group {
+  gap: 6px;
+}
+
+.expenses-form-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.expenses-form-label .required {
+  color: var(--occupied);
+}
+
+.expenses-form-input,
+.expenses-form-select,
+.expenses-form-textarea {
+  min-height: 44px;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  padding: 10px 12px;
+}
+
+.expenses-form-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.expenses-form-input:focus,
+.expenses-form-select:focus,
+.expenses-form-textarea:focus {
+  border-color: var(--gold-strong);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+.expenses-currency-prefix {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* Nominal adalah angka, bukan peringatan: warna teks biasa, tabular. */
+.expenses-input-amount {
+  color: var(--text) !important;
+  font-size: 1.1rem !important;
+  font-weight: 800 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Sumber dana: satu baris informasi yang tenang, bukan badge menyala */
+.expenses-source-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-deep);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.expenses-source-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--available);
+  box-shadow: none;
+}
+
+/* --- Tombol simpan: ikut bahasa tombol utama aplikasi */
+.expenses-submit-button {
+  min-height: 46px;
+  border: 1px solid rgba(255, 215, 122, 0.55);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
+  font-weight: 900;
+  font-size: 0.98rem;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.expenses-submit-button:hover:not(:disabled) {
+  transform: none;
+  filter: brightness(1.05);
+  box-shadow: var(--focus-ring);
+}
+
+.expenses-refresh-button {
+  min-height: 38px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.expenses-refresh-button:hover {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+}
+
+/* --- Tabel: header netral dengan garis bawah, angka rata kanan dan netral */
+.expenses-table {
+  font-size: 0.88rem;
+}
+
+.expenses-table th {
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+/* Kelas perataan dari style.css harus tetap menang — tanpa ini, judul kolom
+   "Nominal" (text-right) ikut jadi rata kiri. */
+.expenses-table th.text-right,
+.expenses-table td.text-right {
+  text-align: right;
+}
+
+.expenses-table th.text-center,
+.expenses-table td.text-center {
+  text-align: center;
+}
+
+.expenses-table td {
+  padding: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.expenses-table tr:hover td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.expense-cell-id code {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.78rem;
+}
+
+.expense-cell-note {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.expense-cell-void-reason {
+  color: var(--occupied);
+}
+
+.expense-category-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Uang keluar ditandai minus; angkanya netral supaya tidak semua baris merah. */
+.expense-cell-amount {
+  color: var(--text);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.expense-cell-amount.voided {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.expense-status-badge {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+
+/* Warna status diselaraskan dengan palet status aplikasi (hijau/merah yang sama
+   dipakai badge ruangan & F&B), bukan hijau/merah terang milik modul ini dulu. */
+.expense-status-badge.active {
+  color: #c9ffe8;
+  background: rgba(24, 199, 135, 0.14);
+  border-color: rgba(24, 199, 135, 0.45);
+}
+
+.expense-status-badge.void {
+  color: #ffd7df;
+  background: rgba(255, 61, 104, 0.12);
+  border-color: rgba(255, 61, 104, 0.45);
+}
+
+/* Baris yang dibatalkan: diredupkan supaya tidak bersaing dengan baris aktif.
+   Coretan hanya di nominalnya, bukan di seluruh kolom (dulu semua kolom dicoret
+   sehingga tabel sulit dibaca). */
+.expense-row-voided td {
+  opacity: 0.5;
+  text-decoration: none;
+}
+
+.expense-row-voided td.expense-cell-amount {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.expense-row-voided td:last-child {
+  opacity: 1;
+}
+
+.expense-btn-action {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.expense-btn-action:hover {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+}
+
+/* "Batalkan" bersifat merusak: dibedakan secara halus, bukan sama dengan Cetak. */
+.expense-btn-action.expense-btn-void {
+  color: #ffd7df;
+  border-color: rgba(255, 61, 104, 0.35);
+  background: rgba(255, 61, 104, 0.08);
+}
+
+.expense-btn-action.expense-btn-void:hover {
+  border-color: rgba(255, 61, 104, 0.75);
+  background: rgba(255, 61, 104, 0.18);
+}
+
+/* --- Keadaan kosong: tenang, tanpa emoji besar */
+.expenses-empty-state {
+  padding: 40px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.expenses-empty-icon {
+  display: none;
+}
+
+.expenses-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.expenses-empty-desc {
+  color: var(--muted);
+}
