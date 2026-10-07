@@ -56,7 +56,13 @@ async function runTvDevicesMigration(targetPool = pool) {
     "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS notes TEXT;",
     "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;",
     "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_result VARCHAR(30);",
-    "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_message TEXT;"
+    "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS last_check_message TEXT;",
+    // Sakelar per ruangan dari Pengaturan -> Kontrol TV: boleh tidaknya TV ditidurkan otomatis
+    // saat waktu billing habis. Bawaan TRUE = perilaku lama.
+    "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS auto_power_off BOOLEAN DEFAULT TRUE;",
+    // Sakelar per ruangan dari Pengaturan -> Kontrol TV: boleh tidaknya TV ditidurkan otomatis.
+    // Bawaan TRUE = perilaku lama (TV ditidurkan saat waktu billing habis).
+    "ALTER TABLE tv_devices ADD COLUMN IF NOT EXISTS auto_power_off BOOLEAN DEFAULT TRUE;"
   ];
   for (const q of alterQueries) {
     try {

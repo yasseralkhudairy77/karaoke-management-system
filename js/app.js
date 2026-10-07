@@ -26186,6 +26186,21 @@ function createTvDeviceModalElement() {
   `;
   form.appendChild(wolField);
 
+  const autoOffField = document.createElement("label");
+  autoOffField.className = "master-form-field";
+  autoOffField.innerHTML = `
+    <span class="master-form-label">Matikan TV otomatis saat waktu habis</span>
+    <select class="master-form-input" data-prop="autoPowerOff">
+      <option value="true"${modal.autoPowerOff === false ? "" : " selected"}>Aktif - TV ditidurkan saat waktu billing habis</option>
+      <option value="false"${modal.autoPowerOff === false ? " selected" : ""}>Tidak - TV dibiarkan menyala, staf mematikan sendiri</option>
+    </select>
+    <small style="color:#9ca3af;font-size:11px;">Peringatan sisa waktu di layar TV tetap berjalan walau pilihan ini Tidak.</small>
+    ${modal.autoPowerOff === false
+      ? '<small style="color:#fca5a5;font-size:11px;font-weight:600;">TV ruangan ini TIDAK akan dimatikan otomatis saat waktu billing habis. Staf yang mematikannya sendiri.</small>'
+      : ''}
+  `;
+  form.appendChild(autoOffField);
+
   const notesField = document.createElement("label");
   notesField.className = "master-form-field";
   notesField.style.gridColumn = "1 / -1";
@@ -26910,6 +26925,21 @@ function printTvControlGuide() {
   }
 }
 
+/**
+ * Jam:menit dalam waktu setempat dari stempel waktu ISO. Dipakai untuk menulis KAPAN sebuah
+ * sambungan terakhir berhasil - tanpa itu, kata "Tersambung" bisa dibaca sebagai keadaan
+ * sekarang padahal itu jejak lama (kejadian nyata: halaman Kontrol TV dibuka sekali lalu
+ * tampilannya membeku, sementara TV sudah tidak menjawab lagi).
+ */
+function formatJamTersambung(isoLike) {
+  if (!isoLike) return "";
+  try {
+    return new Date(isoLike).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (_e) {
+    return "";
+  }
+}
+
 function createTvControlSectionElement() {
   const section = document.createElement("section");
   section.className = "master-section tv-control-section";
@@ -27158,8 +27188,21 @@ function createTvControlSectionElement() {
         adbBadge.className = "tv-pill neutral";
         adbBadge.innerHTML = `<span class="tv-pill-dot abu"></span>Mock`;
       } else if (r.device_connected) {
-        adbBadge.className = "tv-pill success";
-        adbBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Tersambung`;
+        // Angka ini adalah JEJAK sambungan yang pernah berhasil, bukan keadaan sekarang:
+        // bridge tidak menghapusnya saat TV hilang dari jaringan (sengaja, supaya ketahuan
+        // kapan terakhir berhasil). Karena itu waktunya ditulis dan warnanya kuning bila
+        // pemeriksaan terakhir sudah tidak menemukan TV-nya - lihat cabang di bawah.
+        const terakhir = formatJamTersambung(r.runtime_last_connect_at);
+        if (r.tv_connected_now === false) {
+          adbBadge.className = "tv-pill warning";
+          adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Terakhir tersambung${terakhir ? ` ${terakhir}` : ""}`;
+          adbBadge.title = "TV ini sempat tersambung, tetapi pada pemeriksaan terakhir tidak menjawab lagi. "
+            + "Lihat kolom Masalah dan status lampu di kartu ruangan.";
+        } else {
+          adbBadge.className = "tv-pill success";
+          adbBadge.innerHTML = `<span class="tv-pill-dot hijau"></span>Tersambung${terakhir ? ` ${terakhir}` : ""}`;
+          adbBadge.title = "Bridge sedang bisa mengirim perintah ke TV ini.";
+        }
       } else if (r.waiting_authorization === true) {
         adbBadge.className = "tv-pill warning";
         adbBadge.innerHTML = `<span class="tv-pill-dot kuning"></span>Menunggu Izin`;
@@ -27234,6 +27277,19 @@ function createTvControlSectionElement() {
       tdArp.appendChild(arpBadge);
 
       const tdIssue = document.createElement("td");
+      // Penanda fitur "Matikan TV otomatis": hanya ruangan yang fiturnya DIMATIKAN yang diberi
+      // label. Ruangan dengan perilaku biasa tidak ditandai, supaya yang menyimpang justru yang
+      // paling terlihat - bukan sebaliknya (kalau semua ditandai, tidak ada yang menonjol).
+      if (r.auto_power_off === false && r.has_device !== false) {
+        const offBadge = document.createElement("span");
+        offBadge.className = "tv-pill danger tv-issue-pill";
+        offBadge.textContent = "Tidak dimatikan otomatis";
+        offBadge.title = "Fitur Matikan TV otomatis sedang NONAKTIF untuk ruangan ini. "
+          + "Waktu billing habis: TV TIDAK ditidurkan sendiri. "
+          + "Peringatan sisa waktu di layar TV tetap berjalan. "
+          + "Ubah di tombol Edit pada baris ini (butuh PIN admin).";
+        tdIssue.appendChild(offBadge);
+      }
       if (!Array.isArray(r.masalah) || r.masalah.length === 0) {
         const okSpan = document.createElement("span");
         okSpan.className = "tv-pill success";
@@ -37319,6 +37375,7 @@ async function handleRoomAction(event) {
       tvMac: "",
       adbPort: 5555,
       wolBroadcast: "192.168.1.255",
+      autoPowerOff: true,
       notes: "",
       status: "active",
       adminPin: "",
@@ -37350,6 +37407,9 @@ async function handleRoomAction(event) {
       isCapturing: false,
       adbPort: item?.adb_port || 5555,
       wolBroadcast: item?.wol_broadcast || "192.168.1.255",
+      // Bawaan AKTIF: perangkat yang belum punya nilai (payload lama / bridge belum terjangkau)
+      // diperlakukan sama seperti perilaku sekarang.
+      autoPowerOff: item?.auto_power_off !== false,
       notes: item?.notes || "",
       status: item?.status || "active",
       adminPin: "",
@@ -37488,6 +37548,7 @@ async function handleRoomAction(event) {
         tv_mac: m.tvMac ? m.tvMac.trim() : "",
         adb_port: m.adbPort ? Number(m.adbPort) : 5555,
         wol_broadcast: m.wolBroadcast ? m.wolBroadcast.trim() : "192.168.1.255",
+        auto_power_off: m.autoPowerOff === false || m.autoPowerOff === "false" ? false : true,
         notes: m.notes ? m.notes.trim() : "",
         status: m.status || "active",
         admin_pin: m.adminPin.trim()
@@ -39438,6 +39499,36 @@ if (dashboardShell) {
 }
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
+
+// Penyegaran otomatis halaman Kontrol TV. Tanpa ini, halaman itu membeku pada keadaan saat
+// dibuka: kartu ruangan menyegarkan diri tiap 10 detik, tetapi daftar Kontrol TV tidak -
+// sehingga bisa menampilkan "Tersambung" berjam-jam setelah TV-nya hilang dari jaringan.
+const TV_CONTROL_REFRESH_MS = 15000;
+
+function halamanKontrolTvSedangDibuka() {
+  return isOperatorLoggedIn()
+    && activeDashboardTab === "settings"
+    && activeSettingsSubTab === "tv_control";
+}
+
+function modalTvSedangTerbuka() {
+  return Boolean(tvDeviceModalState && tvDeviceModalState.isOpen)
+    || Boolean(tvNotifyModalState && tvNotifyModalState.isOpen);
+}
+
+setInterval(() => {
+  if (!halamanKontrolTvSedangDibuka()) return;
+  // Jangan sentuh apa pun selagi orang mengisi PIN di modal atau sedang mengetik.
+  if (isUserBusy() || modalTvSedangTerbuka()) return;
+  if (document.hidden) return;
+  loadTvControlOverview({ force: true, silent: true });
+}, TV_CONTROL_REFRESH_MS);
+
+// Begitu jendela kembali aktif (operator balik ke aplikasi), segarkan segera.
+window.addEventListener("focus", () => {
+  if (!halamanKontrolTvSedangDibuka() || isUserBusy() || modalTvSedangTerbuka()) return;
+  loadTvControlOverview({ force: true, silent: true });
+});
 
 // Jalankan silent refresh setiap 10 detik jika tidak sedang sibuk
 setInterval(async () => {

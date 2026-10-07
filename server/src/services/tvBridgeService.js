@@ -235,6 +235,12 @@ async function startSchedule(roomId, endTime, options = {}) {
 
   const remainingSeconds = Math.round((endMs - Date.now()) / 1000);
   if (remainingSeconds <= 0) {
+    // Waktu sudah habis. Kalau ruangan ini fitur "matikan TV otomatis"-nya DIMATIKAN,
+    // jangan kirim perintah matikan - staf ruangan yang memutuskan kapan TV dimatikan.
+    if (options.autoPowerOff === false) {
+      log(`Jadwal ${roomId}: waktu sudah habis, tetapi matikan TV otomatis dimatikan - TV tidak ditidurkan.`);
+      return { ok: true, skipped: true, reason: 'matikan TV otomatis dimatikan untuk ruangan ini' };
+    }
     return sendTvCommand(roomId, 'power_off', {
       triggerSource: options.triggerSource || 'countdown_expired',
       cashierName: options.cashierName,
@@ -342,8 +348,20 @@ async function syncRoom(roomId, options = {}) {
   }
 
   try {
+    // Nilai sakelar dibaca dari baris perangkat yang BENAR-BENAR dipakai (baris middleware
+    // lebih diutamakan, sama seperti di panel Kontrol TV). Kalau tidak ada baris, perilaku
+    // lama (AKTIF) yang dipakai.
     const result = await db.query(
-      'SELECT room_id, room_name, status, scheduled_end_time FROM rooms WHERE room_id = $1',
+      `SELECT r.room_id, r.room_name, r.status, r.scheduled_end_time,
+              COALESCE(d.auto_power_off, TRUE) AS auto_power_off
+         FROM rooms r
+         LEFT JOIN LATERAL (
+           SELECT auto_power_off FROM tv_devices
+            WHERE room_id = r.room_id
+            ORDER BY CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END, tv_device_id
+            LIMIT 1
+         ) d ON TRUE
+        WHERE r.room_id = $1`,
       [roomId],
     );
 
@@ -352,14 +370,21 @@ async function syncRoom(roomId, options = {}) {
     }
 
     const room = result.rows[0];
+    const autoPowerOff = room.auto_power_off !== false;
 
     if (ACTIVE_ROOM_STATUSES.includes(room.status) && room.scheduled_end_time) {
-      return startSchedule(room.room_id, room.scheduled_end_time, options);
+      return startSchedule(room.room_id, room.scheduled_end_time, { ...options, autoPowerOff });
     }
 
     const cancelled = await cancelSchedule(room.room_id, options);
 
     if (options.sleepWhenInactive) {
+      // Sakelar "Matikan TV otomatis" DIMATIKAN untuk ruangan ini: menutup billing memang
+      // membatalkan jadwal, tetapi TV TIDAK ditidurkan. Staf mematikannya sendiri.
+      if (!autoPowerOff) {
+        log(`Ruangan ${room.room_id} ditutup, tetapi matikan TV otomatis dimatikan - TV tidak ditidurkan.`);
+        return { ok: cancelled.ok, cancelled, sleep: { ok: true, skipped: true, reason: 'matikan TV otomatis dimatikan' } };
+      }
       const sleepResult = await sendTvCommand(room.room_id, 'power_off', options);
       return { ok: cancelled.ok && sleepResult.ok, cancelled, sleep: sleepResult };
     }
@@ -421,6 +446,20 @@ async function sweepExpiredRooms() {
 
       if (alreadyDone.rowCount > 0) {
         actions.push({ roomId: room.room_id, action: 'dilewati', reason: 'sudah ada catatan sukses' });
+        continue;
+      }
+
+      // Sakelar per ruangan: penyapu pun harus tunduk, kalau tidak TV tetap mati sendiri
+      // padahal staf sudah mematikan fiturnya lewat Pengaturan -> Kontrol TV.
+      const autoOffRow = await db.query(
+        `SELECT auto_power_off FROM tv_devices
+          WHERE room_id = $1
+          ORDER BY CASE WHEN control_type = 'middleware' THEN 0 ELSE 1 END, tv_device_id
+          LIMIT 1`,
+        [room.room_id],
+      );
+      if (autoOffRow.rowCount > 0 && autoOffRow.rows[0].auto_power_off === false) {
+        actions.push({ roomId: room.room_id, action: 'dilewati', reason: 'matikan TV otomatis dimatikan' });
         continue;
       }
 

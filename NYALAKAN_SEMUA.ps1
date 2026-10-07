@@ -27,7 +27,8 @@ param(
 $ErrorActionPreference = 'Continue'
 
 $PosDir     = 'C:\HappySong\happy-song-local\server'
-$BridgeDir  = 'C:\karaoke-tv-bridge'
+# Sejak 2026-10-05 bridge DIJALANKAN dari salinan repo ini (satu sumber kode).
+$BridgeDir  = 'C:\HappySong\happy-song-local\middleware\tv-control-bridge'
 $LogDir     = 'C:\HappySong\happy-song-local\logs'
 $LogStatus  = Join-Path $LogDir 'nyalakan-semua.log'
 $LogPos     = Join-Path $LogDir 'pos-server.log'

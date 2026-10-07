@@ -138,6 +138,33 @@ Setiap command TV dicatat ke console:
 [2026-06-22T21:00:00.000Z] room_id=ROOM-001 tv_device_id=TV-001 tv_action=power_on result=sent
 ```
 
+## Sakelar per ruangan: "Matikan TV otomatis saat waktu habis"
+
+Diatur dari aplikasi POS: Pengaturan -> Kontrol TV -> tombol Edit pada baris ruangan.
+Nilainya disimpan di `config/rooms.json` per ruangan sebagai `autoPowerOff` dan ikut
+dikirim POS lewat `PUT /api/rooms/:roomId/config`.
+
+Aturan:
+
+- Bawaan AKTIF (`autoPowerOff` tidak ada / bukan `false`) = perilaku lama: TV ditidurkan
+  saat waktu billing habis.
+- `autoPowerOff: false` = TV TIDAK ditidurkan otomatis. Yang DILEWATI hanya peniduran:
+  - jadwal T-0 -> `runFinalSequence` menulis kejadian `tidur_dilewati` lalu berhenti;
+  - POS menutup billing (`syncRoom` dengan `sleepWhenInactive`) -> perintah matikan tidak dikirim;
+  - penyapu ruangan lewat waktu di POS -> ruangan itu dilewati dengan alasan
+    "matikan TV otomatis dimatikan";
+  - `restoreSchedules` setelah restart bridge -> jadwal peniduran tidak dilanjutkan.
+- Peringatan sisa waktu (T-15/T-5) dan pesan "WAKTU HABIS" TETAP dikirim ke layar TV
+  walau sakelarnya dimatikan - staf ruangan tetap perlu tahu waktunya habis.
+- Sakelar dibaca saat urutan akhir berjalan, bukan saat jadwal dipasang, supaya
+  perubahan lewat aplikasi langsung berlaku untuk jadwal yang sedang berjalan.
+
+Uji terisolasi tanpa menyentuh TV venue:
+
+```bash
+ADB_BIN=<adb-palsu> node scripts-uji/uji-auto-power-off.js
+```
+
 ## Langkah berikutnya (belum fase ini)
 
 - Hubungkan Apps Script `sendTvCommand` ke `middleware_url` device

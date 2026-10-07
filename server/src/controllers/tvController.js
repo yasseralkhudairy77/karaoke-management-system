@@ -464,12 +464,24 @@ async function getTvRoomOverview(req, res) {
       const notifyPackage = (dev && dev.notify_package) || 'com.happysong.tvnotify';
       const notes = (dev && dev.notes) || '';
       const middlewareUrl = (dev && dev.middleware_url) || bridgeConfig.url;
+      // Sakelar matikan-otomatis dibaca dari BRIDGE (pemegang keputusan); database POS hanya
+      // cadangan saat bridge tidak terjangkau, supaya tampilan tidak berbeda dengan perilaku nyata.
+      const autoPowerOff = bRoom && typeof bRoom.autoPowerOff === 'boolean'
+        ? bRoom.autoPowerOff
+        : (dev && typeof dev.auto_power_off === 'boolean' ? dev.auto_power_off : true);
 
       // 1. Baca status sambungan dari bRoom.runtime.connected atau bRoom.connected
       let deviceConnected = false;
       let wakefulness = null;
       let arpMac = '';
       let hasConnectionField = false;
+      // `runtime.connected` TIDAK dihapus bridge saat TV hilang dari jaringan (sengaja: supaya
+      // ketahuan kapan terakhir berhasil tersambung). Jadi nilai itu bukan "keadaan sekarang".
+      // Dua field di bawah memisahkan keduanya supaya UI bisa menulis jujur:
+      //   tv_connected_now       = pada pemeriksaan terakhir bridge, TV benar-benar tersambung
+      //   runtime_last_connect_at = kapan sambungan terakhir berhasil (untuk ditulis waktunya)
+      let tvConnectedNow = false;
+      let runtimeLastConnectAt = '';
 
       if (bRoom) {
         if (bRoom.runtime && typeof bRoom.runtime.connected === 'boolean') {
@@ -481,6 +493,8 @@ async function getTvRoomOverview(req, res) {
         }
         wakefulness = bRoom.wakefulness || (bRoom.runtime && bRoom.runtime.wakefulness) || null;
         arpMac = bRoom.arpMac || (bRoom.runtime && bRoom.runtime.arpMac) || '';
+        tvConnectedNow = Boolean(bRoom.runtime && bRoom.runtime.connected === true);
+        runtimeLastConnectAt = (bRoom.runtime && bRoom.runtime.lastConnectAt) || '';
       }
 
       // Cadangan: jika bRoom ada tapi field status connected tidak ada dan bridge aktif,
@@ -564,6 +578,11 @@ async function getTvRoomOverview(req, res) {
         wol_broadcast: wolBroadcast,
         notify_package: notifyPackage,
         notes,
+        // Sakelar "Matikan TV otomatis" per ruangan - dipakai UI untuk menampilkan statusnya.
+        auto_power_off: autoPowerOff,
+        // Pemisah antara "sedang tersambung" dan "terakhir tersambung pukul berapa".
+        tv_connected_now: tvConnectedNow,
+        runtime_last_connect_at: runtimeLastConnectAt,
         middleware_url: middlewareUrl,
         bridge_url: bridgeConfig.url,
         bridge_reachable: bridgeReachable,
@@ -713,12 +732,17 @@ async function saveTvDeviceSettings(req, res, payload) {
     const notes = String(payload.notes || '').trim();
     const middlewareUrl = String(payload.middleware_url || '').trim() || tvBridgeService.getConfig().url;
 
+    // Sakelar "matikan TV otomatis saat waktu billing habis" (Pengaturan -> Kontrol TV).
+    // Hanya nilai false yang mematikan; selain itu (termasuk payload lama yang belum mengirim
+    // field ini) berarti AKTIF, supaya perilaku lama tidak berubah tanpa sengaja.
+    const autoPowerOff = (payload.auto_power_off === false || payload.auto_power_off === 'false') ? false : true;
+
     await db.query(`
       INSERT INTO tv_devices (
         tv_device_id, room_id, device_name, control_type, status,
         middleware_url, device_identifier, tv_ip, tv_mac, adb_port,
-        adb_timeout_ms, wol_broadcast, notify_package, notes, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP)
+        adb_timeout_ms, wol_broadcast, notify_package, notes, auto_power_off, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
       ON CONFLICT (tv_device_id) DO UPDATE SET
         room_id = EXCLUDED.room_id,
         device_name = EXCLUDED.device_name,
@@ -733,11 +757,12 @@ async function saveTvDeviceSettings(req, res, payload) {
         wol_broadcast = EXCLUDED.wol_broadcast,
         notify_package = EXCLUDED.notify_package,
         notes = EXCLUDED.notes,
+        auto_power_off = EXCLUDED.auto_power_off,
         updated_at = CURRENT_TIMESTAMP
     `, [
       tvDeviceId, roomId, deviceName, controlType, status,
       middlewareUrl, tvMac || null, tvIp || null, tvMac || null, adbPort,
-      adbTimeoutMs, wolBroadcast, notifyPackage, notes
+      adbTimeoutMs, wolBroadcast, notifyPackage, notes, autoPowerOff
     ]);
 
     // Baris lama ber-tipe 'mock' di ruangan yang SAMA harus dibuang begitu ruangan itu punya
@@ -774,7 +799,10 @@ async function saveTvDeviceSettings(req, res, payload) {
           adbTimeoutMs,
           wolBroadcast,
           notes,
-          enabled: status === 'active'
+          enabled: status === 'active',
+          // Bridge yang benar-benar memegang jadwal peniduran TV, jadi sakelar ini harus
+          // ikut dikirim - bukan hanya disimpan di database POS.
+          autoPowerOff
         });
       } catch (bridgeErr) {
         bridgeSyncResult = { ok: false, error: bridgeErr.message };
