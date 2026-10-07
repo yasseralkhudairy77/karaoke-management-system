@@ -20206,7 +20206,7 @@ function createTransactionRowElement(transaction) {
     ["F&B", formatCurrency(getTransactionFnbTotal(transaction))],
     ["Total Akhir", formatCurrency(getTransactionFinalTotal(transaction)), getTransactionFnbTotal(transaction) > 0 ? "transaction-has-fnb" : ""],
     ["Status", formatPaymentStatusLabel(transaction?.payment_status), statusClass],
-    ["Metode Bayar", getPaymentMethodDetailLabel(transaction)],
+    ["Metode Bayar", getPaymentMethodDetailLabel(transaction), "transaction-payment-cell"],
     ["Aksi", "", "transaction-actions-cell"],
   ].forEach(([labelText, valueText, modifierClass]) => {
     const item = document.createElement("div");
@@ -20230,6 +20230,21 @@ function createTransactionRowElement(transaction) {
         value.title = valueText;
       }
       item.append(label, value);
+
+      if (labelText === "Metode Bayar" && String(transaction?.payment_method || "").toLowerCase() === "split" && String(transaction?.payment_status || "").toLowerCase() === "paid") {
+        value.textContent = "Split Bill";
+        value.title = valueText;
+        const splitStack = document.createElement("div");
+        splitStack.className = "transaction-split-stack";
+        const cashBadge = document.createElement("span");
+        cashBadge.className = "transaction-split-badge";
+        cashBadge.textContent = `Cash ${formatCurrency(getTransactionCashAmount(transaction))}`;
+        const transferBadge = document.createElement("span");
+        transferBadge.className = "transaction-split-badge";
+        transferBadge.textContent = `Transfer ${formatCurrency(getTransactionTransferAmount(transaction))}`;
+        splitStack.append(cashBadge, transferBadge);
+        item.appendChild(splitStack);
+      }
 
       if (modifierClass === "transaction-lc-cell" && (lcSummary || lcTotal > 0)) {
         const badge = document.createElement("span");
