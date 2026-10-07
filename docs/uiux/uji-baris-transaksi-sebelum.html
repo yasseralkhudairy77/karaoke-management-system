@@ -1,0 +1,97 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<link rel="stylesheet" href="uji-baris-transaksi-style.css">
+<link rel="stylesheet" href="../../css/skin-transaksi.css">
+<style>
+ .dashboard-shell{position:relative;width:min(1320px,100%);margin:0 auto;padding:24px clamp(18px,3.5vw,40px) 40px;min-width:0;box-sizing:border-box}
+ body{margin:0;background:#0b0805}
+</style></head><body>
+<main class="dashboard-shell"><section class="app-tab-panel app-tab-panel--transactions active">
+<div class="transaction-list"><article class="transaction-row">
+<div class="transaction-cell transaction-id-cell"><p class="transaction-label">ID Transaksi</p>
+<p class="transaction-value">TRX-20261008-0001</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Ruangan</p>
+<p class="transaction-value">VIP 3</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Durasi</p>
+<p class="transaction-value">90 menit</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Biaya Paket</p>
+<p class="transaction-value">Rp 350.000</p>
+</div>
+<div class="transaction-cell transaction-lc-cell"><p class="transaction-label">Jasa LC</p>
+<p class="transaction-value">Rp 135.000</p>
+</div>
+<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">F&B</p>
+<p class="transaction-value">Rp 45.000</p>
+<div class="transaction-badges-stack"><span class="transaction-fnb-badge status-badge warning">Termasuk F&amp;B</span></div>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Total Akhir</p>
+<p class="transaction-value">Rp 530.000</p>
+</div>
+<div class="transaction-cell transaction-status-unpaid"><p class="transaction-label">Status</p>
+<p class="transaction-value status-badge warning">Belum Dibayar</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Metode Bayar</p>
+<p class="transaction-value">Belum dibayar</p>
+</div>
+<div class="transaction-cell transaction-actions-cell"><p class="transaction-label">Aksi</p>
+<div class="transaction-actions">
+              <div class="transaction-primary-actions">
+                <button class="transaction-action-button">Lihat</button>
+                <button class="transaction-action-button">Struk</button>
+                <div class="transaction-menu-wrapper"><button class="transaction-action-button transaction-menu-trigger"><span>Opsi</span> <span class="transaction-menu-chevron">▾</span></button></div>
+              </div>
+              <div class="transaction-pay-control">
+                <select class="transaction-pay-select"><option>Cash</option><option>Transfer</option><option>Split Bill</option></select>
+                <button class="transaction-pay-button">Tandai Lunas</button>
+              </div></div>
+</div>
+</article><article class="transaction-row">
+<div class="transaction-cell transaction-id-cell"><p class="transaction-label">ID Transaksi</p>
+<p class="transaction-value">TRX-20261008-0001</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Ruangan</p>
+<p class="transaction-value">VIP 3</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Durasi</p>
+<p class="transaction-value">90 menit</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Biaya Paket</p>
+<p class="transaction-value">Rp 350.000</p>
+</div>
+<div class="transaction-cell transaction-lc-cell"><p class="transaction-label">Jasa LC</p>
+<p class="transaction-value">Rp 135.000</p>
+</div>
+<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">F&B</p>
+<p class="transaction-value">Rp 45.000</p>
+<div class="transaction-badges-stack"><span class="transaction-fnb-badge status-badge warning">Termasuk F&amp;B</span></div>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Total Akhir</p>
+<p class="transaction-value">Rp 530.000</p>
+</div>
+<div class="transaction-cell transaction-status-paid"><p class="transaction-label">Status</p>
+<p class="transaction-value status-badge success">Lunas</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Metode Bayar</p>
+<p class="transaction-value">Cash</p>
+</div>
+<div class="transaction-cell transaction-actions-cell"><p class="transaction-label">Aksi</p>
+<div class="transaction-actions">
+              <div class="transaction-primary-actions">
+                <button class="transaction-action-button">Lihat</button>
+                <button class="transaction-action-button">Cetak</button>
+                <div class="transaction-menu-wrapper"><button class="transaction-action-button transaction-menu-trigger"><span>Opsi</span> <span class="transaction-menu-chevron">▾</span></button></div>
+              </div></div>
+</div>
+</article></div></section></main>
+<pre id="metrics" style="display:none"></pre>
+<script>
+addEventListener("load",()=>{const r=[];const row=document.querySelector(".transaction-row");
+ r.push("LEBAR BARIS NYATA = "+row.getBoundingClientRect().width.toFixed(0)+"px");
+ const b=document.querySelector(".transaction-status-unpaid .status-badge");
+ r.push("BADGE '"+b.textContent+"' kotak="+b.clientWidth+"px butuh="+b.scrollWidth+"px -> "+(b.scrollWidth<=b.clientWidth+1?"UTUH":"TERPOTONG"));
+ r.push("TOMBOL/GKOL AKSI:");document.querySelectorAll(".transaction-action-button,.transaction-pay-select,.transaction-pay-button,.transaction-menu-trigger").forEach(x=>{
+   const q=x.getBoundingClientRect();r.push("  "+x.tagName+" '"+x.textContent.trim().replace(/\s+/g,' ')+"' "+q.width.toFixed(0)+"x"+q.height.toFixed(1));});
+ document.getElementById("metrics").textContent=r.join("\n");});
+</script></body></html>

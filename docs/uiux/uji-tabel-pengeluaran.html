@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>Uji tabel pengeluaran</title>
+  <link rel="stylesheet" href="file:///C:/HappySong/happy-song-local/css/style.css">
+  <link rel="stylesheet" href="file:///C:/HappySong/happy-song-local/css/skin-fnb-layout.css">
+  <link rel="stylesheet" href="file:///C:/HappySong/happy-song-local/css/skin-pengeluaran.css">
+</head>
+<body>
+<main class="dashboard-shell">
+  <div class="app-tab-panel app-tab-panel--expenses active">
+    <section class="expenses-page-container">
+      <div class="expenses-metrics-row">
+        <div class="expense-metric-card expense-metric-card--total-spent"><span class="expense-metric-title">Total Kas Keluar</span><strong class="expense-metric-value">Rp 187.500</strong></div>
+        <div class="expense-metric-card expense-metric-card--active-count"><span class="expense-metric-title">Pengeluaran Aktif</span><strong class="expense-metric-value">3 transaksi</strong></div>
+        <div class="expense-metric-card expense-metric-card--voided-count"><span class="expense-metric-title">Dibatalkan</span><strong class="expense-metric-value">1 transaksi</strong></div>
+      </div>
+      <div class="expenses-layout">
+        <div class="expenses-card expenses-table-card" style="grid-column:1/-1">
+          <div class="expenses-card-header expenses-table-header">
+            <div class="expenses-table-header-info">
+              <h3 class="expenses-card-title">Riwayat Pengeluaran Kas Hari Ini</h3>
+              <p class="expenses-card-subtitle">Daftar pengeluaran pada tanggal operasional aktif.</p>
+            </div>
+            <button type="button" class="expenses-refresh-button">Segarkan</button>
+          </div>
+          <div class="expenses-table-wrapper">
+            <table class="expenses-table">
+              <thead><tr><th>Waktu</th><th>No. Bukti</th><th>Keperluan</th><th>Kategori</th><th class="text-right">Nominal</th><th>Kasir</th><th>Status</th><th class="text-center">Aksi</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td class="expense-cell-time">16:35</td>
+                  <td class="expense-cell-id"><code>EXP-1791279245430</code></td>
+                  <td class="expense-cell-title"><strong>Beli kertas thermal 58mm (3 roll)</strong><div class="expense-cell-note">Beli di warung sebelah, bon ada</div></td>
+                  <td><span class="expense-category-pill">Perlengkapan Kasir &amp; Tamu</span></td>
+                  <td class="text-right expense-cell-amount">-Rp 30.000</td>
+                  <td>Manager 1</td>
+                  <td><span class="expense-status-badge active">Aktif</span></td>
+                  <td class="text-center expense-actions-cell">
+                    <button type="button" class="expense-btn-action expense-btn-print" title="Cetak slip bukti pengeluaran">Cetak</button>
+                    <button type="button" class="expense-btn-action expense-btn-void" title="Batalkan pengeluaran ini">Batalkan</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="expense-cell-time">14:02</td>
+                  <td class="expense-cell-id"><code>EXP-1791270000001</code></td>
+                  <td class="expense-cell-title"><strong>Baterai mic wireless (2 pcs)</strong></td>
+                  <td><span class="expense-category-pill">Operasional Kamar &amp; Audio</span></td>
+                  <td class="text-right expense-cell-amount">-Rp 157.500</td>
+                  <td>Kasir 1</td>
+                  <td><span class="expense-status-badge active">Aktif</span></td>
+                  <td class="text-center expense-actions-cell">
+                    <button type="button" class="expense-btn-action expense-btn-print">Cetak</button>
+                    <button type="button" class="expense-btn-action expense-btn-void">Batalkan</button>
+                  </td>
+                </tr>
+                <tr class="expense-row-voided">
+                  <td class="expense-cell-time">11:20</td>
+                  <td class="expense-cell-id"><code>EXP-1791260000002</code></td>
+                  <td class="expense-cell-title"><strong>Salah catat nominal</strong><div class="expense-cell-void-reason">Batal: salah input (oleh Manager 1)</div></td>
+                  <td><span class="expense-category-pill">Lain-lain</span></td>
+                  <td class="text-right expense-cell-amount voided">-Rp 50.000</td>
+                  <td>Kasir 1</td>
+                  <td><span class="expense-status-badge void">Dibatalkan</span></td>
+                  <td class="text-center expense-actions-cell">
+                    <button type="button" class="expense-btn-action expense-btn-print">Cetak</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

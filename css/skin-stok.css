@@ -1,0 +1,742 @@
+/* ============================================================================
+   STOK / GUDANG — desain ulang. Dimuat SETELAH style.css.
+
+   Akar masalah "norak" yang terukur (audit 2026-10-06):
+     S1. Sub-tab memakai 5 emoji sebagai ikon + semua tombol bergaris emas sehingga
+         tab aktif tidak lebih menonjol daripada tab lain.
+     S2. Panel utama memakai palet kedua: latar rgba(13,10,7,.45) + gradien
+         (38,29,20) -> (16,12,8) dan kotak bergradien di panel penyesuaian.
+     S3. Kartu ringkasan memakai "garis tepi kiri" 4px berwarna (emas/hijau/
+         oranye/pink) — pola yang tidak dipakai modul lain, dan hijau #18c787 /
+         pink #ff6384 / oranye #ffb347 bukan warna status aplikasi.
+     S4. Kolom pencarian bergaris biru (var(--border-color)/var(--bg-card) tidak
+         ada di tema) + emoji kaca pembesar.
+     S5. Nama barang diberi emoji ✏️ yang tampak seperti tombol sunting.
+     S6. Tombol baris "Adjust / Restock" (Inggris) dan kolom judul "SKU / Item
+         Code", "Nama Material", "Min. Stok" (Inggris).
+     S7. Sakelar aktif hijau #10b981 + glow 0 0 8px (efek menyala).
+     S8. Panel "Catat Barang Masuk" ditulis seluruhnya dengan gaya inline:
+         latar #1e1e24, dua judul warna berbeda (#fbbf24 emas dan #10b981 hijau),
+         tabel bergaya kartu #18181e, dan tombol simpan gradien hijau.
+     S9. Angka stok tidak rata kanan dan tidak memakai angka tabular.
+
+   Prinsip perbaikan: palet 100% token tema; emas hanya untuk aksi; warna status
+   memakai palet status aplikasi; tanpa glow; angka rata kanan + tabular-nums.
+   ============================================================================ */
+
+/* --------------------------------------------------------------- S1: sub-tab */
+.app-tab-panel--stock .stock-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 14px 0 18px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.025);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.app-tab-panel--stock .stock-subnav-button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.app-tab-panel--stock .stock-subnav-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.app-tab-panel--stock .stock-subnav-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Tab aktif: emas sebagai penanda tunggal, tanpa garis tepi. */
+.app-tab-panel--stock .stock-subnav-button.active,
+.app-tab-panel--stock .stock-subnav-button.active:hover {
+  color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.42);
+}
+
+/* --------------------------------------------------------- S2: panel utama */
+.app-tab-panel--stock .erp-inventory-view {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+}
+
+.app-tab-panel--stock .erp-header {
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.app-tab-panel--stock .inventory-title {
+  font-size: 1.24rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.app-tab-panel--stock .inventory-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-width: 64ch;
+}
+
+/* Aksi utama = emas; aksi kedua = netral. Dulu keduanya bergradien emas. */
+.app-tab-panel--stock .erp-btn-secondary,
+.app-tab-panel--stock .inventory-button.erp-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.app-tab-panel--stock .erp-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--gold-strong);
+}
+
+.app-tab-panel--stock .erp-btn-primary,
+.app-tab-panel--stock .inventory-button.erp-btn-primary {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  border-color: rgba(255, 215, 122, 0.62);
+  color: #1a130b;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------- S3: kartu ringkasan */
+.app-tab-panel--stock .erp-kpi-grid {
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.app-tab-panel--stock .erp-kpi-card {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md);
+  border-left-width: 1px; /* batalkan garis tepi kiri 4px */
+}
+
+/* Warna status ditempelkan pada label, bukan pada balok garis tepi. */
+.app-tab-panel--stock .erp-kpi-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.app-tab-panel--stock .erp-kpi-val {
+  font-size: 1.5rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.app-tab-panel--stock .erp-kpi-card.tone-success .erp-kpi-label {
+  color: #c9ffe8;
+}
+
+.app-tab-panel--stock .erp-kpi-card.tone-warning .erp-kpi-label {
+  color: #ffe8bf;
+}
+
+.app-tab-panel--stock .erp-kpi-card.tone-critical .erp-kpi-label {
+  color: #ffd7df;
+}
+
+/* -------------------------------------------------------- S4: kolom pencarian */
+.app-tab-panel--stock .erp-search-input,
+.app-tab-panel--stock .inventory-search-input {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: var(--text) !important;
+  font-size: 0.9rem !important;
+}
+
+.app-tab-panel--stock .erp-search-input::placeholder {
+  color: var(--muted);
+}
+
+.app-tab-panel--stock .erp-search-input:focus-visible {
+  border-color: rgba(255, 215, 122, 0.6) !important;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------------------------------------------------------------- S5: tabel */
+.app-tab-panel--stock .erp-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(10, 8, 6, 0.35);
+}
+
+.app-tab-panel--stock .erp-inventory-table {
+  font-size: 0.88rem;
+}
+
+.app-tab-panel--stock .erp-inventory-table thead th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  padding: 11px 14px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-tab-panel--stock .erp-inventory-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.app-tab-panel--stock .erp-inventory-tr:hover {
+  background: rgba(255, 215, 122, 0.045);
+}
+
+/* Stok & stok minimum: rata kanan + angka tabular supaya mudah dibandingkan. */
+.app-tab-panel--stock .erp-inventory-table th:nth-child(4),
+.app-tab-panel--stock .erp-inventory-table th:nth-child(5),
+.app-tab-panel--stock .erp-inventory-table td:nth-child(4),
+.app-tab-panel--stock .erp-inventory-table td:nth-child(5) {
+  text-align: right;
+}
+
+.app-tab-panel--stock .erp-qty-cell strong {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.app-tab-panel--stock .erp-qty-cell small,
+.app-tab-panel--stock .erp-min-cell {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kode SKU: netral (emas disimpan untuk aksi), monospace tipis. */
+.app-tab-panel--stock .erp-sku-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 3px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-tab-panel--stock .erp-name-cell {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Pengganti emoji ✏️: tombol teks kecil yang jelas maksudnya. */
+.app-tab-panel--stock .erp-btn-rename-trigger {
+  opacity: 0.75;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.app-tab-panel--stock .erp-btn-rename-trigger:hover {
+  opacity: 1;
+  color: var(--gold-strong);
+  border-color: rgba(255, 215, 122, 0.35);
+  background: rgba(255, 215, 122, 0.1);
+  transform: none;
+}
+
+/* Badge status: pakai palet status aplikasi + bentuk pil. */
+.app-tab-panel--stock .inventory-status {
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--stock .inventory-status.safe {
+  border-color: rgba(24, 199, 135, 0.45);
+  background: rgba(24, 199, 135, 0.14);
+  color: #c9ffe8;
+}
+
+.app-tab-panel--stock .inventory-status.low {
+  border-color: rgba(255, 150, 60, 0.55);
+  background: rgba(255, 150, 60, 0.16);
+  color: #ffd9b0;
+}
+
+.app-tab-panel--stock .inventory-status.negative {
+  border-color: rgba(255, 61, 104, 0.5);
+  background: rgba(255, 61, 104, 0.14);
+  color: #ffd7df;
+}
+
+/* Sakelar: warna status aplikasi, tanpa efek menyala. */
+.app-tab-panel--stock .erp-switch-slider {
+  background-color: rgba(139, 150, 168, 0.5);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: none;
+}
+
+.app-tab-panel--stock .erp-switch-input:checked + .erp-switch-slider {
+  background-color: var(--available);
+  border-color: var(--available-deep);
+  box-shadow: none;
+}
+
+.app-tab-panel--stock .erp-switch-input:focus + .erp-switch-slider {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Tombol aksi baris. */
+.app-tab-panel--stock .erp-action-group {
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.app-tab-panel--stock .erp-quick-adjust-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 215, 122, 0.34);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 215, 122, 0.1);
+  color: var(--gold-strong);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--stock .erp-quick-adjust-btn:hover {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
+}
+
+/* ------------------------------------------------------------ S6: halaman */
+.app-tab-panel--stock .pagination {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 14px;
+}
+
+.app-tab-panel--stock .pagination-info {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.app-tab-panel--stock .pagination-button {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: none;
+  min-height: 38px;
+}
+
+.app-tab-panel--stock .pagination-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--gold-strong);
+}
+
+.app-tab-panel--stock .pagination-button:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+
+/* -------------------------------------------------- S7: form penyesuaian */
+.app-tab-panel--stock .stock-adjustment-panel {
+  margin-top: var(--space-4);
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: none;
+}
+
+.app-tab-panel--stock .stock-adjustment-title {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--stock .stock-adjustment-field span,
+.app-tab-panel--stock .stock-adjustment-field label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.app-tab-panel--stock .stock-adjustment-help {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.app-tab-panel--stock .inventory-empty {
+  padding: 22px;
+  border: 1px dashed rgba(139, 150, 168, 0.35);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   S8 — Sub-tab lain (Catat Barang Masuk / Barang Keluar / Riwayat / Cek Fisik).
+   Panel-panel ini ditulis dengan style inline di app.js, sehingga beberapa
+   aturan perlu !important untuk menang. Ini disengaja dan terbatas pada
+   properti tampilan (warna/latar/jarak), bukan tata letak.
+   ========================================================================== */
+
+/* --- Pembungkus & judul --------------------------------------------------- */
+.app-tab-panel--stock .inbound-goods-view,
+.app-tab-panel--stock .erp-consumption-view {
+  max-width: 1120px !important;
+}
+
+.app-tab-panel--stock .inbound-goods-view h2,
+.app-tab-panel--stock .erp-consumption-view h2 {
+  color: var(--text) !important;
+  font-size: 1.24rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.01em;
+}
+
+/* Dulu dua judul seksi memakai dua warna berbeda (emas #fbbf24 + hijau #10b981).
+   Sekarang keduanya netral; warna disimpan untuk status saja. */
+.app-tab-panel--stock .inbound-goods-view h3,
+.app-tab-panel--stock .erp-consumption-view h3 {
+  color: var(--muted) !important;
+  font-size: 0.76rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
+}
+
+/* --- Kartu ---------------------------------------------------------------- */
+.app-tab-panel--stock .inbound-goods-view > div {
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: none !important;
+}
+
+/* --- Kolom isian ---------------------------------------------------------- */
+.app-tab-panel--stock .inbound-goods-view input,
+.app-tab-panel--stock .inbound-goods-view select,
+.app-tab-panel--stock .inbound-goods-view textarea {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: var(--text) !important;
+  font-size: 0.88rem !important;
+  font-weight: 700 !important;
+  min-height: 42px;
+}
+
+.app-tab-panel--stock .inbound-goods-view input:focus,
+.app-tab-panel--stock .inbound-goods-view select:focus {
+  border-color: rgba(255, 215, 122, 0.6) !important;
+  box-shadow: var(--focus-ring);
+}
+
+.app-tab-panel--stock .inbound-goods-view input::placeholder {
+  color: var(--muted) !important;
+}
+
+/* --- Tabel rincian barang ------------------------------------------------- */
+.app-tab-panel--stock .inbound-goods-view table {
+  border-spacing: 0 6px !important;
+}
+
+.app-tab-panel--stock .inbound-goods-view table > tbody > tr {
+  background: rgba(255, 255, 255, 0.025) !important;
+  box-shadow: none !important;
+}
+
+.app-tab-panel--stock .inbound-goods-view table td {
+  color: var(--text);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Angka jumlah yang diterima: warna teks biasa + angka tabular. */
+.app-tab-panel--stock .inbound-goods-view input[type="number"] {
+  color: var(--text) !important;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* --- Tombol --------------------------------------------------------------- */
+.app-tab-panel--stock .inbound-goods-view button[type="button"]:not([class]) {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--text) !important;
+  font-weight: 800 !important;
+}
+
+/* Tombol utama "Simpan & Masukkan ke Stok Gudang": dulu gradien hijau. */
+.app-tab-panel--stock .inbound-goods-view > button {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep)) !important;
+  border: 1px solid rgba(255, 215, 122, 0.62) !important;
+  border-radius: var(--radius-md) !important;
+  color: #1a130b !important;
+  font-weight: 900 !important;
+  box-shadow: none !important;
+}
+
+.app-tab-panel--stock .inbound-goods-view > button:hover {
+  transform: none !important;
+  filter: brightness(1.05);
+}
+
+/* Tombol hapus baris (✕) — merah lembut, bukan merah menyala. */
+.app-tab-panel--stock .inbound-goods-view table button {
+  border: 1px solid rgba(255, 61, 104, 0.4) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 61, 104, 0.12) !important;
+  color: #ffd7df !important;
+}
+
+.app-tab-panel--stock .inbound-goods-view table button:hover {
+  background: rgba(255, 61, 104, 0.2) !important;
+}
+
+/* --- Kartu ringkasan pada Riwayat & Cek Fisik ----------------------------- */
+.app-tab-panel--stock .stock-movements-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.app-tab-panel--stock .stock-movements-summary > * {
+  padding: 14px 16px !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: var(--radius-md) !important;
+  color: var(--text);
+}
+
+.app-tab-panel--stock .stock-movements-badge {
+  border-radius: var(--radius-pill);
+  font-weight: 800;
+  font-size: 0.72rem;
+}
+
+.app-tab-panel--stock .stock-movements-button,
+.app-tab-panel--stock .stock-movements-filter-button {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.app-tab-panel--stock .stock-movements-button:not(.secondary):not(:disabled) {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  border-color: rgba(255, 215, 122, 0.62);
+  color: #1a130b;
+}
+
+@media (max-width: 720px) {
+  .app-tab-panel--stock .stock-subnav {
+    width: 100%;
+  }
+
+  .app-tab-panel--stock .stock-subnav-button {
+    flex: 1 1 auto;
+  }
+}
+
+/* ==========================================================================
+   S9 — sisa warna warisan style.css yang tidak sesuai tema, khusus blok Stok.
+   ========================================================================== */
+
+/* Tombol simpan / kirim / setujui: dulu hijau #5cd59b + garis luar hijau. */
+.app-tab-panel--stock .stock-adjustment-button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 215, 122, 0.62);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  color: #1a130b;
+  font-weight: 900;
+}
+
+.app-tab-panel--stock .stock-adjustment-button:hover:not(:disabled),
+.app-tab-panel--stock .stock-adjustment-button:focus-visible:not(:disabled) {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  outline: none;
+  box-shadow: var(--focus-ring);
+  filter: brightness(1.05);
+}
+
+.app-tab-panel--stock .stock-adjustment-button.secondary {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.app-tab-panel--stock .stock-adjustment-button.secondary:hover:not(:disabled),
+.app-tab-panel--stock .stock-adjustment-button.secondary:focus-visible:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--gold-strong);
+}
+
+.app-tab-panel--stock .stock-adjustment-button:disabled {
+  border-color: rgba(139, 150, 168, 0.35);
+  background: rgba(139, 150, 168, 0.1);
+  color: var(--muted);
+}
+
+/* Catatan periode shift: dulu blok biru penuh. Biru disimpan untuk badge status. */
+.app-tab-panel--stock .shift-period-note {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* Badge naik/turun stok & status cek fisik → palet status aplikasi. */
+.app-tab-panel--stock .stock-movements-badge.in {
+  border-color: rgba(24, 199, 135, 0.45);
+  background: rgba(24, 199, 135, 0.14);
+  color: #c9ffe8;
+}
+
+.app-tab-panel--stock .stock-movements-badge.adjustment {
+  border-color: rgba(255, 193, 102, 0.5);
+  background: rgba(255, 193, 102, 0.14);
+  color: #ffe8bf;
+}
+
+.app-tab-panel--stock .stock-movements-badge.out {
+  border-color: rgba(255, 61, 104, 0.5);
+  background: rgba(255, 61, 104, 0.14);
+  color: #ffd7df;
+}
+
+.app-tab-panel--stock .stock-movements-badge.draft,
+.app-tab-panel--stock .stock-movements-badge.counting {
+  border-color: rgba(139, 150, 168, 0.45);
+  background: rgba(139, 150, 168, 0.12);
+  color: #d6deea;
+}
+
+.app-tab-panel--stock .stock-movements-badge.submitted {
+  border-color: rgba(255, 193, 102, 0.5);
+  background: rgba(255, 193, 102, 0.14);
+  color: #ffe8bf;
+}
+
+.app-tab-panel--stock .stock-movements-badge.posted {
+  border-color: rgba(24, 199, 135, 0.45);
+  background: rgba(24, 199, 135, 0.14);
+  color: #c9ffe8;
+}
+
+/* Selisih hasil cek fisik. */
+.app-tab-panel--stock .inventory-audit-diff.overage {
+  color: #c9ffe8;
+}
+
+.app-tab-panel--stock .inventory-audit-diff.shortage {
+  color: #ffd7df;
+}
+
+/* Kotak ganti nama barang: dulu efek menyala oranye. */
+.app-tab-panel--stock .erp-inline-rename-input:focus {
+  border-color: rgba(255, 215, 122, 0.6);
+  box-shadow: var(--focus-ring);
+}
+
+/* Sakelar aktif: hijau status aplikasi, bukan #10b981 milik style.css. */
+.app-tab-panel--stock .erp-switch-input:checked + .erp-switch-slider {
+  background-color: rgb(24, 199, 135);
+  border-color: rgba(24, 199, 135, 0.6);
+}
+
+/* Filter & paginasi. */
+.app-tab-panel--stock .stock-movements-filter-button.active {
+  border-color: rgba(255, 215, 122, 0.6);
+  background: rgba(255, 215, 122, 0.14);
+  color: var(--gold-strong);
+  outline: none;
+}
+
+.app-tab-panel--stock .stock-movements-item-filter:focus-visible {
+  border-color: rgba(255, 215, 122, 0.6);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+/* Badge jumlah baris & tombol hapus baris pada "Catat Barang Masuk".
+   Dulu hijau #10b981 dan tombol merah menyala yang berubah warna saat disorot. */
+.app-tab-panel--stock .inbound-row-count-badge {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--muted) !important;
+  font-size: 0.76rem !important;
+  font-weight: 800 !important;
+  padding: 4px 10px !important;
+  border-radius: var(--radius-pill) !important;
+}
+
+.app-tab-panel--stock .inbound-row-delete-btn {
+  border: 1px solid rgba(255, 61, 104, 0.4) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 61, 104, 0.12) !important;
+  color: #ffd7df !important;
+  padding: 6px 12px !important;
+  min-width: auto !important;
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.app-tab-panel--stock .inbound-row-delete-btn:hover {
+  background: rgba(255, 61, 104, 0.22) !important;
+  color: #ffd7df !important;
+}
+/* Panel Riwayat Keluar-Masuk & Cek Fisik: dulu bergradien gelap coklat
+   (rgba(38,29,20,.9) -> rgba(16,12,8,.88)) sehingga terlihat berbeda dari
+   panel Stok utama. Disamakan dengan permukaan tema. */
+.app-tab-panel--stock .stock-movements-panel,
+.app-tab-panel--stock .inventory-audit-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.app-tab-panel--stock .stock-movements-title,
+.app-tab-panel--stock .inventory-audit-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--stock .stock-movements-subtitle {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  max-width: 72ch;
+}

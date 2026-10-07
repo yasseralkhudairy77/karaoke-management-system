@@ -1,0 +1,423 @@
+/* ============================================================================
+   TRANSAKSI — desain ulang. Dimuat SETELAH style.css.
+
+   Akar masalah "norak" yang terukur (audit 2026-10-06):
+     T1. Kotak isian di sub-tab "Input Manual" memakai latar PUTIH #f5f5f5 dengan
+         teks biru tua #182238 (aturan warisan di style.css). Ada 9 kotak: tanggal,
+         jam, metode bayar, status, ruangan, durasi, nama tamu, kasir, catatan,
+         plus pemilih menu/LC. Ini temuan paling mencolok.
+     T2. Tiga sub-tab berupa kartu 300x92 px bergradien; ketiga judulnya EMAS
+         sehingga tab aktif tidak lebih menonjol.
+     T3. Panel Riwayat memakai gradien permukaan (38,29,20) -> (13,10,7).
+     T4. Kotak keterangan periode operasional memakai HIJAU pekat (garis tepi
+         #4fd19a + latar hijau) — satu-satunya blok hijau besar di aplikasi.
+     T5. Tombol pilihan periode memakai hijau warisan rgba(92,213,155).
+     T6. Tombol "Semua" (filter status) memakai hijau rgba(120,247,198) — dua
+         hijau berbeda untuk hal yang sama.
+     T7. Judul "Pemulihan Transaksi Mati Listrik" tidak nyambung dengan nama
+         sub-tab "Input Manual"; "Nama Tamu / Tuan" ambigu; label "Tanggal Nota /
+         Periode" mencampur dua hal.
+     T8. "Cash"/"Transfer" pada metode bayar tidak konsisten bahasanya.
+
+   Prinsip: palet 100% token tema; kotak isian selalu gelap; emas hanya untuk
+   aksi & tab aktif; satu hijau saja (untuk status sukses).
+   ============================================================================ */
+
+/* ------------------------------------------------------------- T1: kotak isian */
+.app-tab-panel--transactions .manual-transaction-fields input,
+.app-tab-panel--transactions .manual-transaction-fields select,
+.app-tab-panel--transactions .manual-transaction-picker select,
+.app-tab-panel--transactions .manual-transaction-line input,
+.app-tab-panel--transactions .manual-transaction-line select,
+.app-tab-panel--transactions .manual-transaction-panel select,
+.app-tab-panel--transactions .manual-transaction-panel input {
+  min-height: 40px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.app-tab-panel--transactions .manual-transaction-panel input::placeholder {
+  color: var(--muted);
+}
+
+.app-tab-panel--transactions .manual-transaction-panel select option {
+  background: #1a1410;
+  color: var(--text);
+}
+
+/* Ikon kalender/jam bawaan browser dibuat terang agar terlihat di latar gelap. */
+.app-tab-panel--transactions .manual-transaction-panel input[type="date"],
+.app-tab-panel--transactions .manual-transaction-panel input[type="time"] {
+  color-scheme: dark;
+}
+
+.app-tab-panel--transactions .manual-transaction-panel input:focus-visible,
+.app-tab-panel--transactions .manual-transaction-panel select:focus-visible {
+  border-color: rgba(255, 215, 122, 0.6);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+/* -------------------------------------------------------------- T2: sub-tab */
+.app-tab-panel--transactions .transactions-subnav {
+  gap: var(--space-2);
+}
+
+.app-tab-panel--transactions .transactions-subnav-button {
+  min-height: 68px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  background-image: none;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.app-tab-panel--transactions .transactions-subnav-button:hover,
+.app-tab-panel--transactions .transactions-subnav-button:focus-visible {
+  border-color: rgba(255, 215, 122, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  background-image: none;
+  outline: none;
+  transform: none;
+}
+
+.app-tab-panel--transactions .transactions-subnav-button:active {
+  transform: none;
+}
+
+/* Judul tab tidak lagi semuanya emas. */
+.app-tab-panel--transactions .transactions-subnav-label {
+  color: var(--text);
+  font-size: 0.96rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--transactions .transactions-subnav-button.active {
+  border-color: var(--gold-strong);
+  border-left: 3px solid var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+  background-image: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.3);
+  outline: none;
+}
+
+.app-tab-panel--transactions .transactions-subnav-button.active .transactions-subnav-label {
+  color: var(--gold-strong);
+}
+
+/* --------------------------------------------------- T3: panel & riwayat */
+.app-tab-panel--transactions .transaction-history,
+.app-tab-panel--transactions .cashier-closing-history,
+.app-tab-panel--transactions .cashier-revenue,
+.app-tab-panel--transactions .manual-transaction-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  background-image: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.app-tab-panel--transactions .manual-transaction-panel {
+  padding: var(--panel-padding);
+}
+
+.app-tab-panel--transactions .transaction-history-header,
+.app-tab-panel--transactions .cashier-revenue-header,
+.app-tab-panel--transactions .cashier-closing-history-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: var(--space-2);
+}
+
+.app-tab-panel--transactions .transaction-history-header h2,
+.app-tab-panel--transactions .cashier-revenue-title,
+.app-tab-panel--transactions .cashier-closing-history-title,
+.app-tab-panel--transactions .manual-transaction-heading h3 {
+  color: var(--text);
+  font-size: 1.16rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------------ T4: kotak periode */
+/* Dulu hijau pekat; sekarang tenang, hijau hanya sebagai garis aksen tipis. */
+.app-tab-panel--transactions .manual-operational-period {
+  border-left: 3px solid rgba(24, 199, 135, 0.55);
+  border-radius: var(--radius-sm);
+  background: rgba(24, 199, 135, 0.08);
+  color: var(--text);
+  padding: 10px 12px;
+}
+
+.app-tab-panel--transactions .manual-operational-period strong {
+  color: #c9ffe8;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.app-tab-panel--transactions .manual-operational-period span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.app-tab-panel--transactions .manual-operational-period.invalid {
+  border-left-color: rgba(255, 193, 102, 0.6);
+  background: rgba(255, 193, 102, 0.1);
+  color: var(--muted);
+}
+
+/* Tombol mode (Room+F&B+LC / F&B Umum) & tombol pilihan lain. */
+.app-tab-panel--transactions .manual-transaction-mode button,
+.app-tab-panel--transactions .manual-transaction-picker button,
+.app-tab-panel--transactions .manual-transaction-actions button,
+.app-tab-panel--transactions .manual-transaction-line > button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.app-tab-panel--transactions .manual-transaction-mode button:hover,
+.app-tab-panel--transactions .manual-transaction-picker button:hover,
+.app-tab-panel--transactions .manual-transaction-actions button:hover {
+  border-color: var(--gold-strong);
+  background: rgba(255, 215, 122, 0.12);
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--transactions .manual-transaction-mode button.active,
+.app-tab-panel--transactions .manual-transaction-actions button:not(.secondary) {
+  background: linear-gradient(180deg, var(--gold-strong), var(--gold-deep));
+  border-color: rgba(255, 215, 122, 0.62);
+  color: #1a130b;
+}
+
+.app-tab-panel--transactions .manual-transaction-mode button:focus-visible,
+.app-tab-panel--transactions .manual-transaction-picker button:focus-visible,
+.app-tab-panel--transactions .manual-transaction-actions button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.app-tab-panel--transactions .manual-transaction-owner-badge {
+  border: 1px solid rgba(255, 215, 122, 0.5);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 215, 122, 0.14);
+  color: var(--gold-strong);
+  padding: 4px 10px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+/* Label kolom isian. */
+.app-tab-panel--transactions .manual-transaction-fields label > span,
+.app-tab-panel--transactions .manual-transaction-heading p,
+.app-tab-panel--transactions .manual-transaction-detail h4 {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.app-tab-panel--transactions .manual-transaction-detail h4 {
+  margin-bottom: 8px;
+}
+
+/* ------------------------------------------------------- T5/T6: filter periode */
+.app-tab-panel--transactions .period-filter {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  background-image: none;
+  padding: 10px;
+}
+
+.app-tab-panel--transactions .period-filter-button,
+.app-tab-panel--transactions .transaction-filter-button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-weight: 700;
+  box-shadow: none;
+  outline: none;
+}
+
+.app-tab-panel--transactions .period-filter-button:hover,
+.app-tab-panel--transactions .transaction-filter-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Aktif = emas (satu warna untuk semua filter, tidak ada hijau). */
+.app-tab-panel--transactions .period-filter-button.active,
+.app-tab-panel--transactions .transaction-filter-button.active {
+  border-color: transparent;
+  background: rgba(255, 215, 122, 0.14);
+  color: var(--gold-strong);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 122, 0.42);
+}
+
+.app-tab-panel--transactions .operational-date-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* ---------------------------------------------------------- kartu ringkasan */
+.app-tab-panel--transactions .transaction-summary-card,
+.app-tab-panel--transactions .cashier-revenue-card {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  background-image: none;
+}
+
+.app-tab-panel--transactions .transaction-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+}
+
+.app-tab-panel--transactions .transaction-value,
+.app-tab-panel--transactions .cashier-revenue-value {
+  color: var(--text);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.2rem;
+}
+
+/* Kartu yang butuh perhatian: cukup garis tepi, bukan blok warna. */
+.app-tab-panel--transactions .cashier-revenue-card.highlight {
+  border-color: rgba(255, 215, 122, 0.3);
+}
+
+.app-tab-panel--transactions .cashier-revenue-card.highlight .cashier-revenue-value {
+  color: var(--gold-strong);
+}
+
+.app-tab-panel--transactions .cashier-revenue-card.warning {
+  border-color: rgba(255, 150, 60, 0.4);
+}
+
+.app-tab-panel--transactions .cashier-revenue-card.warning .cashier-revenue-value {
+  color: #ffd9b0;
+}
+
+/* --------------------------------------------------------------- tombol */
+.app-tab-panel--transactions .cashier-closing-button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 215, 122, 0.42);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 215, 122, 0.12);
+  color: var(--gold-strong);
+  font-weight: 800;
+  box-shadow: none;
+}
+
+.app-tab-panel--transactions .cashier-closing-button:hover:not(:disabled) {
+  background: rgba(255, 215, 122, 0.2);
+  border-color: var(--gold-strong);
+}
+
+/* --------------------------------------------------------------- tabel */
+.app-tab-panel--transactions table {
+  border-color: var(--border);
+}
+
+.app-tab-panel--transactions th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-tab-panel--transactions td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-tab-panel--transactions tbody tr:hover td {
+  background: rgba(255, 215, 122, 0.045);
+}
+
+/* Kotak isian/tanggal pada saringan laporan transaksi. */
+.app-tab-panel--transactions .custom-date-input,
+.app-tab-panel--transactions .duration-custom-input {
+  min-height: 38px;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: rgba(255, 255, 255, 0.045) !important;
+  color: var(--text) !important;
+  color-scheme: dark;
+}
+
+@media (max-width: 900px) {
+  .app-tab-panel--transactions .transactions-subnav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-tab-panel--transactions .manual-transaction-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* Kotak catatan operasional: dulu BIRU penuh (rgba(59,130,246,.08) + teks
+   #bfdbfe) — satu-satunya blok biru besar di aplikasi. Dibuat tenang. */
+.app-tab-panel--transactions .operational-date-note,
+.app-tab-panel--transactions .shift-period-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Kartu ringkasan: 6 kartu dibagi rata 3 kolom supaya tidak ada baris
+   menggantung 2 kartu dengan ruang kosong di kanan. */
+.app-tab-panel--transactions .transaction-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Rekap omzet kasir: 5 kartu -> 5 kolom tetap sudah pas, tapi tingginya
+   disamakan supaya tidak ada kartu lebih pendek. */
+.app-tab-panel--transactions .cashier-revenue-card {
+  min-height: 96px;
+  align-content: start;
+}
+
+@media (max-width: 1100px) {
+  .app-tab-panel--transactions .transaction-summary,
+  .app-tab-panel--transactions .cashier-revenue-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Angka pengurang (komisi marketing) jangan diberi emas seperti angka
+   penghasilan — supaya tidak terbaca sebagai nilai positif. */
+.app-tab-panel--transactions .cashier-revenue-card .cashier-revenue-value,
+.app-tab-panel--transactions .transaction-summary-card .transaction-value {
+  color: var(--text);
+}
+
+.app-tab-panel--transactions .cashier-revenue-card.highlight .cashier-revenue-value {
+  color: var(--gold-strong);
+}

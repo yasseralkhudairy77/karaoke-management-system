@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>Uji kartu ruangan (audit)</title>
+  <link rel="stylesheet" href="file:///C:/HappySong/happy-song-local/css/style.css">
+  <link rel="stylesheet" href="file:///C:/HappySong/happy-song-local/css/skin-fnb-layout.css">
+</head>
+<body>
+  <main class="dashboard-shell">
+    <div class="app-tab-panel app-tab-panel--rooms active">
+      <section class="rooms-summary" aria-label="Ringkasan status ruangan">
+        <button class="rooms-summary-card active" data-status="all"><span class="rooms-summary-label">Semua Ruangan</span><span class="rooms-summary-value">4</span></button>
+        <button class="rooms-summary-card tone-danger" data-status="occupied"><span class="rooms-summary-label">Terisi</span><span class="rooms-summary-value">2</span></button>
+        <button class="rooms-summary-card tone-info" data-status="paid_waiting_start"><span class="rooms-summary-label">Menunggu Mulai</span><span class="rooms-summary-value">1</span></button>
+        <button class="rooms-summary-card tone-info" data-status="booked"><span class="rooms-summary-label">Booking</span><span class="rooms-summary-value">1</span></button>
+      </section>
+      <div class="rooms-tab-grid" id="grid"></div>
+    </div>
+  </main>
+
+<script>
+// Markup mirrors createRoomCard() in js/app.js exactly (same classes, same nesting)
+function occupiedCard(withFnb) {
+  return `
+  <article class="room-card occupied" data-audit="occupied">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">VIP 2</h2>
+        <span class="room-status status-badge danger">Terisi</span>
+        <span class="tv-indicator tv-indicator-hijau" title="TV"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV</span></span>
+      </div>
+      <div class="room-topline-sub">
+        <span class="room-status-badge open-bill-badge">Tagihan Berjalan</span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info">
+        <div class="room-booking-row"><span class="room-booking-label">Durasi:</span><span class="room-booking-value">2 jam</span></div>
+        <div class="room-booking-row"><span class="room-booking-label">Mulai:</span><span class="room-booking-value">20:15</span></div>
+        <div class="room-booking-row"><span class="room-booking-label">Selesai:</span><span class="room-booking-value">22:15</span></div>
+        <div class="room-booking-row room-countdown"><span class="room-booking-label">Sisa:</span><span class="room-booking-value">01:12:30</span></div>
+      </div>
+      ${withFnb ? `
+      <div class="room-card-fnb-breakdown">
+        <p class="fnb-breakdown-title">Pesanan F&B Belum Ditagih</p>
+        <div class="fnb-breakdown-list">
+          <div class="fnb-breakdown-item"><span>2x Bintang</span><span>Rp 150.000</span></div>
+          <div class="fnb-breakdown-item"><span>1x French Fries</span><span>Rp 45.000</span></div>
+        </div>
+      </div>` : ""}
+      <div class="room-live-billing-panel">
+        <div class="live-billing-header">Estimasi Tagihan</div>
+        <div class="live-billing-breakdown">
+          <div class="live-billing-row"><span class="live-billing-item-label">Room 2 jam</span><span>Rp 240.000</span></div>
+          <div class="live-billing-row"><span class="live-billing-item-label">LC (1 orang)</span><span>Rp 100.000</span></div>
+          <div class="live-billing-row"><span class="live-billing-item-label">Total</span><span>Rp 340.000</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="room-actions room-actions-occupied">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon"></span> <span>Selesaikan Sesi</span></button>
+      <button class="room-button room-button-upfront"><span class="room-btn-icon">💳</span> <span>Bayar di Muka</span></button>
+      <button class="room-button room-button-extend"><span class="room-btn-icon">⏱️</span> <span>Tambah Waktu</span></button>
+      <button class="room-button room-button-lc"><span class="room-btn-icon">🎙️</span> <span>Pilih LC</span></button>
+      <button class="room-button room-button-adjust-time"><span class="room-btn-icon">⏳</span> <span>Koreksi Jam</span></button>
+      <button class="room-button room-button-package"><span class="room-btn-icon">📦</span> <span>Ubah Paket</span></button>
+      <button class="room-button room-button-move"><span class="room-btn-icon">🔁</span> <span>Pindah Room</span></button>
+      <button class="room-button room-button-gift"><span class="room-btn-icon">🎁</span> <span>Free Gift</span></button>
+    </div>
+  </article>`;
+}
+function upfrontCard() {
+  return `
+  <article class="room-card occupied" data-audit="upfront">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">VIP 4</h2>
+        <span class="room-status status-badge danger">Terisi</span>
+        <span class="tv-indicator tv-indicator-kuning" title="TV"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV</span></span>
+      </div>
+      <div class="room-topline-sub">
+        <span class="room-status-badge upfront-paid-badge">Lunas di Muka</span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info">
+        <div class="room-booking-row"><span class="room-booking-label">Durasi:</span><span class="room-booking-value">1 jam</span></div>
+      </div>
+      <div class="room-live-billing-panel">
+        <div class="live-billing-header">Estimasi Tagihan</div>
+        <div class="live-billing-breakdown">
+          <div class="live-billing-row"><span class="live-billing-item-label">Room</span><span>Rp 120.000</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="room-actions room-actions-occupied">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon"></span> <span>Selesaikan Sesi</span></button>
+      <button class="room-button room-button-upfront is-settled"><span class="room-btn-icon">✅</span> <span>Sudah Lunas di Muka</span></button>
+      <button class="room-button room-button-extend"><span class="room-btn-icon">⏱️</span> <span>Tambah Waktu</span></button>
+      <button class="room-button room-button-package"><span class="room-btn-icon">📦</span> <span>Ubah Paket</span></button>
+      <button class="room-button room-button-move"><span class="room-btn-icon">🔁</span> <span>Pindah Room</span></button>
+    </div>
+  </article>`;
+}
+function waitingStartCard() {
+  return `
+  <article class="room-card paid-waiting-start" data-audit="paid_waiting_start">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">STANDAR 3</h2>
+        <span class="room-status status-badge info">Menunggu Mulai</span>
+        <span class="tv-indicator tv-indicator-abu" title="TV"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV</span></span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info">
+        <div class="room-booking-row"><span class="room-booking-label">Pelanggan:</span><span class="room-booking-value">Budi</span></div>
+        <div class="room-booking-row"><span class="room-booking-label">Durasi:</span><span class="room-booking-value">1 jam</span></div>
+      </div>
+      <p class="rate">Rp 100.000 / jam</p>
+    </div>
+    <div class="room-actions">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon">▶️</span> <span>Mulai Countdown</span></button>
+      <button class="room-button room-button-cancel-waiting"><span class="room-btn-icon">❌</span> <span>Batal</span></button>
+    </div>
+  </article>`;
+}
+function bookedCard() {
+  return `
+  <article class="room-card booked" data-audit="booked">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">EXECUTIVE</h2>
+        <span class="room-status status-badge info">Menunggu Mulai</span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info">
+        <div class="room-booking-row"><span class="room-booking-label">Pelanggan:</span><span class="room-booking-value">Sinta</span></div>
+      </div>
+      <p class="rate">Rp 185.000 / jam</p>
+    </div>
+    <div class="room-actions">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon">▶️</span> <span>Mulai Sesi</span></button>
+      <button class="room-button room-button-secondary">Batalkan Booking</button>
+    </div>
+  </article>`;
+}
+
+function availableCard() {
+  return `
+  <article class="room-card available" data-audit="available">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">STANDAR 1</h2>
+        <span class="room-status status-badge success">Kosong</span>
+        <span class="tv-indicator tv-indicator-merah" title="TV"><span class="tv-indicator-dot"></span><span class="tv-indicator-label">TV</span></span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <p class="meta-label">Durasi sesi</p>
+      <p class="timer">00:00:00</p>
+      <p class="rate">Rp 100.000 / jam</p>
+    </div>
+    <div class="room-actions">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon"></span> <span>Buat Booking</span></button>
+    </div>
+  </article>`;
+}
+
+function waitingPaymentCard() {
+  return `
+  <article class="room-card waiting-payment" data-audit="waiting_payment">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">VIP 7</h2>
+        <span class="room-status status-badge warning">Menunggu Bayar</span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info">
+        <div class="room-booking-row"><span class="room-booking-label">Pelanggan:</span><span class="room-booking-value">Andi</span></div>
+      </div>
+      <p class="rate">Rp 120.000 / jam</p>
+    </div>
+    <div class="room-actions">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon">▶️</span> <span>Mulai Sesi</span></button>
+      <button class="room-button room-button-secondary">Batalkan Booking</button>
+    </div>
+  </article>`;
+}
+function cleaningCard() {
+  return `
+  <article class="room-card cleaning" data-audit="cleaning">
+    <div class="room-topline">
+      <div class="room-topline-main">
+        <h2 class="room-name">VIP 8</h2>
+        <span class="room-status status-badge warning">Cleaning</span>
+      </div>
+    </div>
+    <div class="room-meta">
+      <div class="room-booking-info room-operational-info">
+        <div class="room-booking-row"><span class="room-booking-label">Status:</span><span class="room-booking-value">Cleaning</span></div>
+        <p class="room-operational-helper">Ruangan sedang dibersihkan sebelum dipakai lagi.</p>
+      </div>
+      <p class="rate">Rp 120.000 / jam</p>
+    </div>
+    <div class="room-actions">
+      <button class="room-button room-button-checkout"><span class="room-btn-icon">✨</span> <span>Selesai Bersihkan</span></button>
+      <button class="room-button room-button-restore-session"><span class="room-btn-icon">↩️</span> <span>Pulihkan Sesi</span></button>
+    </div>
+  </article>`;
+}
+document.getElementById("grid").innerHTML = availableCard() + occupiedCard(true) + occupiedCard(false).replace('data-audit="occupied"', 'data-audit="occupied_no_fnb"') + upfrontCard() + waitingStartCard() + bookedCard() + waitingPaymentCard() + cleaningCard();
+</script>
+</body>
+</html>

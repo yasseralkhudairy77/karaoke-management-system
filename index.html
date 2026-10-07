@@ -7,8 +7,51 @@
     <link rel="icon" href="data:," />
 
     <!-- Style utama untuk dashboard statis yang siap dipakai di GitHub Pages. -->
-    <link rel="stylesheet" href="css/style.css?v=trx-ui-polish" />
-  </head>
+        <link rel="stylesheet" href="css/style.css?v=trx-ui-polish" />
+
+        <!--
+          Opsi A: perapihan tata letak menu F&B (bilah sub-tab, bilah alat sticky,
+          kepadatan daftar, fokus keyboard). Dimuat SETELAH style.css karena sifatnya
+          menimpa. Untuk membalik perubahan ini cukup hapus baris <link> di bawah —
+          tidak ada berkas lain yang perlu disentuh.
+        -->
+        <link rel="stylesheet" href="css/skin-fnb-layout.css?v=1" />
+
+    <!--
+      Perapihan modul Pengeluaran: paletnya disamakan dengan tema venue, emoji
+      ikon dibuang, kartu/tabel dirapikan. Sama seperti skin F&B: hapus baris ini
+      untuk kembali sepenuhnya ke tampilan lama.
+    -->
+    <link rel="stylesheet" href="css/skin-pengeluaran.css?v=1" />
+
+    <!--
+      Perapihan modul Stok: palet disamakan dengan tema venue, emoji dibuang,
+      kartu/tabel/form dirapikan. Dimuat setelah style.css; untuk membatalkan,
+      cukup hapus baris ini (tampilan lama kembali sepenuhnya).
+    -->
+    <link rel="stylesheet" href="css/skin-stok.css?v=1" />
+
+    <!--
+      Perapihan modul LC: kotak isian yang tadinya putih dikembalikan ke tema
+      gelap, panel/kartu disamakan, sub-tab & tabel dirapikan. Dimuat setelah
+      style.css; untuk membatalkan, cukup hapus baris ini.
+    -->
+    <link rel="stylesheet" href="css/skin-lc.css?v=1" />
+
+    <!--
+      Perapihan modul Laporan: sub-tab, kartu metrik, filter periode, dan tabel
+      disamakan dengan tema venue (permukaan polos, emas hanya untuk aksi).
+      Dimuat setelah style.css; untuk membatalkan, cukup hapus baris ini.
+    -->
+    <link rel="stylesheet" href="css/skin-laporan.css?v=1" />
+
+    <!--
+      Perapihan modul Transaksi: kotak isian yang tadinya putih dikembalikan ke
+      tema gelap, sub-tab, filter, kartu & tabel dirapikan. Dimuat setelah
+      style.css; untuk membatalkan, cukup hapus baris ini.
+    -->
+    <link rel="stylesheet" href="css/skin-transaksi.css?v=1" />
+      </head>
   <body>
     <!-- Header aplikasi tetap statis agar konteks halaman jelas sebelum JavaScript selesai dimuat. -->
     <header class="app-header">

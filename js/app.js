@@ -530,7 +530,7 @@ const TRANSACTION_PERIOD_OPTIONS = [
   ["last7days", "7 Shift"],
   ["thisMonth", "Bulan Ini"],
   ["all", "Semua"],
-  ["custom", "Custom"],
+  ["custom", "Kustom"],
 ];
 const REPORT_SUB_TABS = [
   {
@@ -564,7 +564,7 @@ const ROOM_STATUS_CONFIG = {
     className: "available",
     tone: "success",
     buttonLabel: "Buat Booking",
-    buttonIcon: "📖",
+    buttonIcon: "",
   },
   occupied: {
     label: "Terisi",
@@ -1060,6 +1060,7 @@ let selectedFnbMenuForLogs = null;
 let fnbReportPrintPreviewVisible = false;
 let fnbReportThermalPreviewVisible = false;
 let roomsLoading = false;
+let roomStatusFilter = "all";
 let menuLoading = false;
 let selectedFbRoomId = "";
 let fnbOrderMode = "room";
@@ -1179,7 +1180,7 @@ const ROOM_USAGE_PERIOD_OPTIONS = [
   ["last7days", "7 Shift"],
   ["thisMonth", "Bulan Ini"],
   ["all", "Semua"],
-  ["custom", "Custom"],
+  ["custom", "Kustom"],
 ];
 
 function isUserBusy() {
@@ -5678,7 +5679,7 @@ function buildFnbOrderPayload(idempotencyKey) {
 function getFnbOrderPaymentLabel() {
   const labels = {
     room_bill: "Masuk tagihan room",
-    general_bill: "Open bill pelanggan",
+    general_bill: "Tagihan berjalan pelanggan",
     cash: "Cash - langsung lunas",
     transfer: "Transfer / QRIS - langsung lunas",
   };
@@ -6701,7 +6702,7 @@ function getSessionButtonLabel(status) {
 }
 
 function getSessionButtonIcon(status) {
-  return ROOM_STATUS_CONFIG[status]?.buttonIcon || "📖";
+  return ROOM_STATUS_CONFIG[status]?.buttonIcon || "";
 }
 
 function getPaymentStatusLabel(status) {
@@ -7251,15 +7252,12 @@ async function loadTodayExpenses() {
   }
 }
 
-function createExpenseMetricCard(title, value, type, icon) {
+function createExpenseMetricCard(title, value, type) {
   const card = document.createElement("div");
   card.className = `expense-metric-card expense-metric-card--${type}`;
   card.innerHTML = `
-    <div class="expense-metric-icon">${icon}</div>
-    <div class="expense-metric-content">
-      <span class="expense-metric-title">${title}</span>
-      <strong class="expense-metric-value">${value}</strong>
-    </div>
+    <span class="expense-metric-title">${title}</span>
+    <strong class="expense-metric-value">${value}</strong>
   `;
   return card;
 }
@@ -7277,9 +7275,9 @@ function createExpensesPanelElement() {
   const voidedCount = todayExpenses.filter(e => e.is_voided).length;
 
   metricsRow.append(
-    createExpenseMetricCard("Total Kas Keluar", formatCurrency(totalAmount), "total-spent", "💸"),
-    createExpenseMetricCard("Transaksi Pengeluaran", `${activeCount} item aktif`, "active-count", "🧾"),
-    createExpenseMetricCard("Dibatalkan (Void)", `${voidedCount} item`, "voided-count", "🚫")
+    createExpenseMetricCard("Total Kas Keluar", formatCurrency(totalAmount), "total-spent"),
+    createExpenseMetricCard("Pengeluaran Aktif", `${activeCount} transaksi`, "active-count"),
+    createExpenseMetricCard("Dibatalkan", `${voidedCount} transaksi`, "voided-count")
   );
 
   container.appendChild(metricsRow);
@@ -7295,7 +7293,7 @@ function createExpensesPanelElement() {
   const formHeader = document.createElement("div");
   formHeader.className = "expenses-card-header";
   formHeader.innerHTML = `
-    <h3 class="expenses-card-title">📝 Catat Pengeluaran Kas Baru</h3>
+    <h3 class="expenses-card-title">Catat Pengeluaran Kas Baru</h3>
     <p class="expenses-card-subtitle">Pengeluaran tunai otomatis memotong target uang fisik kas laci saat closing.</p>
   `;
   formCard.appendChild(formHeader);
@@ -7344,7 +7342,7 @@ function createExpensesPanelElement() {
 
     <div class="expenses-form-actions">
       <button type="submit" class="expenses-submit-button" id="btnSaveExpense" ${isSavingExpense ? "disabled" : ""}>
-        ${isSavingExpense ? "Menyimpan..." : "💾 Simpan & Cetak Slip"}
+        ${isSavingExpense ? "Menyimpan..." : "Simpan Pengeluaran"}
       </button>
     </div>
   `;
@@ -7387,11 +7385,11 @@ function createExpensesPanelElement() {
   tableHeader.className = "expenses-card-header expenses-table-header";
   tableHeader.innerHTML = `
     <div class="expenses-table-header-info">
-      <h3 class="expenses-card-title">📜 Riwayat Pengeluaran Kas Hari Ini</h3>
+      <h3 class="expenses-card-title">Riwayat Pengeluaran Kas Hari Ini</h3>
       <p class="expenses-card-subtitle">Daftar pengeluaran pada tanggal operasional aktif.</p>
     </div>
     <button type="button" class="expenses-refresh-button" id="btnRefreshExpenses" title="Muat ulang data pengeluaran">
-      🔄 Segarkan
+      Segarkan
     </button>
   `;
   tableHeader.querySelector("#btnRefreshExpenses")?.addEventListener("click", async () => {
@@ -7406,7 +7404,7 @@ function createExpensesPanelElement() {
     const emptyMsg = document.createElement("div");
     emptyMsg.className = "expenses-empty-state";
     emptyMsg.innerHTML = `
-      <div class="expenses-empty-icon">💸</div>
+      <div class="expenses-empty-icon" aria-hidden="true"></div>
       <p class="expenses-empty-title">Belum ada pengeluaran kas hari ini.</p>
       <p class="expenses-empty-desc">Gunakan form di samping untuk mencatat pengeluaran operasional kasir.</p>
     `;
@@ -7461,13 +7459,9 @@ function createExpensesPanelElement() {
             : '<span class="expense-status-badge active">Aktif</span>'}
         </td>
         <td class="text-center expense-actions-cell">
-          <button type="button" class="expense-btn-action expense-btn-print" title="Cetak Slip Bukti Pengeluaran" data-expense-id="${item.expense_id}">
-            🖨️
-          </button>
+          <button type="button" class="expense-btn-action expense-btn-print" title="Cetak slip bukti pengeluaran" data-expense-id="${item.expense_id}">Cetak</button>
           ${!item.is_voided
-            ? `<button type="button" class="expense-btn-action expense-btn-void" title="Batalkan Pengeluaran Ini" data-expense-id="${item.expense_id}">
-                ❌
-              </button>`
+            ? `<button type="button" class="expense-btn-action expense-btn-void" title="Batalkan pengeluaran ini" data-expense-id="${item.expense_id}">Batalkan</button>`
             : ""}
         </td>
       `;
@@ -10416,7 +10410,7 @@ function createRoomLiveEstimatedBillingElement(room) {
   header.innerHTML = `
     <span class="live-billing-title">💰 Estimasi Tagihan</span>
     <span class="live-billing-badge ${data.isUpfrontPaid ? "is-upfront" : "is-open-bill"}">
-      ${data.isUpfrontPaid ? "🟢 Lunas di Muka" : "🟣 Open Bill"}
+      ${data.isUpfrontPaid ? "Lunas di Muka" : "Tagihan Berjalan"}
     </span>
   `;
   container.appendChild(header);
@@ -10604,7 +10598,7 @@ function createRoomCard(room) {
       openBillBadge.style.borderRadius = "4px";
       openBillBadge.style.border = "1px solid rgba(124, 58, 237, 0.3)";
       openBillBadge.style.fontWeight = "bold";
-      openBillBadge.textContent = "Open Bill";
+      openBillBadge.textContent = "Tagihan Berjalan";
       subRow.appendChild(openBillBadge);
     }
     topLine.appendChild(subRow);
@@ -12687,7 +12681,7 @@ function createExtendSelectionElement(room) {
   paymentField.style.fontSize = "12px";
   paymentField.style.color = "#a78bfa";
   paymentField.style.textAlign = "center";
-  paymentField.textContent = "ℹ️ Biaya tambahan waktu akan ditagihkan saat checkout (Open Bill).";
+  paymentField.textContent = "Biaya tambahan waktu akan ditagihkan saat checkout (tagihan berjalan).";
 
   const noteField = document.createElement("div");
   noteField.className = "extend-note-field";
@@ -13343,6 +13337,25 @@ function createMenuPanelElement() {
 }
 
 function createMenuCategoryFilterElement() {
+  const wrap = document.createElement("div");
+  wrap.className = "menu-category-bar";
+
+  const scrollLeftButton = document.createElement("button");
+  scrollLeftButton.type = "button";
+  scrollLeftButton.className = "menu-category-scroll";
+  scrollLeftButton.dataset.action = "scroll-menu-categories";
+  scrollLeftButton.dataset.direction = "-1";
+  scrollLeftButton.setAttribute("aria-label", "Geser kategori ke kiri");
+  scrollLeftButton.textContent = "‹";
+
+  const scrollRightButton = document.createElement("button");
+  scrollRightButton.type = "button";
+  scrollRightButton.className = "menu-category-scroll";
+  scrollRightButton.dataset.action = "scroll-menu-categories";
+  scrollRightButton.dataset.direction = "1";
+  scrollRightButton.setAttribute("aria-label", "Geser kategori ke kanan");
+  scrollRightButton.textContent = "›";
+
   const filter = document.createElement("div");
   filter.className = "menu-category-filter";
   filter.setAttribute("aria-label", "Filter kategori Menu F&B");
@@ -13351,7 +13364,6 @@ function createMenuCategoryFilterElement() {
   getMenuCategories().forEach(
     (value) => {
       const labelText = FNB_CATEGORY_LABELS[value] || value;
-      const icon = FNB_CATEGORY_ICONS[value] || "🏷️";
       const button = document.createElement("button");
       button.className =
         value === menuCategoryFilter
@@ -13362,12 +13374,43 @@ function createMenuCategoryFilterElement() {
       button.setAttribute("aria-selected", String(value === menuCategoryFilter));
       button.dataset.action = "filter-menu-category";
       button.dataset.category = value;
-      button.innerHTML = `<span class="category-tab-icon">${icon}</span><span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
+      button.setAttribute("aria-label", `${labelText} (${getFnbMenuCategoryCount(value)} item)`);
+      button.innerHTML = `<span class="category-tab-text">${labelText}</span><span class="category-tab-count">${getFnbMenuCategoryCount(value)}</span>`;
       filter.appendChild(button);
     }
   );
 
-  return filter;
+  // Roda mouse juga menggeser deretan kategori ke kanan/kiri (tanpa shift).
+  filter.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+      return;
+    }
+    const maxScroll = filter.scrollWidth - filter.clientWidth;
+    if (maxScroll <= 0) {
+      return;
+    }
+    const next = filter.scrollLeft + event.deltaY;
+    if ((next > 0 && next < maxScroll)) {
+      event.preventDefault();
+      filter.scrollLeft = next;
+    }
+  }, { passive: false });
+
+  // Tombol panah hanya tampil bila memang ada isi yang tersembunyi.
+  const syncScrollButtons = () => {
+    const maxScroll = filter.scrollWidth - filter.clientWidth;
+    const hasOverflow = maxScroll > 4;
+    wrap.classList.toggle("has-overflow", hasOverflow);
+    scrollLeftButton.classList.toggle("is-disabled", !hasOverflow || filter.scrollLeft <= 2);
+    scrollRightButton.classList.toggle("is-disabled", !hasOverflow || filter.scrollLeft >= maxScroll - 2);
+  };
+  filter.addEventListener("scroll", syncScrollButtons, { passive: true });
+  requestAnimationFrame(syncScrollButtons);
+  window.setTimeout(syncScrollButtons, 300);
+
+  wrap.append(scrollLeftButton, filter, scrollRightButton);
+
+  return wrap;
 }
 
 function createMenuSpiritFilterElement() {
@@ -13637,7 +13680,7 @@ function createGeneralFnbBillControlElement() {
   const billLabel = document.createElement("label");
   billLabel.className = "transaction-label";
   billLabel.setAttribute("for", "generalFnbBillSelect");
-  billLabel.textContent = "Open Bill Pelanggan";
+  billLabel.textContent = "Tagihan Berjalan Pelanggan";
 
   const billSelect = document.createElement("select");
   billSelect.className = "fb-room-select";
@@ -13852,7 +13895,7 @@ function createFbPaymentMethodElement() {
   if (!isGeneralOrder) {
     const roomBillOpt = document.createElement("option");
     roomBillOpt.value = "room_bill";
-    roomBillOpt.textContent = "Open Bill (Masuk Tagihan Room)";
+    roomBillOpt.textContent = "Tagihan Berjalan (Masuk Tagihan Room)";
     if (fnbOrderPaymentMethod === "room_bill") roomBillOpt.selected = true;
     select.appendChild(roomBillOpt);
   }
@@ -13860,7 +13903,7 @@ function createFbPaymentMethodElement() {
   if (isGeneralOrder) {
     const generalBillOpt = document.createElement("option");
     generalBillOpt.value = "general_bill";
-    generalBillOpt.textContent = "Postpaid (Open Bill Pelanggan)";
+    generalBillOpt.textContent = "Bayar Nanti (Tagihan Berjalan Pelanggan)";
     if (fnbOrderPaymentMethod === "general_bill") generalBillOpt.selected = true;
     select.appendChild(generalBillOpt);
   }
@@ -13957,7 +14000,7 @@ function createLastFnbOrderElement(order, items) {
     if (order?.order_id) {
       printButton.dataset.fnbOrderId = order.order_id;
     }
-    printButton.textContent = "🖨️ Cetak Struk Transaksi Ini";
+    printButton.textContent = "Cetak Struk Transaksi Ini";
 
     actions.appendChild(printButton);
     saved.appendChild(actions);
@@ -13968,11 +14011,11 @@ function createLastFnbOrderElement(order, items) {
 
 function getFnbOrderStatusLabel(status) {
   if (status === "open") {
-    return "Open";
+    return "Belum Dibayar";
   }
 
   if (status === "billed") {
-    return "Billed";
+    return "Sudah Ditagih";
   }
 
   if (status === "paid") {
@@ -14021,7 +14064,7 @@ function createFbOrderActionsElement() {
   const isPostpaid = fnbOrderPaymentMethod === "room_bill" || fnbOrderPaymentMethod === "general_bill";
   saveButton.textContent = isSavingFnbOrder
     ? "Memproses..."
-    : isPostpaid ? "Simpan ke Open Bill" : "Bayar & Kirim Order";
+    : isPostpaid ? "Simpan ke Tagihan" : "Bayar & Kirim Order";
 
   actions.append(clearButton, saveButton);
 
@@ -14204,7 +14247,7 @@ function requestCancelGeneralFnbBill(generalBillId) {
   if (!generalBillId || isCancellingFnbOrder || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14272,7 +14315,7 @@ async function settleGeneralFnbBill(generalBillId) {
   if (!generalBillId || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14298,7 +14341,7 @@ async function executeSettleGeneralFnbBill(generalBillId) {
   if (!generalBillId || isSettlingGeneralFnbBill) return;
   const bill = getOpenGeneralFnbBills().find((item) => item.general_bill_id === generalBillId);
   if (!bill) {
-    showInlineNotice("Open bill pelanggan tidak ditemukan.", "error");
+    showInlineNotice("Tagihan berjalan pelanggan tidak ditemukan.", "error");
     return;
   }
 
@@ -14352,7 +14395,7 @@ function createOpenFnbOrdersPanelElement() {
   const title = document.createElement("h2");
   title.className = "open-fnb-title";
   title.id = "open-fnb-title";
-  title.textContent = "Open Order F&B";
+  title.textContent = "Antrean Pesanan F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "open-fnb-subtitle";
@@ -14404,7 +14447,7 @@ function createOpenFnbSummaryElement(summary) {
   [
     ["Total Order", Number(summary.total_orders) || 0],
     ["Total Item", Number(summary.total_items) || 0],
-    ["Total F&B Open", formatCurrency(summary.total_amount)],
+        ["Total Nilai F&B", formatCurrency(summary.total_amount)],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "open-fnb-summary-card";
@@ -14431,7 +14474,7 @@ function createOpenFnbFilterNoteElement() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    note.textContent = "Menampilkan semua order F&B yang masih open.";
+    note.textContent = "Menampilkan semua pesanan F&B yang belum selesai (belum ditagih maupun sudah ditagih).";
   } else if (isFbOrderRoomSelectable(selectedRoom)) {
     note.textContent = `Menampilkan order untuk sesi: ${selectedRoom.room_name}`;
   } else {
@@ -14450,7 +14493,7 @@ function createOpenFnbActionsElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-open-fnb-orders";
   refreshButton.disabled = isLoadingOpenFnbOrders;
-  refreshButton.textContent = isLoadingOpenFnbOrders ? "Memuat..." : "Refresh Order F&B";
+  refreshButton.textContent = isLoadingOpenFnbOrders ? "Memuat..." : "Muat Ulang Antrean";
 
   actions.appendChild(refreshButton);
 
@@ -14658,13 +14701,13 @@ function createTodayFnbSummaryElement(summary) {
   grid.className = "today-fnb-summary";
 
   [
-    ["Total Order", Number(summary.total_orders) || 0],
-    ["Open", Number(summary.open_orders) || 0],
-    ["Billed", Number(summary.billed_orders) || 0],
-    ["Dibatalkan", Number(summary.cancelled_orders) || 0],
-    ["Nilai Batal", formatCurrency(summary.cancelled_amount)],
-    ["Total F&B", formatCurrency(summary.total_amount)],
-  ].forEach(([labelText, valueText]) => {
+      ["Total Order", Number(summary.total_orders) || 0],
+      ["Belum Dibayar", Number(summary.open_orders) || 0],
+      ["Sudah Ditagih", Number(summary.billed_orders) || 0],
+      ["Dibatalkan", Number(summary.cancelled_orders) || 0],
+      ["Nilai Batal", formatCurrency(summary.cancelled_amount)],
+      ["Total Nilai F&B", formatCurrency(summary.total_amount)],
+    ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "today-fnb-summary-card";
 
@@ -14691,11 +14734,11 @@ function createTodayFnbToolbarElement() {
   statusFilter.className = "today-fnb-filter";
 
   [
-    ["all", "Semua"],
-    ["open", "Open"],
-    ["billed", "Billed"],
-    ["cancelled", "Dibatalkan"],
-  ].forEach(([status, labelText]) => {
+      ["all", "Semua"],
+      ["open", "Belum Dibayar"],
+      ["billed", "Sudah Ditagih"],
+      ["cancelled", "Dibatalkan"],
+    ].forEach(([status, labelText]) => {
     const button = document.createElement("button");
     button.className = status === todayFnbOrderStatusFilter
       ? "today-fnb-filter-button active"
@@ -14733,7 +14776,7 @@ function createTodayFnbToolbarElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-today-fnb-orders";
   refreshButton.disabled = isLoadingTodayFnbOrders;
-  refreshButton.textContent = isLoadingTodayFnbOrders ? "Memuat..." : "Refresh Riwayat F&B";
+  refreshButton.textContent = isLoadingTodayFnbOrders ? "Memuat..." : "Muat Ulang Riwayat F&B";
 
   actions.appendChild(refreshButton);
   toolbar.append(statusFilter, roomFilter, actions);
@@ -14900,14 +14943,14 @@ function createInventoryPanelElement() {
   const title = document.createElement("h2");
   title.className = "inventory-title";
   title.id = "inventory-title";
-  title.textContent = "Material Management & Stok";
+  title.textContent = "Stok & Material F&B";
 
   const subtitle = document.createElement("p");
   subtitle.className = "inventory-subtitle";
   if (getCurrentOperatorRole() === "inventory") {
     subtitle.textContent = "Posisi fisik barang di rak & kulkas. Untuk input barang masuk harian dari supplier, silakan gunakan menu Catat Barang Masuk.";
   } else {
-    subtitle.textContent = "Katalog inventaris, posisi fisik barang, dan kontrol penyesuaian stok real-time (SAP/Odoo View).";
+    subtitle.textContent = "Katalog barang, posisi fisik di rak & kulkas, serta penyesuaian stok secara real-time.";
   }
 
   const canManageMaster = ["owner", "manager", "inventory"].includes(getCurrentOperatorRole());
@@ -14922,7 +14965,7 @@ function createInventoryPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory";
   refreshButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "↻ Refresh Data";
+  refreshButton.textContent = isLoadingInventory ? "Memuat..." : "Segarkan Data";
 
   actions.append(refreshButton);
 
@@ -14932,7 +14975,7 @@ function createInventoryPanelElement() {
     addButton.type = "button";
     addButton.dataset.action = "open-add-inventory-item-modal";
     addButton.disabled = isLoadingInventory || !API_BASE_URL.trim();
-    addButton.textContent = "+ Tambah Item F&B Baru";
+    addButton.textContent = "Tambah Barang Baru";
     addButton.style.marginLeft = "8px";
     actions.append(addButton);
   }
@@ -14945,7 +14988,7 @@ function createInventoryPanelElement() {
   const searchInput = document.createElement("input");
   searchInput.className = "inventory-search-input erp-search-input";
   searchInput.type = "search";
-  searchInput.placeholder = "🔍 Cari barang: nama material, SKU/kode, kategori, status (misal: Jack Daniels, Anggur, Rendah)...";
+  searchInput.placeholder = "Cari barang: nama, kode SKU, kategori, atau status (misal: Jack Daniels, Anggur, Rendah)...";
   searchInput.value = inventorySearchQuery;
   searchInput.dataset.action = "search-inventory";
   searchInput.setAttribute("aria-label", "Cari stok barang");
@@ -14957,7 +15000,7 @@ function createInventoryPanelElement() {
     const clearBtn = document.createElement("button");
     clearBtn.className = "inventory-button erp-btn-secondary";
     clearBtn.type = "button";
-    clearBtn.textContent = "✕ Reset";
+    clearBtn.textContent = "Bersihkan";
     clearBtn.style.cssText = "padding: 8px 14px; border-radius: 8px;";
     clearBtn.onclick = () => setInventorySearchQuery("");
     searchToolbar.appendChild(clearBtn);
@@ -14971,7 +15014,7 @@ function createInventoryPanelElement() {
   if (!API_BASE_URL.trim()) {
     tableContainer.appendChild(createStateMessage("Stok F&B hanya tersedia saat terhubung ke server."));
   } else if (isLoadingInventory) {
-    tableContainer.appendChild(createStateMessage("Memuat katalog stok SAP/Odoo ERP..."));
+    tableContainer.appendChild(createStateMessage("Memuat katalog stok..."));
   } else if (inventoryItems.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
@@ -14980,7 +15023,7 @@ function createInventoryPanelElement() {
   } else if (filteredInventory.length === 0) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.style.cssText = "padding: 24px; text-align: center; color: #aaa;";
+    empty.style.cssText = "padding: 24px; text-align: center;";
     empty.textContent = `Barang dengan kata kunci "${inventorySearchQuery}" tidak ditemukan.`;
     tableContainer.appendChild(empty);
   } else {
@@ -15044,10 +15087,10 @@ function createInventorySummaryElement() {
   grid.className = "inventory-summary erp-kpi-grid";
 
   [
-    ["Total SKU Material", Number(summary.total_items) || 0, "neutral"],
-    ["Stok Safe / Normal", Number(summary.safe_items) || 0, "success"],
-    ["Alert Stok Rendah", Number(summary.low_items) || 0, "warning"],
-    ["Stok Out / Minus", Number(summary.negative_items) || 0, "critical"],
+    ["Total Barang", Number(summary.total_items) || 0, "neutral"],
+    ["Stok Aman", Number(summary.safe_items) || 0, "success"],
+    ["Stok Rendah", Number(summary.low_items) || 0, "warning"],
+    ["Stok Kosong / Minus", Number(summary.negative_items) || 0, "critical"],
   ].forEach(([labelText, valueText, tone]) => {
     const card = document.createElement("div");
     card.className = `inventory-summary-card erp-kpi-card tone-${tone}`;
@@ -15076,11 +15119,11 @@ function createInventoryErpTableElement(sourceItems = null) {
   const thead = document.createElement("thead");
   thead.innerHTML = `
     <tr>
-      <th>SKU / Item Code</th>
-      <th>Nama Material</th>
+      <th>Kode SKU</th>
+      <th>Nama Barang</th>
       <th>Kategori</th>
-      <th>Stok Aktual</th>
-      <th>Min. Stok</th>
+      <th>Stok Tersedia</th>
+      <th>Stok Minimum</th>
       <th>Status</th>
       ${canAdjustStock ? '<th style="text-align: right;">Aksi</th>' : ''}
     </tr>
@@ -15119,7 +15162,7 @@ function createInventoryErpTableElement(sourceItems = null) {
       editBtn.className = "erp-btn-rename-trigger";
       editBtn.type = "button";
       editBtn.title = `Ubah nama "${item.stock_item_name || item.stock_item_id}"`;
-      editBtn.innerHTML = "✏️";
+      editBtn.textContent = "Ubah";
 
       const startInlineEdit = () => {
         nameWrapper.style.display = "none";
@@ -15294,7 +15337,7 @@ function createInventoryErpTableElement(sourceItems = null) {
       const adjustBtn = document.createElement("button");
       adjustBtn.className = "erp-quick-adjust-btn";
       adjustBtn.type = "button";
-      adjustBtn.textContent = "Adjust / Restock";
+      adjustBtn.textContent = "Sesuaikan Stok";
       adjustBtn.onclick = () => {
         updateStockAdjustmentForm("stock_item_id", item.stock_item_id);
         focusStockAdjustmentField(".stock-adjustment-quantity");
@@ -15350,7 +15393,7 @@ function createStockAdjustmentPanelElement() {
   const form = document.createElement("div");
   form.className = "stock-adjustment-form";
 
-  const itemField = createStockAdjustmentFieldElement("Item Stok");
+  const itemField = createStockAdjustmentFieldElement("Barang");
   const itemSelect = document.createElement("select");
   itemSelect.className = "stock-adjustment-select stock-adjustment-item";
   itemSelect.dataset.action = "update-stock-adjustment-item";
@@ -15358,7 +15401,7 @@ function createStockAdjustmentPanelElement() {
 
   const emptyItemOption = document.createElement("option");
   emptyItemOption.value = "";
-  emptyItemOption.textContent = "Pilih item stok";
+  emptyItemOption.textContent = "Pilih barang";
   itemSelect.appendChild(emptyItemOption);
 
   const sortedAdjustmentItems = [...(inventoryItems || [])].sort((a, b) => {
@@ -15384,9 +15427,9 @@ function createStockAdjustmentPanelElement() {
   typeSelect.disabled = !API_BASE_URL.trim() || isSavingStockAdjustment;
 
   [
-    ["restock", "Tambah Stok (Restock)"],
-    ["set_stock", "Koreksi Stok Aktual"],
-    ["initial_stock", "👑 Revisi Stok Awal (Otorisasi Owner)"],
+    ["restock", "Tambah Stok (Barang Masuk)"],
+    ["set_stock", "Koreksi Jumlah Stok"],
+    ["initial_stock", "Revisi Stok Awal (Otorisasi Owner)"],
   ].forEach(([value, labelText]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -15492,7 +15535,7 @@ function createLastStockAdjustmentElement(adjustment) {
     ["Stok Sebelum", Number(movement.stock_before) || 0],
     ["Stok Sesudah", Number(movement.stock_after) || 0],
     ["Perubahan", Number(movement.qty_change) || 0],
-    ["Jenis Movement", getStockMovementTypeLabel(movement.movement_type)],
+    ["Jenis Perubahan", getStockMovementTypeLabel(movement.movement_type)],
     ["Catatan", movement.note || "-"],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
@@ -15557,7 +15600,7 @@ function getTodayStockMovementReferenceLabel(referenceType) {
   }
 
   if (referenceType === "stock_audit") {
-    return "Stock Opname";
+    return "Cek Fisik";
   }
 
   return referenceType || "-";
@@ -15675,7 +15718,7 @@ function createInboundGoodsPanelElement() {
 
   const title = document.createElement("h2");
   title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
-  title.innerHTML = `<span style="font-size: 26px;">📥</span> Catat Barang Masuk (Penerimaan dari Supplier)`;
+  title.textContent = "Catat Barang Masuk";
 
   const subtitle = document.createElement("p");
   subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
@@ -15690,7 +15733,7 @@ function createInboundGoodsPanelElement() {
 
   const docTitle = document.createElement("h3");
   docTitle.style.cssText = "margin: 0 0 16px 0; font-size: 15px; font-weight: 700; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.5px;";
-  docTitle.textContent = "📄 1. Informasi Surat Jalan & Toko / Distributor";
+  docTitle.textContent = "1. Informasi Surat Jalan & Toko / Distributor";
   docCard.appendChild(docTitle);
 
   const infoGrid = document.createElement("div");
@@ -15748,10 +15791,11 @@ function createInboundGoodsPanelElement() {
 
   const itemsTitle = document.createElement("h3");
   itemsTitle.style.cssText = "margin: 0; font-size: 15px; font-weight: 700; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px;";
-  itemsTitle.textContent = "📦 2. Rincian Barang yang Diterima";
+  itemsTitle.textContent = "2. Rincian Barang yang Diterima";
 
   const itemCountBadge = document.createElement("span");
   itemCountBadge.style.cssText = "background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.3);";
+  itemCountBadge.className = "inbound-row-count-badge";
   itemCountBadge.textContent = `${inboundGoodsForm.items.length} Baris Barang`;
 
   itemsHeader.append(itemsTitle, itemCountBadge);
@@ -15852,10 +15896,8 @@ function createInboundGoodsPanelElement() {
     const delBtn = document.createElement("button");
     delBtn.type = "button";
     delBtn.title = "Hapus baris ini";
-    delBtn.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; width: 34px; height: 34px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s;";
-    delBtn.innerHTML = "✕";
-    delBtn.onmouseenter = () => { delBtn.style.background = "#ef4444"; delBtn.style.color = "#fff"; };
-    delBtn.onmouseleave = () => { delBtn.style.background = "rgba(239, 68, 68, 0.1)"; delBtn.style.color = "#ef4444"; };
+    delBtn.className = "inbound-row-delete-btn";
+    delBtn.textContent = "Hapus";
     delBtn.onclick = () => {
       if (inboundGoodsForm.items.length > 1) {
         inboundGoodsForm.items.splice(index, 1);
@@ -15894,8 +15936,8 @@ function createInboundGoodsPanelElement() {
   submitBtn.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 16px 24px; border-radius: 10px; background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: 800; font-size: 16px; border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35); transition: transform 0.15s, box-shadow 0.15s;";
   submitBtn.disabled = isSavingInboundGoods;
   submitBtn.innerHTML = isSavingInboundGoods
-    ? `<span>⏳</span> Menyimpan ke Database Gudang...`
-    : `<span style="font-size: 18px;">📥</span> Simpan & Masukkan ke Stok Gudang`;
+    ? "Menyimpan ke Database Gudang..."
+    : "Simpan & Masukkan ke Stok Gudang";
 
   submitBtn.onmouseenter = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "translateY(-1px)"; };
   submitBtn.onmouseleave = () => { if (!isSavingInboundGoods) submitBtn.style.transform = "none"; };
@@ -15967,7 +16009,7 @@ function createStockConsumptionPanelElement() {
 
   const title = document.createElement("h2");
   title.style.cssText = "margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #f3f4f6; display: flex; align-items: center; gap: 10px;";
-  title.innerHTML = `<span style="font-size: 26px;">📤</span> Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)`;
+  title.textContent = "Rekapitulasi Barang Keluar (Terjual / Dipakai Shift Ini)";
 
   const subtitle = document.createElement("p");
   subtitle.style.cssText = "margin: 0; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.5;";
@@ -16061,7 +16103,7 @@ function createTodayStockMovementToolbarElement() {
     ["transaction", "Transaksi"],
     ["goods_receipt", "Barang Masuk"],
     ["manual_adjustment", "Manual Adjustment"],
-    ["stock_audit", "Stock Opname"],
+    ["stock_audit", "Cek Fisik"],
   ].forEach(([referenceType, labelText]) => {
     const button = document.createElement("button");
     button.className = referenceType === stockMovementReferenceFilter
@@ -16082,7 +16124,7 @@ function createTodayStockMovementToolbarElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-stock-movements";
   refreshButton.disabled = isLoadingStockMovements || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingStockMovements ? "Memuat..." : "Refresh Mutasi Stok";
+  refreshButton.textContent = isLoadingStockMovements ? "Memuat..." : "Segarkan Mutasi";
 
   actions.appendChild(refreshButton);
   toolbar.append(itemFilter, typeFilter, referenceFilter, actions);
@@ -16430,7 +16472,7 @@ function createRoomUsageReportPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-room-usage-report";
   refreshButton.disabled = isLoadingRoomUsageReport || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingRoomUsageReport ? "Memuat..." : "Refresh Laporan Room";
+  refreshButton.textContent = isLoadingRoomUsageReport ? "Memuat..." : "Segarkan Laporan Room";
 
   actions.appendChild(refreshButton);
   header.append(titleGroup, actions);
@@ -16709,11 +16751,11 @@ function createRoomOccupancySummaryElement(summary) {
     ["Total Room Aktif", `${summary.activeRoomCount} room`],
     ["Total Jam Tersedia", formatHours(summary.totalAvailableHours)],
     ["Total Jam Terpakai", formatDurationMinutesAndHours(summary.totalUsedMinutes)],
-    ["Occupancy Rate", formatPercent(summary.occupancyRate)],
+    ["Tingkat Okupansi", formatPercent(summary.occupancyRate)],
     ["Room Terproduktif", productiveLabel],
     ["Room Terendah Pemakaian", lowestLabel],
-    ["Revenue per Jam", formatCurrency(summary.revenuePerUsedHour)],
-    ["Total Session", `${summary.totalSessions} sesi`],
+    ["Pendapatan per Jam", formatCurrency(summary.revenuePerUsedHour)],
+    ["Total Sesi", `${summary.totalSessions} sesi`],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("article");
     card.className = "room-occupancy-summary-card";
@@ -16743,7 +16785,7 @@ function createRoomOccupancyTableElement(rows) {
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
 
-  ["Room", "Session", "Durasi", "Revenue", "Utilization", "Revenue/Jam", "Status"].forEach((labelText) => {
+  ["Room", "Sesi", "Durasi", "Pendapatan", "Pemakaian", "Pendapatan/Jam", "Status"].forEach((labelText) => {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = labelText;
@@ -16807,7 +16849,7 @@ function createRoomOccupancyElement() {
   const title = document.createElement("h2");
   title.className = "room-occupancy-title";
   title.id = "room-occupancy-title";
-  title.textContent = "Room Occupancy & Utilization";
+  title.textContent = "Pemakaian & Okupansi Room";
 
   const subtitle = document.createElement("p");
   subtitle.className = "room-occupancy-subtitle";
@@ -16820,7 +16862,7 @@ function createRoomOccupancyElement() {
   const summary = buildRoomOccupancySummary(rows);
 
   if (isLoadingRoomUsageReport) {
-    section.append(header, createStateMessage("Memuat occupancy room..."));
+    section.append(header, createStateMessage("Memuat pemakaian room..."));
     return section;
   }
 
@@ -17097,7 +17139,7 @@ function createFinanceOverviewMetricCard({ label, value, detail, tone = "neutral
 
     const hint = document.createElement("span");
     hint.className = "finance-card-action-hint";
-    hint.textContent = "🔍 Lihat Rincian";
+    hint.textContent = "Lihat Rincian";
     card.appendChild(hint);
   }
 
@@ -17399,7 +17441,7 @@ function createFinanceOverviewElement() {
   const title = document.createElement("h2");
   title.className = "finance-overview-title";
   title.id = "finance-overview-title";
-  title.textContent = `Ringkasan Keuangan Owner - ${getOwnerReportPeriodTitleSuffix()}`;
+  title.textContent = `Ringkasan Keuangan - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "finance-overview-subtitle";
@@ -17826,7 +17868,7 @@ function createOwnerDashboardElement() {
   const title = document.createElement("h2");
   title.className = "owner-dashboard-title";
   title.id = "owner-dashboard-title";
-  title.textContent = `Dashboard Owner - ${getOwnerReportPeriodTitleSuffix()}`;
+  title.textContent = `Ikhtisar Pemilik - ${getOwnerReportPeriodTitleSuffix()}`;
 
   const subtitle = document.createElement("p");
   subtitle.className = "owner-dashboard-subtitle";
@@ -17839,7 +17881,7 @@ function createOwnerDashboardElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-owner-dashboard";
   refreshButton.disabled = isLoadingOwnerDashboard || isLoadingOwnerReport || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Refresh Dashboard";
+  refreshButton.textContent = isLoadingOwnerDashboard || isLoadingOwnerReport ? "Memuat..." : "Segarkan Dashboard";
 
   header.append(titleGroup, refreshButton);
 
@@ -17872,27 +17914,27 @@ function createOwnerDashboardElement() {
       detail: `${Number(summary.total_sessions) || 0} sesi tercatat`,
     },
     {
-      label: "Paid Revenue",
+      label: "Sudah Dibayar",
       value: formatCurrency(summary.paid_revenue),
-      badgeText: "Paid",
+      badgeText: "Lunas",
       badgeTone: "success",
     },
     {
-      label: "Revenue Room",
+      label: "Penjualan Room",
       value: formatCurrency(summary.total_room_revenue),
     },
     {
-      label: "Revenue F&B",
+      label: "Penjualan F&B",
       value: formatCurrency(summary.total_fnb_revenue),
     },
     {
-      label: "Unpaid Revenue",
+      label: "Belum Dibayar",
       value: formatCurrency(summary.unpaid_revenue),
-      badgeText: "Unpaid",
+      badgeText: "Belum Lunas",
       badgeTone: Number(summary.unpaid_revenue) > 0 ? "warning" : "success",
     },
     {
-      label: "Total Session",
+      label: "Total Sesi",
       value: `${Number(summary.total_sessions) || 0} sesi`,
     },
     {
@@ -17924,7 +17966,7 @@ function createOwnerDashboardElement() {
   grid.appendChild(createOwnerDashboardListCard({
     label: "Sesi Aktif",
     value: `${activeSessions.length} room`,
-    badgeText: activeSessions.length > 0 ? "Room Occupied" : "Room Available",
+    badgeText: activeSessions.length > 0 ? "Room Terpakai" : "Room Kosong",
     badgeTone: activeSessions.length > 0 ? "danger" : "success",
     items: activeSessions,
     emptyText: "Semua room available.",
@@ -17996,7 +18038,7 @@ function createTodayFnbSalesReportPanelElement() {
     ["yesterday", "Kemarin"],
     ["last7days", "7 Hari Terakhir"],
     ["thismonth", "Bulan Ini"],
-    ["custom", "Pilih Tanggal (Custom)"],
+    ["custom", "Pilih Tanggal (Kustom)"],
   ].forEach(([val, lbl]) => {
     const opt = document.createElement("option");
     opt.value = val;
@@ -18082,12 +18124,12 @@ function createTodayFnbSalesReportPanelElement() {
   const statusLbl = document.createElement("label");
   statusLbl.style.fontSize = "12px";
   statusLbl.style.fontWeight = "bold";
-  statusLbl.textContent = "Status Order:";
+  statusLbl.textContent = "Status Pesanan:";
   const statusSelect = document.createElement("select");
   statusSelect.className = "duration-custom-input";
   [
-    ["billed", "Hanya Billed / Lunas"],
-    ["all", "Semua (Termasuk Open)"],
+    ["billed", "Hanya Sudah Ditagih / Lunas"],
+        ["all", "Semua (Termasuk Belum Dibayar)"],
   ].forEach(([val, lbl]) => {
     const opt = document.createElement("option");
     opt.value = val;
@@ -18119,7 +18161,7 @@ function createTodayFnbSalesReportPanelElement() {
   printThermalBtn.style.padding = "8px 16px";
   printThermalBtn.style.alignSelf = "flex-end";
   printThermalBtn.style.fontWeight = "bold";
-  printThermalBtn.textContent = "🧾 Cetak Struk (58mm)";
+  printThermalBtn.textContent = "Cetak Struk (58mm)";
   printThermalBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
   printThermalBtn.onclick = () => {
     fnbReportThermalPreviewVisible = true;
@@ -18132,7 +18174,7 @@ function createTodayFnbSalesReportPanelElement() {
   printBtn.style.padding = "8px 16px";
   printBtn.style.alignSelf = "flex-end";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "🖨️ Download / Cetak PDF";
+  printBtn.textContent = "Download / Cetak PDF";
   printBtn.disabled = isLoadingFnbSalesReport || todayFnbMenuSales.length === 0;
   printBtn.onclick = () => {
     showFnbReportPrintPreview();
@@ -18242,7 +18284,7 @@ function createFnbCategorySummaryElement(categorySummary = []) {
     const label = document.createElement("span");
     label.style.fontSize = "11px";
     label.style.color = "var(--muted)";
-    label.textContent = `${FNB_CATEGORY_ICONS[cat.category] || "📦"} ${cat.category}`;
+    label.textContent = `${FNB_CATEGORY_ICONS[cat.category] || ""} ${cat.category}`.trim();
 
     const value = document.createElement("strong");
     value.style.fontSize = "13px";
@@ -18628,7 +18670,7 @@ function createFnbReportPrintPreviewElement() {
         <div style="font-size: 9.5px; color: #333; display: flex; flex-direction: column; gap: 4px;">
           ${packageSales.length > 0 ? packageSales.map((pkg) => `
             <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 2px;">
-              <span>📦 <strong>${Number(pkg.quantity_sold ?? pkg.quantity ?? 1)}x</strong> ${escapeHtml(pkg.menu_name || "-")}</span>
+              <span><strong>${Number(pkg.quantity_sold ?? pkg.quantity ?? 1)}x</strong> ${escapeHtml(pkg.menu_name || "-")}</span>
               <strong style="color: #047857;">${formatCurrency(pkg.gross_sales ?? pkg.subtotal ?? 0)}</strong>
             </div>
           `).join("") : `<p style="margin: 0; color: #64748b; font-style: italic;">Tidak ada paket room/F&B terjual (semua pesanan satuan).</p>`}
@@ -18910,7 +18952,7 @@ function createFnbPhysicalConsumptionSectionElement(items = []) {
   title.style.display = "flex";
   title.style.alignItems = "center";
   title.style.gap = "8px";
-  title.innerHTML = `<span>📦</span> Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)`;
+  title.innerHTML = `Rekapitulasi Konsumsi Fisik Barang (Audit Gudang - Zero Leakage)`;
 
   const subtitle = document.createElement("p");
   subtitle.style.fontSize = "12px";
@@ -19083,7 +19125,7 @@ function getOpenFnbEmptyMessage() {
   const selectedRoom = getSelectedFbRoom();
 
   if (!selectedRoom) {
-    return "Belum ada open order F&B.";
+    return "Belum ada pesanan F&B yang belum selesai.";
   }
 
   if (!isFbOrderRoomSelectable(selectedRoom)) {
@@ -19232,7 +19274,7 @@ function createCashierClosingHistoryElement() {
   const title = document.createElement("h3");
   title.className = "cashier-closing-history-title";
   title.id = "cashier-closing-history-title";
-  title.textContent = `Riwayat Closing - ${getTransactionPeriodTitleSuffix()}`;
+  title.textContent = `Riwayat Tutup Kasir - ${getTransactionPeriodTitleSuffix()}`;
 
   header.appendChild(title);
 
@@ -19640,6 +19682,14 @@ function formatClosingClock(value) {
     minute: "2-digit",
     hour12: false,
   }).format(date).replace(".", ":");
+}
+
+function formatOperationalDateId(isoDate) {
+  const parts = String(isoDate || "").split("-");
+  if (parts.length !== 3) {
+    return String(isoDate || "-");
+  }
+  return `${parts[2]}-${parts[1]}-${parts[0]}`;
 }
 
 function formatClosingDate(value) {
@@ -20505,11 +20555,11 @@ function createStockSubNavElement() {
   nav.setAttribute("aria-label", "Sub menu stok");
 
   [
-    ["position", "📦 Sisa Stok di Rak"],
-    ["inbound", "📥 Catat Barang Masuk"],
-    ["consumption", "📤 Barang Keluar (Penjualan)"],
-    ["movements", "📋 Riwayat Keluar-Masuk"],
-    ["opname", "📝 Cek Fisik (Stock Opname)"],
+    ["position", "Sisa Stok di Rak"],
+    ["inbound", "Catat Barang Masuk"],
+    ["consumption", "Barang Keluar (Penjualan)"],
+    ["movements", "Riwayat Keluar-Masuk"],
+    ["opname", "Cek Fisik (Opname)"],
   ].forEach(([key, label]) => {
     const button = document.createElement("button");
     button.className = key === activeStockSubTab ? "stock-subnav-button active" : "stock-subnav-button";
@@ -20535,7 +20585,7 @@ function createInventoryAuditPanelElement() {
   const title = document.createElement("h2");
   title.className = "stock-movements-title";
   title.id = "inventory-audit-title";
-  title.textContent = "Stock Opname Outlet";
+  title.textContent = "Cek Fisik Stok (Opname)";
 
   const subtitle = document.createElement("p");
   subtitle.className = "stock-movements-subtitle";
@@ -20551,14 +20601,14 @@ function createInventoryAuditPanelElement() {
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-inventory-audits";
   refreshButton.disabled = isLoadingInventoryAudits || !API_BASE_URL.trim();
-  refreshButton.textContent = isLoadingInventoryAudits ? "Memuat..." : "Refresh";
+  refreshButton.textContent = isLoadingInventoryAudits ? "Memuat..." : "Segarkan";
 
   const newButton = document.createElement("button");
   newButton.className = "stock-movements-button";
   newButton.type = "button";
   newButton.dataset.action = "create-inventory-audit";
   newButton.disabled = isSavingInventoryAudit || isLoadingInventoryAudits || !API_BASE_URL.trim();
-  newButton.textContent = isSavingInventoryAudit ? "Memproses..." : "+ Mulai Stock Opname";
+  newButton.textContent = isSavingInventoryAudit ? "Memproses..." : "Mulai Cek Fisik";
 
   actions.append(refreshButton, newButton);
   header.append(titleGroup, actions);
@@ -20583,10 +20633,10 @@ function createInventoryAuditSummaryElement() {
   grid.className = "stock-movements-summary inventory-audit-summary";
 
   [
-    ["Total Item", Number(summary.total_items) || 0],
+    ["Total Barang", Number(summary.total_items) || 0],
     ["Sudah Dihitung", Number(summary.counted_items) || 0],
-    ["Item Berbeda", Number(summary.variance_items) || 0],
-    ["Total Beda Absolut", Number(summary.absolute_variance_qty) || 0],
+    ["Barang Berbeda", Number(summary.variance_items) || 0],
+    ["Total Selisih", Number(summary.absolute_variance_qty) || 0],
   ].forEach(([labelText, valueText]) => {
     const card = document.createElement("div");
     card.className = "stock-movements-summary-card";
@@ -20611,16 +20661,16 @@ function createInventoryAuditWorkspaceElement() {
   wrapper.className = "inventory-audit-workspace";
 
   if (!API_BASE_URL.trim()) {
-    wrapper.appendChild(createStateMessage("Stock Opname hanya tersedia saat terhubung ke server."));
+    wrapper.appendChild(createStateMessage("Cek fisik stok hanya tersedia saat terhubung ke server."));
     return wrapper;
   }
 
   wrapper.appendChild(createInventoryAuditListElement());
 
   if (isLoadingInventoryAudits && !selectedInventoryAudit) {
-    wrapper.appendChild(createStateMessage("Memuat data Stock Opname..."));
+    wrapper.appendChild(createStateMessage("Memuat data cek fisik..."));
   } else if (!selectedInventoryAudit) {
-    wrapper.appendChild(createStateMessage("Belum ada Stock Opname dipilih. Klik Mulai Stock Opname untuk audit baru."));
+    wrapper.appendChild(createStateMessage("Belum ada sesi cek fisik dipilih. Klik Mulai Cek Fisik untuk memulai."));
   } else {
     wrapper.appendChild(createInventoryAuditDetailElement());
   }
@@ -20634,7 +20684,7 @@ function createInventoryAuditListElement() {
 
   const title = document.createElement("h3");
   title.className = "stock-adjustment-title";
-  title.textContent = "Riwayat Opname";
+  title.textContent = "Riwayat Cek Fisik";
   aside.appendChild(title);
 
   if (inventoryAudits.length === 0) {
@@ -20902,14 +20952,14 @@ function createInventoryAuditActionsElement() {
   submitButton.type = "button";
   submitButton.dataset.action = "submit-inventory-audit";
   submitButton.disabled = isSavingInventoryAudit || !["draft", "counting"].includes(status);
-  submitButton.textContent = "Submit ke Pemeriksa";
+  submitButton.textContent = "Kirim ke Pemeriksa";
 
   const approveButton = document.createElement("button");
   approveButton.className = "stock-adjustment-button";
   approveButton.type = "button";
   approveButton.dataset.action = "approve-inventory-audit";
   approveButton.disabled = isSavingInventoryAudit || status !== "submitted";
-  approveButton.textContent = "Approve & Posting";
+  approveButton.textContent = "Setujui & Terapkan";
 
   actions.append(saveButton, submitButton, approveButton);
   return actions;
@@ -20933,10 +20983,10 @@ function getInventoryAuditReasonOptions() {
 
 function getInventoryAuditStatusLabel(status) {
   const labels = {
-    draft: "Draft",
-    counting: "Counting",
-    submitted: "Menunggu Approval",
-    posted: "Posted",
+    draft: "Draf",
+    counting: "Sedang Dihitung",
+    submitted: "Menunggu Persetujuan",
+    posted: "Sudah Diterapkan",
   };
 
   return labels[status] || status || "-";
@@ -31082,7 +31132,7 @@ function createLcMasterSubTabElement() {
   bulkBtn.style.display = "inline-flex";
   bulkBtn.style.alignItems = "center";
   bulkBtn.style.gap = "6px";
-  bulkBtn.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+  bulkBtn.textContent = "Ubah Tarif Semua LC";
   bulkBtn.onclick = () => {
     const activeLcs = Array.isArray(lcs) ? lcs.filter(l => l.status === "active") : [];
     const sampleRate = activeLcs.length > 0 ? (Number(activeLcs[0].rate_per_hour || activeLcs[0].rate_per_room) || 130000) : 130000;
@@ -31130,7 +31180,7 @@ function createLcMasterSubTabElement() {
       <th>ID LC</th>
       <th>Nama Panggilan</th>
       <th>Tarif / Jam</th>
-      <th>Status Keaktifan</th>
+      <th>Status</th>
       <th>Ketersediaan</th>
       <th style="text-align: center;">Aksi</th>
     </tr>
@@ -31163,9 +31213,11 @@ function createLcMasterSubTabElement() {
       <td>${formatCurrency(lc.rate_per_room)}</td>
       <td><span class="${statusClass}">${statusText}</span></td>
       <td><span class="${availClass}">${availText}</span></td>
-      <td style="text-align: center; display: flex; justify-content: center; gap: 8px;">
+      <td class="lc-actions-cell">
+        <div class="lc-actions-group">
         <button type="button" class="erp-btn erp-btn-secondary btn-edit-lc" style="padding: 4px 8px; font-size: 12px;" data-id="${lc.lc_id}">Edit</button>
-        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" style="padding: 4px 8px; font-size: 12px; background-color: var(--color-danger); color: #fff;" data-id="${lc.lc_id}">Hapus</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-delete-lc" data-id="${lc.lc_id}">Hapus</button>
+        </div>
       </td>
     `;
 
@@ -31197,7 +31249,7 @@ function createLcMasterSubTabElement() {
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "erp-btn erp-btn-secondary";
-    prevBtn.textContent = "«";
+    prevBtn.textContent = "Sebelumnya";
     prevBtn.disabled = lcMasterPage === 1;
     prevBtn.onclick = () => {
       lcMasterPage--;
@@ -31206,12 +31258,12 @@ function createLcMasterSubTabElement() {
 
     const label = document.createElement("span");
     label.style.fontSize = "14px";
-    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages}`;
+    label.textContent = `Halaman ${lcMasterPage} dari ${totalPages} (${lcs.length} data)`;
 
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.className = "erp-btn erp-btn-secondary";
-    nextBtn.textContent = "»";
+    nextBtn.textContent = "Berikutnya";
     nextBtn.disabled = lcMasterPage === totalPages;
     nextBtn.onclick = () => {
       lcMasterPage++;
@@ -31373,7 +31425,7 @@ function createLcReportsSubTabElement() {
   printThermalBtn.style.padding = "8px 16px";
   printThermalBtn.style.alignSelf = "flex-end";
   printThermalBtn.style.fontWeight = "bold";
-  printThermalBtn.textContent = "🖨️ Cetak Rekap (58mm)";
+  printThermalBtn.textContent = "Cetak Rekap (58mm)";
   printThermalBtn.disabled = isLoadingLcWorkReports || lcWorkReports.length === 0;
   printThermalBtn.onclick = async () => {
     const sortedReports = getSortedLcWorkReports();
@@ -31478,7 +31530,7 @@ function createLcReportsSubTabElement() {
       <td><strong>${formatCurrency(rep.gross_earning_total ?? rep.total_earnings)}</strong></td>
       <td style="text-align: center; display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
         <button type="button" class="erp-btn erp-btn-secondary btn-detail-lc-logs" style="padding: 4px 8px; font-size: 12px;">Lihat Rincian</button>
-        <button type="button" class="erp-btn erp-btn-secondary btn-print-lc-slip" style="padding: 4px 8px; font-size: 12px;">🖨️ Cetak Slip</button>
+        <button type="button" class="erp-btn erp-btn-secondary btn-print-lc-slip" style="padding: 4px 8px; font-size: 12px;">Cetak Slip</button>
       </td>
     `;
 
@@ -31514,7 +31566,7 @@ function createLcReportsSubTabElement() {
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "erp-btn erp-btn-secondary";
-    prevBtn.textContent = "«";
+    prevBtn.textContent = "Sebelumnya";
     prevBtn.disabled = lcReportsPage === 1;
     prevBtn.onclick = () => {
       lcReportsPage--;
@@ -31528,7 +31580,7 @@ function createLcReportsSubTabElement() {
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.className = "erp-btn erp-btn-secondary";
-    nextBtn.textContent = "»";
+    nextBtn.textContent = "Berikutnya";
     nextBtn.disabled = lcReportsPage === totalPages;
     nextBtn.onclick = () => {
       lcReportsPage++;
@@ -31778,7 +31830,7 @@ function createLcFinanceSubTabElement() {
   refreshBtn.className = "erp-btn erp-btn-secondary";
   refreshBtn.style.padding = "8px 12px";
   refreshBtn.disabled = isLoadingLcFinance;
-  refreshBtn.textContent = isLoadingLcFinance ? "Memuat..." : "Refresh";
+  refreshBtn.textContent = isLoadingLcFinance ? "Memuat..." : "Segarkan";
   refreshBtn.onclick = () => loadLcFinanceSummary();
 
   toolbar.append(titleGroup, refreshBtn);
@@ -31796,8 +31848,8 @@ function createLcFinanceSubTabElement() {
   metricGrid.style.gap = "12px";
   metricGrid.append(
     createLcFinanceMetric("Saldo Petty Cash", summary.petty_cash_balance, true),
-    createLcFinanceMetric("Cash In Hari Ini", summary.petty_cash_in_total),
-    createLcFinanceMetric("Cash Out Hari Ini", summary.petty_cash_out_total),
+    createLcFinanceMetric("Kas Masuk Hari Ini", summary.petty_cash_in_total),
+    createLcFinanceMetric("Kas Keluar Hari Ini", summary.petty_cash_out_total),
     createLcFinanceMetric("Kasbon LC Hari Ini", summary.cash_advance_total),
     createLcFinanceMetric("Bonus Sales LC Hari Ini", summary.sales_bonus_total)
   );
@@ -31864,8 +31916,8 @@ function createLcFinanceSubTabElement() {
   const pettyType = document.createElement("select");
   pettyType.className = "duration-payment-select";
   pettyType.innerHTML = `
-    <option value="cash_in" ${pettyCashForm.entry_type === "cash_in" ? "selected" : ""}>Cash In</option>
-    <option value="cash_out" ${pettyCashForm.entry_type === "cash_out" ? "selected" : ""}>Cash Out</option>
+    <option value="cash_in" ${pettyCashForm.entry_type === "cash_in" ? "selected" : ""}>Kas Masuk</option>
+    <option value="cash_out" ${pettyCashForm.entry_type === "cash_out" ? "selected" : ""}>Kas Keluar</option>
   `;
   pettyType.onchange = (event) => {
     pettyCashForm.entry_type = event.target.value;
@@ -32084,7 +32136,7 @@ function createLcPayrollSubTabElement() {
 
   summaryBox.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Net Payout Payroll:</span>
+      <span style="font-size:12px; color:var(--muted)">Gaji Bersih Payroll:</span>
       <strong style="font-size:18px; color:var(--gold)">${formatCurrency(totalAmount)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32092,7 +32144,7 @@ function createLcPayrollSubTabElement() {
       <strong style="font-size:18px;">${formatCurrency(totalRoomEarning)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Bonus Sales:</span>
+      <span style="font-size:12px; color:var(--muted)">Bonus Penjualan:</span>
       <strong style="font-size:18px;">${formatCurrency(totalSalesBonus)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32104,11 +32156,11 @@ function createLcPayrollSubTabElement() {
       <strong style="font-size:18px;">${formatCurrency(totalCashAdvanceOutstanding)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Gross Earning:</span>
+      <span style="font-size:12px; color:var(--muted)">Penghasilan Bruto:</span>
       <strong style="font-size:18px;">${formatCurrency(totalGross)}</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Total Sesi / Job:</span>
+      <span style="font-size:12px; color:var(--muted)">Total Sesi:</span>
       <strong style="font-size:18px;">${totalSessions} Sesi</strong>
     </div>
     <div style="display:flex; flex-direction:column; gap:4px;">
@@ -32138,10 +32190,10 @@ function createLcPayrollSubTabElement() {
           <th>Tarif per Jam</th>
           <th style="text-align: center;">Total Sesi Pending</th>
           <th>Gaji Room</th>
-          <th>Bonus Sales</th>
+          <th>Bonus Penjualan</th>
           <th>Kasbon</th>
           <th>Sisa Kasbon</th>
-          <th>Net Payout</th>
+          <th>Gaji Bersih</th>
         </tr>
       </thead>
       <tbody>
@@ -32180,7 +32232,7 @@ function createLcPayrollSubTabElement() {
           ["Periode", `${lcPayrollStartDate || "-"} s/d ${lcPayrollEndDate || "-"}`],
           ["Jumlah LC", `${lcPayrollPendingReports.length} LC`],
           ["Total Sesi", `${lcPayrollPendingReports.reduce((sum, report) => sum + (Number(report.total_sessions) || 0), 0)} sesi`],
-          ["Net Payout", formatCurrency(totalAmount)],
+          ["Gaji Bersih", formatCurrency(totalAmount)],
         ],
         confirmLabel: "Proses Pembayaran",
         cancelLabel: "Periksa Lagi",
@@ -32219,7 +32271,7 @@ function createLcPayrollSubTabElement() {
         <tr>
           <th>ID Payroll</th>
           <th>Periode Kerja</th>
-          <th>Net Payout</th>
+          <th>Gaji Bersih</th>
           <th style="text-align: center;">Total Sesi</th>
           <th style="text-align: center;">LC Terbayar</th>
           <th>Tanggal Diproses</th>
@@ -32421,7 +32473,7 @@ function createLcSlipModalOverlay() {
   printBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
   printBtn.style.padding = "8px 16px";
   printBtn.style.fontWeight = "bold";
-  printBtn.textContent = "🖨️ Cetak Slip (58mm)";
+  printBtn.textContent = "Cetak Slip (58mm)";
   printBtn.onclick = async () => {
     await printThermalText(formattedSlipText);
   };
@@ -32659,7 +32711,7 @@ function createEditLcModalOverlay() {
   statusField.style.flexDirection = "column";
   statusField.style.gap = "4px";
   statusField.innerHTML = `
-    <label style="font-size: 12px; color: var(--muted);">Status Keaktifan:</label>
+    <label style="font-size: 12px; color: var(--muted);">Status:</label>
     <select class="duration-payment-select text-select-status" style="width: 100%;">
       <option value="active" ${editLcForm.status === "active" ? "selected" : ""}>Aktif</option>
       <option value="inactive" ${editLcForm.status === "inactive" ? "selected" : ""}>Tidak Aktif</option>
@@ -32805,10 +32857,7 @@ function createDeleteLcModalOverlay() {
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
-  deleteBtn.className = "erp-btn";
-  deleteBtn.style.backgroundColor = "var(--color-danger)";
-  deleteBtn.style.color = "#fff";
-  deleteBtn.style.fontWeight = "bold";
+  deleteBtn.className = "erp-btn lc-danger-btn";
   deleteBtn.textContent = isDeletingLc ? "Menghapus..." : "Hapus Permanen (Manager)";
   deleteBtn.disabled = isDeletingLc;
   deleteBtn.onclick = () => {
@@ -32920,7 +32969,7 @@ function createBulkUpdateLcRateModalOverlay() {
   title.style.display = "flex";
   title.style.alignItems = "center";
   title.style.gap = "8px";
-  title.innerHTML = `<span>⚡</span> Ubah Tarif Semua LC`;
+  title.textContent = "Ubah Tarif Semua LC";
 
   const desc = document.createElement("p");
   desc.style.margin = "0";
@@ -33365,11 +33414,11 @@ function createFnbSubNavElement() {
   wrapper.setAttribute("aria-label", "Sub menu F&B");
 
   [
-    ["order", "🛒 Pesan Menu", "Input order F&B baru untuk room"],
-    ["open", "⏳ Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
-    ["history", "📜 Riwayat F&B", "Lihat seluruh transaksi pesanan F&B"],
-    ["report", "📊 Laporan Penjualan", "Rekapitulasi penjualan barang F&B dan cetak laporan"],
-  ].forEach(([key, label, description]) => {
+      ["order", "Pesan Menu", "Input order F&B baru untuk room"],
+      ["open", "Antrean F&B", "Pantau pesanan F&B yang sedang diproses"],
+      ["history", "Riwayat F&B", "Lihat seluruh transaksi pesanan F&B"],
+      ["report", "Laporan Penjualan", "Rekapitulasi penjualan barang F&B dan cetak laporan"],
+    ].forEach(([key, label, description]) => {
     const button = document.createElement("button");
     button.className = activeFnbSubTab === key
       ? "fnb-subnav-button active"
@@ -33397,12 +33446,12 @@ function createTransactionsSubNavElement() {
   wrapper.setAttribute("aria-label", "Sub menu Transaksi");
 
   const transactionTabs = [
-    ["history", "📑 Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
-    ["closing", "💵 Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
+    ["history", "Riwayat Transaksi", "Cari dan lihat seluruh transaksi hari ini"],
+    ["closing", "Shift Kasir (Shift Aktif)", "Pantau omzet berjalan kasir dan proses Tutup Shift"],
   ];
 
   if (getCurrentOperatorRole() === "owner") {
-    transactionTabs.push(["manual", "Input Manual", "Masukkan transaksi backdate saat operasional mati listrik"]);
+    transactionTabs.push(["manual", "Input Manual (Mati Listrik)", "Masukkan transaksi backdate saat operasional mati listrik"]);
   }
 
   transactionTabs.forEach(([key, label, description]) => {
@@ -33500,7 +33549,7 @@ function getManualTransactionOperationalPeriod(draft = ensureManualTransactionDr
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   return {
     operationalDate: date,
-    label: formatClosingDate(date),
+    label: formatOperationalDateId(date),
   };
 }
 
@@ -33525,7 +33574,7 @@ function createManualTransactionPanelElement() {
   panel.className = "manual-transaction-panel";
   panel.innerHTML = `
     <header class="manual-transaction-heading">
-      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus owner. Semua harga diambil dari data master.</p></div>
+      <div><h3>Pemulihan Transaksi Mati Listrik</h3><p>Khusus pemilik. Semua harga diambil dari data master.</p></div>
       <span class="manual-transaction-owner-badge">OWNER</span>
     </header>
     <div class="manual-transaction-mode">
@@ -33533,7 +33582,7 @@ function createManualTransactionPanelElement() {
       <button type="button" data-action="set-manual-transaction-mode" data-mode="general_fnb">F&amp;B Umum</button>
     </div>
     <div class="manual-transaction-fields">
-      <label><span>Tanggal Nota / Periode</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
+      <label><span>Tanggal Nota</span><input type="date" data-action="update-manual-transaction" data-field="date"></label>
       <label><span>Jam Mulai</span><input type="time" data-action="update-manual-transaction" data-field="time"></label>
       <label><span>Metode Bayar</span><select data-action="update-manual-transaction" data-field="payment_method"></select></label>
       <label><span>Status</span><select data-action="update-manual-transaction" data-field="payment_status"></select></label>
@@ -33576,7 +33625,7 @@ function createManualTransactionPanelElement() {
   setValue("customer_name", draft.customer_name);
   setValue("cashier_name", draft.cashier_name);
   setValue("source_note", draft.source_note);
-  fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Cash"], ["transfer", "Transfer"]], draft.payment_method);
+  fillManualSelect(panel.querySelector("[data-field='payment_method']"), [["cash", "Tunai"], ["transfer", "Transfer"]], draft.payment_method);
   fillManualSelect(panel.querySelector("[data-field='payment_status']"), [["paid", "Lunas"], ["unpaid", "Belum Dibayar"]], draft.payment_status);
   const operationalPeriod = getManualTransactionOperationalPeriod(draft);
   const operationalPeriodBox = panel.querySelector(".manual-operational-period");
@@ -33584,7 +33633,7 @@ function createManualTransactionPanelElement() {
     const title = document.createElement("strong");
     title.textContent = `Masuk periode operasional ${operationalPeriod.label}`;
     const detail = document.createElement("span");
-    detail.textContent = "Khusus input manual, Tanggal Nota menjadi periode tujuan owner. Cutoff tetap berlaku untuk transaksi otomatis.";
+    detail.textContent = "Khusus input manual, tanggal nota menjadi periode tujuan pemilik. Cutoff tetap berlaku untuk transaksi otomatis.";
     operationalPeriodBox.append(title, detail);
   } else {
     operationalPeriodBox.textContent = "Isi tanggal nota dan jam mulai untuk melihat periode operasional.";
@@ -33612,7 +33661,7 @@ function createManualTransactionPanelElement() {
     roomFields.remove();
     lcDetail.remove();
   }
-  panel.querySelector(".manual-customer-label").textContent = draft.mode === "room" ? "Nama Tamu / Tuan" : "Nama Pelanggan";
+  panel.querySelector(".manual-customer-label").textContent = draft.mode === "room" ? "Nama Tamu" : "Nama Pelanggan";
 
   const menuSelect = panel.querySelector("[data-field='selected_menu_id']");
   fillManualSelect(
@@ -33785,6 +33834,62 @@ function createReportsSubTabContentElement() {
   return wrapper;
 }
 
+function createRoomSummaryElement() {
+  const wrapper = document.createElement("section");
+  wrapper.className = "rooms-summary";
+  wrapper.setAttribute("aria-label", "Ringkasan status ruangan");
+
+  const counts = new Map();
+  rooms.forEach((room) => {
+    const key = VALID_ROOM_STATUS_KEYS.has(room.status) ? room.status : "unknown";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+
+  const total = rooms.length;
+  const totalCard = document.createElement("button");
+  totalCard.type = "button";
+  totalCard.className = roomStatusFilter === "all" ? "rooms-summary-card active" : "rooms-summary-card";
+  totalCard.dataset.action = "filter-rooms-status";
+  totalCard.dataset.status = "all";
+  totalCard.setAttribute("aria-pressed", String(roomStatusFilter === "all"));
+  totalCard.innerHTML = `<span class="rooms-summary-label">Semua Ruangan</span><span class="rooms-summary-value">${total}</span>`;
+  wrapper.appendChild(totalCard);
+
+  const order = ["occupied", "waiting_payment", "paid_waiting_start", "booked", "cleaning", "maintenance", "available"];
+  order.forEach((status) => {
+    const count = counts.get(status) || 0;
+    // Hanya tampilkan status yang benar-benar ada, supaya baris ringkasan tidak
+    // penuh nol saat venue sedang lengang.
+    if (count === 0 && status !== "available" && status !== "occupied") {
+      return;
+    }
+    const card = document.createElement("button");
+        card.type = "button";
+        const tone = getRoomStatusTone(status);
+        card.className = [
+          "rooms-summary-card",
+          `tone-${tone}`,
+          count === 0 ? "is-zero" : "",
+          roomStatusFilter === status ? "active" : "",
+        ].filter(Boolean).join(" ");
+    card.dataset.action = "filter-rooms-status";
+    card.dataset.status = status;
+    card.setAttribute("aria-pressed", String(roomStatusFilter === status));
+    card.innerHTML = `<span class="rooms-summary-label">${getStatusLabel(status)}</span><span class="rooms-summary-value">${count}</span>`;
+    wrapper.appendChild(card);
+  });
+
+  return wrapper;
+}
+
+function getFilteredRooms() {
+  if (!roomStatusFilter || roomStatusFilter === "all") {
+    return rooms;
+  }
+
+  return rooms.filter((room) => (VALID_ROOM_STATUS_KEYS.has(room.status) ? room.status : "unknown") === roomStatusFilter);
+}
+
 function appendDashboardTabContent(panel, tabKey) {
   switch (tabKey) {
     case "rooms": {
@@ -33797,20 +33902,27 @@ function appendDashboardTabContent(panel, tabKey) {
       }
 
       const roomsContainer = document.createElement("div");
-      roomsContainer.className = "rooms-tab-grid";
+            roomsContainer.className = "rooms-tab-grid";
 
-      if (roomsLoading) {
-        roomsContainer.appendChild(createStateMessage("Memuat data ruangan..."));
-      } else {
-        rooms.forEach((room) => {
-          roomsContainer.appendChild(createRoomCard(room));
-        });
-      }
+            if (roomsLoading) {
+              roomsContainer.appendChild(createStateMessage("Memuat data ruangan..."));
+            } else {
+              panel.appendChild(createRoomSummaryElement());
 
-      panel.appendChild(roomsContainer);
-      break;
-    }
-    case "fnb": {
+              const visibleRooms = getFilteredRooms();
+              if (visibleRooms.length === 0) {
+                roomsContainer.appendChild(createStateMessage("Tidak ada ruangan dengan status ini."));
+              } else {
+                visibleRooms.forEach((room) => {
+                  roomsContainer.appendChild(createRoomCard(room));
+                });
+              }
+            }
+
+            panel.appendChild(roomsContainer);
+            break;
+          }
+          case "fnb": {
         // Insert sub-navigation for F&B
         panel.appendChild(createFnbSubNavElement());
         // Render content based on selected sub-tab
@@ -37254,6 +37366,13 @@ async function handleRoomAction(event) {
   const action = button.dataset.action;
   const roomId = card?.dataset.roomId;
 
+  if (action === "filter-rooms-status") {
+    const next = button.dataset.status || "all";
+    roomStatusFilter = roomStatusFilter === next && next !== "all" ? "all" : next;
+    renderRooms();
+    return;
+  }
+
   if (action === "toggle-transaction-menu") {
     event.stopPropagation();
     const menuWrapper = button.closest(".transaction-menu-wrapper");
@@ -38409,6 +38528,16 @@ async function handleRoomAction(event) {
 
   if (action === "apply-transaction-custom-period") {
     await applyTransactionCustomPeriod();
+    return;
+  }
+
+  if (action === "scroll-menu-categories") {
+    const bar = button.closest(".menu-category-bar");
+    const list = bar?.querySelector(".menu-category-filter");
+    if (list) {
+      const direction = Number(button.dataset.direction) || 1;
+      list.scrollBy({ left: direction * Math.max(240, list.clientWidth * 0.6), behavior: "smooth" });
+    }
     return;
   }
 

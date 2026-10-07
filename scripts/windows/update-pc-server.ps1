@@ -5,6 +5,12 @@ $serverDir = Join-Path $repoRoot "server"
 $envFile = Join-Path $serverDir ".env"
 $healthUrl = "http://localhost:3000/exec?action=health"
 
+$gitExe = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+if (-not $gitExe) { $gitExe = (Get-Command git -ErrorAction SilentlyContinue).Source }
+if (-not $gitExe) {
+  throw "Perintah 'git' tidak ditemukan di PATH. Pasang Git for Windows lebih dulu sebelum memakai UPDATE-APP."
+}
+
 Write-Host "============================================================"
 Write-Host " HAPPY SONG POS - UPDATE PC SERVER LOKAL"
 Write-Host "============================================================"
@@ -36,7 +42,21 @@ foreach ($portPid in $portUsers) {
 Write-Host ""
 Write-Host "Update kode dari GitHub..."
 Set-Location $repoRoot
+
+$branch = (git rev-parse --abbrev-ref HEAD).Trim()
+Write-Host "Branch aktif    : $branch"
+
+$upstream = (git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null)
+if (-not $upstream) {
+  throw "Branch '$branch' belum punya upstream (belum terhubung ke GitHub). Jalankan sekali: git push -u origin $branch"
+}
+Write-Host "Sumber pembaruan: $upstream"
+
 git pull --ff-only
+if ($LASTEXITCODE -ne 0) {
+  throw "git pull GAGAL di branch '$branch'. Biasanya karena riwayat bercabang atau ada berkas lokal yang bentrok dengan perubahan dari GitHub. Perbaiki dulu (commit/stash) lalu ulangi UPDATE-APP."
+}
+Write-Host "Kode berhasil disamakan dengan GitHub."
 
 Write-Host ""
 Write-Host "Install/update dependency server..."
