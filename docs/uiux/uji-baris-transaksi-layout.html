@@ -49,32 +49,33 @@
 </div>
 </article><article class="transaction-row">
 <div class="transaction-cell transaction-id-cell"><p class="transaction-label">ID Transaksi</p>
-<p class="transaction-value">TRX-20261008-0001</p>
+<p class="transaction-value">TRX-1791400033332</p>
 </div>
 <div class="transaction-cell"><p class="transaction-label">Ruangan</p>
-<p class="transaction-value">VIP 3</p>
+<p class="transaction-value">VIP 8</p>
 </div>
 <div class="transaction-cell"><p class="transaction-label">Durasi</p>
-<p class="transaction-value">90 menit</p>
+<p class="transaction-value">180 menit</p>
 </div>
-<div class="transaction-cell"><p class="transaction-label">Biaya Paket</p>
-<p class="transaction-value">Rp 350.000</p>
+<div class="transaction-cell"><p class="transaction-label">Biaya Room</p>
+<p class="transaction-value">Rp 0</p>
 </div>
 <div class="transaction-cell transaction-lc-cell"><p class="transaction-label">Jasa LC</p>
-<p class="transaction-value">Rp 135.000</p>
+<p class="transaction-value">Rp 2.400.000</p>
+<span class="transaction-lc-badge">20 jam • Sania (2j), Eka (2j), Resma (2j).</span>
 </div>
-<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">F&B</p>
-<p class="transaction-value">Rp 45.000</p>
+<div class="transaction-cell"><p class="transaction-label">F&B</p>
+<p class="transaction-value">Rp 1.088.000</p>
+</div>
+<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">Total Akhir</p>
+<p class="transaction-value">Rp 3.488.000</p>
 <div class="transaction-badges-stack"><span class="transaction-fnb-badge status-badge warning">Termasuk F&amp;B</span></div>
-</div>
-<div class="transaction-cell"><p class="transaction-label">Total Akhir</p>
-<p class="transaction-value">Rp 530.000</p>
 </div>
 <div class="transaction-cell transaction-status-paid"><p class="transaction-label">Status</p>
 <p class="transaction-value status-badge success">Lunas</p>
 </div>
 <div class="transaction-cell"><p class="transaction-label">Metode Bayar</p>
-<p class="transaction-value">Cash</p>
+<p class="transaction-value">Transfer</p>
 </div>
 <div class="transaction-cell transaction-actions-cell"><p class="transaction-label">Aksi</p>
 <div class="transaction-actions">
@@ -87,20 +88,39 @@
 </article></div></section></main>
 <pre id="metrics" style="display:none"></pre>
 <script>
-addEventListener("load",()=>{const r=[];const vw=document.documentElement.clientWidth;
- r.push("VIEWPORT clientWidth = "+vw+"px");
- const list=document.querySelector(".transaction-list"), row=document.querySelector(".transaction-row");
- r.push("wadah .transaction-list clientWidth = "+list.clientWidth+"px  scrollWidth="+list.scrollWidth+"px");
- r.push("baris .transaction-row  offsetWidth = "+row.offsetWidth+"px  scrollWidth="+row.scrollWidth+"px");
- r.push("  -> ", row.scrollWidth>list.clientWidth? "BARIS MELUBERI WADAH" : "baris muat");
- const cells=[...row.querySelectorAll(".transaction-cell")];
- const labels=["ID","Ruangan","Durasi","Biaya","LC","F&B","Total","Status","Metode","AKSI"];
- cells.forEach((c,i)=>{const q=c.getBoundingClientRect();
-   r.push("  sel "+String(labels[i]).padEnd(8)+" kiri="+q.left.toFixed(0).padStart(5)+" kanan="+q.right.toFixed(0).padStart(5)+(q.right>vw?"  <-- DI LUAR VIEWPORT":""));});
- const grp=row.querySelector(".transaction-actions");
- const g=grp.getBoundingClientRect();
- r.push("GRUP AKSI kiri="+g.left.toFixed(0)+" kanan="+g.right.toFixed(0)+(g.right>vw?"  <-- TERPOTONG "+ (g.right-vw).toFixed(0)+"px":"  (utuh)"));
- row.querySelectorAll(".transaction-action-button,.transaction-pay-select,.transaction-pay-button").forEach(b=>{const q=b.getBoundingClientRect();
-   r.push("   "+b.tagName.padEnd(6)+" '"+b.textContent.trim().slice(0,10).padEnd(10)+"' kiri="+q.left.toFixed(0).padStart(5)+" kanan="+q.right.toFixed(0).padStart(5)+(q.right>vw?"  TERPOTONG":"  tampak"));});
- document.getElementById("metrics").textContent=r.join("\n");});
-</script><script>addEventListener("load",()=>{const r=[];document.querySelectorAll(".transaction-row")[0].querySelectorAll(".transaction-cell .transaction-label").forEach(l=>{const q=l.getBoundingClientRect();r.push("judul '"+l.textContent+"' tinggi="+q.height.toFixed(1)+(q.height>20?" MEMBUNGKUS":""));});document.getElementById("metrics").textContent=r.join("\n");});</script></body></html>
+addEventListener("load", () => {
+  const r = [];
+  const vw = document.documentElement.clientWidth;
+  r.push("VIEWPORT clientWidth = " + vw + "px");
+
+  const list = document.querySelector(".transaction-list");
+  const rows = [...document.querySelectorAll(".transaction-row")];
+
+  rows.forEach((row, rowIdx) => {
+    r.push("\n--- BARIS " + (rowIdx + 1) + " ---");
+    r.push("wadah clientWidth = " + list.clientWidth + "px, baris scrollWidth = " + row.scrollWidth + "px, offsetWidth = " + row.offsetWidth + "px");
+    r.push("status baris: " + (row.scrollWidth > list.clientWidth ? "MELUBER!" : "PAS & MUAT"));
+
+    const cells = [...row.querySelectorAll(".transaction-cell")];
+    const labels = ["ID", "Ruangan", "Durasi", "Biaya", "LC", "F&B", "Total", "Status", "Metode", "AKSI"];
+    cells.forEach((c, i) => {
+      const q = c.getBoundingClientRect();
+      const val = c.querySelector(".transaction-value");
+      const vText = val ? val.textContent.trim() : "";
+      const vH = val ? val.getBoundingClientRect().height : 0;
+      const isWrap = vH > 24;
+      r.push("  sel " + String(labels[i]).padEnd(8) + " [" + q.width.toFixed(0) + "px] val='" + vText + "' (h=" + vH.toFixed(0) + "px" + (isWrap ? " MEMBUNGKUS!" : " 1-BARIS") + ")");
+    });
+
+    const grp = row.querySelector(".transaction-actions");
+    if (grp) {
+      const g = grp.getBoundingClientRect();
+      r.push("GRUP AKSI: w=" + g.width.toFixed(0) + "px, right=" + g.right.toFixed(0) + (g.right > vw ? " TERPOTONG!" : " UTUH DI LAYAR"));
+    }
+  });
+
+  const m = document.getElementById("metrics");
+  m.textContent = r.join("\n");
+  m.style.display = "block";
+});
+</script></body></html>

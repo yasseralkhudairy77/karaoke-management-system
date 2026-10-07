@@ -16,24 +16,25 @@
 
   Konvensi repo: ini SATU lapisan tambahan, dimuat lewat satu baris <link>
   di index.html setelah seluruh skin lain. Untuk membatalkan, cukup hapus
-  baris <link> itu — tidak ada berkas lain yang perlu disentuh.
+  baris <link> itu: tidak ada berkas lain yang perlu disentuh.
 */
 
 @media (min-width: 1024px) {
   .app-tab-panel--transactions .transaction-row {
-    /* Ramping di kiri, lega di kanan (Aksi). Angka minimum = lebar nyata
-       judul kolom satu baris (terpanjang 'Metode Bayar' ~98px) dan teks nilainya. */
+    /* Ramping di kiri, lega di tengah & kanan (Aksi). Angka minimum menjamin
+       nominal rupiah (Rp 1.088.000 / Rp 2.400.000 ~86px) tidak terdesak dan
+       judul kolom satu baris (terpanjang 'Metode Bayar' ~85px). */
     grid-template-columns:
-      minmax(100px, 0.9fr)   /* ID Transaksi  (judul 88px) */
-      minmax(80px, 0.8fr)    /* Ruangan       (judul 64px) */
-      minmax(60px, 0.55fr)   /* Durasi        (judul 47px) */
-      minmax(92px, 0.75fr)   /* Biaya Paket   (judul 83px) */
-      minmax(70px, 0.65fr)   /* Jasa LC       (judul 49px) */
-      minmax(55px, 0.5fr)    /* F&B           (judul 24px) */
-      minmax(92px, 0.78fr)   /* Total Akhir   (judul 84px) */
-      minmax(104px, 0.9fr)   /* Status        (muat 'BELUM DIBAYAR') */
-      minmax(106px, 0.7fr)   /* Metode Bayar  (judul 98px) */
-      minmax(178px, 1.3fr) !important; /* Aksi: Lihat/Struk/Opsi + dropdown + Tandai Lunas */
+      minmax(96px, 0.85fr)   /* ID Transaksi  (judul ~88px, ID TRX ~88px) */
+      minmax(74px, 0.65fr)   /* Ruangan       (judul ~64px, VIP 8 ~40px) */
+      minmax(60px, 0.5fr)    /* Durasi        (judul ~47px, 180 menit ~55px) */
+      minmax(85px, 0.75fr)   /* Biaya Paket   (judul ~83px, Rp 0 ~30px) */
+      minmax(92px, 0.85fr)   /* Jasa LC       (muat 'Rp 2.400.000' ~86px) */
+      minmax(90px, 0.8fr)    /* F&B           (muat 'Rp 1.088.000' ~86px) */
+      minmax(96px, 0.85fr)   /* Total Akhir   (muat 'Rp 3.488.000' ~86px) */
+      minmax(102px, 0.85fr)  /* Status        (muat 'BELUM DIBAYAR' ~95px) */
+      minmax(88px, 0.7fr)    /* Metode Bayar  (judul ~85px, Transfer ~55px) */
+      minmax(180px, 1.3fr) !important; /* Aksi: Lihat/Struk/Opsi + dropdown + Tandai Lunas */
     gap: 8px 6px !important;
     /* Buang paksaan lebar yang membuat baris menuntut 1289px */
     min-width: 0 !important;
@@ -44,6 +45,15 @@
      yang tadinya terbelah dua baris). */
   .app-tab-panel--transactions .transaction-cell .transaction-label {
     white-space: nowrap !important;
+  }
+
+  /* Nilai nominal & teks transaksi wajib satu baris utuh, tidak boleh patah
+     di tengah angka desimal atau ribuan (contoh: 'Rp 1.088.' lalu '.000' ke bawah). */
+  .app-tab-panel--transactions .transaction-cell .transaction-value {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    font-variant-numeric: tabular-nums !important;
   }
 
   /* Badge 'Termasuk F&B' / LC: boleh turun baris, tetapi jangan terpotong di
