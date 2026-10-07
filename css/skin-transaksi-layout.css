@@ -1,0 +1,68 @@
+/*
+  Perbaikan tata letak baris menu TRANSAKSI (kolom paling kanan terpotong).
+
+  SEBAB (terukur di PC kasir 1366x768, lebar baris nyata ~1240px):
+  Grid 10 kolom pada baris transaksi menuntut ~1289px (jumlah kolom + gap),
+  sedangkan wadahnya hanya ~1240px dan `body { overflow-x: hidden }`.
+  Akibatnya kolom terakhir (Aksi) meluber ~49px ke luar dan terpotong:
+  yang tampak hanya tombol "Lihat"; "Struk/Cetak", "Opsi", dropdown metode,
+  dan "Tandai Lunas" hilang.
+
+  SOLUSI:
+  Rampingkan kolom teks yang berlebih (sesuai ruang yang benar-benar dipakai,
+  terukur dari tiap teks) dan lebarkan kolom Aksi, lalu buang paksaan
+  `min-width: 1140px`. Seluruh kolom Aksi kini muat tanpa scroll horizontal
+  pada lebar >= 1024px. Tidak ada label/istilah yang diubah.
+
+  Konvensi repo: ini SATU lapisan tambahan, dimuat lewat satu baris <link>
+  di index.html setelah seluruh skin lain. Untuk membatalkan, cukup hapus
+  baris <link> itu — tidak ada berkas lain yang perlu disentuh.
+*/
+
+@media (min-width: 1024px) {
+  .app-tab-panel--transactions .transaction-row {
+    /* Ramping di kiri, lega di kanan (Aksi). Angka = lebar minimum nyata tiap teks. */
+    grid-template-columns:
+      minmax(100px, 0.9fr)   /* ID Transaksi */
+      minmax(88px, 0.85fr)   /* Ruangan */
+      minmax(58px, 0.5fr)    /* Durasi */
+      minmax(82px, 0.72fr)   /* Biaya Paket / Room */
+      minmax(76px, 0.7fr)    /* Jasa LC */
+      minmax(62px, 0.55fr)   /* F&B */
+      minmax(90px, 0.8fr)    /* Total Akhir */
+      minmax(104px, 0.85fr)  /* Status (muat 'BELUM DIBAYAR') */
+      minmax(60px, 0.55fr)   /* Metode Bayar */
+      minmax(178px, 1.3fr) !important; /* Aksi: Lihat/Struk/Opsi + dropdown + Tandai Lunas */
+    gap: 8px 6px !important;
+    /* Buang paksaan lebar yang membuat baris menuntut 1289px */
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* ID transaksi sedikit lebih rapat agar muat tanpa memotong tokoh teks */
+  .app-tab-panel--transactions .transaction-cell.transaction-id-cell .transaction-value {
+    font-size: 0.82rem !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  /* Kolom Aksi dan isinya tidak boleh meluber / membungkus ke bawah */
+  .app-tab-panel--transactions .transaction-cell.transaction-actions-cell {
+    min-width: 0 !important;
+  }
+  .app-tab-panel--transactions .transaction-actions {
+    width: 100% !important;
+    min-width: 0 !important;
+    align-items: stretch !important;
+  }
+  .app-tab-panel--transactions .transaction-primary-actions {
+    flex-wrap: nowrap !important;
+    justify-content: flex-end !important;
+    min-width: 0 !important;
+    gap: 4px !important;
+  }
+  .app-tab-panel--transactions .transaction-pay-control {
+    flex-wrap: nowrap !important;
+    min-width: 0 !important;
+    gap: 4px !important;
+  }
+}
