@@ -1,0 +1,106 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="../../css/style.css">
+<link rel="stylesheet" href="../../css/skin-transaksi.css">
+<link rel="stylesheet" href="../../css/skin-transaksi-layout.css">
+</head><body>
+<header class="app-header"><div><p class="app-kicker">Happy Song Karaoke</p><h1>Dashboard Operasional</h1></div><span class="app-badge">Lokal</span></header>
+<main class="dashboard-shell"><nav class="app-tabs"></nav>
+<section class="app-tab-panel app-tab-panel--transactions active" style="display:block">
+<div class="transaction-list"><article class="transaction-row">
+<div class="transaction-cell transaction-id-cell"><p class="transaction-label">ID Transaksi</p>
+<p class="transaction-value">TRX-20261008-0001</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Ruangan</p>
+<p class="transaction-value">VIP 3</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Durasi</p>
+<p class="transaction-value">90 menit</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Biaya Paket</p>
+<p class="transaction-value">Rp 350.000</p>
+</div>
+<div class="transaction-cell transaction-lc-cell"><p class="transaction-label">Jasa LC</p>
+<p class="transaction-value">Rp 135.000</p>
+</div>
+<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">F&B</p>
+<p class="transaction-value">Rp 45.000</p>
+<div class="transaction-badges-stack"><span class="transaction-fnb-badge status-badge warning">Termasuk F&amp;B</span></div>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Total Akhir</p>
+<p class="transaction-value">Rp 530.000</p>
+</div>
+<div class="transaction-cell transaction-status-unpaid"><p class="transaction-label">Status</p>
+<p class="transaction-value status-badge warning">Belum Dibayar</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Metode Bayar</p>
+<p class="transaction-value">Belum dibayar</p>
+</div>
+<div class="transaction-cell transaction-actions-cell"><p class="transaction-label">Aksi</p>
+<div class="transaction-actions">
+              <div class="transaction-primary-actions">
+                <button class="transaction-action-button">Lihat</button>
+                <button class="transaction-action-button">Struk</button>
+                <div class="transaction-menu-wrapper"><button class="transaction-action-button transaction-menu-trigger"><span>Opsi</span> <span class="transaction-menu-chevron">▾</span></button></div>
+              </div>
+              <div class="transaction-pay-control">
+                <select class="transaction-pay-select"><option>Cash</option><option>Transfer</option><option>Split Bill</option></select>
+                <button class="transaction-pay-button">Tandai Lunas</button>
+              </div></div>
+</div>
+</article><article class="transaction-row">
+<div class="transaction-cell transaction-id-cell"><p class="transaction-label">ID Transaksi</p>
+<p class="transaction-value">TRX-20261008-0001</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Ruangan</p>
+<p class="transaction-value">VIP 3</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Durasi</p>
+<p class="transaction-value">90 menit</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Biaya Paket</p>
+<p class="transaction-value">Rp 350.000</p>
+</div>
+<div class="transaction-cell transaction-lc-cell"><p class="transaction-label">Jasa LC</p>
+<p class="transaction-value">Rp 135.000</p>
+</div>
+<div class="transaction-cell transaction-has-fnb"><p class="transaction-label">F&B</p>
+<p class="transaction-value">Rp 45.000</p>
+<div class="transaction-badges-stack"><span class="transaction-fnb-badge status-badge warning">Termasuk F&amp;B</span></div>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Total Akhir</p>
+<p class="transaction-value">Rp 530.000</p>
+</div>
+<div class="transaction-cell transaction-status-paid"><p class="transaction-label">Status</p>
+<p class="transaction-value status-badge success">Lunas</p>
+</div>
+<div class="transaction-cell"><p class="transaction-label">Metode Bayar</p>
+<p class="transaction-value">Cash</p>
+</div>
+<div class="transaction-cell transaction-actions-cell"><p class="transaction-label">Aksi</p>
+<div class="transaction-actions">
+              <div class="transaction-primary-actions">
+                <button class="transaction-action-button">Lihat</button>
+                <button class="transaction-action-button">Cetak</button>
+                <div class="transaction-menu-wrapper"><button class="transaction-action-button transaction-menu-trigger"><span>Opsi</span> <span class="transaction-menu-chevron">▾</span></button></div>
+              </div></div>
+</div>
+</article></div></section></main>
+<pre id="metrics" style="display:none"></pre>
+<script>
+addEventListener("load",()=>{const r=[];const vw=document.documentElement.clientWidth;
+ r.push("VIEWPORT clientWidth = "+vw+"px");
+ const list=document.querySelector(".transaction-list"), row=document.querySelector(".transaction-row");
+ r.push("wadah .transaction-list clientWidth = "+list.clientWidth+"px  scrollWidth="+list.scrollWidth+"px");
+ r.push("baris .transaction-row  offsetWidth = "+row.offsetWidth+"px  scrollWidth="+row.scrollWidth+"px");
+ r.push("  -> ", row.scrollWidth>list.clientWidth? "BARIS MELUBERI WADAH" : "baris muat");
+ const cells=[...row.querySelectorAll(".transaction-cell")];
+ const labels=["ID","Ruangan","Durasi","Biaya","LC","F&B","Total","Status","Metode","AKSI"];
+ cells.forEach((c,i)=>{const q=c.getBoundingClientRect();
+   r.push("  sel "+String(labels[i]).padEnd(8)+" kiri="+q.left.toFixed(0).padStart(5)+" kanan="+q.right.toFixed(0).padStart(5)+(q.right>vw?"  <-- DI LUAR VIEWPORT":""));});
+ const grp=row.querySelector(".transaction-actions");
+ const g=grp.getBoundingClientRect();
+ r.push("GRUP AKSI kiri="+g.left.toFixed(0)+" kanan="+g.right.toFixed(0)+(g.right>vw?"  <-- TERPOTONG "+ (g.right-vw).toFixed(0)+"px":"  (utuh)"));
+ row.querySelectorAll(".transaction-action-button,.transaction-pay-select,.transaction-pay-button").forEach(b=>{const q=b.getBoundingClientRect();
+   r.push("   "+b.tagName.padEnd(6)+" '"+b.textContent.trim().slice(0,10).padEnd(10)+"' kiri="+q.left.toFixed(0).padStart(5)+" kanan="+q.right.toFixed(0).padStart(5)+(q.right>vw?"  TERPOTONG":"  tampak"));});
+ document.getElementById("metrics").textContent=r.join("\n");});
+</script></body></html>
