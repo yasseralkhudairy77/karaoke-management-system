@@ -103,4 +103,4 @@ addEventListener("load",()=>{const r=[];const vw=document.documentElement.client
  row.querySelectorAll(".transaction-action-button,.transaction-pay-select,.transaction-pay-button").forEach(b=>{const q=b.getBoundingClientRect();
    r.push("   "+b.tagName.padEnd(6)+" '"+b.textContent.trim().slice(0,10).padEnd(10)+"' kiri="+q.left.toFixed(0).padStart(5)+" kanan="+q.right.toFixed(0).padStart(5)+(q.right>vw?"  TERPOTONG":"  tampak"));});
  document.getElementById("metrics").textContent=r.join("\n");});
-</script></body></html>
+</script><script>addEventListener("load",()=>{const r=[];document.querySelectorAll(".transaction-row")[0].querySelectorAll(".transaction-cell .transaction-label").forEach(l=>{const q=l.getBoundingClientRect();r.push("judul '"+l.textContent+"' tinggi="+q.height.toFixed(1)+(q.height>20?" MEMBUNGKUS":""));});document.getElementById("metrics").textContent=r.join("\n");});</script></body></html>
