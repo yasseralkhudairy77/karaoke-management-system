@@ -21,22 +21,38 @@
 
 @media (min-width: 1024px) {
   .app-tab-panel--transactions .transaction-row {
-    /* Ramping di kiri, lega di kanan (Aksi). Angka = lebar minimum nyata tiap teks. */
+    /* Ramping di kiri, lega di kanan (Aksi). Angka minimum = lebar nyata
+       judul kolom satu baris (terpanjang 'Metode Bayar' ~98px) dan teks nilainya. */
     grid-template-columns:
-      minmax(100px, 0.9fr)   /* ID Transaksi */
-      minmax(88px, 0.85fr)   /* Ruangan */
-      minmax(58px, 0.5fr)    /* Durasi */
-      minmax(82px, 0.72fr)   /* Biaya Paket / Room */
-      minmax(76px, 0.7fr)    /* Jasa LC */
-      minmax(62px, 0.55fr)   /* F&B */
-      minmax(90px, 0.8fr)    /* Total Akhir */
-      minmax(104px, 0.85fr)  /* Status (muat 'BELUM DIBAYAR') */
-      minmax(60px, 0.55fr)   /* Metode Bayar */
+      minmax(100px, 0.9fr)   /* ID Transaksi  (judul 88px) */
+      minmax(80px, 0.8fr)    /* Ruangan       (judul 64px) */
+      minmax(60px, 0.55fr)   /* Durasi        (judul 47px) */
+      minmax(92px, 0.75fr)   /* Biaya Paket   (judul 83px) */
+      minmax(70px, 0.65fr)   /* Jasa LC       (judul 49px) */
+      minmax(55px, 0.5fr)    /* F&B           (judul 24px) */
+      minmax(92px, 0.78fr)   /* Total Akhir   (judul 84px) */
+      minmax(104px, 0.9fr)   /* Status        (muat 'BELUM DIBAYAR') */
+      minmax(106px, 0.7fr)   /* Metode Bayar  (judul 98px) */
       minmax(178px, 1.3fr) !important; /* Aksi: Lihat/Struk/Opsi + dropdown + Tandai Lunas */
     gap: 8px 6px !important;
     /* Buang paksaan lebar yang membuat baris menuntut 1289px */
     min-width: 0 !important;
     max-width: 100% !important;
+  }
+
+  /* Judul kolom selalu satu baris (tidak membungkus seperti 'METODE BAYAR'
+     yang tadinya terbelah dua baris). */
+  .app-tab-panel--transactions .transaction-cell .transaction-label {
+    white-space: nowrap !important;
+  }
+
+  /* Badge 'Termasuk F&B' / LC: boleh turun baris, tetapi jangan terpotong di
+     tengah kata (mis. 'TERMASU K'). Patah hanya di spasi. */
+  .app-tab-panel--transactions .transaction-cell .transaction-fnb-badge,
+  .app-tab-panel--transactions .transaction-cell .transaction-lc-badge {
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none !important;
   }
 
   /* ID transaksi sedikit lebih rapat agar muat tanpa memotong tokoh teks */

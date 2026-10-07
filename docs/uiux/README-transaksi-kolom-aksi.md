@@ -35,6 +35,16 @@ Tidak ada label/istilah operasional yang diubah. Rollback: hapus baris `<link>` 
 | 1280 | 3/5 tampak | 5/5 muat |
 | 1184 | 0/5 tampak | 5/5 muat |
 
+## Judul kolom (header)
+Setiap sel sudah merender judul kolomnya sendiri ("ID TRANSAKSI", "RUANGAN", ... "AKSI"),
+tetapi "METODE BAYAR" tadinya terbelah dua baris karena kolomnya terlalu sempit.
+Pada lapisan ini kolom disetel mengikuti lebar nyata judul (terpanjang "Metode Bayar" ~98px)
+dan `.transaction-label` dibuat `white-space: nowrap`, sehingga KESEPULUH judul tampil utuh
+satu baris — termasuk "AKSI" yang sebelumnya tidak terlihat karena terpotong.
+
+Sekaligus: badge "Termasuk F&B" tadinya terpotong di tengah kata ("TERMASU K") karena kolom
+Total Akhir dirapatkan; kini dipatahkan hanya di spasi ("Termasuk" / "F&B").
+
 Bukti harness (bisa dibuka di browser): `uji-baris-transaksi-layout.html` (sesudah)
 dan `uji-baris-transaksi-layout-sebelum.html` (sebelum).
 Tangkapan layar: `bukti/130-before-aksi-terpotong.png`, `bukti/131-after-aksi-terlihat.png`.
