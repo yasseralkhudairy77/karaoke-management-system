@@ -26,3 +26,6 @@ launcher.html
 js/launcher.js
 karaoke-mode.html
 js/karaoke-mode.js
+
+# Cadangan lokal (snapshot kode & dump database) - jangan ikut ke repo publik
+backups/

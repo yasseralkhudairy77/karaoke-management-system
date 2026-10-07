@@ -1,0 +1,111 @@
+=============================================================================
+   🔍 HAPPY SONG POS - LAPORAN PEMERIKSAAN STOK & BARANG MASUK SEPTEMBER 2026
+=============================================================================
+Waktu Pemeriksaan: 7/9/2026, 21.57.28 WIB
+
+✅ Terhubung ke database PostgreSQL Lokal PC Server.
+
+-----------------------------------------------------------------------------
+📦 1. POSISI STOK TERKINI DI DATABASE (TABEL INVENTORY)
+-----------------------------------------------------------------------------
+ID ITEM   | NAMA BARANG                   | STOK SISTEM | SATUAN | TERAKHIR DIUPDATE
+----------+-------------------------------+-------------+--------+------------------
+MENU-035  | Anggur Merah                  |          46 | botol  | 2026-09-07 21:13
+MENU-038  | Anggur Putih                  |          53 | botol  | 2026-09-07 21:13
+MENU-039  | Atlas Leci                    |           4 | botol  | 2026-09-06 04:41
+MENU-036  | Intisari                      |          68 | botol  | 2026-09-07 01:37
+
+-----------------------------------------------------------------------------
+📥 2. SEMUA MUTASI BARANG MASUK (01 S/D 07 SEPTEMBER 2026)
+-----------------------------------------------------------------------------
+Ditemukan 55 mutasi barang masuk di September 2026:
+WAKTU WIB        | NAMA BARANG         | MASUK | REF TYPE        | NO REFERENSI / SJ | PETUGAS
+-----------------+---------------------+-------+-----------------+-------------------+--------
+2026-09-01 06:13 | Atlas Leci          |    12 | manual_adjustme | MOV-1788218028820 | Admin 1 
+2026-09-02 22:02 | Chivas  Regal       |    10 | manual_adjustme | MOV-1788361378502 | Admin 1 
+2026-09-03 16:23 | Jameson             |     2 | manual_adjustme | MOV-1788427408710 | Manager 1
+2026-09-03 16:23 | Ice Land Vodca      |     2 | manual_adjustme | MOV-1788427431337 | Manager 1
+2026-09-03 16:25 | Alva                |     2 | manual_adjustme | MOV-1788427544355 | Manager 1
+2026-09-03 16:27 | Singleton 12 GO     |     3 | manual_adjustme | MOV-1788427660257 | Manager 1
+2026-09-03 16:28 | Noblemen Whisky     |     5 | manual_adjustme | MOV-1788427682228 | Manager 1
+2026-09-03 16:28 | Batavia Whisky      |     6 | manual_adjustme | MOV-1788427704613 | Manager 1
+2026-09-03 16:28 | Jose Cuervo Gold    |     2 | manual_adjustme | MOV-1788427737411 | Manager 1
+2026-09-03 16:30 | Martell Vsop        |     3 | manual_adjustme | MOV-1788427802393 | Manager 1
+2026-09-03 16:31 | baileys             |     2 | manual_adjustme | MOV-1788427897983 | Manager 1
+2026-09-03 16:33 | BAILEYS PINK        |     1 | manual_adjustme | MOV-1788427983442 | Manager 1
+2026-09-03 16:34 | JW Red Label        |     2 | manual_adjustme | MOV-1788428062900 | Manager 1
+2026-09-03 16:34 | Hennesy Vsop        |     3 | manual_adjustme | MOV-1788428089518 | Manager 1
+2026-09-03 16:37 | Anggur Putih        |     5 | manual_adjustme | MOV-1788428227880 | Manager 1
+2026-09-03 16:40 | Alben Cider         |    95 | manual_adjustme | MOV-1788428411193 | Manager 1
+2026-09-03 16:40 | ALBEN STROBERI      |    20 | manual_adjustme | MOV-1788428451193 | Manager 1
+2026-09-03 16:44 | ALBEN STROBERI      |    20 | manual_adjustme | MOV-1788428645741 | Manager 1
+2026-09-03 22:06 | French Fries        |     2 | manual_adjustme | MOV-1788447994131 | Admin 1 
+2026-09-03 22:08 | Djarum Super        |     4 | manual_adjustme | MOV-1788448109125 | Admin 1 
+2026-09-03 22:08 | Marlboro Ice Blast  |     3 | manual_adjustme | MOV-1788448120785 | Admin 1 
+2026-09-03 23:07 | Coca-Cola           |     3 | manual_adjustme | MOV-1788451664806 | Admin 1 
+2026-09-04 01:11 | Intisari            |    60 | manual_adjustme | MOV-1788459086916 | Admin Gudang
+2026-09-04 01:13 | Anggur Merah        |    60 | manual_adjustme | MOV-1788459219187 | Admin Gudang
+2026-09-04 21:31 | nasi goreng biasa   |     1 | manual_adjustme | MOV-1788532311947 | Admin 1 
+2026-09-04 23:07 | Mix Snack Pletter   |     2 | manual_adjustme | MOV-1788538025527 | Admin 1 
+2026-09-04 23:10 | Coca-Cola           |    10 | manual_adjustme | MOV-1788538247681 | Admin 1 
+2026-09-04 23:15 | Airtis 330ml        |    10 | manual_adjustme | MOV-1788538510961 | Admin 1 
+2026-09-05 02:16 | mb red              |     2 | manual_adjustme | MOV-1788549368878 | Admin 1 
+2026-09-05 02:33 | Coca-Cola           |     3 | manual_adjustme | MOV-1788550406524 | Admin 1 
+2026-09-05 19:50 | Esse Change         |     8 | manual_adjustme | MOV-1788612649963 | Admin 1 
+2026-09-05 19:51 | Sampoerna Mild Red  |    19 | manual_adjustme | MOV-1788612667789 | Admin 1 
+2026-09-06 00:10 | Esse double click   |    15 | manual_adjustme | MOV-1788628259734 | Admin 1 
+2026-09-06 00:12 | Coca-Cola           |     3 | manual_adjustme | MOV-1788628349445 | Admin 1 
+2026-09-06 00:28 | Airtis 330ml        |    10 | manual_adjustme | MOV-1788629326305 | Admin 1 
+2026-09-06 00:29 | Airtis 600ml        |    10 | manual_adjustme | MOV-1788629347803 | Admin 1 
+2026-09-06 01:05 | Abidin              |     5 | manual_adjustme | MOV-1788631521520 | Admin 1 
+2026-09-06 01:12 | Kratingdaeng        |    10 | manual_adjustme | MOV-1788631929163 | Admin 1 
+2026-09-06 01:33 | French Fries        |     5 | manual_adjustme | MOV-1788633193047 | Admin 1 
+2026-09-06 02:22 | Jus Jeruk           |     1 | manual_adjustme | MOV-1788636152175 | Manager 1
+2026-09-06 02:43 | Anggur Putih        |    12 | goods_receipt   | 001-06-09-2026    | Admin Gudang
+2026-09-06 04:37 | Esse double click   |     1 | manual_adjustme | MOV-1788644270776 | Manager 1
+2026-09-06 20:34 | Esse Juice          |     5 | goods_receipt   | 002-06-09-2026    | Manager 1
+2026-09-06 20:34 | Sampoerna Menthol   |    10 | goods_receipt   | 002-06-09-2026    | Manager 1
+2026-09-06 20:34 | Magnum Filter       |     5 | goods_receipt   | 002-06-09-2026    | Manager 1
+2026-09-06 20:34 | Sampoerna Mild Red  |    20 | goods_receipt   | 002-06-09-2026    | Manager 1
+2026-09-06 20:34 | Esse double click   |    20 | goods_receipt   | 002-06-09-2026    | Manager 1
+2026-09-06 21:15 | Mix Snack Pletter   |    10 | manual_adjustme | MOV-1788704105057 | Manager 1
+2026-09-06 22:29 | Jus Alpukat         |    20 | manual_adjustme | MOV-1788708570921 | Manager 1
+2026-09-06 23:18 | Airtis 600ml        |    30 | manual_adjustme | MOV-1788711538600 | Manager 1
+2026-09-06 23:52 | Kaki Naga           |    20 | manual_adjustme | MOV-1788713564689 | Manager 1
+2026-09-07 04:00 | Guinnes Stout       |    10 | manual_adjustme | MOV-1788728424974 | Manager 1
+2026-09-07 04:26 | Es teh manis        |   100 | manual_adjustme | MOV-1788729971732 | Manager 1
+2026-09-07 21:13 | Anggur Putih        |    36 | goods_receipt   | 003-07-09-2026    | Admin 1 
+2026-09-07 21:13 | Anggur Merah        |    12 | goods_receipt   | 003-07-09-2026    | Admin 1 
+
+-----------------------------------------------------------------------------
+📋 3. HASIL PENCOCOKAN DENGAN CATATAN FISIK ANDA
+-----------------------------------------------------------------------------
+TANGGAL    | NAMA BARANG     | QTY FISIK | STATUS DI SISTEM PC SERVER
+-----------+-----------------+-----------+------------------------------------------
+2026-09-04 | Anggur Merah    |        60 | ✅ TERCATAT TEPAT (60 pcs - Ref: MOV-1788459219187)
+2026-09-04 | Intisari        |        60 | ✅ TERCATAT TEPAT (60 pcs - Ref: MOV-1788459086916)
+2026-09-04 | Atlas Leci      |        60 | ⚠️ BELUM DI TGL INI (Ada di tgl: 2026-09-01 (12 pcs))
+2026-09-07 | Anggur Putih    |        36 | ✅ TERCATAT TEPAT (36 pcs - Ref: 003-07-09-2026)
+2026-09-07 | Anggur Merah    |        12 | ✅ TERCATAT TEPAT (12 pcs - Ref: 003-07-09-2026)
+
+-----------------------------------------------------------------------------
+📤 4. PENJUALAN / BARANG KELUAR SEPTEMBER 2026 (01 S/D 07 SEPTEMBER)
+-----------------------------------------------------------------------------
+NAMA BARANG                   | TOTAL TERJUAL / KELUAR
+------------------------------+-----------------------
+Anggur Merah                  |                 59.00 botol
+Anggur Putih                  |                  2.00 botol
+Atlas Leci                    |                  9.00 botol
+Intisari                      |                 19.00 botol
+
+=============================================================================
+📌 KESIMPULAN REKONSILIASI STOK:
+=============================================================================
+1. Jika di Bagian 3 statusnya bertanda "❌ BELUM TERCATAT SAMA SEKALI":
+   Artinya admin gudang / kasir memang belum pernah meng-input barang masuk
+   tersebut ke dalam software POS (stok sistem belum bertambah).
+2. Anda dapat mencatat barang masuk tersebut melalui dashboard menu:
+   -> Manajemen Stok / Admin Gudang -> [Catat Barang Masuk]
+3. Laporan ini juga disimpan otomatis ke file teks di:
+   server\scripts\laporan_pemeriksaan_stok_september.txt
+=============================================================================

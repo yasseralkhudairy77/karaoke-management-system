@@ -1,0 +1,22 @@
+[
+ {
+  "tv_device_id": "TV-001",
+  "room_id": "ROOM-001",
+  "device_name": "POLYTRON VIP-1",
+  "control_type": "mock",
+  "status": "inactive",
+  "middleware_url": null,
+  "device_identifier": null,
+  "updated_at": "2026-09-25T07:46:19.257Z",
+  "tv_ip": null,
+  "tv_mac": null,
+  "adb_port": 5555,
+  "adb_timeout_ms": 15000,
+  "wol_broadcast": "192.168.1.255",
+  "notify_package": "com.happysong.tvnotify",
+  "notes": null,
+  "last_checked_at": "2026-09-25T07:46:19.257Z",
+  "last_check_result": "connected",
+  "last_check_message": "Terhubung ke ADB"
+ }
+]
