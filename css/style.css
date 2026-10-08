@@ -98,12 +98,11 @@ body::before {
   z-index: 0;
   pointer-events: none;
   content: "";
-  background-image: url("../assets/brand/happy-song-logo-bg.jpg");
-  background-position: center 52%;
+  background-image: url("../assets/brand/harmonic-logo-header.png");
+  background-position: center 50%;
   background-repeat: no-repeat;
-  background-size: min(720px, 60vw) auto;
-  opacity: 0.10;
-  filter: blur(1px) saturate(0.95);
+  background-size: min(600px, 50vw) auto;
+  opacity: 0.08;
 }
 
 body::after {

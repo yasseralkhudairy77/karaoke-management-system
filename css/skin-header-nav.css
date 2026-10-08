@@ -1,7 +1,8 @@
 /* ==========================================================================
-   HAPPY SONG KARAOKE - SAP ENTERPRISE FIORI LOOK (QUARTZ DARK + EXECUTIVE GOLD)
+   HARMONIC NIGHTLIFE MANAGEMENT - SAP FIORI ENTERPRISE LOOK (CARBON & GOLD)
    Sistem Header Terpadu (Freeze ShellBar & IconTabBar), Telemetri, & MessageStrip
-   Ambience: Executive Dark Slate + Venue Gold Accents (#e2b85c / #ffd77a)
+   Ambience: Pure Neutral Carbon (#101216 / #14161b) + Executive Gold (#e2b85c)
+   Bebas dari segala rona biru dingin (slate navy)
    ========================================================================== */
 
 /* 1. APP SHELL TOP (STICKY FREEZE CONTAINER)
@@ -14,9 +15,9 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  background: #11161f;
-  border-bottom: 1px solid rgba(226, 184, 92, 0.25);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  background: #101216;
+  border-bottom: 1px solid rgba(226, 184, 92, 0.24);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
 }
 
 /* 2. SAP FIORI SHELLBAR (.app-header) */
@@ -30,48 +31,26 @@
   height: 48px;
   min-height: 48px;
   padding: 0 clamp(16px, 3.5vw, 40px);
-  background: #11161f;
-  border-bottom: 1px solid #1c2430;
+  background: #101216;
+  border-bottom: 1px solid #1a1d22;
   box-sizing: border-box;
 }
 
-/* Brand Section (Murni Tipografi Profesional SAP, Tanpa Logo AI) */
+/* Brand Section (Opsi B: Logo HARMONIC Bersih Proporsional) */
 .app-brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
-.app-brand-title {
-  color: #ffffff;
-  font-family: inherit;
-  font-size: 0.95rem;
-  font-weight: 850;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.app-brand-divider {
-  color: #e2b85c;
-  font-size: 0.85rem;
-  font-weight: 400;
-  line-height: 1;
-  user-select: none;
-  opacity: 0.7;
-}
-
-.app-brand-subtitle {
-  margin: 0;
-  color: #cbd5e1;
-  font-family: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  line-height: 1;
-  white-space: nowrap;
+.app-brand-logo-img {
+  display: block;
+  height: 28px;
+  width: auto;
+  max-width: 175px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
 /* Header Controls Cluster (Telemetri & Kontrol Kanan) */
@@ -90,13 +69,13 @@
   height: 32px;
   padding: 0 10px;
   border-radius: 4px;
-  background: #18202c;
-  border: 1px solid #283344;
-  color: #cbd5e1;
+  background: #181b20;
+  border: 1px solid #272a32;
+  color: #e2e8f0;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
@@ -112,9 +91,9 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  background: #18202c;
-  border: 1px solid #283344;
-  color: #94a3b8;
+  background: #181b20;
+  border: 1px solid #272a32;
+  color: #9aa1ad;
   transition: all 0.15s ease;
 }
 
@@ -149,7 +128,7 @@
 .app-badge.mock {
   background: rgba(148, 163, 184, 0.1);
   border-color: rgba(148, 163, 184, 0.3);
-  color: #94a3b8;
+  color: #9aa1ad;
 }
 
 /* Operator Session Widget */
@@ -160,8 +139,8 @@
   height: 32px;
   padding: 0 6px 0 10px;
   border-radius: 4px;
-  background: #18202c;
-  border: 1px solid #283344;
+  background: #181b20;
+  border: 1px solid #272a32;
 }
 
 .operator-session[hidden] {
@@ -169,7 +148,7 @@
 }
 
 .operator-session-label {
-  color: #cbd5e1;
+  color: #e2e8f0;
   font-size: 0.78rem;
   font-weight: 600;
   white-space: nowrap;
@@ -213,7 +192,7 @@
   min-height: 42px;
   margin: 0;
   padding: 0 clamp(16px, 3.5vw, 40px);
-  background: #151b24;
+  background: #14161b;
   border: none;
   border-radius: 0;
   overflow-x: auto;
@@ -245,7 +224,7 @@
   border-bottom: 3px solid transparent;
   border-radius: 3px 3px 0 0;
   background: transparent;
-  color: #94a3b8;
+  color: #9aa1ad;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.84rem;
@@ -318,7 +297,7 @@
   width: 1px;
   height: 18px;
   margin: 12px 4px 0;
-  background: rgba(226, 184, 92, 0.2);
+  background: #272a32;
   flex: 0 0 1px;
 }
 
@@ -336,10 +315,10 @@
   padding: 8px 14px;
   min-height: 46px;
   border-radius: 4px;
-  background: #161c26;
+  background: #14161b;
   border: 1px solid rgba(226, 184, 92, 0.22);
   border-left: 4px solid #e2b85c;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   box-sizing: border-box;
 }
 
@@ -388,7 +367,7 @@
 }
 
 .latest-transaction-shortcut-detail {
-  color: #94a3b8;
+  color: #9aa1ad;
   font-size: 0.78rem;
   font-weight: 500;
   white-space: nowrap;

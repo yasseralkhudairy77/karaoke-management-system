@@ -34251,7 +34251,20 @@ function renderRooms() {
   renderDashboardTabPanels();
 }
 
+function updateLiveClock() {
+  const clockEl = document.querySelector("#liveClockDisplay");
+  if (!clockEl) {
+    return;
+  }
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+  clockEl.textContent = `${hours}:${minutes}:${seconds}`;
+}
+
 function updateRunningTimers() {
+  updateLiveClock();
   updateRoomsTimeWarningAwareness({ playSound: true });
 
   const occupiedCards = dashboardPanels
@@ -39850,6 +39863,7 @@ if (appShellTop) {
   appShellTop.addEventListener("click", handleRoomAction);
 }
 initializeDashboard();
+updateLiveClock();
 setInterval(updateRunningTimers, 1000);
 
 // Penyegaran otomatis halaman Kontrol TV. Tanpa ini, halaman itu membeku pada keadaan saat
