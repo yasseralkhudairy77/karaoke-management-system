@@ -31768,6 +31768,11 @@ function createLcReportsSubTabElement() {
   customGroup.append(startField, endField);
   toolbar.appendChild(customGroup);
 
+  periodSelect.onchange = (e) => {
+    lcReportPeriod = e.target.value;
+    customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  };
+
   // --- LC Select Group (Dropdown & Multi-Select Checklist) ---
   const lcSelectGroup = document.createElement("div");
   lcSelectGroup.className = "lc-select-group";
@@ -32270,7 +32275,8 @@ function createLcReportsSubTabElement() {
     };
 
     tbody.appendChild(tr);
-  });
+    });
+  }
   table.appendChild(tbody);
   tableWrapper.appendChild(table);
   container.appendChild(tableWrapper);
