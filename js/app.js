@@ -20190,6 +20190,35 @@ function createTransactionFilterElement() {
   return filter;
 }
 
+function formatTransactionDateSubtitle(transaction) {
+  const rawDate = transaction?.created_at || transaction?.end_time || transaction?.start_time;
+  if (rawDate) {
+    const d = new Date(rawDate);
+    if (!Number.isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, "0");
+      const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+      const month = months[d.getMonth()] || "";
+      const year = d.getFullYear();
+      const hours = String(d.getHours()).padStart(2, "0");
+      const minutes = String(d.getMinutes()).padStart(2, "0");
+      return `${day} ${month} ${year} • ${hours}:${minutes}`;
+    }
+  }
+  if (transaction?.operational_date) {
+    const parts = String(transaction.operational_date).split("-");
+    if (parts.length === 3) {
+      const year = parts[0];
+      const monthIdx = parseInt(parts[1], 10) - 1;
+      const day = String(parseInt(parts[2], 10)).padStart(2, "0");
+      const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+      const month = months[monthIdx] || parts[1];
+      return `${day} ${month} ${year}`;
+    }
+    return String(transaction.operational_date);
+  }
+  return "";
+}
+
 function createTransactionRowElement(transaction) {
   const row = document.createElement("article");
   row.className = "transaction-row";
@@ -20237,6 +20266,14 @@ function createTransactionRowElement(transaction) {
       value.textContent = valueText;
       if (modifierClass === "transaction-id-cell") {
         value.title = valueText;
+        const dateSub = formatTransactionDateSubtitle(transaction);
+        if (dateSub) {
+          const subEl = document.createElement("span");
+          subEl.className = "transaction-date-subtitle";
+          subEl.textContent = dateSub;
+          subEl.title = `Waktu Transaksi: ${dateSub}`;
+          item.appendChild(subEl);
+        }
       }
       item.append(label, value);
 

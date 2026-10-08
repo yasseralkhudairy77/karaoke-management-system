@@ -80,6 +80,21 @@
     color: var(--text, #f5f0e1) !important;
   }
 
+  .app-tab-panel--transactions .transaction-cell.transaction-id-cell .transaction-date-subtitle {
+    display: block !important;
+    font-size: 0.68rem !important;
+    font-weight: 500 !important;
+    color: var(--gold-light, #e2b85c) !important;
+    opacity: 0.85 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin-top: 2px !important;
+    line-height: 1.2 !important;
+    font-family: inherit !important;
+    letter-spacing: 0.01em !important;
+  }
+
   /* Kolom 2 - Ruangan: nama ruangan panjang (misal 'F&B Umum - Umum') membungkus rapi,
      bukan menabrak kolom Durasi */
   .app-tab-panel--transactions .transaction-cell:nth-child(2) .transaction-value {

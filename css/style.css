@@ -7131,6 +7131,18 @@ select.action-confirmation-input option {
   line-height: 1.22;
 }
 
+.transaction-id-cell .transaction-date-subtitle {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted, #a6a092);
+  margin-top: 2px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .transaction-label {
   margin: 0 0 5px;
   color: var(--muted);
