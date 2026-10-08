@@ -21,45 +21,99 @@
 
 @media (min-width: 1024px) {
   .app-tab-panel--transactions .transaction-row {
-    /* Ramping di kiri, lega di tengah & kanan (Aksi). Angka minimum menjamin
-       nominal rupiah (Rp 1.088.000 / Rp 2.400.000 ~86px) tidak terdesak,
-       kolom Metode Bayar muat keterangan split bill secara proporsional,
-       dan kolom Aksi tidak pernah tertimpa. */
+    /* Tata letak grid 10 kolom proporsional terukur (wadah kasir nyata ~1240px).
+       - ID Transaksi: lega (min 126px, fr 1.05) muat 17 char TRX-1791408987268 utuh.
+       - Ruangan: lega (min 84px, fr 0.75) muat nama ruangan & F&B Umum tanpa tabrakan.
+       - Durasi: pas (min 68px, fr 0.55) muat durasi & badge free room.
+       - Biaya Paket/Room: pas (min 84px, fr 0.7) muat nominal & overtime extra.
+       - Jasa LC & F&B: lega (min 86px, fr 0.75) muat nominal hingga jutaan satu baris.
+       - Total Akhir & Status: pas (min 92px/94px, fr 0.8) muat label & badge.
+       - Metode Bayar: rapi (min 96px, fr 0.85) muat transfer, cash, split bill stack.
+       - Aksi: lega (min 178px, fr 1.25) muat tombol & kontrol pelunasan. */
     grid-template-columns:
-      minmax(95px, 0.85fr)   /* ID Transaksi  (judul ~88px, ID TRX ~88px) */
-      minmax(72px, 0.65fr)   /* Ruangan       (judul ~64px, VIP 8 ~40px) */
-      minmax(58px, 0.5fr)    /* Durasi        (judul ~47px, 180 menit ~55px) */
-      minmax(82px, 0.7fr)    /* Biaya Paket   (judul ~83px, Rp 0 ~30px) */
-      minmax(90px, 0.8fr)    /* Jasa LC       (muat 'Rp 2.400.000' ~86px) */
-      minmax(88px, 0.75fr)   /* F&B           (muat 'Rp 1.088.000' ~86px) */
-      minmax(94px, 0.8fr)    /* Total Akhir   (muat 'Rp 3.488.000' ~86px) */
-      minmax(96px, 0.8fr)    /* Status        (muat 'BELUM DIBAYAR' ~92px) */
-      minmax(100px, 0.9fr)   /* Metode Bayar  (muat split bill / wrap rapi) */
-      minmax(180px, 1.3fr) !important; /* Aksi: Lihat/Struk/Opsi + dropdown + Tandai Lunas */
+      minmax(126px, 1.05fr)  /* 1. ID Transaksi  (TRX-1791408987268 ~118px) */
+      minmax(84px, 0.75fr)   /* 2. Ruangan       (STANDAR 3 / F&B Umum) */
+      minmax(68px, 0.55fr)   /* 3. Durasi        (180 menit & badge free) */
+      minmax(84px, 0.70fr)   /* 4. Biaya Room    (Rp 200.000 / Rp 770.000) */
+      minmax(86px, 0.75fr)   /* 5. Jasa LC       (Rp 480.000 / Rp 2.400.000) */
+      minmax(86px, 0.75fr)   /* 6. F&B           (Rp 428.000 / Rp 1.088.000) */
+      minmax(92px, 0.80fr)   /* 7. Total Akhir   (Rp 1.108.000 / Rp 3.488.000) */
+      minmax(94px, 0.80fr)   /* 8. Status        (LUNAS / BELUM DIBAYAR) */
+      minmax(96px, 0.85fr)   /* 9. Metode Bayar  (Transfer, Cash, Split Bill) */
+      minmax(178px, 1.25fr) !important; /* 10. Aksi: Lihat/Cetak/Opsi + Tandai Lunas */
     gap: 8px 6px !important;
     /* Buang paksaan lebar yang membuat baris menuntut 1289px */
     min-width: 0 !important;
     max-width: 100% !important;
   }
 
-  /* Judul kolom selalu satu baris (tidak membungkus seperti 'METODE BAYAR'
-     yang tadinya terbelah dua baris). */
+  /* Judul kolom selalu satu baris utuh dan berjarak rapi */
   .app-tab-panel--transactions .transaction-cell .transaction-label {
     white-space: nowrap !important;
+    font-size: 0.67rem !important;
+    letter-spacing: 0.05em !important;
   }
 
-  /* Nilai nominal & teks ringkas transaksi wajib satu baris utuh, tidak boleh patah
-     di tengah angka desimal atau ribuan (contoh: 'Rp 1.088.' lalu '.000' ke bawah).
-     Kolom Metode Bayar dikecualikan agar keterangan panjang (Split Bill) bisa wrap ke bawah. */
-  .app-tab-panel--transactions .transaction-cell:not(.transaction-payment-cell):not(:nth-child(9)) .transaction-value {
+  /* Seluruh sel data (sel 1 sampai 9) memiliki batas tegas
+     dan tidak boleh meluap menabrak sel tetangganya */
+  .app-tab-panel--transactions .transaction-cell:not(.transaction-actions-cell) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  /* Kolom 1 - ID Transaksi: font monospace rapi, muat 17 karakter penuh
+     tanpa terpotong dan tidak menempel ke border */
+  .app-tab-panel--transactions .transaction-cell.transaction-id-cell {
+    padding-right: 4px !important;
+  }
+
+  .app-tab-panel--transactions .transaction-cell.transaction-id-cell .transaction-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    font-size: 0.77rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.015em !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    line-height: 1.3 !important;
+    color: var(--text, #f5f0e1) !important;
+  }
+
+  /* Kolom 2 - Ruangan: nama ruangan panjang (misal 'F&B Umum - Umum') membungkus rapi,
+     bukan menabrak kolom Durasi */
+  .app-tab-panel--transactions .transaction-cell:nth-child(2) .transaction-value {
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    font-size: 0.86rem !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Kolom 3 - Durasi: format bersih satu baris */
+  .app-tab-panel--transactions .transaction-cell:nth-child(3) .transaction-value {
+    white-space: nowrap !important;
+    font-size: 0.88rem !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Kolom 4, 5, 6, 7 - Nominal Rupiah: selalu satu baris utuh, angka rapi tabular,
+     tidak boleh patah di tengah kata/desimal (misal 'Rp 1.088.' lalu '.000' ke bawah) */
+  .app-tab-panel--transactions .transaction-cell:nth-child(4) .transaction-value,
+  .app-tab-panel--transactions .transaction-cell.transaction-lc-cell .transaction-value,
+  .app-tab-panel--transactions .transaction-cell:nth-child(6) .transaction-value,
+  .app-tab-panel--transactions .transaction-cell:nth-child(7) .transaction-value {
     white-space: nowrap !important;
     overflow-wrap: normal !important;
     word-break: normal !important;
     font-variant-numeric: tabular-nums !important;
+    font-size: 0.88rem !important;
+    font-weight: 800 !important;
+    line-height: 1.25 !important;
   }
 
-  /* Kolom Metode Bayar: jika keterangannya panjang (mis. Split: Cash Rp... / Transfer Rp...),
-     otomatis menyesuaikan ke bawah (wrap) secara proporsional dan tidak menimpa kolom Aksi */
+  /* Kolom 9 - Metode Bayar: jika teks panjang (misal Split Bill),
+     otomatis menyesuaikan ke bawah secara proporsional tanpa menimpa kolom Aksi */
   .app-tab-panel--transactions .transaction-cell.transaction-payment-cell,
   .app-tab-panel--transactions .transaction-cell:nth-child(9) {
     min-width: 0 !important;
@@ -77,7 +131,7 @@
     max-width: 100% !important;
   }
 
-  /* Rincian split payment: tertata vertikal ke bawah, proporsional dan elegan */
+  /* Rincian split payment: tertata vertikal ke bawah, proporsional dan rapi */
   .app-tab-panel--transactions .transaction-split-stack {
     display: flex !important;
     flex-direction: column !important;
@@ -103,22 +157,20 @@
     box-sizing: border-box !important;
   }
 
-  /* Badge 'Termasuk F&B' / LC: boleh turun baris, tetapi jangan terpotong di
-     tengah kata (mis. 'TERMASU K'). Patah hanya di spasi. */
+  /* Badge umum di tabel: boleh turun baris di antara kata, tidak boleh patah di tengah kata */
   .app-tab-panel--transactions .transaction-cell .transaction-fnb-badge,
   .app-tab-panel--transactions .transaction-cell .transaction-lc-badge {
     overflow-wrap: normal !important;
     word-break: normal !important;
     hyphens: none !important;
+    font-size: 0.67rem !important;
+    line-height: 1.25 !important;
+    padding: 2px 6px !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
 
-  /* ID transaksi sedikit lebih rapat agar muat tanpa memotong tokoh teks */
-  .app-tab-panel--transactions .transaction-cell.transaction-id-cell .transaction-value {
-    font-size: 0.82rem !important;
-    letter-spacing: -0.02em !important;
-  }
-
-  /* Kolom Aksi dan isinya selalu di atas, terlindungi, dan tidak boleh tertimpa */
+  /* Kolom 10 - Aksi: selalu di atas, terlindungi, dan tidak boleh tertimpa */
   .app-tab-panel--transactions .transaction-cell.transaction-actions-cell {
     position: relative !important;
     z-index: 2 !important;
