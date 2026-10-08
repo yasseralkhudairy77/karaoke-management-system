@@ -56,30 +56,30 @@
       Redesain Header & Segmented Navigation Tabs:
       Tata letak terpadu, brand emblem, live clock, subtle live indicator, dan tab modern.
     -->
-    <link rel="stylesheet" href="css/skin-header-nav.css?v=1" />
+    <link rel="stylesheet" href="css/skin-header-nav.css?v=sap-v1" />
   </head>
   <body>
-    <!-- Header aplikasi tetap statis agar konteks halaman jelas sebelum JavaScript selesai dimuat. -->
-    <header class="app-header">
-      <div class="app-brand">
-        <div class="app-brand-logo">HS</div>
-        <div class="app-brand-text">
-          <p class="app-kicker">Happy Song Karaoke</p>
-          <h1>Dashboard Operasional</h1>
+    <!-- Shell Header Terpadu: Freeze di bagian atas saat halaman di-skrol (SAP ShellBar + IconTabBar) -->
+    <div class="app-shell-top">
+      <header class="app-header">
+        <div class="app-brand">
+          <span class="app-brand-title">HAPPY SONG</span>
+          <span class="app-brand-divider" aria-hidden="true">|</span>
+          <h1 class="app-brand-subtitle">POS Operasional Kasir</h1>
         </div>
-      </div>
-      <div class="app-header-controls">
-        <div id="liveClockDisplay" class="app-live-clock" aria-label="Waktu operasional">--:--:--</div>
-        <span id="dataSourceBadge" class="app-badge"><span class="app-badge-dot"></span><span class="app-badge-text">Memuat Data</span></span>
-      </div>
-    </header>
+        <div class="app-header-controls">
+          <div id="liveClockDisplay" class="app-live-clock" aria-label="Waktu operasional">--:--:--</div>
+          <span id="dataSourceBadge" class="app-badge"><span class="app-badge-dot"></span><span class="app-badge-text">Memuat Data</span></span>
+        </div>
+      </header>
+
+      <!-- Navigasi tab modul dashboard (SAP IconTabBar). -->
+      <nav id="appTabs" class="app-tabs" role="tablist" aria-label="Navigasi modul dashboard"></nav>
+    </div>
 
     <main class="dashboard-shell">
       <!-- Pesan global, ringkasan tagihan, dan struk dirender oleh js/app.js. -->
       <div id="dashboardGlobal" class="dashboard-global" aria-live="polite"></div>
-
-      <!-- Navigasi tab modul dashboard. -->
-      <nav id="appTabs" class="app-tabs" role="tablist" aria-label="Navigasi modul dashboard"></nav>
 
       <!-- Panel konten tab aktif dirender oleh js/app.js. -->
       <div id="dashboardPanels" class="dashboard-panels"></div>

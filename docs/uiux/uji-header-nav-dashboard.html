@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Uji Layout Header & Navigasi POS Karaoke</title>
+  <title>Uji Layout Freeze Header & Navigasi SAP Fiori - POS Karaoke</title>
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="stylesheet" href="../../css/skin-fnb-layout.css">
   <link rel="stylesheet" href="../../css/skin-pengeluaran.css">
@@ -12,29 +12,67 @@
   <link rel="stylesheet" href="../../css/skin-laporan.css">
   <link rel="stylesheet" href="../../css/skin-transaksi.css">
   <link rel="stylesheet" href="../../css/skin-transaksi-layout.css?v=4">
-  <link rel="stylesheet" href="../../css/skin-header-nav.css?v=1">
+  <link rel="stylesheet" href="../../css/skin-header-nav.css?v=sap-v1">
 </head>
 <body>
-  <header class="app-header">
-    <div class="app-brand">
-      <div class="app-brand-logo">HS</div>
-      <div class="app-brand-text">
-        <p class="app-kicker">Happy Song Karaoke</p>
-        <h1>Dashboard Operasional</h1>
+  <!-- Shell Header Terpadu: Freeze di bagian atas saat halaman di-skrol (SAP ShellBar + IconTabBar) -->
+  <div class="app-shell-top">
+    <header class="app-header">
+      <div class="app-brand">
+        <span class="app-brand-title">HAPPY SONG</span>
+        <span class="app-brand-divider" aria-hidden="true">|</span>
+        <h1 class="app-brand-subtitle">POS Operasional Kasir</h1>
       </div>
-    </div>
-    <div class="app-header-controls">
-      <div class="app-live-clock" aria-label="Waktu operasional">22:45:10</div>
-      <span class="app-badge success"><span class="app-badge-dot"></span><span class="app-badge-text">Online</span></span>
-    </div>
-  </header>
+      <div class="app-header-controls">
+        <div class="app-live-clock" aria-label="Waktu operasional">22:45:10</div>
+        <span class="app-badge live"><span class="app-badge-dot"></span><span class="app-badge-text">Terhubung</span></span>
+        <div class="operator-session">
+          <span class="operator-session-label">Operator: Kasir 1 (Shift Malam)</span>
+          <button class="operator-logout-button" type="button">Keluar</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- SAP Fiori IconTabBar (Flat Tab dengan Indikator Bawah SAP Blue) -->
+    <nav class="app-tabs" role="tablist">
+      <button class="app-tab-button active" type="button" role="tab" aria-selected="true">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></span>
+        <span class="app-tab-label">Ruangan</span>
+        <span class="app-tab-badge rooms-warning-badge">2</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg></span>
+        <span class="app-tab-label">F&amp;B</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg></span>
+        <span class="app-tab-label">Pengeluaran</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></span>
+        <span class="app-tab-label">Stok</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></span>
+        <span class="app-tab-label">LC</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></span>
+        <span class="app-tab-label">Laporan</span>
+      </button>
+      <button class="app-tab-button" type="button" role="tab" aria-selected="false">
+        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg></span>
+        <span class="app-tab-label">Transaksi</span>
+      </button>
+    </nav>
+  </div>
 
   <main class="dashboard-shell">
     <div class="dashboard-global">
-      <!-- Shortcut Transaksi Terakhir Slim -->
+      <!-- Shortcut Transaksi Terakhir (SAP MessageStrip / Quick Action Bar) -->
       <section class="latest-transaction-shortcut">
         <div class="latest-transaction-shortcut-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
         </div>
         <div class="latest-transaction-shortcut-content">
           <span class="latest-transaction-shortcut-kicker">Transaksi Terakhir</span>
@@ -51,71 +89,115 @@
       </section>
     </div>
 
-    <!-- Segmented Navigation Tabs Bar -->
-    <nav class="app-tabs" role="tablist">
-      <button class="app-tab-button active" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></span>
-        <span class="app-tab-label">Ruangan</span>
-        <span class="app-tab-badge rooms-warning-badge">2</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg></span>
-        <span class="app-tab-label">F&amp;B</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg></span>
-        <span class="app-tab-label">Pengeluaran</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></span>
-        <span class="app-tab-label">Stok</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></span>
-        <span class="app-tab-label">LC</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></span>
-        <span class="app-tab-label">Laporan</span>
-      </button>
-      <button class="app-tab-button" type="button" role="tab">
-        <span class="app-tab-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg></span>
-        <span class="app-tab-label">Transaksi</span>
-      </button>
-    </nav>
-
-    <!-- Panel Content Mockup -->
+    <!-- Panel Content Mockup untuk Menguji Skrol Vertikal -->
     <div class="dashboard-panels">
-      <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 1rem;">
-        <div style="background: #14110d; border: 1px solid #3d3423; border-radius: 12px; padding: 1.25rem;">
+      <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <strong style="color: #f7eed7; font-size: 1.1rem;">VIP 1</strong>
-            <span style="background: rgba(22, 101, 52, 0.4); color: #86efac; border: 1px solid #166534; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">Kosong</span>
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">VIP 1</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
           </div>
-          <p style="color: #b5a995; font-size: 0.85rem; margin: 0 0 1rem 0;">Kapasitas 10 orang • Sound Premium</p>
-          <button style="width: 100%; background: #262118; border: 1px solid #4a3e2a; color: #f7eed7; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 10 orang • Sound Premium</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
         </div>
 
-        <div style="background: #14110d; border: 1px solid #eab308; border-radius: 12px; padding: 1.25rem; box-shadow: 0 0 16px rgba(234, 179, 8, 0.1);">
+        <div style="background: #141820; border: 1px solid #1b90ff; border-radius: 6px; padding: 1.25rem; box-shadow: 0 0 12px rgba(27, 144, 255, 0.15);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <strong style="color: #f7eed7; font-size: 1.1rem;">STANDAR 2</strong>
-            <span style="background: rgba(153, 27, 27, 0.4); color: #fca5a5; border: 1px solid #991b1b; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">Terisi</span>
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 2</strong>
+            <span style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Terisi</span>
           </div>
-          <p style="color: #eab308; font-size: 0.85rem; margin: 0 0 0.5rem 0; font-weight: 600;">Sisa Waktu: 00:14:20</p>
-          <p style="color: #b5a995; font-size: 0.8rem; margin: 0 0 1rem 0;">Paket Twin Morgan • 2 LC</p>
-          <button style="width: 100%; background: #d97706; border: 1px solid #b45309; color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">Detail Room</button>
+          <p style="color: #60a5fa; font-size: 0.85rem; margin: 0 0 0.5rem 0; font-weight: 700;">Sisa Waktu: 00:14:20</p>
+          <p style="color: #94a3b8; font-size: 0.8rem; margin: 0 0 1rem 0;">Paket Twin Morgan • 2 LC</p>
+          <button style="width: 100%; background: #0070f2; border: 1px solid #0056b3; color: #fff; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 700; cursor: pointer;">Detail Room</button>
         </div>
 
-        <div style="background: #14110d; border: 1px solid #3d3423; border-radius: 12px; padding: 1.25rem;">
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <strong style="color: #f7eed7; font-size: 1.1rem;">STANDAR 3</strong>
-            <span style="background: rgba(22, 101, 52, 0.4); color: #86efac; border: 1px solid #166534; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">Kosong</span>
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 3</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
           </div>
-          <p style="color: #b5a995; font-size: 0.85rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
-          <button style="width: 100%; background: #262118; border: 1px solid #4a3e2a; color: #f7eed7; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 4</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">VIP 2</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 12 orang • Sound Premium</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 5</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 6</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 7</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 8</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 9</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
+        </div>
+
+        <div style="background: #141820; border: 1px solid #232d3d; border-radius: 6px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <strong style="color: #f1f5f9; font-size: 1.05rem;">STANDAR 10</strong>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">Kosong</span>
+          </div>
+          <p style="color: #94a3b8; font-size: 0.82rem; margin: 0 0 1rem 0;">Kapasitas 6 orang • Standar</p>
+          <button style="width: 100%; background: #1c2432; border: 1px solid #2e3b4e; color: #f1f5f9; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">Buka Room</button>
         </div>
       </div>
     </div>
   </main>
+  <script>
+    if (window.location.search.includes('scroll') || window.location.hash.includes('scroll')) {
+      window.scrollTo(0, 320);
+    }
+  </script>
 </body>
 </html>

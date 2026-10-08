@@ -1,152 +1,147 @@
 /* ==========================================================================
-   HAPPY SONG KARAOKE - LUXURY EXECUTIVE HEADER & NAVIGATION SYSTEM
-   Skin khusus untuk Redesain Header, Status Bar, Operator Widget, & Tab Navigation
+   HAPPY SONG KARAOKE - SAP ENTERPRISE FIORI LOOK (QUARTZ DARK)
+   Sistem Header Terpadu (Freeze ShellBar & IconTabBar), Telemetri, & MessageStrip
    ========================================================================== */
 
-/* 1. APP HEADER (TOP BAR) */
-.app-header {
+/* 1. APP SHELL TOP (STICKY FREEZE CONTAINER)
+   Membungkus Header Bar dan Tab Navigasi agar tetap terkunci di bagian atas
+   saat halaman di-skrol ke bawah, sehingga kasir dapat memilih menu kapan saja. */
+.app-shell-top {
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: #11161f;
+  border-bottom: 1px solid #232c38;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* 2. SAP FIORI SHELLBAR (.app-header) */
+.app-header {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 14px clamp(20px, 3.5vw, 40px);
-  background: linear-gradient(180deg, rgba(22, 17, 12, 0.96) 0%, rgba(13, 10, 7, 0.94) 100%);
-  border-bottom: 1px solid rgba(226, 184, 92, 0.2);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  gap: 20px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 clamp(16px, 3.5vw, 40px);
+  background: #11161f;
+  border-bottom: 1px solid #1c2430;
+  box-sizing: border-box;
 }
 
-/* Brand Section (Kiri) */
+/* Brand Section (Murni Tipografi Profesional SAP, Tanpa Logo AI) */
 .app-brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
 }
 
-.app-brand-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #e2b85c 0%, #a4782b 100%);
-  color: #0c0906;
+.app-brand-title {
+  color: #ffffff;
   font-family: inherit;
-  font-size: 1.15rem;
-  font-weight: 950;
-  letter-spacing: -0.02em;
-  box-shadow: 0 4px 14px rgba(226, 184, 92, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(255, 235, 180, 0.5);
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
-}
-
-.app-brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.app-kicker {
-  margin: 0;
-  color: #e2b85c;
-  font-size: 0.76rem;
-  font-weight: 900;
-  letter-spacing: 0.14em;
+  font-size: 0.95rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  line-height: 1.2;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.app-header h1 {
-  margin: 2px 0 0;
-  color: #f8fafc;
-  font-size: clamp(1.25rem, 2.2vw, 1.65rem);
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  line-height: 1.15;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+.app-brand-divider {
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1;
+  user-select: none;
 }
 
-/* Header Controls Cluster (Kanan) */
+.app-brand-subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Header Controls Cluster (Telemetri & Kontrol Kanan) */
 .app-header-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
-/* Live Clock Display */
+/* Live Operational Clock */
 .app-live-clock {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  height: 38px;
-  border-radius: 9px;
-  background: rgba(26, 20, 14, 0.65);
-  border: 1px solid rgba(226, 184, 92, 0.14);
-  color: #d6cfc7;
-  font-size: 0.82rem;
-  font-weight: 700;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 4px;
+  background: #18202c;
+  border: 1px solid #283344;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
   white-space: nowrap;
 }
 
-/* Live Server Badge */
+/* Telemetry Server Status Badge */
 .app-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  height: 38px;
-  border-radius: 9px;
-  font-size: 0.82rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: all 0.2s ease;
-  background: rgba(26, 20, 14, 0.65);
-  border: 1px solid rgba(226, 184, 92, 0.14);
-  color: #a8a29e;
+  background: #18202c;
+  border: 1px solid #283344;
+  color: #94a3b8;
+  transition: all 0.15s ease;
 }
 
 .app-badge-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  flex: 0 0 8px;
+  flex: 0 0 7px;
   background: currentColor;
 }
 
 .app-badge.live {
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(16, 185, 129, 0.12);
   border-color: rgba(16, 185, 129, 0.35);
   color: #34d399;
 }
 
 .app-badge.live .app-badge-dot {
   background: #10b981;
-  box-shadow: 0 0 8px #10b981;
-  animation: pulseDot 2s infinite ease-in-out;
 }
 
 .app-badge.error {
-  background: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.15);
   border-color: rgba(239, 68, 68, 0.4);
   color: #f87171;
 }
 
 .app-badge.error .app-badge-dot {
   background: #ef4444;
-  box-shadow: 0 0 8px #ef4444;
 }
 
 .app-badge.mock {
@@ -155,85 +150,40 @@
   color: #94a3b8;
 }
 
-@keyframes pulseDot {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.3);
-    opacity: 0.65;
-  }
-}
-
-/* Operator Session & Profile Pill */
+/* Operator Session Widget */
 .operator-session {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 6px 4px 12px;
-  height: 44px;
-  border-radius: 12px;
-  background: rgba(32, 24, 17, 0.85);
-  border: 1px solid rgba(226, 184, 92, 0.28);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border-radius: 4px;
+  background: #18202c;
+  border: 1px solid #283344;
 }
 
 .operator-session[hidden] {
   display: none;
 }
 
-.operator-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(226, 184, 92, 0.3) 0%, rgba(226, 184, 92, 0.1) 100%);
-  border: 1px solid rgba(226, 184, 92, 0.4);
-  color: #f5d076;
+.operator-session-label {
+  color: #cbd5e1;
   font-size: 0.78rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  flex: 0 0 32px;
-}
-
-.operator-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.operator-name {
-  color: #f8fafc;
-  font-size: 0.84rem;
-  font-weight: 800;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-
-.operator-role {
-  color: #e2b85c;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  line-height: 1.2;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .operator-logout-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  height: 34px;
-  border-radius: 8px;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.35);
   color: #fca5a5;
-  font-size: 0.8rem;
-  font-weight: 800;
+  font-size: 0.74rem;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -241,46 +191,43 @@
 
 .operator-logout-button:hover,
 .operator-logout-button:focus-visible {
-  background: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.28);
   border-color: rgba(239, 68, 68, 0.6);
   color: #ffffff;
   outline: none;
-  transform: translateY(-1px);
-}
-
-.operator-logout-button:active {
-  transform: translateY(1px);
 }
 
 /* ==========================================================================
-   2. SEGMENTED NAVIGATION TABS BAR (.app-tabs)
+   3. SAP FIORI ICONTABBAR (.app-tabs)
+   Flat tab bar dengan active bottom indicator underline 3px (SAP Blue #1b90ff)
    ========================================================================== */
 .app-tabs {
   position: relative;
-  z-index: 10;
+  z-index: 1;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 18px 0 16px;
-  padding: 6px;
-  background: rgba(18, 14, 10, 0.82);
-  border: 1px solid rgba(226, 184, 92, 0.18);
-  border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  align-items: stretch;
+  gap: 2px;
+  height: 42px;
+  min-height: 42px;
+  margin: 0;
+  padding: 0 clamp(16px, 3.5vw, 40px);
+  background: #151b24;
+  border: none;
+  border-radius: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(226, 184, 92, 0.3) transparent;
+  scrollbar-color: #2b3644 transparent;
 }
 
 .app-tabs::-webkit-scrollbar {
-  height: 5px;
+  height: 3px;
 }
 
 .app-tabs::-webkit-scrollbar-thumb {
-  background: rgba(226, 184, 92, 0.3);
-  border-radius: 999px;
+  background: #2b3644;
+  border-radius: 2px;
 }
 
 .app-tab-button {
@@ -288,21 +235,23 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   flex: 0 0 auto;
-  min-height: 42px;
-  padding: 0 16px;
-  border-radius: 9px;
-  border: 1px solid transparent;
+  height: 42px;
+  padding: 0 14px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 3px 3px 0 0;
   background: transparent;
-  color: #a8a29e;
+  color: #94a3b8;
   cursor: pointer;
   font-family: inherit;
-  font-size: 0.88rem;
-  font-weight: 750;
+  font-size: 0.84rem;
+  font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  box-sizing: border-box;
 }
 
 .app-tab-icon {
@@ -310,97 +259,105 @@
   align-items: center;
   justify-content: center;
   color: inherit;
-  opacity: 0.8;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
 
 .app-tab-button:hover {
-  background: rgba(226, 184, 92, 0.08);
-  color: #f5f5f4;
-  border-color: rgba(226, 184, 92, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e2e8f0;
+  border-bottom-color: rgba(27, 144, 255, 0.4);
 }
 
 .app-tab-button:hover .app-tab-icon {
   opacity: 1;
-  transform: translateY(-1px);
 }
 
-.app-tab-button.active {
-  background: linear-gradient(135deg, rgba(226, 184, 92, 0.22) 0%, rgba(164, 120, 43, 0.18) 100%);
-  border: 1px solid rgba(226, 184, 92, 0.5);
-  color: #fde047;
-  box-shadow: 0 2px 12px rgba(226, 184, 92, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.15);
-  font-weight: 850;
-  text-shadow: 0 0 12px rgba(226, 184, 92, 0.35);
+/* Active State (SAP Enterprise Blue Underline) */
+.app-tab-button.active,
+.app-tab-button[aria-selected="true"] {
+  background: rgba(27, 144, 255, 0.08);
+  border-bottom-color: #1b90ff;
+  color: #ffffff;
+  font-weight: 700;
 }
 
-.app-tab-button.active .app-tab-icon {
-  color: #fde047;
+.app-tab-button.active .app-tab-icon,
+.app-tab-button[aria-selected="true"] .app-tab-icon {
+  color: #1b90ff;
   opacity: 1;
 }
 
+.app-tab-button:focus-visible {
+  outline: 2px solid #1b90ff;
+  outline-offset: -2px;
+}
+
+/* SAP Notification Counter Badge */
 .app-tab-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #ef4444;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 4px;
+  border-radius: 3px;
+  background: #dc2626;
   color: #ffffff;
-  font-size: 0.72rem;
-  font-weight: 900;
+  font-size: 0.7rem;
+  font-weight: 750;
   line-height: 1;
-  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.5);
 }
 
-/* Subtle Group Separator inside Tab Bar */
+/* Hairline Tab Divider */
 .app-tab-divider {
   width: 1px;
-  height: 24px;
-  margin: 0 4px;
-  background: rgba(226, 184, 92, 0.2);
+  height: 18px;
+  margin: 12px 4px 0;
+  background: #2b3644;
   flex: 0 0 1px;
 }
 
 /* ==========================================================================
-   3. STREAMLINED TRANSAKSI TERAKHIR (COMPACT STATUS BAR)
+   4. SAP COMPACT MESSAGESTRIP / TRANSACTION SHORTCUT
+   Datar, presisi, border-left SAP Info Blue, tombol aksi korporat tegas
    ========================================================================== */
 .latest-transaction-shortcut {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   margin: 0 0 14px;
-  padding: 10px 16px;
-  min-height: 52px;
-  border-radius: 12px;
-  background: linear-gradient(90deg, rgba(38, 28, 17, 0.85) 0%, rgba(22, 17, 12, 0.85) 100%);
-  border: 1px solid rgba(226, 184, 92, 0.3);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px);
+  padding: 8px 14px;
+  min-height: 46px;
+  border-radius: 4px;
+  background: #161c26;
+  border: 1px solid #283344;
+  border-left: 4px solid #1b90ff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
 }
 
 .latest-transaction-shortcut-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: rgba(226, 184, 92, 0.15);
-  border: 1px solid rgba(226, 184, 92, 0.35);
-  color: #fde047;
-  flex: 0 0 32px;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background: rgba(27, 144, 255, 0.12);
+  border: 1px solid rgba(27, 144, 255, 0.25);
+  color: #60a5fa;
+  flex: 0 0 28px;
 }
 
 .latest-transaction-shortcut-content {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 16px;
+  gap: 8px 14px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -408,28 +365,29 @@
 .latest-transaction-shortcut-kicker {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(226, 184, 92, 0.15);
-  color: #e2b85c;
-  font-size: 0.72rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(27, 144, 255, 0.12);
+  border: 1px solid rgba(27, 144, 255, 0.25);
+  color: #60a5fa;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .latest-transaction-shortcut-meta {
   color: #f8fafc;
-  font-size: 0.92rem;
-  font-weight: 850;
+  font-size: 0.88rem;
+  font-weight: 750;
   white-space: nowrap;
 }
 
 .latest-transaction-shortcut-detail {
-  color: #a8a29e;
-  font-size: 0.8rem;
-  font-weight: 650;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -440,59 +398,69 @@
   flex: 0 0 auto;
 }
 
+/* SAP Standard Buttons */
 .latest-transaction-shortcut-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 0 14px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #e2b85c 0%, #a4782b 100%);
-  border: 1px solid rgba(255, 235, 180, 0.4);
-  color: #0c0906;
-  font-size: 0.82rem;
-  font-weight: 900;
+  min-height: 30px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 4px;
+  background: #0070f2;
+  border: 1px solid #0056b3;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(226, 184, 92, 0.25);
-}
-
-.latest-transaction-shortcut-button.secondary {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(226, 184, 92, 0.25);
-  color: #f5f5f4;
-  box-shadow: none;
 }
 
 .latest-transaction-shortcut-button:hover,
 .latest-transaction-shortcut-button:focus-visible {
-  transform: translateY(-1px);
-  filter: brightness(1.1);
+  background: #1b90ff;
+  border-color: #1b90ff;
   outline: none;
 }
 
-.latest-transaction-shortcut-button:active {
-  transform: translateY(1px);
+.latest-transaction-shortcut-button.secondary {
+  background: transparent;
+  border: 1px solid #3b4758;
+  color: #cbd5e1;
 }
 
-/* Responsiveness */
+.latest-transaction-shortcut-button.secondary:hover,
+.latest-transaction-shortcut-button.secondary:focus-visible {
+  background: #1f2735;
+  border-color: #64748b;
+  color: #ffffff;
+}
+
+/* Responsivitas Layar Sempit */
 @media (max-width: 900px) {
   .app-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 14px 18px;
+    height: auto;
+    min-height: 48px;
+    padding: 8px 16px;
+    flex-wrap: wrap;
+  }
+  .app-brand {
+    width: 100%;
+    margin-bottom: 4px;
   }
   .app-header-controls {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
     flex-wrap: wrap;
+  }
+  .app-tabs {
+    padding: 0 16px;
   }
   .latest-transaction-shortcut {
     flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
   }
   .latest-transaction-shortcut-actions {
     width: 100%;
