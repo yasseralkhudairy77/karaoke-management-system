@@ -26,17 +26,61 @@ const appHeader = document.querySelector(".app-header");
 const DASHBOARD_TAB_STORAGE_KEY = "karaoke_active_dashboard_tab";
 const OPERATOR_SESSION_STORAGE_KEY = "karaoke_operator_session";
 const DASHBOARD_TABS = [
-  { key: "rooms", label: "Ruangan" },
-  { key: "fnb", label: "F&B" },
-  { key: "expenses", label: "Pengeluaran" },
-  { key: "stock", label: "Stok" },
-  { key: "lc", label: "LC" },
-  { key: "reports", label: "Laporan" },
-  { key: "transactions", label: "Transaksi" },
-  { key: "audit", label: "Audit" },
-  { key: "promosi", label: "Promosi" },
-  { key: "analytics", label: "Analisa" },
-  { key: "settings", label: "Pengaturan" },
+  {
+    key: "rooms",
+    label: "Ruangan",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
+  },
+  {
+    key: "fnb",
+    label: "F&B",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>`,
+  },
+  {
+    key: "expenses",
+    label: "Pengeluaran",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>`,
+  },
+  {
+    key: "stock",
+    label: "Stok",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>`,
+  },
+  {
+    key: "lc",
+    label: "LC",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>`,
+  },
+  {
+    key: "reports",
+    label: "Laporan",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>`,
+  },
+  {
+    key: "transactions",
+    label: "Transaksi",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>`,
+  },
+  {
+    key: "audit",
+    label: "Audit",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>`,
+  },
+  {
+    key: "promosi",
+    label: "Promosi",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>`,
+  },
+  {
+    key: "analytics",
+    label: "Analisa",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>`,
+  },
+  {
+    key: "settings",
+    label: "Pengaturan",
+    iconSvg: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`,
+  },
 ];
 const ROLE_ALIASES = {
   admin: "manager",
@@ -3847,7 +3891,14 @@ function setDataSourceBadge(label, type = "default") {
     return;
   }
 
-  dataSourceBadge.textContent = label;
+  dataSourceBadge.replaceChildren();
+  const dot = document.createElement("span");
+  dot.className = "app-badge-dot";
+  const text = document.createElement("span");
+  text.className = "app-badge-text";
+  text.textContent = label;
+  dataSourceBadge.append(dot, text);
+
   dataSourceBadge.className =
     type === "default" ? "app-badge" : `app-badge ${type}`;
 }
@@ -8759,27 +8810,31 @@ function createLatestTransactionShortcutElement(transaction) {
   shortcut.dataset.transactionId = transaction?.transaction_id || "";
   shortcut.setAttribute("aria-labelledby", "latest-transaction-shortcut-title");
 
+  const iconTag = document.createElement("div");
+  iconTag.className = "latest-transaction-shortcut-icon";
+  iconTag.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`;
+
   const content = document.createElement("div");
   content.className = "latest-transaction-shortcut-content";
 
-  const title = document.createElement("h2");
-  title.id = "latest-transaction-shortcut-title";
-  title.className = "latest-transaction-shortcut-title";
-  title.textContent = "Transaksi Terakhir";
+  const kicker = document.createElement("span");
+  kicker.id = "latest-transaction-shortcut-title";
+  kicker.className = "latest-transaction-shortcut-kicker";
+  kicker.textContent = "Transaksi Terakhir";
 
-  const meta = document.createElement("p");
+  const meta = document.createElement("span");
   meta.className = "latest-transaction-shortcut-meta";
   meta.textContent = [
     transaction?.room_name || transaction?.room_id || "-",
     formatCurrency(getTransactionFinalTotal(transaction)),
     getPaymentStatusLabel(transaction?.payment_status),
-  ].join(" | ");
+  ].join(" • ");
 
-  const detail = document.createElement("p");
+  const detail = document.createElement("span");
   detail.className = "latest-transaction-shortcut-detail";
-  detail.textContent = `ID: ${transaction?.transaction_id || "-"} | Selesai: ${formatTransactionDateTime(transaction?.end_time || transaction?.created_at)}`;
+  detail.textContent = `ID: ${transaction?.transaction_id || "-"} (${formatTransactionDateTime(transaction?.end_time || transaction?.created_at)})`;
 
-  content.append(title, meta, detail);
+  content.append(kicker, meta, detail);
 
   const actions = document.createElement("div");
   actions.className = "latest-transaction-shortcut-actions";
@@ -8789,17 +8844,17 @@ function createLatestTransactionShortcutElement(transaction) {
   summaryButton.type = "button";
   summaryButton.dataset.action = "show-transaction-summary";
   summaryButton.dataset.transactionId = transaction?.transaction_id || "";
-  summaryButton.textContent = "Lihat Ringkasan";
+  summaryButton.textContent = "Lihat";
 
   const printButton = document.createElement("button");
   printButton.className = "latest-transaction-shortcut-button";
   printButton.type = "button";
   printButton.dataset.action = "show-receipt-print";
   printButton.dataset.transactionId = transaction?.transaction_id || "";
-  printButton.textContent = "Cetak Struk";
+  printButton.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg><span>Cetak Struk</span>`;
 
   actions.append(summaryButton, printButton);
-  shortcut.append(content, actions);
+  shortcut.append(iconTag, content, actions);
 
   return shortcut;
 }
@@ -33537,6 +33592,14 @@ function renderAppTabs() {
     button.dataset.action = "switch-dashboard-tab";
     button.dataset.tab = tab.key;
     button.setAttribute("aria-selected", activeDashboardTab === tab.key ? "true" : "false");
+
+    if (tab.iconSvg) {
+      const icon = document.createElement("span");
+      icon.className = "app-tab-icon";
+      icon.innerHTML = tab.iconSvg;
+      button.appendChild(icon);
+    }
+
     label.className = "app-tab-label";
     label.textContent = tab.label;
     button.appendChild(label);

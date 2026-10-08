@@ -48,19 +48,30 @@
 
     <!--
       Perbaikan tata letak baris Transaksi: kolom paling kanan (Aksi) tadinya
-      meluber dan terpotong (hanya "Lihat" yang tampak). Dimuat TERAKHIR, setelah
-      semua skin, agar menang. Hapus baris ini untuk membatalkan.
+      meluber dan terpotong (hanya "Lihat" yang tampak).
     -->
     <link rel="stylesheet" href="css/skin-transaksi-layout.css?v=4" />
+
+    <!--
+      Redesain Header & Segmented Navigation Tabs:
+      Tata letak terpadu, brand emblem, live clock, subtle live indicator, dan tab modern.
+    -->
+    <link rel="stylesheet" href="css/skin-header-nav.css?v=1" />
   </head>
   <body>
     <!-- Header aplikasi tetap statis agar konteks halaman jelas sebelum JavaScript selesai dimuat. -->
     <header class="app-header">
-      <div>
-        <p class="app-kicker">Happy Song Karaoke</p>
-        <h1>Dashboard Operasional</h1>
+      <div class="app-brand">
+        <div class="app-brand-logo">HS</div>
+        <div class="app-brand-text">
+          <p class="app-kicker">Happy Song Karaoke</p>
+          <h1>Dashboard Operasional</h1>
+        </div>
       </div>
-      <span id="dataSourceBadge" class="app-badge">Memuat Data</span>
+      <div class="app-header-controls">
+        <div id="liveClockDisplay" class="app-live-clock" aria-label="Waktu operasional">--:--:--</div>
+        <span id="dataSourceBadge" class="app-badge"><span class="app-badge-dot"></span><span class="app-badge-text">Memuat Data</span></span>
+      </div>
     </header>
 
     <main class="dashboard-shell">
