@@ -147,6 +147,11 @@ function allocatePackageLcBilling(lcRows, packageRule) {
   const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
   const hasPackageRule = Boolean(packageRule?.package_id || includedCount > 0);
 
+  // Total tabungan kuota paket (pooling pool): misal 2 LC x 120 menit = 240 menit
+  let remainingPackageQuota = includedCount * includedDuration;
+  // Batas maksimal jatah paket per individu LC (misal 120 menit / 2 jam per LC)
+  const maxIncludedPerLc = includedDuration > 0 ? includedDuration : remainingPackageQuota;
+
   // Prioritaskan LC dengan durasi terpanjang dan tarif tertinggi agar alokasi paket paling menguntungkan customer (fair billing)
   const sortedRows = [...lcRows].sort((a, b) => {
     const durA = Math.max(0, Math.round(Number(a.duration_minutes || a.durationMinutes || 0)));
@@ -157,13 +162,16 @@ function allocatePackageLcBilling(lcRows, packageRule) {
     return rateB - rateA;
   });
 
-  return sortedRows.map((row, index) => {
+  return sortedRows.map((row) => {
     const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || row.durationMinutes || 0)));
     const ratePerHour = toMoneyNumber(row.rate_per_hour || row.ratePerHour || row.rate_per_room);
     const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
-    const includedMinutes = index < includedCount
-      ? Math.min(durationMinutes, includedDuration)
-      : 0;
+
+    // Serap jatah dari sisa tabungan kuota paket kamar
+    const canInclude = Math.min(durationMinutes, maxIncludedPerLc, remainingPackageQuota);
+    const includedMinutes = Math.max(0, canInclude);
+    remainingPackageQuota = Math.max(0, remainingPackageQuota - includedMinutes);
+
     const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
     const customerChargeAmount = calculateLcCharge(extraMinutes, ratePerHour);
     const billingSource = includedMinutes > 0

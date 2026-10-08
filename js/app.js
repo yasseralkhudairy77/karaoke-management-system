@@ -340,6 +340,9 @@ function getPackageLcIncludedRule(room) {
 
 function calculateLcCustomerChargeForRoom(room, lcItems) {
   const rule = getPackageLcIncludedRule(room);
+  let remainingPackageQuota = rule.includedCount * rule.includedDurationMinutes;
+  const maxIncludedPerLc = rule.includedDurationMinutes > 0 ? rule.includedDurationMinutes : remainingPackageQuota;
+
   const sortedItems = [...lcItems].sort((a, b) => {
     const durA = Math.max(0, Math.round(Number(a.durationMinutes || a.duration_minutes || 0)));
     const durB = Math.max(0, Math.round(Number(b.durationMinutes || b.duration_minutes || 0)));
@@ -349,12 +352,14 @@ function calculateLcCustomerChargeForRoom(room, lcItems) {
     return rateB - rateA;
   });
 
-  return sortedItems.map((item, index) => {
+  return sortedItems.map((item) => {
     const durationMinutes = Math.max(1, Math.round(Number(item.durationMinutes || item.duration_minutes) || 0));
     const ratePerHour = Number(item.ratePerHour || item.rate_per_hour || item.rate || 0);
-    const includedMinutes = index < rule.includedCount
-      ? Math.min(durationMinutes, rule.includedDurationMinutes)
-      : 0;
+
+    const canInclude = Math.min(durationMinutes, maxIncludedPerLc, remainingPackageQuota);
+    const includedMinutes = Math.max(0, canInclude);
+    remainingPackageQuota = Math.max(0, remainingPackageQuota - includedMinutes);
+
     const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
     const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
     const customerCharge = calculateLcCharge(extraMinutes, ratePerHour);
