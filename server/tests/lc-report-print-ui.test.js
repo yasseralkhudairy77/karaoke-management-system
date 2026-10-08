@@ -22,4 +22,11 @@ assert(styleSource.includes('@page lc-report-page'));
 assert(styleSource.includes('page: lc-report-page'));
 assert(styleSource.includes('.lc-report-print-actions'));
 
-console.log('LC report print UI static test passed.');
+assert(appSource.includes('let lcReportSelectedIds = new Set();'));
+assert(appSource.includes('function getAvailableLcsForSelector()'));
+assert(appSource.includes('lcReportSelectedIds.has(String(rep.lc_id || "").trim())'));
+assert(appSource.includes('"lcReportFilterSelectBtn"'));
+assert(appSource.includes('"lcReportSearchInput"'));
+assert(appSource.includes('Mode Selektif Aktif:'));
+
+console.log('LC report print UI and selective filter static test passed.');

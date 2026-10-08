@@ -31198,9 +31198,55 @@ let lcReportStartDate = "";
 let lcReportEndDate = "";
 let lcReportSort = "gross_desc";
 let selectedLcDetailForLogs = null;
+let lcReportSelectedIds = new Set();
+let lcReportSearchQuery = "";
+let lcSelectorDropdownOpen = false;
+let lcChecklistSearchQuery = "";
+
+function getAvailableLcsForSelector() {
+  const map = new Map();
+  (Array.isArray(lcs) ? lcs : []).forEach((lc) => {
+    if (lc && lc.lc_id) {
+      map.set(String(lc.lc_id).trim(), {
+        lc_id: String(lc.lc_id).trim(),
+        lc_name: lc.lc_name || lc.lc_id,
+        status: lc.status || "active",
+      });
+    }
+  });
+  (Array.isArray(lcWorkReports) ? lcWorkReports : []).forEach((rep) => {
+    if (rep && rep.lc_id && !map.has(String(rep.lc_id).trim())) {
+      map.set(String(rep.lc_id).trim(), {
+        lc_id: String(rep.lc_id).trim(),
+        lc_name: rep.lc_name || rep.lc_id,
+        status: "active",
+      });
+    }
+  });
+
+  const list = Array.from(map.values());
+  list.sort((a, b) => String(a.lc_name || "").localeCompare(String(b.lc_name || ""), "id"));
+  return list;
+}
 
 function getSortedLcWorkReports() {
-  const reports = lcWorkReports.slice();
+  let reports = lcWorkReports.slice();
+
+  // Mode Selektif: Filter berdasarkan LC yang dicentang / dipilih
+  if (lcReportSelectedIds && lcReportSelectedIds.size > 0) {
+    reports = reports.filter((rep) => lcReportSelectedIds.has(String(rep.lc_id || "").trim()));
+  }
+
+  // Filter kata kunci pencarian teks
+  if (lcReportSearchQuery && lcReportSearchQuery.trim()) {
+    const q = lcReportSearchQuery.trim().toLowerCase();
+    reports = reports.filter((rep) => {
+      const name = String(rep.lc_name || "").toLowerCase();
+      const id = String(rep.lc_id || "").toLowerCase();
+      return name.includes(q) || id.includes(q);
+    });
+  }
+
   const byName = (first, second) => String(first.lc_name || "").localeCompare(String(second.lc_name || ""), "id");
 
   reports.sort((first, second) => {
@@ -31722,10 +31768,309 @@ function createLcReportsSubTabElement() {
   customGroup.append(startField, endField);
   toolbar.appendChild(customGroup);
 
-  periodSelect.onchange = (e) => {
-    lcReportPeriod = e.target.value;
-    customGroup.style.display = lcReportPeriod === "custom" ? "flex" : "none";
+  // --- LC Select Group (Dropdown & Multi-Select Checklist) ---
+  const lcSelectGroup = document.createElement("div");
+  lcSelectGroup.className = "lc-select-group";
+  lcSelectGroup.style.display = "flex";
+  lcSelectGroup.style.flexDirection = "column";
+  lcSelectGroup.style.gap = "4px";
+  lcSelectGroup.style.position = "relative";
+
+  const lcSelectLabel = document.createElement("label");
+  lcSelectLabel.style.fontSize = "12px";
+  lcSelectLabel.style.color = "var(--muted)";
+  lcSelectLabel.textContent = "Pilih LC (Selektif):";
+
+  const availableLcs = getAvailableLcsForSelector();
+  let triggerBtnLabel = "Semua LC";
+  if (lcReportSelectedIds.size === 1) {
+    const singleId = Array.from(lcReportSelectedIds)[0];
+    const match = availableLcs.find((l) => l.lc_id === singleId);
+    triggerBtnLabel = match ? `${match.lc_name} (${match.lc_id})` : singleId;
+  } else if (lcReportSelectedIds.size > 1) {
+    const names = [];
+    availableLcs.forEach((l) => {
+      if (lcReportSelectedIds.has(l.lc_id)) names.push(l.lc_name);
+    });
+    triggerBtnLabel = `${lcReportSelectedIds.size} LC Terpilih (${names.slice(0, 2).join(", ")}${names.length > 2 ? "..." : ""})`;
+  }
+
+  const triggerBtn = document.createElement("button");
+  triggerBtn.type = "button";
+  triggerBtn.id = "lcReportFilterSelectBtn";
+  triggerBtn.className = "erp-btn erp-btn-secondary lc-selector-trigger-btn";
+  triggerBtn.style.padding = "6px 12px";
+  triggerBtn.style.minHeight = "36px";
+  triggerBtn.style.display = "inline-flex";
+  triggerBtn.style.alignItems = "center";
+  triggerBtn.style.gap = "8px";
+  triggerBtn.style.background = lcReportSelectedIds.size > 0 ? "rgba(226, 184, 92, 0.18)" : "rgba(255, 255, 255, 0.04)";
+  triggerBtn.style.borderColor = lcReportSelectedIds.size > 0 ? "rgba(255, 215, 122, 0.6)" : "rgba(226, 184, 92, 0.25)";
+  triggerBtn.style.color = lcReportSelectedIds.size > 0 ? "var(--gold-strong, #ffd77a)" : "var(--text, #f6ead2)";
+  triggerBtn.style.fontWeight = lcReportSelectedIds.size > 0 ? "bold" : "normal";
+  triggerBtn.innerHTML = `<span>👤 ${escapeHtml(triggerBtnLabel)}</span> <span style="font-size: 10px; opacity: 0.8;">${lcSelectorDropdownOpen ? "▲" : "▼"}</span>`;
+
+  triggerBtn.onclick = (e) => {
+    e.stopPropagation();
+    lcSelectorDropdownOpen = !lcSelectorDropdownOpen;
+    renderRooms();
   };
+
+  lcSelectGroup.append(lcSelectLabel, triggerBtn);
+
+  if (lcSelectorDropdownOpen) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "lc-selector-backdrop";
+    backdrop.style.position = "fixed";
+    backdrop.style.top = "0";
+    backdrop.style.left = "0";
+    backdrop.style.width = "100%";
+    backdrop.style.height = "100%";
+    backdrop.style.zIndex = "1900";
+    backdrop.onclick = (e) => {
+      e.stopPropagation();
+      lcSelectorDropdownOpen = false;
+      renderRooms();
+    };
+    container.appendChild(backdrop);
+
+    const dropdownMenu = document.createElement("div");
+    dropdownMenu.className = "lc-selector-dropdown-menu erp-card";
+    dropdownMenu.style.position = "absolute";
+    dropdownMenu.style.top = "calc(100% + 4px)";
+    dropdownMenu.style.left = "0";
+    dropdownMenu.style.width = "320px";
+    dropdownMenu.style.maxWidth = "90vw";
+    dropdownMenu.style.zIndex = "2000";
+    dropdownMenu.style.backgroundColor = "#1c150e";
+    dropdownMenu.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
+    dropdownMenu.style.border = "1px solid rgba(226, 184, 92, 0.4)";
+    dropdownMenu.style.borderRadius = "8px";
+    dropdownMenu.style.boxShadow = "0 12px 36px rgba(0,0,0,0.85), 0 0 1px rgba(255, 215, 122, 0.3)";
+    dropdownMenu.style.padding = "10px";
+    dropdownMenu.style.display = "flex";
+    dropdownMenu.style.flexDirection = "column";
+    dropdownMenu.style.gap = "8px";
+    dropdownMenu.onclick = (e) => e.stopPropagation();
+
+    const searchWrapper = document.createElement("div");
+    searchWrapper.style.position = "relative";
+    searchWrapper.style.display = "flex";
+    searchWrapper.style.alignItems = "center";
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.id = "lcChecklistSearchInput";
+    searchInput.className = "duration-custom-input";
+    searchInput.placeholder = "Cari nama LC (mis: Eka, Desi)...";
+    searchInput.value = lcChecklistSearchQuery || "";
+    searchInput.style.width = "100%";
+    searchInput.style.padding = "6px 8px";
+    searchInput.style.fontSize = "12px";
+    searchInput.style.borderRadius = "6px";
+    searchInput.style.background = "rgba(10, 8, 6, 0.8)";
+    searchInput.style.border = "1px solid rgba(226, 184, 92, 0.3)";
+    searchInput.style.color = "#f6ead2";
+    searchInput.oninput = (e) => {
+      lcChecklistSearchQuery = e.target.value;
+      const cursorPos = e.target.selectionStart;
+      renderRooms();
+      window.requestAnimationFrame(() => {
+        const inp = document.getElementById("lcChecklistSearchInput");
+        if (inp) {
+          inp.focus();
+          if (cursorPos != null) inp.setSelectionRange(cursorPos, cursorPos);
+        }
+      });
+    };
+    searchWrapper.appendChild(searchInput);
+    dropdownMenu.appendChild(searchWrapper);
+
+    const actionBar = document.createElement("div");
+    actionBar.style.display = "flex";
+    actionBar.style.justifyContent = "space-between";
+    actionBar.style.alignItems = "center";
+    actionBar.style.borderBottom = "1px solid rgba(226, 184, 92, 0.15)";
+    actionBar.style.paddingBottom = "6px";
+
+    const selectAllBtn = document.createElement("button");
+    selectAllBtn.type = "button";
+    selectAllBtn.className = "erp-btn erp-btn-secondary";
+    selectAllBtn.style.padding = "2px 8px";
+    selectAllBtn.style.fontSize = "11px";
+    selectAllBtn.textContent = "Pilih Semua";
+    selectAllBtn.onclick = () => {
+      availableLcs.forEach((l) => lcReportSelectedIds.add(l.lc_id));
+      lcReportsPage = 1;
+      renderRooms();
+    };
+
+    const clearAllBtn = document.createElement("button");
+    clearAllBtn.type = "button";
+    clearAllBtn.className = "erp-btn erp-btn-secondary";
+    clearAllBtn.style.padding = "2px 8px";
+    clearAllBtn.style.fontSize = "11px";
+    clearAllBtn.textContent = "Reset (Semua LC)";
+    clearAllBtn.onclick = () => {
+      lcReportSelectedIds.clear();
+      lcReportsPage = 1;
+      renderRooms();
+    };
+
+    actionBar.append(selectAllBtn, clearAllBtn);
+    dropdownMenu.appendChild(actionBar);
+
+    const checklistBox = document.createElement("div");
+    checklistBox.style.maxHeight = "180px";
+    checklistBox.style.overflowY = "auto";
+    checklistBox.style.display = "flex";
+    checklistBox.style.flexDirection = "column";
+    checklistBox.style.gap = "4px";
+
+    const filterQ = String(lcChecklistSearchQuery || "").trim().toLowerCase();
+    const visibleLcs = availableLcs.filter((l) => {
+      if (!filterQ) return true;
+      return (
+        String(l.lc_name || "").toLowerCase().includes(filterQ) ||
+        String(l.lc_id || "").toLowerCase().includes(filterQ)
+      );
+    });
+
+    if (visibleLcs.length === 0) {
+      const emptyItem = document.createElement("div");
+      emptyItem.style.padding = "8px";
+      emptyItem.style.color = "var(--muted)";
+      emptyItem.style.fontSize = "12px";
+      emptyItem.style.textAlign = "center";
+      emptyItem.textContent = "LC tidak ditemukan.";
+      checklistBox.appendChild(emptyItem);
+    } else {
+      visibleLcs.forEach((lc) => {
+        const itemRow = document.createElement("label");
+        itemRow.style.display = "flex";
+        itemRow.style.alignItems = "center";
+        itemRow.style.gap = "8px";
+        itemRow.style.padding = "4px 6px";
+        itemRow.style.borderRadius = "4px";
+        itemRow.style.cursor = "pointer";
+        itemRow.style.fontSize = "12px";
+        itemRow.style.userSelect = "none";
+
+        const isChecked = lcReportSelectedIds.has(lc.lc_id);
+        if (isChecked) {
+          itemRow.style.backgroundColor = "rgba(226, 184, 92, 0.12)";
+          itemRow.style.color = "var(--gold-strong, #ffd77a)";
+        } else {
+          itemRow.style.color = "var(--text, #f6ead2)";
+        }
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = isChecked;
+        checkbox.style.accentColor = "var(--gold, #d4af37)";
+        checkbox.style.cursor = "pointer";
+        checkbox.onchange = (e) => {
+          if (e.target.checked) {
+            lcReportSelectedIds.add(lc.lc_id);
+          } else {
+            lcReportSelectedIds.delete(lc.lc_id);
+          }
+          lcReportsPage = 1;
+          renderRooms();
+        };
+
+        const labelSpan = document.createElement("span");
+        labelSpan.style.flex = "1";
+        labelSpan.textContent = `${lc.lc_name} (${lc.lc_id})`;
+
+        itemRow.append(checkbox, labelSpan);
+        checklistBox.appendChild(itemRow);
+      });
+    }
+
+    dropdownMenu.appendChild(checklistBox);
+
+    const footerBtn = document.createElement("button");
+    footerBtn.type = "button";
+    footerBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+    footerBtn.style.width = "100%";
+    footerBtn.style.padding = "6px";
+    footerBtn.style.fontSize = "12px";
+    footerBtn.style.fontWeight = "bold";
+    footerBtn.textContent = "Selesai Memilih";
+    footerBtn.onclick = () => {
+      lcSelectorDropdownOpen = false;
+      renderRooms();
+    };
+    dropdownMenu.appendChild(footerBtn);
+
+    lcSelectGroup.appendChild(dropdownMenu);
+  }
+
+  // --- LC Quick Search Group ---
+  const lcSearchGroup = document.createElement("div");
+  lcSearchGroup.className = "lc-search-group";
+  lcSearchGroup.style.display = "flex";
+  lcSearchGroup.style.flexDirection = "column";
+  lcSearchGroup.style.gap = "4px";
+
+  const lcSearchLabel = document.createElement("label");
+  lcSearchLabel.style.fontSize = "12px";
+  lcSearchLabel.style.color = "var(--muted)";
+  lcSearchLabel.textContent = "Cari Cepat LC:";
+
+  const lcSearchInputBox = document.createElement("div");
+  lcSearchInputBox.style.display = "flex";
+  lcSearchInputBox.style.alignItems = "center";
+  lcSearchInputBox.style.position = "relative";
+
+  const lcSearchInput = document.createElement("input");
+  lcSearchInput.type = "text";
+  lcSearchInput.id = "lcReportSearchInput";
+  lcSearchInput.className = "duration-custom-input";
+  lcSearchInput.placeholder = "Ketik nama LC...";
+  lcSearchInput.value = lcReportSearchQuery || "";
+  lcSearchInput.style.padding = "6px 24px 6px 8px";
+  lcSearchInput.style.minHeight = "36px";
+  lcSearchInput.style.borderRadius = "var(--radius-sm)";
+  lcSearchInput.style.fontSize = "13px";
+  lcSearchInput.oninput = (e) => {
+    lcReportSearchQuery = e.target.value;
+    lcReportsPage = 1;
+    const cursorPos = e.target.selectionStart;
+    renderRooms();
+    window.requestAnimationFrame(() => {
+      const inp = document.getElementById("lcReportSearchInput");
+      if (inp) {
+        inp.focus();
+        if (cursorPos != null) inp.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+  };
+  lcSearchInputBox.appendChild(lcSearchInput);
+
+  if (lcReportSearchQuery) {
+    const clearSearchBtn = document.createElement("button");
+    clearSearchBtn.type = "button";
+    clearSearchBtn.innerHTML = "&times;";
+    clearSearchBtn.title = "Hapus pencarian";
+    clearSearchBtn.style.position = "absolute";
+    clearSearchBtn.style.right = "6px";
+    clearSearchBtn.style.background = "transparent";
+    clearSearchBtn.style.border = "none";
+    clearSearchBtn.style.color = "var(--muted)";
+    clearSearchBtn.style.fontSize = "16px";
+    clearSearchBtn.style.cursor = "pointer";
+    clearSearchBtn.onclick = () => {
+      lcReportSearchQuery = "";
+      lcReportsPage = 1;
+      renderRooms();
+    };
+    lcSearchInputBox.appendChild(clearSearchBtn);
+  }
+
+  lcSearchGroup.append(lcSearchLabel, lcSearchInputBox);
+  toolbar.append(lcSelectGroup, lcSearchGroup);
 
   const applyBtn = document.createElement("button");
   applyBtn.type = "button";
@@ -31777,6 +32122,42 @@ function createLcReportsSubTabElement() {
 
   toolbar.append(applyBtn, printThermalBtn, printBtn);
   container.appendChild(toolbar);
+
+  if (lcReportSelectedIds.size > 0 || lcReportSearchQuery) {
+    const activeFilterBadge = document.createElement("div");
+    activeFilterBadge.style.display = "flex";
+    activeFilterBadge.style.alignItems = "center";
+    activeFilterBadge.style.gap = "8px";
+    activeFilterBadge.style.padding = "8px 12px";
+    activeFilterBadge.style.borderRadius = "6px";
+    activeFilterBadge.style.background = "rgba(226, 184, 92, 0.1)";
+    activeFilterBadge.style.border = "1px solid rgba(226, 184, 92, 0.3)";
+    activeFilterBadge.style.fontSize = "12px";
+    activeFilterBadge.style.color = "#ffd77a";
+
+    const filterText = document.createElement("span");
+    const countText = lcReportSelectedIds.size > 0 ? `${lcReportSelectedIds.size} LC dipilih` : "";
+    const queryText = lcReportSearchQuery ? `pencarian "${lcReportSearchQuery}"` : "";
+    const combined = [countText, queryText].filter(Boolean).join(" dan ");
+    const currentMatches = getSortedLcWorkReports().length;
+    filterText.innerHTML = `Mode Selektif Aktif: <strong>${escapeHtml(combined)}</strong> (${currentMatches} LC ditampilkan)`;
+
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "erp-btn erp-btn-secondary";
+    resetBtn.style.padding = "3px 8px";
+    resetBtn.style.fontSize = "11px";
+    resetBtn.textContent = "Reset Filter (Tampilkan Semua)";
+    resetBtn.onclick = () => {
+      lcReportSelectedIds.clear();
+      lcReportSearchQuery = "";
+      lcReportsPage = 1;
+      renderRooms();
+    };
+
+    activeFilterBadge.append(filterText, resetBtn);
+    container.appendChild(activeFilterBadge);
+  }
 
   if (isLoadingLcWorkReports) {
     const loadingMessage = lcWorkReports.length > 0
@@ -31838,7 +32219,26 @@ function createLcReportsSubTabElement() {
   const endIndex = startIndex + itemsPerPage;
   const paginatedReports = sortedReports.slice(startIndex, endIndex);
 
-  paginatedReports.forEach(rep => {
+  if (paginatedReports.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td colspan="9" style="text-align: center; color: var(--muted); padding: 24px;">
+        Tidak ada data kerja LC yang cocok dengan filter atau pencarian terpilih.<br/>
+        <button type="button" class="erp-btn erp-btn-secondary btn-reset-lc-filter" style="margin-top: 8px; font-size: 11px;">Tampilkan Semua LC</button>
+      </td>
+    `;
+    const btn = tr.querySelector(".btn-reset-lc-filter");
+    if (btn) {
+      btn.onclick = () => {
+        lcReportSelectedIds.clear();
+        lcReportSearchQuery = "";
+        lcReportsPage = 1;
+        renderRooms();
+      };
+    }
+    tbody.appendChild(tr);
+  } else {
+    paginatedReports.forEach(rep => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${rep.lc_id}</strong></td>
