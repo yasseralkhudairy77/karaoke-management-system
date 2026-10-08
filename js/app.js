@@ -8805,10 +8805,14 @@ function createLatestTransactionShortcutElement(transaction) {
 }
 
 function canOpenLcDurationEditor(transaction) {
+  const hasLc = Number(transaction?.lc_total || 0) > 0
+    || Number(transaction?.lc_count || 0) > 0
+    || (Array.isArray(transaction?.lc_logs) && transaction.lc_logs.length > 0)
+    || Boolean(String(transaction?.lc_summary || "").trim());
   return Boolean(
     API_BASE_URL.trim()
     && transaction?.transaction_id
-    && Number(transaction?.lc_total || 0) > 0
+    && hasLc
     && String(transaction?.payment_status || "").trim().toLowerCase() !== "cancelled"
     && getCurrentOperatorRole() !== "receptionist"
   );
