@@ -1,6 +1,7 @@
 /* ==========================================================================
-   HAPPY SONG KARAOKE - SAP ENTERPRISE FIORI LOOK (QUARTZ DARK)
+   HAPPY SONG KARAOKE - SAP ENTERPRISE FIORI LOOK (QUARTZ DARK + EXECUTIVE GOLD)
    Sistem Header Terpadu (Freeze ShellBar & IconTabBar), Telemetri, & MessageStrip
+   Ambience: Executive Dark Slate + Venue Gold Accents (#e2b85c / #ffd77a)
    ========================================================================== */
 
 /* 1. APP SHELL TOP (STICKY FREEZE CONTAINER)
@@ -14,8 +15,8 @@
   flex-direction: column;
   width: 100%;
   background: #11161f;
-  border-bottom: 1px solid #232c38;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  border-bottom: 1px solid rgba(226, 184, 92, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 /* 2. SAP FIORI SHELLBAR (.app-header) */
@@ -54,16 +55,17 @@
 }
 
 .app-brand-divider {
-  color: #475569;
+  color: #e2b85c;
   font-size: 0.85rem;
   font-weight: 400;
   line-height: 1;
   user-select: none;
+  opacity: 0.7;
 }
 
 .app-brand-subtitle {
   margin: 0;
-  color: #94a3b8;
+  color: #cbd5e1;
   font-family: inherit;
   font-size: 0.82rem;
   font-weight: 600;
@@ -199,7 +201,7 @@
 
 /* ==========================================================================
    3. SAP FIORI ICONTABBAR (.app-tabs)
-   Flat tab bar dengan active bottom indicator underline 3px (SAP Blue #1b90ff)
+   Flat tab bar dengan active bottom indicator underline 3px (Executive Gold #e2b85c)
    ========================================================================== */
 .app-tabs {
   position: relative;
@@ -218,7 +220,7 @@
   overflow-y: hidden;
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: #2b3644 transparent;
+  scrollbar-color: rgba(226, 184, 92, 0.25) transparent;
 }
 
 .app-tabs::-webkit-scrollbar {
@@ -226,7 +228,7 @@
 }
 
 .app-tabs::-webkit-scrollbar-thumb {
-  background: #2b3644;
+  background: rgba(226, 184, 92, 0.3);
   border-radius: 2px;
 }
 
@@ -264,32 +266,33 @@
 }
 
 .app-tab-button:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: #e2e8f0;
-  border-bottom-color: rgba(27, 144, 255, 0.4);
+  background: rgba(226, 184, 92, 0.06);
+  color: #f7eed7;
+  border-bottom-color: rgba(226, 184, 92, 0.45);
 }
 
 .app-tab-button:hover .app-tab-icon {
   opacity: 1;
+  color: #ffd77a;
 }
 
-/* Active State (SAP Enterprise Blue Underline) */
+/* Active State (Executive Gold Underline #e2b85c) */
 .app-tab-button.active,
 .app-tab-button[aria-selected="true"] {
-  background: rgba(27, 144, 255, 0.08);
-  border-bottom-color: #1b90ff;
+  background: rgba(226, 184, 92, 0.1);
+  border-bottom-color: #e2b85c;
   color: #ffffff;
-  font-weight: 700;
+  font-weight: 750;
 }
 
 .app-tab-button.active .app-tab-icon,
 .app-tab-button[aria-selected="true"] .app-tab-icon {
-  color: #1b90ff;
+  color: #ffd77a;
   opacity: 1;
 }
 
 .app-tab-button:focus-visible {
-  outline: 2px solid #1b90ff;
+  outline: 2px solid #e2b85c;
   outline-offset: -2px;
 }
 
@@ -315,13 +318,13 @@
   width: 1px;
   height: 18px;
   margin: 12px 4px 0;
-  background: #2b3644;
+  background: rgba(226, 184, 92, 0.2);
   flex: 0 0 1px;
 }
 
 /* ==========================================================================
    4. SAP COMPACT MESSAGESTRIP / TRANSACTION SHORTCUT
-   Datar, presisi, border-left SAP Info Blue, tombol aksi korporat tegas
+   Datar, presisi, border-left Executive Gold, tombol aksi berwibawa
    ========================================================================== */
 .latest-transaction-shortcut {
   grid-column: 1 / -1;
@@ -334,8 +337,8 @@
   min-height: 46px;
   border-radius: 4px;
   background: #161c26;
-  border: 1px solid #283344;
-  border-left: 4px solid #1b90ff;
+  border: 1px solid rgba(226, 184, 92, 0.22);
+  border-left: 4px solid #e2b85c;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   box-sizing: border-box;
 }
@@ -347,9 +350,9 @@
   width: 28px;
   height: 28px;
   border-radius: 4px;
-  background: rgba(27, 144, 255, 0.12);
-  border: 1px solid rgba(27, 144, 255, 0.25);
-  color: #60a5fa;
+  background: rgba(226, 184, 92, 0.12);
+  border: 1px solid rgba(226, 184, 92, 0.28);
+  color: #ffd77a;
   flex: 0 0 28px;
 }
 
@@ -367,11 +370,11 @@
   align-items: center;
   padding: 2px 7px;
   border-radius: 3px;
-  background: rgba(27, 144, 255, 0.12);
-  border: 1px solid rgba(27, 144, 255, 0.25);
-  color: #60a5fa;
+  background: rgba(226, 184, 92, 0.12);
+  border: 1px solid rgba(226, 184, 92, 0.28);
+  color: #ffd77a;
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 750;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -398,7 +401,7 @@
   flex: 0 0 auto;
 }
 
-/* SAP Standard Buttons */
+/* SAP Standard Buttons (Executive Gold Palette) */
 .latest-transaction-shortcut-button {
   display: inline-flex;
   align-items: center;
@@ -407,33 +410,35 @@
   height: 30px;
   padding: 0 12px;
   border-radius: 4px;
-  background: #0070f2;
-  border: 1px solid #0056b3;
-  color: #ffffff;
+  background: linear-gradient(135deg, #e2b85c 0%, #c99632 100%);
+  border: 1px solid rgba(255, 235, 180, 0.4);
+  color: #0c0906;
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: 850;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .latest-transaction-shortcut-button:hover,
 .latest-transaction-shortcut-button:focus-visible {
-  background: #1b90ff;
-  border-color: #1b90ff;
+  filter: brightness(1.1);
+  transform: translateY(-1px);
   outline: none;
 }
 
 .latest-transaction-shortcut-button.secondary {
   background: transparent;
-  border: 1px solid #3b4758;
-  color: #cbd5e1;
+  border: 1px solid rgba(226, 184, 92, 0.3);
+  color: #f7eed7;
+  box-shadow: none;
 }
 
 .latest-transaction-shortcut-button.secondary:hover,
 .latest-transaction-shortcut-button.secondary:focus-visible {
-  background: #1f2735;
-  border-color: #64748b;
+  background: rgba(226, 184, 92, 0.12);
+  border-color: #e2b85c;
   color: #ffffff;
 }
 

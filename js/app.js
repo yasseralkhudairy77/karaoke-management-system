@@ -39842,6 +39842,13 @@ if (dashboardShell) {
   dashboardShell.addEventListener("input", handleDashboardInput);
   dashboardShell.addEventListener("change", handleDashboardChange);
 }
+if (appTabsNav) {
+  appTabsNav.addEventListener("click", handleRoomAction);
+}
+const appShellTop = document.querySelector(".app-shell-top");
+if (appShellTop) {
+  appShellTop.addEventListener("click", handleRoomAction);
+}
 initializeDashboard();
 setInterval(updateRunningTimers, 1000);
 
