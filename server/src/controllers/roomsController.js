@@ -145,12 +145,22 @@ function parseAdjustedStartTime(input, referenceDate = new Date()) {
 function allocatePackageLcBilling(lcRows, packageRule) {
   const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
   const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+  const hasPackageRule = Boolean(packageRule?.package_id || includedCount > 0);
 
-  return lcRows.map((row, index) => {
-    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || 0)));
-    const ratePerHour = toMoneyNumber(row.rate_per_hour);
+  // Prioritaskan LC dengan durasi terpanjang dan tarif tertinggi agar alokasi paket paling menguntungkan customer (fair billing)
+  const sortedRows = [...lcRows].sort((a, b) => {
+    const durA = Math.max(0, Math.round(Number(a.duration_minutes || a.durationMinutes || 0)));
+    const durB = Math.max(0, Math.round(Number(b.duration_minutes || b.durationMinutes || 0)));
+    if (durB !== durA) return durB - durA;
+    const rateA = Number(a.rate_per_hour || a.ratePerHour || a.rate_per_room || 0);
+    const rateB = Number(b.rate_per_hour || b.ratePerHour || b.rate_per_room || 0);
+    return rateB - rateA;
+  });
+
+  return sortedRows.map((row, index) => {
+    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || row.durationMinutes || 0)));
+    const ratePerHour = toMoneyNumber(row.rate_per_hour || row.ratePerHour || row.rate_per_room);
     const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
-    const hasPackageRule = Boolean(packageRule?.package_id);
     const includedMinutes = index < includedCount
       ? Math.min(durationMinutes, includedDuration)
       : 0;

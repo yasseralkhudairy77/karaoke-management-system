@@ -340,9 +340,18 @@ function getPackageLcIncludedRule(room) {
 
 function calculateLcCustomerChargeForRoom(room, lcItems) {
   const rule = getPackageLcIncludedRule(room);
-  return lcItems.map((item, index) => {
-    const durationMinutes = Math.max(1, Math.round(Number(item.durationMinutes) || 0));
-    const ratePerHour = Number(item.ratePerHour || item.rate || 0);
+  const sortedItems = [...lcItems].sort((a, b) => {
+    const durA = Math.max(0, Math.round(Number(a.durationMinutes || a.duration_minutes || 0)));
+    const durB = Math.max(0, Math.round(Number(b.durationMinutes || b.duration_minutes || 0)));
+    if (durB !== durA) return durB - durA;
+    const rateA = Number(a.ratePerHour || a.rate_per_hour || a.rate || 0);
+    const rateB = Number(b.ratePerHour || b.rate_per_hour || b.rate || 0);
+    return rateB - rateA;
+  });
+
+  return sortedItems.map((item, index) => {
+    const durationMinutes = Math.max(1, Math.round(Number(item.durationMinutes || item.duration_minutes) || 0));
+    const ratePerHour = Number(item.ratePerHour || item.rate_per_hour || item.rate || 0);
     const includedMinutes = index < rule.includedCount
       ? Math.min(durationMinutes, rule.includedDurationMinutes)
       : 0;

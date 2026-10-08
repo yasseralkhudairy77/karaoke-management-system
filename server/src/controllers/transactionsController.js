@@ -57,12 +57,22 @@ async function getPackageLcRule(executor, packageId) {
 function allocatePackageLcBilling(lcRows, packageRule) {
   const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
   const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+  const hasPackageRule = Boolean(packageRule?.package_id || includedCount > 0);
 
-  return lcRows.map((row, index) => {
-    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || 0)));
-    const ratePerHour = Math.max(0, Number(row.rate_per_hour || 0));
+  // Prioritaskan LC dengan durasi terpanjang dan tarif tertinggi agar alokasi paket paling menguntungkan customer (fair billing)
+  const sortedRows = [...lcRows].sort((a, b) => {
+    const durA = Math.max(0, Math.round(Number(a.duration_minutes || a.durationMinutes || 0)));
+    const durB = Math.max(0, Math.round(Number(b.duration_minutes || b.durationMinutes || 0)));
+    if (durB !== durA) return durB - durA;
+    const rateA = Number(a.rate_per_hour || a.ratePerHour || a.rate_per_room || 0);
+    const rateB = Number(b.rate_per_hour || b.ratePerHour || b.rate_per_room || 0);
+    return rateB - rateA;
+  });
+
+  return sortedRows.map((row, index) => {
+    const durationMinutes = Math.max(0, Math.round(Number(row.duration_minutes || row.durationMinutes || 0)));
+    const ratePerHour = Math.max(0, Number(row.rate_per_hour || row.ratePerHour || row.rate_per_room || 0));
     const payableAmount = calculateLcCharge(durationMinutes, ratePerHour);
-    const hasPackageRule = Boolean(packageRule?.package_id);
     const includedMinutes = index < includedCount ? Math.min(durationMinutes, includedDuration) : 0;
     const extraMinutes = Math.max(0, durationMinutes - includedMinutes);
     const customerChargeAmount = calculateLcCharge(extraMinutes, ratePerHour);
@@ -98,16 +108,23 @@ function normalizeLcBillingRow(row, transactionIsPackage = false) {
       ? 0
       : payableAmount;
 
+  const durationMinutes = Number(row.duration_minutes || 0);
+  const includedMinutes = Number(row.included_minutes || 0);
+  const rawExtra = row.extra_minutes !== undefined && row.extra_minutes !== null && row.extra_minutes !== ''
+    ? Number(row.extra_minutes)
+    : (durationMinutes > includedMinutes ? durationMinutes - includedMinutes : 0);
+  const extraMinutes = Number.isFinite(rawExtra) ? Math.max(0, rawExtra) : 0;
+
   return {
     ...row,
-    duration_minutes: Number(row.duration_minutes || 0),
+    duration_minutes: durationMinutes,
     rate_per_hour: Number(row.rate_per_hour || 0),
     rate_per_room: Number(row.rate_per_hour || 0),
     rate: payableAmount,
     payable_amount: payableAmount,
     customer_charge_amount: customerChargeAmount,
-    included_minutes: Number(row.included_minutes || 0),
-    extra_minutes: Number(row.extra_minutes || row.duration_minutes || 0),
+    included_minutes: includedMinutes,
+    extra_minutes: extraMinutes,
     billing_source: billingSource || (customerChargeAmount < payableAmount ? 'package_included' : 'regular')
   };
 }
