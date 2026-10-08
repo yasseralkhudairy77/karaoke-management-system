@@ -557,6 +557,7 @@ let lastTransaction = null;
 let todayTransactions = [];
 let todayTransactionSummary = null;
 let transactionHistoryFilter = "all";
+let transactionSearchQuery = "";
 let transactionPeriodFilter = "today";
 let transactionCustomStartDate = "";
 let transactionCustomEndDate = "";
@@ -4597,13 +4598,32 @@ function getFilteredTodayTransactions() {
     (transaction) => transaction.payment_status !== "cancelled"
   );
 
-  if (transactionHistoryFilter === "all") {
-    return activeTransactions;
+  let filtered = activeTransactions;
+  if (transactionHistoryFilter !== "all") {
+    filtered = filtered.filter((transaction) => {
+      return transaction.payment_status === transactionHistoryFilter;
+    });
   }
 
-  return activeTransactions.filter((transaction) => {
-    return transaction.payment_status === transactionHistoryFilter;
-  });
+  const query = String(transactionSearchQuery || "").trim().toLowerCase();
+  if (query) {
+    filtered = filtered.filter((transaction) => {
+      const trxId = String(transaction.transaction_id || "").toLowerCase();
+      const room = String(transaction.room_name || transaction.room_id || "").toLowerCase();
+      const lc = String(transaction.lc_summary || "").toLowerCase();
+      const cashier = String(transaction.cashier_name || "").toLowerCase();
+      const paymentMethod = String(transaction.payment_method || "").toLowerCase();
+      return (
+        trxId.includes(query) ||
+        room.includes(query) ||
+        lc.includes(query) ||
+        cashier.includes(query) ||
+        paymentMethod.includes(query)
+      );
+    });
+  }
+
+  return filtered;
 }
 
 function findTodayTransactionById(transactionId) {
@@ -4735,6 +4755,11 @@ function showTransactionFromHistory(transactionId) {
 }
 
 function getEmptyTransactionMessage() {
+  const query = String(transactionSearchQuery || "").trim();
+  if (query) {
+    return `Tidak ada transaksi yang cocok dengan pencarian "${query}".`;
+  }
+
   if (transactionHistoryFilter === "paid") {
     return "Belum ada transaksi lunas pada shift/periode ini.";
   }
@@ -20315,7 +20340,93 @@ function createTransactionPeriodFilterElement() {
 function createTransactionFilterElement() {
   const filter = document.createElement("div");
   filter.className = "transaction-filter";
-  filter.setAttribute("aria-label", "Filter riwayat transaksi");
+  filter.setAttribute("aria-label", "Filter dan pencarian riwayat transaksi");
+
+  const searchBox = document.createElement("div");
+  searchBox.className = "transaction-search-box";
+  searchBox.style.display = "flex";
+  searchBox.style.alignItems = "center";
+  searchBox.style.position = "relative";
+  searchBox.style.flex = "1 1 280px";
+  searchBox.style.minWidth = "220px";
+
+  const searchIcon = document.createElement("span");
+  searchIcon.textContent = "🔍";
+  searchIcon.style.position = "absolute";
+  searchIcon.style.left = "12px";
+  searchIcon.style.fontSize = "13px";
+  searchIcon.style.opacity = "0.75";
+  searchIcon.style.pointerEvents = "none";
+  searchIcon.style.color = "var(--gold, #d4af37)";
+
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.id = "transactionSearchInput";
+  searchInput.className = "transaction-search-input duration-custom-input";
+  searchInput.placeholder = "Cari No. Transaksi, Ruangan, LC...";
+  searchInput.value = transactionSearchQuery || "";
+  searchInput.style.width = "100%";
+  searchInput.style.minHeight = "36px";
+  searchInput.style.padding = "0 32px 0 34px";
+  searchInput.style.fontSize = "13px";
+  searchInput.style.borderRadius = "8px";
+  searchInput.style.background = "rgba(10, 8, 6, 0.75)";
+  searchInput.style.border = "1px solid rgba(226, 184, 92, 0.35)";
+  searchInput.style.color = "var(--text, #f6ead2)";
+  searchInput.style.boxSizing = "border-box";
+
+  searchInput.oninput = (e) => {
+    transactionSearchQuery = e.target.value;
+    resetPaginationPage("transactions");
+    const cursorPos = e.target.selectionStart;
+    renderRooms();
+    window.requestAnimationFrame(() => {
+      const activeEl = document.getElementById("transactionSearchInput");
+      if (activeEl) {
+        activeEl.focus();
+        if (cursorPos != null) {
+          activeEl.setSelectionRange(cursorPos, cursorPos);
+        }
+      }
+    });
+  };
+
+  searchBox.append(searchIcon, searchInput);
+
+  if (transactionSearchQuery) {
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "transaction-search-clear-btn";
+    clearBtn.title = "Hapus kata kunci pencarian";
+    clearBtn.innerHTML = "&times;";
+    clearBtn.style.position = "absolute";
+    clearBtn.style.right = "8px";
+    clearBtn.style.background = "transparent";
+    clearBtn.style.border = "none";
+    clearBtn.style.color = "var(--muted, #9ca3af)";
+    clearBtn.style.fontSize = "18px";
+    clearBtn.style.cursor = "pointer";
+    clearBtn.style.lineHeight = "1";
+    clearBtn.style.padding = "0 4px";
+    clearBtn.onclick = () => {
+      transactionSearchQuery = "";
+      resetPaginationPage("transactions");
+      renderRooms();
+      window.requestAnimationFrame(() => {
+        const activeEl = document.getElementById("transactionSearchInput");
+        if (activeEl) activeEl.focus();
+      });
+    };
+    searchBox.appendChild(clearBtn);
+  }
+
+  filter.appendChild(searchBox);
+
+  const buttonGroup = document.createElement("div");
+  buttonGroup.style.display = "flex";
+  buttonGroup.style.gap = "6px";
+  buttonGroup.style.alignItems = "center";
+  buttonGroup.style.flexWrap = "wrap";
 
   [
     ["all", "Semua"],
@@ -20331,8 +20442,10 @@ function createTransactionFilterElement() {
     button.dataset.action = "filter-transactions";
     button.dataset.filter = value;
     button.textContent = labelText;
-    filter.appendChild(button);
+    buttonGroup.appendChild(button);
   });
+
+  filter.appendChild(buttonGroup);
 
   return filter;
 }
@@ -33271,6 +33384,47 @@ async function executeBulkUpdateLcRate(ratePerHour, adminPin) {
   }
 }
 
+async function jumpToTransactionInHistory(transactionId) {
+  if (!transactionId) return;
+  const targetId = String(transactionId).trim();
+
+  selectedLcDetailForLogs = null;
+  activeDashboardTab = "transactions";
+  activeTransactionsSubTab = "history";
+  transactionSearchQuery = targetId;
+  transactionHistoryFilter = "all";
+  resetPaginationPage("transactions");
+
+  const found = todayTransactions.some(
+    (t) => String(t.transaction_id || "").toLowerCase() === targetId.toLowerCase()
+  );
+  if (!found) {
+    transactionPeriodFilter = "all";
+    await loadTodayTransactions();
+  }
+
+  renderRooms();
+  showInlineNotice(`Membuka transaksi ${targetId} di riwayat transaksi.`);
+
+  window.requestAnimationFrame(() => {
+    const inputEl = document.getElementById("transactionSearchInput");
+    if (inputEl) {
+      inputEl.focus();
+      inputEl.select();
+    }
+    const targetRow = document.querySelector(`.transaction-row[data-transaction-id="${CSS.escape(targetId)}"]`);
+    if (targetRow) {
+      targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      targetRow.style.transition = "box-shadow 0.3s ease, border-color 0.3s ease";
+      targetRow.style.borderColor = "var(--gold-strong, #ffd77a)";
+      targetRow.style.boxShadow = "0 0 16px rgba(226, 184, 92, 0.5)";
+      setTimeout(() => {
+        targetRow.style.boxShadow = "";
+      }, 3500);
+    }
+  });
+}
+
 function createLcDetailLogsOverlay() {
   const overlay = document.createElement("div");
   overlay.className = "admin-pin-modal-overlay lc-detail-modal-overlay";
@@ -33296,7 +33450,7 @@ function createLcDetailLogsOverlay() {
 
   const formEl = document.createElement("div");
   formEl.className = "admin-pin-modal erp-card lc-detail-modal-card";
-  formEl.style.width = "920px";
+  formEl.style.width = "980px";
   formEl.style.maxWidth = "96%";
   formEl.style.maxHeight = "90vh";
   formEl.style.overflowY = "auto";
@@ -33377,6 +33531,7 @@ function createLcDetailLogsOverlay() {
   thead.innerHTML = `
     <tr>
       <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">ID Log</th>
+      <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">No. Transaksi</th>
       <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">ID Sesi Room</th>
       <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Tarif (Rp)</th>
       <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Status Kerja</th>
@@ -33390,20 +33545,35 @@ function createLcDetailLogsOverlay() {
   
   if (logs.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--muted); padding: 16px;">Tidak ada riwayat sesi.</td>`;
+    tr.innerHTML = `<td colspan="6" style="text-align: center; color: var(--muted); padding: 16px;">Tidak ada riwayat sesi.</td>`;
     tbody.appendChild(tr);
   } else {
     logs.forEach(log => {
       const tr = document.createElement("tr");
       const statusDisplay = getLcWorkStatusDisplay(log.status, Boolean(log.is_upfront || log.upfront_transaction_id));
+      const trxId = log.closed_transaction_id || log.upfront_transaction_id || "";
+
+      let trxCellHtml = `<span style="color: var(--muted); font-size: 11px;">-</span>`;
+      if (trxId) {
+        trxCellHtml = `<button type="button" class="erp-btn btn-jump-to-trx" data-trx-id="${escapeHtml(trxId)}" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid rgba(226, 184, 92, 0.4); color: var(--gold, #ffd77a); background: rgba(226, 184, 92, 0.12); cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Klik untuk lihat transaksi di Riwayat Transaksi"><span>🔍</span><strong>${escapeHtml(trxId)}</strong></button>`;
+      }
 
       tr.innerHTML = `
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${log.log_id}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${trxCellHtml}</td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${log.session_id || log.room_name || "-"}</small></td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${formatCurrency(log.rate)}</td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><span class="${statusDisplay.className}">${statusDisplay.text}</span></td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${formatDateTimeLabel(log.created_at)}</small></td>
       `;
+
+      if (trxId) {
+        const jumpBtn = tr.querySelector(".btn-jump-to-trx");
+        if (jumpBtn) {
+          jumpBtn.onclick = () => jumpToTransactionInHistory(trxId);
+        }
+      }
+
       tbody.appendChild(tr);
     });
   }
@@ -33432,6 +33602,7 @@ function createLcDetailLogsOverlay() {
     <thead>
       <tr>
         <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Waktu</th>
+        <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">No. Transaksi</th>
         <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Menu</th>
         <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase;">Order</th>
         <th style="padding: 10px 12px; background: rgba(226,184,92,0.12); color: #ffd77a; font-size: 11px; text-transform: uppercase; text-align:center;">Qty Bagian LC</th>
@@ -33445,19 +33616,34 @@ function createLcDetailLogsOverlay() {
   const bonusLogs = selectedLcDetailForLogs.sales_bonus_logs || [];
   if (bonusLogs.length === 0) {
     const emptyBonusRow = document.createElement("tr");
-    emptyBonusRow.innerHTML = `<td colspan="6" style="text-align:center; color:var(--muted); padding: 16px;">Tidak ada bonus penjualan pada periode ini.</td>`;
+    emptyBonusRow.innerHTML = `<td colspan="7" style="text-align:center; color:var(--muted); padding: 16px;">Tidak ada bonus penjualan pada periode ini.</td>`;
     bonusTbody.appendChild(emptyBonusRow);
   } else {
     bonusLogs.forEach((bonusLog) => {
       const row = document.createElement("tr");
+      const bonusTrxId = bonusLog.transaction_id || "";
+      let bonusTrxHtml = `<span style="color: var(--muted); font-size: 11px;">-</span>`;
+      if (bonusTrxId) {
+        bonusTrxHtml = `<button type="button" class="erp-btn btn-jump-to-bonus-trx" data-trx-id="${escapeHtml(bonusTrxId)}" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid rgba(226, 184, 92, 0.4); color: var(--gold, #ffd77a); background: rgba(226, 184, 92, 0.12); cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Klik untuk lihat transaksi di Riwayat Transaksi"><span>🔍</span><strong>${escapeHtml(bonusTrxId)}</strong></button>`;
+      }
+
       row.innerHTML = `
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${formatDateTimeLabel(bonusLog.created_at)}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${bonusTrxHtml}</td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><strong>${escapeHtml(bonusLog.menu_name || bonusLog.menu_id || "-")}</strong></td>
-        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${escapeHtml(bonusLog.order_id || bonusLog.transaction_id || "-")}</small></td>
+        <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><small>${escapeHtml(bonusLog.order_id || "-")}</small></td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align:center;">${Number(bonusLog.quantity || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">${formatCurrency(bonusLog.bonus_per_item || 0)}</td>
         <td style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);"><strong>${formatCurrency(bonusLog.bonus_total || 0)}</strong></td>
       `;
+
+      if (bonusTrxId) {
+        const jumpBtn = row.querySelector(".btn-jump-to-bonus-trx");
+        if (jumpBtn) {
+          jumpBtn.onclick = () => jumpToTransactionInHistory(bonusTrxId);
+        }
+      }
+
       bonusTbody.appendChild(row);
     });
   }
