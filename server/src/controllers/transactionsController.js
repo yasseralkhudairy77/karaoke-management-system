@@ -32,25 +32,58 @@ async function ensurePackageLcBillingSchema(executor = db) {
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+
+    UPDATE package_master
+    SET included_lc_count = 2, included_lc_duration_minutes = 120
+    WHERE (package_name ILIKE '%twin morgan%' OR package_id ILIKE '%twin%morgan%')
+      AND (included_lc_count = 0 OR included_lc_duration_minutes = 0);
   `);
   packageLcBillingSchemaChecked = true;
 }
 
-async function getPackageLcRule(executor, packageId) {
-  if (!packageId) {
+async function getPackageLcRule(executor, packageId, packageName = '') {
+  const idStr = String(packageId || '').trim();
+  const nameStr = String(packageName || '').trim();
+  if (!idStr && !nameStr) {
     return { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
   }
   const pkgRes = await executor.query(`
-    SELECT package_id, included_lc_count, included_lc_duration_minutes
+    SELECT package_id, package_name, included_lc_count, included_lc_duration_minutes
     FROM package_master
-    WHERE package_id = $1
+    WHERE (package_id = $1 AND $1 <> '')
+       OR (package_id = $2 AND $2 <> '')
+       OR (package_name ILIKE $1 AND $1 <> '')
+       OR (package_name ILIKE $2 AND $2 <> '')
+       OR (LOWER(REPLACE(package_name, ' ', '')) = LOWER(REPLACE($1, ' ', '')) AND $1 <> '')
+       OR (LOWER(REPLACE(package_name, ' ', '')) = LOWER(REPLACE($2, ' ', '')) AND $2 <> '')
     LIMIT 1
-  `, [packageId]);
-  const pkg = pkgRes.rows[0] || {};
+  `, [idStr, nameStr]);
+  const pkg = pkgRes.rows[0];
+  if (pkg && (Number(pkg.included_lc_count || 0) > 0 || Number(pkg.included_lc_duration_minutes || 0) > 0)) {
+    return {
+      package_id: pkg.package_id || idStr || nameStr,
+      package_name: pkg.package_name || nameStr || '',
+      included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
+      included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+    };
+  }
+
+  // Fallback cerdas untuk Paket Twin Morgan: 2 LC @ 120 menit (total 4 jam)
+  const combined = `${idStr} ${nameStr}`.toLowerCase();
+  if (combined.includes('twin') || combined.includes('morgan')) {
+    return {
+      package_id: idStr || 'PKG-TWIN-MORGAN',
+      package_name: nameStr || 'PAKET TWIN MORGAN',
+      included_lc_count: 2,
+      included_lc_duration_minutes: 120
+    };
+  }
+
   return {
-    package_id: pkg.package_id || packageId,
-    included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
-    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+    package_id: pkg?.package_id || idStr || nameStr,
+    package_name: pkg?.package_name || nameStr || '',
+    included_lc_count: Math.max(0, Math.floor(Number(pkg?.included_lc_count || 0))),
+    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg?.included_lc_duration_minutes || 0)))
   };
 }
 
@@ -2204,7 +2237,13 @@ async function getTransactionLcDetails(req, res) {
       return map;
     }, new Map()).values());
     const lcTotal = Number(trx.lc_total || 0);
-    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    const transactionIsPackage = Boolean(String(trx.package_id || '').trim())
+      || Boolean(String(trx.package_name || '').trim())
+      || String(trx.booking_mode || '').toLowerCase().includes('package');
+    const packageRule = transactionIsPackage
+      ? await getPackageLcRule(db, trx.package_id, trx.package_name)
+      : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
+
     let logs = uniqueRows.map(row => ({
       ...normalizeLcBillingRow(row, transactionIsPackage),
       created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
@@ -2255,6 +2294,7 @@ async function getTransactionLcDetails(req, res) {
       can_edit: canEdit,
       requires_admin_pin: false,
       blocked_reason: blockedReason,
+      package_rule: packageRule,
       ...lcDetails,
       lc_details: lcDetails,
       details: logs
@@ -2338,9 +2378,11 @@ async function updateTransactionLcDurations(req, res, payload) {
       rate: Number(row.rate || 0)
     }));
 
-    const transactionIsPackage = String(trx.booking_mode || '').toLowerCase() === 'package';
+    const transactionIsPackage = Boolean(String(trx.package_id || '').trim())
+      || Boolean(String(trx.package_name || '').trim())
+      || String(trx.booking_mode || '').toLowerCase().includes('package');
     const packageRule = transactionIsPackage
-      ? await getPackageLcRule(client, trx.package_id || '')
+      ? await getPackageLcRule(client, trx.package_id, trx.package_name)
       : { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
     const editedLogs = [];
     const newItems = [];

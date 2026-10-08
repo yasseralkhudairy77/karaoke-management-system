@@ -100,25 +100,58 @@ async function ensurePackageLcBillingSchema(client) {
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS extra_minutes INT NOT NULL DEFAULT 0;
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS billing_source VARCHAR(30) NOT NULL DEFAULT 'regular';
     ALTER TABLE lc_work_logs ADD COLUMN IF NOT EXISTS package_id VARCHAR(50);
+
+    UPDATE package_master
+    SET included_lc_count = 2, included_lc_duration_minutes = 120
+    WHERE (package_name ILIKE '%twin morgan%' OR package_id ILIKE '%twin%morgan%')
+      AND (included_lc_count = 0 OR included_lc_duration_minutes = 0);
   `);
   packageLcBillingSchemaChecked = true;
 }
 
-async function getPackageLcRule(client, packageId) {
-  if (!packageId) {
+async function getPackageLcRule(client, packageId, packageName = '') {
+  const idStr = String(packageId || '').trim();
+  const nameStr = String(packageName || '').trim();
+  if (!idStr && !nameStr) {
     return { package_id: '', included_lc_count: 0, included_lc_duration_minutes: 0 };
   }
   const pkgRes = await client.query(`
-    SELECT package_id, included_lc_count, included_lc_duration_minutes
+    SELECT package_id, package_name, included_lc_count, included_lc_duration_minutes
     FROM package_master
-    WHERE package_id = $1
+    WHERE (package_id = $1 AND $1 <> '')
+       OR (package_id = $2 AND $2 <> '')
+       OR (package_name ILIKE $1 AND $1 <> '')
+       OR (package_name ILIKE $2 AND $2 <> '')
+       OR (LOWER(REPLACE(package_name, ' ', '')) = LOWER(REPLACE($1, ' ', '')) AND $1 <> '')
+       OR (LOWER(REPLACE(package_name, ' ', '')) = LOWER(REPLACE($2, ' ', '')) AND $2 <> '')
     LIMIT 1
-  `, [packageId]);
-  const pkg = pkgRes.rows[0] || {};
+  `, [idStr, nameStr]);
+  const pkg = pkgRes.rows[0];
+  if (pkg && (Number(pkg.included_lc_count || 0) > 0 || Number(pkg.included_lc_duration_minutes || 0) > 0)) {
+    return {
+      package_id: pkg.package_id || idStr || nameStr,
+      package_name: pkg.package_name || nameStr || '',
+      included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
+      included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+    };
+  }
+
+  // Fallback cerdas untuk Paket Twin Morgan: 2 LC @ 120 menit (total 4 jam)
+  const combined = `${idStr} ${nameStr}`.toLowerCase();
+  if (combined.includes('twin') || combined.includes('morgan')) {
+    return {
+      package_id: idStr || 'PKG-TWIN-MORGAN',
+      package_name: nameStr || 'PAKET TWIN MORGAN',
+      included_lc_count: 2,
+      included_lc_duration_minutes: 120
+    };
+  }
+
   return {
-    package_id: pkg.package_id || packageId,
-    included_lc_count: Math.max(0, Math.floor(Number(pkg.included_lc_count || 0))),
-    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg.included_lc_duration_minutes || 0)))
+    package_id: pkg?.package_id || idStr || nameStr,
+    package_name: pkg?.package_name || nameStr || '',
+    included_lc_count: Math.max(0, Math.floor(Number(pkg?.included_lc_count || 0))),
+    included_lc_duration_minutes: Math.max(0, Math.floor(Number(pkg?.included_lc_duration_minutes || 0)))
   };
 }
 

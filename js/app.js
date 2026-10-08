@@ -8917,6 +8917,81 @@ function closeLcDurationEditor() {
   renderRooms();
 }
 
+function getEditorPackageRule(details) {
+  if (details?.package_rule && (Number(details.package_rule.included_lc_count || 0) > 0 || details.package_rule.package_id)) {
+    return details.package_rule;
+  }
+  const pkgId = String(details?.transaction?.package_id || details?.package_id || "").trim();
+  const pkgName = String(details?.transaction?.package_name || details?.package_name || "").trim();
+  const combined = `${pkgId} ${pkgName}`.toLowerCase();
+  if (combined.includes("twin") || combined.includes("morgan")) {
+    return {
+      package_id: pkgId || "PKG-TWIN-MORGAN",
+      package_name: pkgName || "PAKET TWIN MORGAN",
+      included_lc_count: 2,
+      included_lc_duration_minutes: 120,
+    };
+  }
+  return {
+    package_id: pkgId,
+    package_name: pkgName,
+    included_lc_count: Number(details?.transaction?.included_lc_count || 0),
+    included_lc_duration_minutes: Number(details?.transaction?.included_lc_duration_minutes || 0),
+  };
+}
+
+function allocateEditorLcBilling(logs, packageRule, editedDurations = {}) {
+  const includedCount = Math.max(0, Math.floor(Number(packageRule?.included_lc_count || 0)));
+  const includedDuration = Math.max(0, Math.floor(Number(packageRule?.included_lc_duration_minutes || 0)));
+  const hasPackageRule = Boolean(packageRule?.package_id || includedCount > 0);
+
+  let remainingPackageQuota = includedCount * includedDuration;
+  const maxIncludedPerLc = includedDuration > 0 ? includedDuration : remainingPackageQuota;
+
+  const items = (logs || []).map((log) => {
+    const durationMinutes = Math.max(0, Math.round(Number(editedDurations?.[log.lc_id] ?? log.duration_minutes ?? 60)));
+    const ratePerHour = Number(log.rate_per_hour || log.rate || 120000);
+    return {
+      ...log,
+      duration_minutes: durationMinutes,
+      rate_per_hour: ratePerHour,
+    };
+  });
+
+  const sortedItems = [...items].sort((a, b) => {
+    if (b.duration_minutes !== a.duration_minutes) return b.duration_minutes - a.duration_minutes;
+    return b.rate_per_hour - a.rate_per_hour;
+  });
+
+  const allocatedMap = new Map();
+  sortedItems.forEach((item) => {
+    const canInclude = Math.min(item.duration_minutes, maxIncludedPerLc, remainingPackageQuota);
+    const includedMinutes = Math.max(0, canInclude);
+    remainingPackageQuota = Math.max(0, remainingPackageQuota - includedMinutes);
+
+    const extraMinutes = Math.max(0, item.duration_minutes - includedMinutes);
+    const payableAmount = calculateLcCharge(item.duration_minutes, item.rate_per_hour);
+    const customerCharge = calculateLcCharge(extraMinutes, item.rate_per_hour);
+    const billingSource = includedMinutes > 0
+      ? (extraMinutes > 0 ? "package_partial" : "package_included")
+      : (hasPackageRule ? "extra_charge" : "regular");
+
+    allocatedMap.set(item.lc_id, {
+      ...item,
+      included_minutes: includedMinutes,
+      extra_minutes: extraMinutes,
+      payable_amount: payableAmount,
+      customer_charge_amount: customerCharge,
+      billing_source: billingSource,
+    });
+  });
+
+  return {
+    allocatedList: items.map((log) => allocatedMap.get(log.lc_id) || log),
+    allocatedMap,
+  };
+}
+
 function getLcDurationEditorPreview() {
   const details = lcDurationEditor?.details;
   if (!details) {
@@ -8929,14 +9004,10 @@ function getLcDurationEditorPreview() {
     };
   }
 
-  const newWorkLogTotal = (details.lc_logs || []).reduce((total, log) => {
-    const duration = Number(lcDurationEditor.durations?.[log.lc_id]) || Number(log.duration_minutes) || 60;
-    const includedMinutes = Math.max(0, Number(log.included_minutes || 0));
-    const chargeDuration = String(log.billing_source || "").startsWith("package")
-      ? Math.max(0, duration - includedMinutes)
-      : duration;
-    return total + calculateLcCharge(chargeDuration, log.rate_per_hour);
-  }, 0);
+  const packageRule = getEditorPackageRule(details);
+  const { allocatedList } = allocateEditorLcBilling(details.lc_logs || [], packageRule, lcDurationEditor.durations || {});
+  const newWorkLogTotal = allocatedList.reduce((total, item) => total + Number(item.customer_charge_amount || 0), 0);
+
   const oldLcTotal = Number(details.current_lc_total) || 0;
   // Preview ini mengikuti tagihan customer. Hak LC tetap dihitung penuh
   // dari work log di backend dan laporan payroll.
@@ -9175,9 +9246,13 @@ function createLcDurationEditorElement() {
     dialog.appendChild(createStateMessage(details.blocked_reason, "error"));
   }
 
+  const packageRule = getEditorPackageRule(details);
+  const { allocatedMap } = allocateEditorLcBilling(details.lc_logs || [], packageRule, editor.durations || {});
+
   const list = document.createElement("div");
   list.className = "lc-duration-editor-list";
   (details.lc_logs || []).forEach((log) => {
+    const allocated = allocatedMap.get(log.lc_id) || log;
     const row = document.createElement("div");
     row.className = "lc-duration-editor-row";
 
@@ -9212,13 +9287,21 @@ function createLcDurationEditorElement() {
     const amount = document.createElement("div");
     amount.className = "lc-duration-editor-amount";
     const amountLabel = document.createElement("span");
-    amountLabel.textContent = String(log.billing_source || "").startsWith("package") ? "Tagihan Extra" : "Biaya";
     const amountValue = document.createElement("strong");
-    const includedMinutes = Math.max(0, Number(log.included_minutes || 0));
-    const chargeDuration = String(log.billing_source || "").startsWith("package")
-      ? Math.max(0, currentDuration - includedMinutes)
-      : currentDuration;
-    amountValue.textContent = formatCurrency(calculateLcCharge(chargeDuration, log.rate_per_hour));
+
+    if (allocated.billing_source === "package_included") {
+      amountLabel.textContent = "Termasuk Paket";
+      amountValue.textContent = "Rp 0";
+    } else if (allocated.billing_source === "package_partial") {
+      amountLabel.textContent = "Tagihan Extra";
+      amountValue.textContent = formatCurrency(allocated.customer_charge_amount);
+    } else if (allocated.billing_source === "extra_charge") {
+      amountLabel.textContent = "Tagihan Extra";
+      amountValue.textContent = formatCurrency(allocated.customer_charge_amount);
+    } else {
+      amountLabel.textContent = "Biaya";
+      amountValue.textContent = formatCurrency(allocated.customer_charge_amount);
+    }
     amount.append(amountLabel, amountValue);
 
     const replaceField = document.createElement("label");
