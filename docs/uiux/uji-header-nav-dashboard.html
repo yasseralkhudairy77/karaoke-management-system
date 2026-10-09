@@ -24,9 +24,14 @@
       <div class="app-header-controls">
         <div class="app-live-clock" aria-label="Waktu operasional">22:45:10</div>
         <span class="app-badge live"><span class="app-badge-dot"></span><span class="app-badge-text">Terhubung</span></span>
-        <div class="operator-session">
-          <span class="operator-session-label">Operator: Kasir 1 (Shift Malam)</span>
-          <button class="operator-logout-button" type="button">Keluar</button>
+        <div class="operator-session" role="group" aria-label="Sesi operator">
+          <span class="operator-session-label">
+            <span class="operator-session-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
+            <span class="operator-session-name">Operator: Manager 1</span>
+            <span class="operator-session-role">Owner</span>
+          </span>
+          <span class="operator-session-divider" aria-hidden="true"></span>
+          <button class="operator-logout-button" type="button" aria-label="Logout operator" title="Logout dari sesi operator">Logout</button>
         </div>
       </div>
     </header>

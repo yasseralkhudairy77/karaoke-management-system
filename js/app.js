@@ -37835,6 +37835,8 @@ function ensureOperatorHeader() {
   if (!operatorPanel) {
     operatorPanel = document.createElement("div");
     operatorPanel.className = "operator-session";
+    operatorPanel.setAttribute("role", "group");
+    operatorPanel.setAttribute("aria-label", "Sesi operator");
 
     if (dataSourceBadge) {
       dataSourceBadge.insertAdjacentElement("afterend", operatorPanel);
@@ -37864,15 +37866,35 @@ function renderOperatorHeader() {
 
   const operatorLabel = document.createElement("span");
   operatorLabel.className = "operator-session-label";
-  operatorLabel.textContent = `Operator: ${currentOperator.employee_name} (${getOperatorRoleLabel(currentOperator.role)})`;
+
+  const operatorIcon = document.createElement("span");
+  operatorIcon.className = "operator-session-icon";
+  operatorIcon.setAttribute("aria-hidden", "true");
+  operatorIcon.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`;
+
+  const operatorName = document.createElement("span");
+  operatorName.className = "operator-session-name";
+  operatorName.textContent = `Operator: ${currentOperator.employee_name}`;
+
+  const operatorRole = document.createElement("span");
+  operatorRole.className = "operator-session-role";
+  operatorRole.textContent = getOperatorRoleLabel(currentOperator.role);
+
+  operatorLabel.append(operatorIcon, operatorName, operatorRole);
+
+  const divider = document.createElement("span");
+  divider.className = "operator-session-divider";
+  divider.setAttribute("aria-hidden", "true");
 
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
-  logoutButton.className = "btn btn-secondary operator-logout-button";
+  logoutButton.className = "operator-logout-button";
   logoutButton.dataset.action = "logout-operator";
+  logoutButton.setAttribute("title", "Logout dari sesi operator");
+  logoutButton.setAttribute("aria-label", "Logout operator");
   logoutButton.textContent = "Logout";
 
-  operatorPanel.append(operatorLabel, logoutButton);
+  operatorPanel.append(operatorLabel, divider, logoutButton);
 }
 
 function renderLoginScreen() {
