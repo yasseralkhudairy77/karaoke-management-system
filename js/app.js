@@ -32814,7 +32814,7 @@ function createLcPayrollSubTabElement() {
   const secTitleGroup = document.createElement("div");
   const secTitle = document.createElement("h3");
   secTitle.style.margin = "0";
-  secTitle.textContent = "Pembayaran Payroll LC (2 Mingguan)";
+  secTitle.textContent = "Pembayaran Payroll LC";
   const secDesc = document.createElement("p");
   secDesc.style.margin = "4px 0 0 0";
   secDesc.style.fontSize = "13px";
@@ -32920,6 +32920,11 @@ function createLcPayrollSubTabElement() {
   const totalAmount = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.net_payout_total ?? r.total_earnings ?? 0), 0);
   const totalSessions = lcPayrollPendingReports.reduce((sum, r) => sum + r.total_sessions, 0);
   const totalLcs = lcPayrollPendingReports.length;
+  const totalMinutes = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.total_duration_minutes ?? (Number(r.total_sessions || 0) * 60) ?? 0), 0);
+  const totalHours = totalMinutes / 60;
+  const totalHoursFormatted = totalMinutes % 60 === 0
+    ? `${totalHours} Jam`
+    : `${totalHours.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Jam`;
 
   summaryBox.innerHTML = `
     <div style="background: rgba(226, 184, 92, 0.08); border: 1px solid rgba(226, 184, 92, 0.35); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
@@ -32963,6 +32968,11 @@ function createLcPayrollSubTabElement() {
     <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
       <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Jumlah LC Dibayar</span>
       <strong style="font-size: 1.15rem; color: #e2e8f0; font-weight: 750; font-variant-numeric: tabular-nums;">${totalLcs} Orang</strong>
+    </div>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Jumlah Jam LC</span>
+      <strong style="font-size: 1.15rem; color: #e2e8f0; font-weight: 750; font-variant-numeric: tabular-nums;">${totalHoursFormatted}</strong>
     </div>
   `;
   pendingSection.appendChild(summaryBox);
