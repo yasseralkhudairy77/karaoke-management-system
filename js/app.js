@@ -31099,16 +31099,21 @@ function downloadPendingPayrollCsv() {
 }
 
 async function loadLcPayrollData(startDate = "", endDate = "") {
+  if (startDate) lcPayrollStartDate = startDate;
+  if (endDate) lcPayrollEndDate = endDate;
+  const reqStart = (startDate || lcPayrollStartDate || "").trim();
+  const reqEnd = (endDate || lcPayrollEndDate || "").trim();
+
   if (!API_BASE_URL.trim()) {
     lcPayrollPendingReports = [
-      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 4, total_earnings: 700000 },
-      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 2, total_earnings: 350000 },
+      { lc_id: "LC-001", lc_name: "Siska", rate_per_room: 175000, total_sessions: 4, room_earning_total: 700000, sales_bonus_total: 0, cash_advance_deducted: 0, cash_advance_outstanding: 0, net_payout_total: 700000, total_earnings: 700000 },
+      { lc_id: "LC-002", lc_name: "Rina", rate_per_room: 175000, total_sessions: 2, room_earning_total: 350000, sales_bonus_total: 0, cash_advance_deducted: 0, cash_advance_outstanding: 0, net_payout_total: 350000, total_earnings: 350000 },
     ];
     lcPayrollHistory = [
       { payroll_id: "LCPAY-20260710-1002", start_date: "2026-06-26", end_date: "2026-07-09", total_amount: 1050000, total_sessions: 6, total_lcs_paid: 2, processed_at: "2026-07-10T10:02:00Z", processed_by: "Kasir" }
     ];
-    lcPayrollStartDate = startDate || "2026-07-10";
-    lcPayrollEndDate = endDate || "2026-07-23";
+    lcPayrollStartDate = reqStart || "2026-07-10";
+    lcPayrollEndDate = reqEnd || "2026-07-23";
     return;
   }
 
@@ -31118,23 +31123,65 @@ async function loadLcPayrollData(startDate = "", endDate = "") {
   }
 
   try {
-    const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${startDate}&end_date=${endDate}`;
+    const pendingUrl = `${API_BASE_URL}?action=getPendingLcPayroll&start_date=${encodeURIComponent(reqStart)}&end_date=${encodeURIComponent(reqEnd)}`;
     const pendingRes = await fetch(pendingUrl);
     const pendingData = await pendingRes.json();
-    if (pendingData && pendingData.success) {
-      lcPayrollPendingReports = pendingData.reports || [];
-      lcPayrollStartDate = pendingData.current_range.startDate;
-      lcPayrollEndDate = pendingData.current_range.endDate;
+    if (pendingData && (pendingData.success || pendingData.ok)) {
+      if (Array.isArray(pendingData.reports)) {
+        lcPayrollPendingReports = pendingData.reports;
+      } else if (Array.isArray(pendingData.pending) || Array.isArray(pendingData.logs)) {
+        const logs = pendingData.pending || pendingData.logs || [];
+        const byLc = new Map();
+        for (const log of logs) {
+          const id = log.lc_id || "";
+          if (!id) continue;
+          if (!byLc.has(id)) {
+            byLc.set(id, {
+              lc_id: id,
+              lc_name: log.lc_name || id,
+              rate_per_room: Number(log.rate_per_hour || log.rate || 0),
+              total_sessions: 0,
+              room_earning_total: 0,
+              sales_bonus_total: 0,
+              cash_advance_deducted: 0,
+              cash_advance_outstanding: 0,
+              gross_earning_total: 0,
+              net_payout_total: 0,
+              total_earnings: 0,
+            });
+          }
+          const item = byLc.get(id);
+          item.total_sessions += 1;
+          item.room_earning_total += Number(log.rate || 0);
+          item.gross_earning_total = item.room_earning_total;
+          item.net_payout_total = item.gross_earning_total;
+          item.total_earnings = item.net_payout_total;
+        }
+        lcPayrollPendingReports = Array.from(byLc.values());
+      } else {
+        lcPayrollPendingReports = [];
+      }
+
+      if (pendingData.current_range?.startDate && pendingData.current_range?.endDate) {
+        if (!reqStart) lcPayrollStartDate = pendingData.current_range.startDate;
+        if (!reqEnd) lcPayrollEndDate = pendingData.current_range.endDate;
+      } else if (pendingData.suggested_range && (!lcPayrollStartDate || !lcPayrollEndDate)) {
+        if (!lcPayrollStartDate) lcPayrollStartDate = pendingData.suggested_range.startDate || "";
+        if (!lcPayrollEndDate) lcPayrollEndDate = pendingData.suggested_range.endDate || "";
+      }
+    } else {
+      showInlineNotice(pendingData?.error || "Gagal memuat data pending payroll LC.", "error");
     }
 
     const historyUrl = `${API_BASE_URL}?action=getLcPayrollHistory`;
     const historyRes = await fetch(historyUrl);
     const historyData = await historyRes.json();
-    if (historyData && historyData.success) {
-      lcPayrollHistory = historyData.history || [];
+    if (historyData && (historyData.success || historyData.ok)) {
+      lcPayrollHistory = historyData.history || historyData.payroll_history || [];
     }
   } catch (error) {
     console.error("Error loading LC payroll data:", error);
+    showInlineNotice("Terjadi kesalahan jaringan saat memuat data payroll LC.", "error");
   } finally {
     isLoadingLcPayroll = false;
     if (activeDashboardTab === "lc") {
@@ -32777,9 +32824,11 @@ function createLcPayrollSubTabElement() {
   secHeader.appendChild(secTitleGroup);
 
   const dateFilters = document.createElement("div");
+  dateFilters.className = "lc-payroll-filter-bar";
   dateFilters.style.display = "flex";
   dateFilters.style.gap = "12px";
-  dateFilters.style.alignItems = "center";
+  dateFilters.style.alignItems = "flex-end";
+  dateFilters.style.flexWrap = "wrap";
 
   const startCol = document.createElement("div");
   startCol.style.display = "flex";
@@ -32787,12 +32836,15 @@ function createLcPayrollSubTabElement() {
   startCol.style.gap = "4px";
   const startLbl = document.createElement("label");
   startLbl.style.fontSize = "11px";
+  startLbl.style.fontWeight = "600";
   startLbl.style.color = "var(--muted)";
   startLbl.textContent = "Dari Tanggal:";
   const startIn = document.createElement("input");
   startIn.type = "date";
   startIn.className = "duration-custom-input";
   startIn.value = lcPayrollStartDate;
+  startIn.addEventListener("change", () => { lcPayrollStartDate = startIn.value; });
+  startIn.addEventListener("input", () => { lcPayrollStartDate = startIn.value; });
   startCol.append(startLbl, startIn);
 
   const endCol = document.createElement("div");
@@ -32801,19 +32853,26 @@ function createLcPayrollSubTabElement() {
   endCol.style.gap = "4px";
   const endLbl = document.createElement("label");
   endLbl.style.fontSize = "11px";
+  endLbl.style.fontWeight = "600";
   endLbl.style.color = "var(--muted)";
   endLbl.textContent = "Sampai Tanggal:";
   const endIn = document.createElement("input");
   endIn.type = "date";
   endIn.className = "duration-custom-input";
   endIn.value = lcPayrollEndDate;
+  endIn.addEventListener("change", () => { lcPayrollEndDate = endIn.value; });
+  endIn.addEventListener("input", () => { lcPayrollEndDate = endIn.value; });
   endCol.append(endLbl, endIn);
 
   const filterBtn = document.createElement("button");
   filterBtn.type = "button";
-  filterBtn.className = "erp-btn erp-btn-secondary";
-  filterBtn.style.padding = "8px 12px";
-  filterBtn.textContent = "Filter";
+  filterBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
+  filterBtn.style.padding = "8px 16px";
+  filterBtn.style.fontWeight = "750";
+  filterBtn.style.display = "inline-flex";
+  filterBtn.style.alignItems = "center";
+  filterBtn.style.gap = "6px";
+  filterBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg><span>Filter</span>`;
   filterBtn.onclick = async () => {
     await loadLcPayrollData(startIn.value, endIn.value);
   };
@@ -32821,8 +32880,11 @@ function createLcPayrollSubTabElement() {
   const downloadCsvBtn = document.createElement("button");
   downloadCsvBtn.type = "button";
   downloadCsvBtn.className = "erp-btn erp-btn-secondary";
-  downloadCsvBtn.style.padding = "8px 12px";
-  downloadCsvBtn.textContent = "Download CSV Pengajuan";
+  downloadCsvBtn.style.padding = "8px 14px";
+  downloadCsvBtn.style.display = "inline-flex";
+  downloadCsvBtn.style.alignItems = "center";
+  downloadCsvBtn.style.gap = "6px";
+  downloadCsvBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span>Download CSV Pengajuan</span>`;
   downloadCsvBtn.onclick = () => {
     downloadPendingPayrollCsv();
   };
@@ -32830,8 +32892,8 @@ function createLcPayrollSubTabElement() {
   const buttonGroup = document.createElement("div");
   buttonGroup.style.display = "flex";
   buttonGroup.style.gap = "8px";
-  buttonGroup.style.alignSelf = "flex-end";
-  buttonGroup.append(downloadCsvBtn, filterBtn);
+  buttonGroup.style.alignItems = "center";
+  buttonGroup.append(filterBtn, downloadCsvBtn);
 
   dateFilters.append(startCol, endCol, buttonGroup);
   secHeader.appendChild(dateFilters);
@@ -32844,13 +32906,11 @@ function createLcPayrollSubTabElement() {
   }
 
   const summaryBox = document.createElement("div");
+  summaryBox.className = "lc-payroll-summary-grid";
   summaryBox.style.display = "grid";
-  summaryBox.style.gridTemplateColumns = "repeat(auto-fit, minmax(180px, 1fr))";
+  summaryBox.style.gridTemplateColumns = "repeat(auto-fit, minmax(210px, 1fr))";
   summaryBox.style.gap = "12px";
-  summaryBox.style.backgroundColor = "var(--bg)";
-  summaryBox.style.padding = "12px";
-  summaryBox.style.borderRadius = "var(--radius-sm)";
-  summaryBox.style.border = "1px solid var(--border)";
+  summaryBox.style.padding = "0";
 
   const totalRoomEarning = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.room_earning_total ?? r.total_earnings ?? 0), 0);
   const totalSalesBonus = lcPayrollPendingReports.reduce((sum, r) => sum + Number(r.sales_bonus_total || 0), 0);
@@ -32862,37 +32922,47 @@ function createLcPayrollSubTabElement() {
   const totalLcs = lcPayrollPendingReports.length;
 
   summaryBox.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Gaji Bersih Payroll:</span>
-      <strong style="font-size:18px; color:var(--gold)">${formatCurrency(totalAmount)}</strong>
+    <div style="background: rgba(226, 184, 92, 0.08); border: 1px solid rgba(226, 184, 92, 0.35); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size: 0.72rem; color: #ffd77a; font-weight: 750; text-transform: uppercase; letter-spacing: 0.04em;">Gaji Bersih Payroll</span>
+        <span style="font-size: 0.68rem; background: rgba(226, 184, 92, 0.2); color: #ffd77a; padding: 1px 6px; border-radius: 3px; font-weight: 700;">Net Payout</span>
+      </div>
+      <strong style="font-size: 1.35rem; color: #ffd77a; font-weight: 850; font-variant-numeric: tabular-nums;">${formatCurrency(totalAmount)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Gaji Room:</span>
-      <strong style="font-size:18px;">${formatCurrency(totalRoomEarning)}</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Penghasilan Bruto</span>
+      <strong style="font-size: 1.15rem; color: #f1f5f9; font-weight: 750; font-variant-numeric: tabular-nums;">${formatCurrency(totalGross)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Bonus Penjualan:</span>
-      <strong style="font-size:18px;">${formatCurrency(totalSalesBonus)}</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Gaji Room</span>
+      <strong style="font-size: 1.15rem; color: #f1f5f9; font-weight: 750; font-variant-numeric: tabular-nums;">${formatCurrency(totalRoomEarning)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Potongan Kasbon:</span>
-      <strong style="font-size:18px;">${formatCurrency(totalCashAdvance)}</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Bonus Penjualan</span>
+      <strong style="font-size: 1.15rem; color: #34d399; font-weight: 750; font-variant-numeric: tabular-nums;">${formatCurrency(totalSalesBonus)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Kasbon Outstanding:</span>
-      <strong style="font-size:18px;">${formatCurrency(totalCashAdvanceOutstanding)}</strong>
+
+    <div style="background: var(--surface); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: #fbbf24; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Potongan Kasbon</span>
+      <strong style="font-size: 1.15rem; color: #fbbf24; font-weight: 750; font-variant-numeric: tabular-nums;">${formatCurrency(totalCashAdvance)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Penghasilan Bruto:</span>
-      <strong style="font-size:18px;">${formatCurrency(totalGross)}</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Kasbon Outstanding</span>
+      <strong style="font-size: 1.15rem; color: #e2e8f0; font-weight: 750; font-variant-numeric: tabular-nums;">${formatCurrency(totalCashAdvanceOutstanding)}</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Total Sesi:</span>
-      <strong style="font-size:18px;">${totalSessions} Sesi</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Total Sesi</span>
+      <strong style="font-size: 1.15rem; color: #e2e8f0; font-weight: 750; font-variant-numeric: tabular-nums;">${totalSessions} Sesi</strong>
     </div>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <span style="font-size:12px; color:var(--muted)">Jumlah LC Dibayar:</span>
-      <strong style="font-size:18px;">${totalLcs} Orang</strong>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;">Jumlah LC Dibayar</span>
+      <strong style="font-size: 1.15rem; color: #e2e8f0; font-weight: 750; font-variant-numeric: tabular-nums;">${totalLcs} Orang</strong>
     </div>
   `;
   pendingSection.appendChild(summaryBox);

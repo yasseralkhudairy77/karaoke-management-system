@@ -420,12 +420,230 @@ async function getLcFinanceSummary(req, res) {
 
 async function getPendingLcPayroll(req, res) {
   try {
-    const result = await db.query(`
-      SELECT * FROM lc_work_logs
-      WHERE status IN ('active', 'closed', 'done') AND payroll_id IS NULL
+    await ensureUpfrontPaymentSchema();
+
+    // 1. Tentukan tanggal default / saran 2 mingguan jika parameter kosong
+    const historyRes = await db.query('SELECT payroll_period_end FROM lc_payroll_history ORDER BY created_at DESC LIMIT 1');
+    let suggestedStartDate = '';
+    let suggestedEndDate = '';
+    if (historyRes.rows.length > 0 && historyRes.rows[0].payroll_period_end) {
+      const lastEnd = new Date(historyRes.rows[0].payroll_period_end);
+      const nextStart = new Date(lastEnd.getTime() + 24 * 60 * 60 * 1000);
+      const nextEnd = new Date(nextStart.getTime() + 13 * 24 * 60 * 60 * 1000);
+      suggestedStartDate = nextStart.toISOString().slice(0, 10);
+      suggestedEndDate = nextEnd.toISOString().slice(0, 10);
+    } else {
+      const currentOpDate = getOperationalDate();
+      suggestedStartDate = currentOpDate.slice(0, 8) + '01';
+      suggestedEndDate = currentOpDate;
+    }
+
+    const startDate = String(req.query.start_date || req.query.startDate || suggestedStartDate || '').trim();
+    const endDate = String(req.query.end_date || req.query.endDate || suggestedEndDate || '').trim();
+
+    // 2. Query work logs eligible for payroll (status selesai, payroll_id NULL, dalam rentang tanggal)
+    const workRes = await db.query(`
+      SELECT
+        lwl.log_id, lwl.session_id, lwl.room_id, lwl.room_name, lwl.lc_id, lwl.lc_name,
+        lwl.duration_minutes, lwl.rate_per_hour, lwl.rate, lwl.status,
+        lwl.created_at, lwl.closed_at, lwl.payroll_id, lwl.closed_transaction_id, lwl.upfront_transaction_id,
+        COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) AS operational_date
+      FROM lc_work_logs lwl
+      LEFT JOIN transactions t_closed ON t_closed.transaction_id = lwl.closed_transaction_id
+      LEFT JOIN transactions t_upfront ON t_upfront.transaction_id = lwl.upfront_transaction_id
+      WHERE lwl.payroll_id IS NULL
+        AND lwl.status <> 'cancelled'
+        AND COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) >= $1::date
+        AND COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) <= $2::date
+      ORDER BY lwl.created_at ASC
+    `, [startDate, endDate]);
+
+    // 3. Query sales bonus logs
+    const bonusRes = await db.query(`
+      SELECT *
+      FROM lc_sales_bonus_logs
+      WHERE payroll_id IS NULL
+        AND source_status NOT IN ('voided', 'cancelled')
+        AND voided_at IS NULL
+        AND operational_date >= $1::date
+        AND operational_date <= $2::date
       ORDER BY created_at ASC
-    `);
-    return res.json({ ok: true, success: true, logs: result.rows, pending: result.rows });
+    `, [startDate, endDate]);
+
+    // 4. Query cash advances open up to endDate
+    const advanceRes = await db.query(`
+      SELECT *
+      FROM lc_cash_advances
+      WHERE payroll_id IS NULL
+        AND status = 'open'
+        AND operational_date <= $1::date
+      ORDER BY created_at ASC
+    `, [endDate]);
+
+    // 5. Query lc master
+    const lcsRes = await db.query('SELECT * FROM lc_master ORDER BY LOWER(TRIM(lc_name)) ASC');
+
+    const reportsMap = new Map();
+    for (const lc of lcsRes.rows) {
+      const lcId = String(lc.lc_id || '').trim();
+      if (!lcId) continue;
+      reportsMap.set(lcId, {
+        lc_id: lcId,
+        lc_name: lc.lc_name || '',
+        rate_per_room: toNumber(lc.rate_per_hour ?? lc.rate_per_room),
+        total_sessions: 0,
+        total_duration_minutes: 0,
+        room_earning_total: 0,
+        sales_bonus_total: 0,
+        cash_advance_outstanding: 0,
+        cash_advance_deducted: 0,
+        gross_earning_total: 0,
+        net_payout_total: 0,
+        total_earnings: 0,
+        work_logs: [],
+        bonus_logs: [],
+        advance_logs: []
+      });
+    }
+
+    for (const row of workRes.rows) {
+      const lcId = String(row.lc_id || '').trim();
+      if (!lcId) continue;
+      if (!reportsMap.has(lcId)) {
+        reportsMap.set(lcId, {
+          lc_id: lcId,
+          lc_name: row.lc_name || `LC ${lcId}`,
+          rate_per_room: toNumber(row.rate_per_hour),
+          total_sessions: 0,
+          total_duration_minutes: 0,
+          room_earning_total: 0,
+          sales_bonus_total: 0,
+          cash_advance_outstanding: 0,
+          cash_advance_deducted: 0,
+          gross_earning_total: 0,
+          net_payout_total: 0,
+          total_earnings: 0,
+          work_logs: [],
+          bonus_logs: [],
+          advance_logs: []
+        });
+      }
+      const rep = reportsMap.get(lcId);
+      rep.total_sessions += 1;
+      rep.total_duration_minutes += toNumber(row.duration_minutes);
+      rep.room_earning_total += toNumber(row.rate);
+      rep.work_logs.push(row);
+    }
+
+    for (const row of bonusRes.rows) {
+      const lcId = String(row.lc_id || '').trim();
+      if (!lcId) continue;
+      if (!reportsMap.has(lcId)) {
+        reportsMap.set(lcId, {
+          lc_id: lcId,
+          lc_name: row.lc_name || `LC ${lcId}`,
+          rate_per_room: 0,
+          total_sessions: 0,
+          total_duration_minutes: 0,
+          room_earning_total: 0,
+          sales_bonus_total: 0,
+          cash_advance_outstanding: 0,
+          cash_advance_deducted: 0,
+          gross_earning_total: 0,
+          net_payout_total: 0,
+          total_earnings: 0,
+          work_logs: [],
+          bonus_logs: [],
+          advance_logs: []
+        });
+      }
+      const rep = reportsMap.get(lcId);
+      rep.sales_bonus_total += toNumber(row.bonus_total);
+      rep.bonus_logs.push(row);
+    }
+
+    for (const row of advanceRes.rows) {
+      const lcId = String(row.lc_id || '').trim();
+      if (!lcId) continue;
+      if (!reportsMap.has(lcId)) {
+        reportsMap.set(lcId, {
+          lc_id: lcId,
+          lc_name: row.lc_name || `LC ${lcId}`,
+          rate_per_room: 0,
+          total_sessions: 0,
+          total_duration_minutes: 0,
+          room_earning_total: 0,
+          sales_bonus_total: 0,
+          cash_advance_outstanding: 0,
+          cash_advance_deducted: 0,
+          gross_earning_total: 0,
+          net_payout_total: 0,
+          total_earnings: 0,
+          work_logs: [],
+          bonus_logs: [],
+          advance_logs: []
+        });
+      }
+      const rep = reportsMap.get(lcId);
+      rep.cash_advance_outstanding += toNumber(row.amount);
+      rep.advance_logs.push(row);
+    }
+
+    const reports = Array.from(reportsMap.values())
+      .map(rep => {
+        rep.gross_earning_total = rep.room_earning_total + rep.sales_bonus_total;
+        rep.cash_advance_deducted = Math.min(rep.gross_earning_total, rep.cash_advance_outstanding);
+        rep.net_payout_total = Math.max(0, rep.gross_earning_total - rep.cash_advance_deducted);
+        rep.total_earnings = rep.net_payout_total;
+        return rep;
+      })
+      .filter(rep => rep.total_sessions > 0 || rep.sales_bonus_total > 0 || rep.cash_advance_outstanding > 0)
+      .sort((a, b) => (b.net_payout_total - a.net_payout_total) || String(a.lc_name).localeCompare(String(b.lc_name), 'id'));
+
+    const summaryRoomEarningTotal = reports.reduce((s, r) => s + r.room_earning_total, 0);
+    const summarySalesBonusTotal = reports.reduce((s, r) => s + r.sales_bonus_total, 0);
+    const summaryGrossEarningTotal = summaryRoomEarningTotal + summarySalesBonusTotal;
+    const summaryCashAdvanceDeducted = reports.reduce((s, r) => s + r.cash_advance_deducted, 0);
+    const summaryTotalAmount = reports.reduce((s, r) => s + r.net_payout_total, 0);
+    const summaryTotalSessions = reports.reduce((s, r) => s + r.total_sessions, 0);
+
+    return res.json({
+      ok: true,
+      success: true,
+      reports,
+      logs: workRes.rows,
+      pending: workRes.rows,
+      current_range: {
+        startDate,
+        endDate
+      },
+      suggested_range: {
+        startDate: suggestedStartDate,
+        endDate: suggestedEndDate
+      },
+      summary: {
+        total_amount: summaryTotalAmount,
+        room_earning_total: summaryRoomEarningTotal,
+        sales_bonus_total: summarySalesBonusTotal,
+        cash_advance_deducted: summaryCashAdvanceDeducted,
+        gross_earning_total: summaryGrossEarningTotal,
+        net_payout_total: summaryTotalAmount,
+        total_sessions: summaryTotalSessions,
+        total_lcs: reports.length
+      }
+    });
   } catch (err) {
     return errorResponse(res, err.message);
   }
@@ -433,8 +651,29 @@ async function getPendingLcPayroll(req, res) {
 
 async function getLcPayrollHistory(req, res) {
   try {
-    const result = await db.query('SELECT * FROM lc_payroll_history ORDER BY created_at DESC LIMIT 200');
-    return res.json({ ok: true, success: true, history: result.rows, payroll_history: result.rows });
+    const result = await db.query(`
+      SELECT
+        ph.*,
+        COUNT(DISTINCT lwl.lc_id) AS total_lcs_paid,
+        COUNT(lwl.log_id) AS total_sessions_count
+      FROM lc_payroll_history ph
+      LEFT JOIN lc_work_logs lwl ON lwl.payroll_id = ph.payroll_id
+      GROUP BY ph.payroll_id
+      ORDER BY ph.created_at DESC
+      LIMIT 200
+    `);
+    const history = result.rows.map(row => ({
+      ...row,
+      payroll_id: row.payroll_id,
+      start_date: row.payroll_period_start ? new Date(row.payroll_period_start).toISOString().slice(0, 10) : '',
+      end_date: row.payroll_period_end ? new Date(row.payroll_period_end).toISOString().slice(0, 10) : '',
+      total_amount: Number(row.total_amount || row.net_payout_total || 0),
+      total_sessions: Number(row.total_sessions_count || (row.total_hours ? Math.round(Number(row.total_hours)) : 0)),
+      total_lcs_paid: Number(row.total_lcs_paid || 0),
+      processed_at: row.created_at,
+      processed_by: row.processed_by || 'Kasir',
+    }));
+    return res.json({ ok: true, success: true, history, payroll_history: history });
   } catch (err) {
     return errorResponse(res, err.message);
   }
@@ -518,24 +757,73 @@ async function processLcPayroll(req, res, payload) {
     const payrollId = `LCP-${Date.now()}`;
 
     const workRes = await client.query(`
-      SELECT * FROM lc_work_logs
-      WHERE payroll_id IS NULL AND status <> 'cancelled'
-    `);
+      SELECT
+        lwl.*,
+        COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) AS operational_date
+      FROM lc_work_logs lwl
+      LEFT JOIN transactions t_closed ON t_closed.transaction_id = lwl.closed_transaction_id
+      LEFT JOIN transactions t_upfront ON t_upfront.transaction_id = lwl.upfront_transaction_id
+      WHERE lwl.payroll_id IS NULL
+        AND lwl.status <> 'cancelled'
+        AND COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) >= $1::date
+        AND COALESCE(
+          t_closed.operational_date,
+          t_upfront.operational_date,
+          (((lwl.created_at AT TIME ZONE 'Asia/Jakarta') - INTERVAL '10 hours')::date)
+        ) <= $2::date
+    `, [periodStart, periodEnd]);
+
     const bonusRes = await client.query(`
       SELECT * FROM lc_sales_bonus_logs
-      WHERE payroll_id IS NULL AND source_status = 'earned'
-    `);
+      WHERE payroll_id IS NULL
+        AND source_status = 'earned'
+        AND voided_at IS NULL
+        AND operational_date >= $1::date
+        AND operational_date <= $2::date
+    `, [periodStart, periodEnd]);
+
     const advanceRes = await client.query(`
       SELECT * FROM lc_cash_advances
-      WHERE payroll_id IS NULL AND status = 'open'
-    `);
+      WHERE payroll_id IS NULL
+        AND status = 'open'
+        AND operational_date <= $1::date
+    `, [periodEnd]);
 
     const roomEarningTotal = workRes.rows.reduce((sum, row) => sum + Number(row.rate || 0), 0);
     const salesBonusTotal = bonusRes.rows.reduce((sum, row) => sum + Number(row.bonus_total || 0), 0);
-    const cashAdvanceTotal = advanceRes.rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const totalMinutes = workRes.rows.reduce((sum, row) => sum + Number(row.duration_minutes || 0), 0);
     const grossTotal = roomEarningTotal + salesBonusTotal;
-    const netTotal = grossTotal - cashAdvanceTotal;
+
+    const earningsByLc = new Map();
+    for (const row of workRes.rows) {
+      const lcId = String(row.lc_id || '').trim();
+      earningsByLc.set(lcId, (earningsByLc.get(lcId) || 0) + Number(row.rate || 0));
+    }
+    for (const row of bonusRes.rows) {
+      const lcId = String(row.lc_id || '').trim();
+      earningsByLc.set(lcId, (earningsByLc.get(lcId) || 0) + Number(row.bonus_total || 0));
+    }
+
+    let cashAdvanceDeductedTotal = 0;
+    const deductedAdvanceIds = [];
+    for (const adv of advanceRes.rows) {
+      const lcId = String(adv.lc_id || '').trim();
+      const earn = earningsByLc.get(lcId) || 0;
+      if (earn > 0) {
+        deductedAdvanceIds.push(adv.cash_advance_id);
+        cashAdvanceDeductedTotal += Number(adv.amount || 0);
+      }
+    }
+
+    const netTotal = Math.max(0, grossTotal - cashAdvanceDeductedTotal);
 
     await client.query(`
       INSERT INTO lc_payroll_history (
@@ -543,11 +831,19 @@ async function processLcPayroll(req, res, payload) {
         room_earning_total, sales_bonus_total, cash_advance_deducted,
         gross_earning_total, net_payout_total, total_amount, processed_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
-    `, [payrollId, periodStart, periodEnd, totalMinutes / 60, roomEarningTotal, salesBonusTotal, cashAdvanceTotal, grossTotal, netTotal, processedBy]);
+    `, [payrollId, periodStart, periodEnd, totalMinutes / 60, roomEarningTotal, salesBonusTotal, cashAdvanceDeductedTotal, grossTotal, netTotal, processedBy]);
 
-    await client.query('UPDATE lc_work_logs SET payroll_id = $1, status = $2 WHERE payroll_id IS NULL AND status <> $3', [payrollId, 'paid', 'cancelled']);
-    await client.query('UPDATE lc_sales_bonus_logs SET payroll_id = $1, source_status = $2 WHERE payroll_id IS NULL AND source_status = $3', [payrollId, 'payrolled', 'earned']);
-    await client.query('UPDATE lc_cash_advances SET payroll_id = $1, status = $2, deducted_at = CURRENT_TIMESTAMP WHERE payroll_id IS NULL AND status = $3', [payrollId, 'deducted', 'open']);
+    if (workRes.rows.length > 0) {
+      const workLogIds = workRes.rows.map(r => r.log_id);
+      await client.query('UPDATE lc_work_logs SET payroll_id = $1, status = $2 WHERE log_id = ANY($3)', [payrollId, 'paid', workLogIds]);
+    }
+    if (bonusRes.rows.length > 0) {
+      const bonusIds = bonusRes.rows.map(r => r.bonus_log_id);
+      await client.query('UPDATE lc_sales_bonus_logs SET payroll_id = $1, source_status = $2 WHERE bonus_log_id = ANY($3)', [payrollId, 'payrolled', bonusIds]);
+    }
+    if (deductedAdvanceIds.length > 0) {
+      await client.query('UPDATE lc_cash_advances SET payroll_id = $1, status = $2, deducted_at = CURRENT_TIMESTAMP WHERE cash_advance_id = ANY($3)', [payrollId, 'deducted', deductedAdvanceIds]);
+    }
 
     await client.query('COMMIT');
     return successResponse(res, { message: 'Payroll LC berhasil diproses.', payroll_id: payrollId, net_payout_total: netTotal });
