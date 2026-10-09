@@ -1116,6 +1116,85 @@ async function validatePromoCode(req, res) {
   }
 }
 
+const DEFAULT_RECEIPT_CONFIG = {
+  business_name: 'Happy Song Karaoke',
+  logo_text: 'HAPPY SONG',
+  tagline: 'FAMILY KARAOKE & RESTO',
+  address: '',
+  phone: '',
+  tax_id: '',
+  social_media: '',
+  wifi_ssid: '',
+  wifi_password: '',
+  footer_text: 'Terima kasih atas kunjungan Anda.',
+  footer_terms: '',
+  show_logo: true,
+  logo_base64: '',
+  paper_width: 32,
+};
+
+async function getReceiptSettings(req, res) {
+  try {
+    const result = await db.query("SELECT value FROM settings WHERE key = 'receipt_settings' LIMIT 1");
+    if (result.rows.length === 0) {
+      return res.json({ ok: true, success: true, settings: { ...DEFAULT_RECEIPT_CONFIG } });
+    }
+    let parsed = {};
+    try {
+      parsed = JSON.parse(result.rows[0].value);
+    } catch {
+      parsed = {};
+    }
+    const combined = { ...DEFAULT_RECEIPT_CONFIG, ...parsed };
+    return res.json({ ok: true, success: true, settings: combined });
+  } catch (err) {
+    console.error('Gagal mengambil pengaturan struk:', err);
+    return res.json({ ok: true, success: true, settings: { ...DEFAULT_RECEIPT_CONFIG }, fallback: true });
+  }
+}
+
+async function saveReceiptSettings(req, res, payload) {
+  try {
+    const data = payload?.settings || payload || {};
+    const sanitized = {
+      business_name: String(data.business_name || DEFAULT_RECEIPT_CONFIG.business_name).trim(),
+      logo_text: String(data.logo_text || DEFAULT_RECEIPT_CONFIG.logo_text).trim(),
+      tagline: String(data.tagline || '').trim(),
+      address: String(data.address || '').trim(),
+      phone: String(data.phone || '').trim(),
+      tax_id: String(data.tax_id || '').trim(),
+      social_media: String(data.social_media || '').trim(),
+      wifi_ssid: String(data.wifi_ssid || '').trim(),
+      wifi_password: String(data.wifi_password || '').trim(),
+      footer_text: String(data.footer_text || DEFAULT_RECEIPT_CONFIG.footer_text).trim(),
+      footer_terms: String(data.footer_terms || '').trim(),
+      show_logo: data.show_logo !== false,
+      logo_base64: String(data.logo_base64 || '').trim(),
+      paper_width: Number(data.paper_width) === 48 ? 48 : 32,
+    };
+
+    const jsonString = JSON.stringify(sanitized);
+    await db.query(`
+      INSERT INTO settings (key, value, description, updated_at)
+      VALUES ('receipt_settings', $1, 'Konfigurasi identitas dan tata letak cetak nota kasir', CURRENT_TIMESTAMP)
+      ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = CURRENT_TIMESTAMP
+    `, [jsonString]);
+
+    await logMasterAudit('settings', 'receipt_settings', 'Pengaturan Nota Kasir', 'update', null, jsonString, payload?.changed_by || 'Manager');
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'Pengaturan nota kasir berhasil disimpan.',
+      settings: sanitized,
+    });
+  } catch (err) {
+    console.error('Gagal menyimpan pengaturan struk:', err);
+    return errorResponse(res, `Gagal menyimpan pengaturan struk: ${err.message}`);
+  }
+}
+
 module.exports = {
   getEmployees,
   getServiceItems,
@@ -1149,4 +1228,8 @@ module.exports = {
   bulkUpdateMenuProfitability,
   bulkImportPackages,
   seedReceptionistEmployee,
+  getReceiptSettings,
+  saveReceiptSettings,
+  DEFAULT_RECEIPT_CONFIG,
 };
+

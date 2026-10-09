@@ -1,9 +1,17 @@
 const DEFAULT_BUSINESS = {
   name: "Happy Song Karaoke",
+  logoText: "HAPPY SONG",
+  tagline: "FAMILY KARAOKE & RESTO",
   address: "",
   phone: "",
-  footer: "Terima kasih.",
-  logoText: "HAPPY SONG",
+  taxId: "",
+  socialMedia: "",
+  wifiSsid: "",
+  wifiPassword: "",
+  footer: "Terima kasih atas kunjungan Anda.",
+  footerTerms: "",
+  showLogo: true,
+  logoBase64: "",
 };
 
 const DEFAULT_PAPER = {
@@ -78,7 +86,15 @@ export function formatReceipt58mm(receiptData, options = {}) {
   }
 
   if (business.phone) {
-    lines.push(centerReceiptText(business.phone, width));
+    lines.push(centerReceiptText(`Telp: ${business.phone}`, width));
+  }
+
+  if (business.taxId) {
+    lines.push(centerReceiptText(`NPWP/NOPD: ${business.taxId}`, width));
+  }
+
+  if (business.socialMedia) {
+    lines.push(centerReceiptText(business.socialMedia, width));
   }
 
   lines.push(separator);
@@ -277,8 +293,23 @@ export function formatReceipt58mm(receiptData, options = {}) {
   lines.push(centerReceiptText(formatPaymentStatusBlock(payment.status), width));
   lines.push(separator);
 
+  if (business.wifiSsid) {
+    const wifiPass = business.wifiPassword ? ` | Pass: ${business.wifiPassword}` : "";
+    wrapReceiptText(`Wi-Fi: ${business.wifiSsid}${wifiPass}`, width).forEach((line) => {
+      lines.push(centerReceiptText(line, width));
+    });
+    lines.push(separator);
+  }
+
   if (business.footer) {
     wrapReceiptText(business.footer, width).forEach((line) => {
+      lines.push(centerReceiptText(line, width));
+    });
+  }
+
+  if (business.footerTerms) {
+    lines.push(separator);
+    wrapReceiptText(business.footerTerms, width).forEach((line) => {
       lines.push(centerReceiptText(line, width));
     });
   }
@@ -859,13 +890,22 @@ export function formatFnbSalesReport58mm(reportData = {}, options = {}) {
 function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
+  const tagline = getText(business.tagline || "");
   const border = repeatReceiptChar("#", width);
 
   lines.push(border);
-  lines.push(centerReceiptText(logoText, width));
+  if (business.showLogo && logoText) {
+    lines.push(centerReceiptText(logoText, width));
+  }
 
-  if (businessName && businessName.toLowerCase() !== logoText.toLowerCase()) {
+  if (businessName && (!business.showLogo || businessName.toLowerCase() !== logoText.toLowerCase())) {
     lines.push(centerReceiptText(businessName, width));
+  }
+
+  if (tagline) {
+    wrapReceiptText(tagline, width).forEach((line) => {
+      lines.push(centerReceiptText(line, width));
+    });
   }
 
   lines.push(border);
@@ -953,9 +993,22 @@ export function repeatReceiptChar(char, width = DEFAULT_PAPER.width) {
 }
 
 function normalizeBusiness(business) {
+  const b = business || {};
   return {
     ...DEFAULT_BUSINESS,
-    ...(business || {}),
+    name: getText(b.name || b.business_name || DEFAULT_BUSINESS.name),
+    logoText: getText(b.logoText || b.logo_text || DEFAULT_BUSINESS.logoText),
+    tagline: getText(b.tagline !== undefined ? b.tagline : DEFAULT_BUSINESS.tagline),
+    address: getText(b.address !== undefined ? b.address : DEFAULT_BUSINESS.address),
+    phone: getText(b.phone !== undefined ? b.phone : DEFAULT_BUSINESS.phone),
+    taxId: getText(b.taxId || b.tax_id || DEFAULT_BUSINESS.taxId),
+    socialMedia: getText(b.socialMedia || b.social_media || DEFAULT_BUSINESS.socialMedia),
+    wifiSsid: getText(b.wifiSsid || b.wifi_ssid || DEFAULT_BUSINESS.wifiSsid),
+    wifiPassword: getText(b.wifiPassword || b.wifi_password || DEFAULT_BUSINESS.wifiPassword),
+    footer: getText(b.footer || b.footer_text || DEFAULT_BUSINESS.footer),
+    footerTerms: getText(b.footerTerms || b.footer_terms || DEFAULT_BUSINESS.footerTerms),
+    showLogo: b.showLogo !== undefined ? Boolean(b.showLogo) : (b.show_logo !== undefined ? Boolean(b.show_logo) : DEFAULT_BUSINESS.showLogo),
+    logoBase64: getText(b.logoBase64 || b.logo_base64 || DEFAULT_BUSINESS.logoBase64),
   };
 }
 

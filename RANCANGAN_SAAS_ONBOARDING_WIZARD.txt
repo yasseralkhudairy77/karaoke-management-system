@@ -1,0 +1,243 @@
+================================================================================
+RANCANGAN SISTEM ONBOARDING WIZARD & SETUP DATA AWAL (SAAS KARAOKE MANAGEMENT)
+================================================================================
+Versi Dokumen : 1.0 (Draft Arsitektur & Diskusi Konseptual)
+Tanggal Dibuat: 09 Oktober 2026
+Format Berkas : Plain Text (.txt) - Mudah dibaca & diedit kapan saja
+Tujuan        : Dokumen acuan persiapan ekspansi sistem ke model multi-tenant SaaS
+================================================================================
+
+
+[DAFTAR ISI]
+1. Pendahuluan & Filosofi Onboarding SaaS
+2. Alur 6 Langkah First-Run Setup Wizard
+3. Detail Parameter yang Di-setting Mengikuti Klien (Tenant)
+4. Spesifikasi Berkas Excel Master Import Awal (Multi-Sheet)
+5. Engine Logika di Balik Layar (Backend & Database Architecture)
+6. Strategi Keamanan Data & Validasi Cerdas (Smart Validator)
+7. Catatan Tambahan Pemilik Sistem (Ruang Ide Masa Depan)
+
+
+================================================================================
+1. PENDAHULUAN & FILOSOFI ONBOARDING SAAS
+================================================================================
+Dalam industri karaoke dan hiburan malam (nightlife), setiap tempat memiliki 
+karakteristik operasional yang berbeda-beda. Perbedaan mencakup:
+- Jam buka dan jam tutup tempat.
+- Jam cut-off pergantian tanggal operasional kasir.
+- Ada atau tidaknya pemandu lagu (Lady Companion / LC).
+- Peraturan tarif pajak hiburan (PB1) dari masing-masing pemerintah daerah.
+- Kategori dan kapasitas ruangan karaoke.
+- Ratusan menu makanan, minuman, dan rokok.
+
+Tujuan utama Onboarding Wizard ini:
+- Self-Service Onboarding: Klien baru dapat mengonfigurasi tempatnya sendiri 
+  dalam 5-10 menit tanpa perlu dikunjungi teknisi secara langsung.
+- Bebas Kesalahan Awal: Menghindari kasus salah hitung tanggal shift atau kasir 
+  selisih brankas sejak hari pertama penggunaan.
+- Cepat Siap Jualan: Klien dapat mengunggah seluruh master data lama mereka 
+  melalui 1 berkas Excel terpadu, lalu langsung dapat membuka billing room.
+
+
+================================================================================
+2. ALUR 6 LANGKAH FIRST-RUN SETUP WIZARD
+================================================================================
+Ketika pengguna (Owner / General Manager) pertama kali login ke akun SaaS baru:
+
+  [LANGKAH 1] Profil & Identitas Tempat Karaoke
+       │
+  [LANGKAH 2] Waktu Operasional & Jam Cut-Off Shift Harian
+       │
+  [LANGKAH 3] Aturan Pajak Daerah (PB1), Service Charge & Billing
+       │
+  [LANGKAH 4] Fitur & Modul Operasional (LC, TV Bridge, Dapur)
+       │
+  [LANGKAH 5] Unggah Data Awal Master Excel (Room, F&B, LC, Paket)
+       │
+  [LANGKAH 6] Ringkasan Verifikasi & Inisialisasi Sistem Siap Pakai
+
+
+================================================================================
+3. DETAIL PARAMETER YANG DI-SETTING MENGIKUTI KLIEN (TENANT)
+================================================================================
+
+--- LANGKAH 1: PROFIL & IDENTITAS TEMPAT ---
+Parameter yang diinput:
+- Nama Usaha & Nama Cabang (misal: "Harmonic Karaoke - Cabang Pantai Indah Kapuk")
+- Alamat Lengkap & Nomor Telepon (otomatis dicetak pada header struk termal)
+- Logo Usaha (opsional, untuk tampilan login dan struk)
+- Zona Waktu Wilayah:
+  * Asia/Jakarta (WIB - UTC+7)
+  * Asia/Makassar (WITA - UTC+8)
+  * Asia/Jayapura (WIT - UTC+9)
+  Fungsi Engine: Mengunci offset jam transaksi kasir agar sesuai jam dinding 
+  lokal venue, bukan jam server cloud.
+
+--- LANGKAH 2: WAKTU OPERASIONAL & JAM CUT-OFF SHIFT ---
+Parameter yang diinput:
+- Jam Buka Biasa: (misal: 14:00)
+- Jam Tutup Biasa: (misal: 03:00 dini hari)
+- Jam Cut-off Tanggal Operasional (Pilihan fleksibel: 06:00 s/d 12:00):
+  * Tempat karaoke keluarga biasanya memilih cut-off jam 06:00 atau 07:00 pagi.
+  * Tempat karaoke dewasa/executive biasanya memilih cut-off jam 09:00 atau 10:00 pagi.
+  Fungsi Engine:
+  operational_date = WaktuTransaksi dikurangi JamCutOff.
+  Contoh: Tamu checkout hari Minggu pukul 03:30 subuh, karena masih sebelum 
+  jam cut-off 10:00 pagi, maka omzetnya tetap masuk ke Buku Kas hari Sabtu.
+- Jumlah Shift Kasir per Hari:
+  * 1 Shift Tunggal (Full Day)
+  * 2 Shift (Shift Siang & Shift Malam)
+  * 3 Shift (Pagi, Siang, Malam)
+
+--- LANGKAH 3: ATURAN PAJAK DAERAH, SERVICE & BILLING ---
+Parameter yang diinput:
+- Pajak Daerah / PB1 Hiburan: (misal 10%, 12.5%, 15%, 20% sesuai perda setempat)
+- Service Charge / Biaya Layanan: (misal 0%, 5%, 7%)
+- Skema Harga Menu F&B:
+  * Nett (Harga di menu sudah termasuk pajak & service)
+  * Plus-Plus (Subtotal akan ditambahkan pajak & service di kasir)
+- Kebijakan Pembulatan Menit Room (Billing Grace Period):
+  * Toleransi keterlambatan checkout (misal: lewat 10 menit pertama gratis).
+  * Pembulatan durasi (misal: pembulatan ke 30 menit atau per 1 jam penuh).
+
+--- LANGKAH 4: FITUR & MODUL OPERASIONAL (FEATURE TOGGLES) ---
+Parameter yang diinput (Aktif / Nonaktif):
+- Modul Lady Companion (LC / Pemandu Lagu):
+  * Toggle NONAKTIF: Untuk Karaoke Keluarga/Syariah. Seluruh menu LC, komisi, 
+    dan slip LC disembunyikan total dari sistem.
+  * Toggle AKTIF: Untuk Karaoke Dewasa. Dilengkapi aturan komisi LC 
+    (tarif per jam tamu, hak bersih LC, dan potongan kasbon).
+- Modul TV Control Bridge (Smart Power Controller):
+  * Toggle AKTIF jika venue menggunakan hardware IoT pemutus arus TV otomatis 
+    saat durasi karaoke habis.
+- Modul Printer Dapur & Bar (Split Printing):
+  * Toggle AKTIF jika pesanan makanan harus langsung cetak di dapur dan minuman 
+    harus cetak di bar kasir secara terpisah.
+
+--- LANGKAH 5: IMPORT DATA AWAL MASTER VIA EXCEL ---
+Konsumen disuguhkan pilihan:
+A. Unduh Template Excel Resmi ("Template_Master_Harmonic_POS.xlsx").
+B. Unggah berkas Excel yang sudah diisi melalui area Drag-and-Drop.
+C. Atau gunakan "Data Contoh / Demo" jika hanya ingin uji coba sistem dulu.
+
+
+================================================================================
+4. SPESIFIKASI BERKAS EXCEL MASTER IMPORT AWAL (MULTI-SHEET)
+================================================================================
+Format berkas yang disediakan sistem: 1 Workbook Excel (.xlsx) dengan 5 Sheet.
+
+--------------------------------------------------------------------------------
+SHEET 1: Panduan_Pengisian
+--------------------------------------------------------------------------------
+Berisi instruksi singkat:
+- Jangan mengubah nama sheet dan urutan kolom header.
+- Tuliskan nominal harga berupa angka bulat murni (contoh: 150000, BUKAN Rp 150.000).
+- Kolom dengan tanda bintang (*) wajib diisi.
+
+--------------------------------------------------------------------------------
+SHEET 2: Daftar_Room (Master Ruangan & Tarif)
+--------------------------------------------------------------------------------
+Header Kolom:
+1. kode_room (*)           : ID unik (contoh: R-01, R-02, VIP-1)
+2. nama_room (*)           : Nama tampilan (contoh: Room 01, Scarlet Room)
+3. kategori_room (*)       : Small / Medium / Large / VIP / VVIP
+4. tarif_regular_per_jam (*): Harga sewa per jam normal (contoh: 120000)
+5. tarif_happy_hour        : Harga sewa per jam promo/siang (contoh: 80000)
+6. ip_device_tv            : Alamat IP hardware TV bridge jika ada (contoh: 192.168.1.101)
+
+--------------------------------------------------------------------------------
+SHEET 3: Menu_FnB (Master Makanan, Minuman, Rokok & Stok)
+--------------------------------------------------------------------------------
+Header Kolom:
+1. kode_item (*)           : Kode unik barang (contoh: MN-01, FD-01, RK-01)
+2. nama_item (*)           : Nama menu/barang (contoh: Beer Bintang Pint, Snack Platter)
+3. kategori (*)            : Minuman / Makanan / Makanan Ringan / Rokok / Paket
+4. harga_jual (*)          : Harga yang ditagihkan ke tamu (contoh: 45000)
+5. harga_pokok_hpp         : Harga modal pembelian untuk hitung laba (contoh: 28000)
+6. stok_awal               : Jumlah fisik awal di gudang/bar (contoh: 48)
+7. satuan                  : Botol / Porsi / Kaleng / Bungkus / Gelas
+
+--------------------------------------------------------------------------------
+SHEET 4: Master_LC (Pemandu Lagu - Hanya Jika Modul LC Aktif)
+--------------------------------------------------------------------------------
+Header Kolom:
+1. id_lc (*)               : Nomor registrasi LC (contoh: LC-001, LC-002)
+2. nama_panggilan (*)      : Nama panggung/kerja (contoh: Eka, Desi, Rere)
+3. tarif_tamu_per_jam (*)  : Biaya yang dibayar tamu per jam (contoh: 120000)
+4. komisi_bersih_lc (*)    : Hak pendapatan bersih yang diterima LC (contoh: 90000)
+5. bagi_hasil_rumah        : Hak pendapatan rumah karaoke (contoh: 30000)
+6. nomor_telepon           : Kontak darurat LC (contoh: 081234567890)
+
+--------------------------------------------------------------------------------
+SHEET 5: Paket_Room (Bundling Paket Sewa + Makanan Minuman)
+--------------------------------------------------------------------------------
+Header Kolom:
+1. nama_paket (*)          : Nama paket promo (contoh: Paket Hemat 2 Jam)
+2. kategori_room (*)       : Kategori ruangan yang berlaku (contoh: Small)
+3. durasi_jam (*)          : Durasi sewa karaoke dalam paket (contoh: 2)
+4. harga_paket (*)         : Total harga paket (contoh: 250000)
+5. deskripsi_fasilitas     : Keterangan (contoh: 2 Jam Room + 1 Pitcher Teh + Snack)
+
+
+================================================================================
+5. ENGINE LOGIKA DI BALIK LAYAR (BACKEND & DATABASE ARCHITECTURE)
+================================================================================
+
+A. Isolasi Data Multi-Tenant (Tenant Isolation)
+- Setiap tempat karaoke memiliki `tenant_id` unik di seluruh tabel basis data.
+- Contoh: Klien A tidak akan pernah bisa melihat transaksi atau data LC Klien B.
+
+B. Engine Perhitungan Tanggal Shift Dinamis
+- Sistem backend membaca konfigurasi tenant:
+  const cutoffHour = tenantConfig.operational_cutoff_hour || 10;
+  const timezone = tenantConfig.timezone || 'Asia/Jakarta';
+- Tanggal operasional dihitung otomatis setiap kali ada transaksi kasir, 
+  check-in room, atau sesi kerja LC.
+
+C. Aturan Perubahan Jam di Masa Mendatang (Forward-Only Policy)
+- Jika owner mengubah jam cut-off dari jam 10:00 ke jam 08:00 di tengah bulan:
+  * Transaksi yang sudah terjadi kemarin TETAP memakai tanggal lama.
+  * Transaksi baru berikutnya yang menggunakan jam cut-off baru.
+  * Hal ini menjamin pembukuan akuntansi masa lalu tidak pernah bergeser.
+
+
+================================================================================
+6. STRATEGI KEAMANAN DATA & VALIDASI CERDAS (SMART VALIDATOR)
+================================================================================
+Saat konsumen mengunggah berkas Excel, sistem tidak langsung memasukkannya 
+ke database secara membabi-buta. Sistem menjalankan 3 tahap inspeksi:
+
+1. Validasi Sintaksis & Struktur Kolom (Client-Side Parsing):
+   - Memeriksa apakah sheet yang dibutuhkan ada.
+   - Memastikan nama kolom header tidak diubah atau terhapus.
+
+2. Pembersihan & Normalisasi Data (Sanitizer):
+   - Menghapus spasi ganda, tanda baca pada angka, dan karakter ilegal.
+   - Mengubah teks seperti "150.000" atau "Rp 150.000" menjadi angka murni 150000.
+
+3. Layar Pratinjau (Preview & Inspection Modal):
+   - Memberikan laporan ringkas ke pengguna:
+     "Terdeteksi: 15 Room, 84 Menu F&B, 22 Data LC, 4 Paket Karaoke."
+   - Menandai baris error secara visual jika ada kolom wajib yang kosong:
+     "Peringatan Baris 14 di Menu_FnB: Harga Jual belum diisi."
+   - Memberikan tombol aman: "Perbaiki Berkas" atau "Lanjutkan & Impor".
+
+
+================================================================================
+7. CATATAN TAMBAHAN PEMILIK SISTEM (RUANG IDE MASA DEPAN)
+================================================================================
+Bagian ini disediakan khusus untuk Anda tambahkan catatan, kebutuhan bisnis baru,
+atau ide fitur lanjutan seiring berjalannya proses riset dan uji coba:
+
+[Catatan 1]:
+- 
+
+[Catatan 2]:
+- 
+
+[Catatan 3]:
+- 
+
+================================================================================
+Akhir Dokumen Rancangan SaaS Onboarding Wizard.
+================================================================================

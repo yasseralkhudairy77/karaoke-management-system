@@ -1000,7 +1000,7 @@ let isLoadingPackageDetails = false;
 let activeSettingsSubTab = (() => {
   try {
     const saved = localStorage.getItem("active_settings_subtab");
-    if (saved && ["rooms", "tv_control", "menu", "packages", "inventory", "access", "audit", "quality", "backup"].includes(saved)) {
+    if (saved && ["rooms", "tv_control", "menu", "packages", "inventory", "access", "receipt", "audit", "quality", "backup"].includes(saved)) {
       return saved;
     }
   } catch (_e) {}
@@ -1021,6 +1021,26 @@ let tvControlLogFilterRoom = "";
 let tvControlLogPage = 1;
 let tvGuideOpen = false;
 const TV_CONTROL_LOG_PAGE_SIZE = 10;
+const DEFAULT_RECEIPT_CONFIG = {
+  business_name: "Happy Song Karaoke",
+  logo_text: "HAPPY SONG",
+  tagline: "FAMILY KARAOKE & RESTO",
+  address: "",
+  phone: "",
+  tax_id: "",
+  social_media: "",
+  wifi_ssid: "",
+  wifi_password: "",
+  footer_text: "Terima kasih atas kunjungan Anda.",
+  footer_terms: "",
+  show_logo: true,
+  logo_base64: "",
+  paper_width: 32,
+};
+let receiptSettings = null;
+let isLoadingReceiptSettings = false;
+let isSavingReceiptSettings = false;
+let receiptSettingsFormData = null;
 let databaseBackupStatus = null;
 let isLoadingDatabaseBackupStatus = false;
 let isExportingDatabaseBackup = false;
@@ -4457,6 +4477,8 @@ async function showThermalReceiptPreview(transaction) {
   }
 
   const receiptData = buildReceiptData(preparedTransaction, {
+    business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
+    paper: { width: receiptSettings?.paper_width || 32 },
     fnbOrders: getReceiptFnbOrders(preparedTransaction),
     lcDetails: getReceiptLcDetails(preparedTransaction),
     print: getReceiptPrintAudit(preparedTransaction),
@@ -4495,6 +4517,8 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
   try {
     const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
     const receiptData = buildReceiptData(preparedTransaction, {
+      business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
+      paper: { width: receiptSettings?.paper_width || 32 },
       fnbOrders: getReceiptFnbOrders(preparedTransaction),
       lcDetails: getReceiptLcDetails(preparedTransaction),
       print: audit,
@@ -9828,6 +9852,8 @@ function createBillingFnbOrderElement(order) {
 function createReceiptPrintElement(transaction) {
   const printAudit = getReceiptPrintAudit(transaction);
   const receiptData = buildReceiptData(transaction, {
+    business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
+    paper: { width: receiptSettings?.paper_width || 32 },
     fnbOrders: getReceiptFnbOrders(transaction),
     lcDetails: getReceiptLcDetails(transaction),
     print: printAudit,
@@ -24535,6 +24561,7 @@ function createSettingsSubTabsElement() {
     ["packages", "Paket"],
     ["inventory", "Inventory"],
     ["access", "Akses"],
+    ["receipt", "Nota & Printer"],
     ["audit", "Audit"],
     ["quality", "Kualitas Data"],
     ["backup", "Backup & Restore"],
@@ -24595,6 +24622,10 @@ function getActiveSettingsSectionElement() {
 
   if (activeSettingsSubTab === "quality") {
     return createMasterDataQualitySection();
+  }
+
+  if (activeSettingsSubTab === "receipt") {
+    return createReceiptSettingsSection();
   }
 
   if (activeSettingsSubTab === "backup") {
@@ -26074,6 +26105,387 @@ function createRestoreDatabaseModalElement() {
   dialog.append(title, banner, detailsList, form, actions);
   overlay.appendChild(dialog);
   return overlay;
+}
+
+
+// ============================================================================
+// PUSAT PENGATURAN NOTA & PRINTER KASIR (THERMAL RECEIPT ENGINE)
+// ============================================================================
+
+async function fetchReceiptSettingsFromApi() {
+  try {
+    const url = buildApiUrl("getReceiptSettings");
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data && (data.ok || data.success) && data.settings) {
+      return { ...DEFAULT_RECEIPT_CONFIG, ...data.settings };
+    }
+  } catch (err) {
+    console.warn("Gagal mengambil pengaturan struk dari API, menggunakan nilai standar:", err);
+  }
+  return { ...DEFAULT_RECEIPT_CONFIG };
+}
+
+async function loadReceiptSettings(options = {}) {
+  if (isLoadingReceiptSettings) return;
+  isLoadingReceiptSettings = true;
+  if (!options.silent) renderRooms();
+  try {
+    const settings = await fetchReceiptSettingsFromApi();
+    receiptSettings = settings;
+    receiptSettingsFormData = { ...settings };
+  } catch (err) {
+    console.error("Gagal memuat konfigurasi struk:", err);
+  } finally {
+    isLoadingReceiptSettings = false;
+    renderRooms();
+  }
+}
+
+async function saveReceiptSettingsToApi() {
+  if (isSavingReceiptSettings) return;
+  isSavingReceiptSettings = true;
+  renderRooms();
+  try {
+    const configToSave = receiptSettingsFormData || receiptSettings || DEFAULT_RECEIPT_CONFIG;
+    const payload = {
+      action: "saveReceiptSettings",
+      settings: configToSave,
+      changed_by: getLoggedInOperatorName() || "Manager",
+    };
+    const result = await postApiAction(payload);
+    if (!result || result.ok !== true) {
+      throw new Error(result?.message || result?.error || "Gagal menyimpan konfigurasi struk.");
+    }
+    receiptSettings = { ...DEFAULT_RECEIPT_CONFIG, ...(result.settings || configToSave) };
+    receiptSettingsFormData = { ...receiptSettings };
+    showInlineNotice("Pengaturan format nota & printer kasir berhasil disimpan.", "success");
+  } catch (err) {
+    console.error("Gagal menyimpan pengaturan nota:", err);
+    showInlineNotice(`Gagal menyimpan pengaturan nota: ${err.message}`, "error");
+  } finally {
+    isSavingReceiptSettings = false;
+    renderRooms();
+  }
+}
+
+function createDummyReceiptTransaction() {
+  const now = new Date();
+  const startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  return {
+    transaction_id: "TRX-DEMO-2026",
+    created_at: now.toISOString(),
+    start_time: startTime.toISOString(),
+    end_time: now.toISOString(),
+    cashier_name: getLoggedInOperatorName() || "Kasir Demo",
+    room_id: "VIP 01",
+    room_name: "VIP Room 01",
+    duration_minutes: 120,
+    rate_per_hour: 150000,
+    room_total: 300000,
+    fnb_total: 85000,
+    lc_total: 0,
+    grand_total: 385000,
+    payment_method: "cash",
+    payment_status: "paid",
+    cash_amount: 400000,
+    fnb_orders: [
+      {
+        order_id: "ORD-DEMO-01",
+        order_status: "completed",
+        items: [
+          { menu_name: "Snack Platter Mix", quantity: 1, price: 50000, subtotal: 50000 },
+          { menu_name: "Ice Lemon Tea Pitcher", quantity: 1, price: 35000, subtotal: 35000 },
+        ],
+      },
+    ],
+  };
+}
+
+function updateThermalReceiptLivePreview() {
+  const previewPre = document.getElementById("receiptLivePreviewPre");
+  const logoImg = document.getElementById("receiptLivePreviewLogo");
+  const config = receiptSettingsFormData || receiptSettings || DEFAULT_RECEIPT_CONFIG;
+  const dummyTx = createDummyReceiptTransaction();
+  const receiptData = buildReceiptData(dummyTx, {
+    business: config,
+    paper: { width: Number(config.paper_width) === 48 ? 48 : 32 },
+  });
+  const formattedText = formatReceipt58mm(receiptData);
+
+  if (previewPre) {
+    previewPre.textContent = formattedText;
+  }
+
+  if (logoImg) {
+    if (config.show_logo !== false && config.logo_base64) {
+      logoImg.src = config.logo_base64;
+      logoImg.style.display = "block";
+    } else {
+      logoImg.style.display = "none";
+    }
+  }
+}
+
+function createReceiptSettingsSection() {
+  if (!receiptSettings && !isLoadingReceiptSettings) {
+    loadReceiptSettings({ silent: true });
+  }
+
+  const current = receiptSettingsFormData || receiptSettings || { ...DEFAULT_RECEIPT_CONFIG };
+  const section = document.createElement("section");
+  section.className = "settings-section receipt-settings-section";
+
+  // Header Section SAP Fiori
+  const header = document.createElement("div");
+  header.className = "settings-section-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("h3");
+  title.className = "settings-section-title";
+  title.textContent = "Pengaturan Format Nota & Printer Kasir";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "settings-section-subtitle";
+  subtitle.textContent = "Sesuaikan identitas bisnis, logo grafis, nomor NPWP/pajak, informasi Wi-Fi tamu, akun sosial media, dan format cetak struk thermal kasir.";
+  titleGroup.append(title, subtitle);
+
+  const headerActions = document.createElement("div");
+  headerActions.className = "receipt-header-actions";
+
+  const testPrintBtn = document.createElement("button");
+  testPrintBtn.type = "button";
+  testPrintBtn.className = "master-button secondary";
+  testPrintBtn.dataset.action = "test-print-receipt";
+  testPrintBtn.textContent = "Tes Cetak Struk (Dummy)";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "master-button primary";
+  saveBtn.dataset.action = "save-receipt-settings";
+  saveBtn.disabled = isSavingReceiptSettings;
+  saveBtn.textContent = isSavingReceiptSettings ? "Menyimpan Konfigurasi..." : "Simpan Pengaturan Nota";
+
+  headerActions.append(testPrintBtn, saveBtn);
+  header.append(titleGroup, headerActions);
+  section.appendChild(header);
+
+  // Layout 2 Kolom: Form Input (Kiri) dan Live Preview Thermal (Kanan)
+  const layout = document.createElement("div");
+  layout.className = "receipt-settings-layout";
+
+  // KOLOM KIRI: FORMULIR INPUT
+  const formCol = document.createElement("div");
+  formCol.className = "receipt-settings-form-col";
+
+  // Card 1: Identitas Bisnis & Logo
+  const cardIdentity = document.createElement("div");
+  cardIdentity.className = "receipt-config-card";
+  cardIdentity.innerHTML = `
+    <div class="receipt-card-header">
+      <h4 class="receipt-card-title">1. Identitas Tempat Usaha & Logo</h4>
+      <p class="receipt-card-desc">Informasi kop utama yang dicetak di baris paling atas struk.</p>
+    </div>
+    <div class="receipt-form-grid">
+      <div class="receipt-form-group full-width">
+        <label class="receipt-field-label">Nama Tempat Usaha (Venue / Karaoke) <span class="required-star">*</span></label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="business_name" value="${escapeHtml(current.business_name || '')}" placeholder="Happy Song Karaoke">
+      </div>
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Tagline / Sub-Header</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="tagline" value="${escapeHtml(current.tagline || '')}" placeholder="FAMILY KARAOKE & RESTO">
+      </div>
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Teks Logo Header (Border Struk)</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="logo_text" value="${escapeHtml(current.logo_text || '')}" placeholder="HAPPY SONG">
+      </div>
+      <div class="receipt-form-group full-width">
+        <label class="receipt-checkbox-label">
+          <input type="checkbox" data-action="update-receipt-settings-field" data-field="show_logo" ${current.show_logo !== false ? 'checked' : ''}>
+          <span>Cetak Logo Grafis Thermal di Struk</span>
+        </label>
+      </div>
+      <div class="receipt-form-group full-width receipt-logo-upload-box">
+        <label class="receipt-field-label">Unggah Gambar Logo Tempat (Monokrom)</label>
+        <div class="receipt-logo-actions-row">
+          <input type="file" id="receiptLogoFileInput" accept="image/png,image/jpeg,image/webp" style="display:none;" data-action="handle-logo-file-change">
+          <button type="button" class="master-button secondary" data-action="trigger-upload-receipt-logo">Pilih Gambar Logo</button>
+          ${current.logo_base64 ? '<button type="button" class="master-button danger" data-action="remove-receipt-logo">Hapus Logo Kustom</button>' : ''}
+          <span class="receipt-upload-hint">Format PNG/JPEG hitam-putih kontras tinggi, maks. 200 KB.</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Card 2: Lokasi, Kontak & Legalitas Pajak
+  const cardContact = document.createElement("div");
+  cardContact.className = "receipt-config-card";
+  cardContact.innerHTML = `
+    <div class="receipt-card-header">
+      <h4 class="receipt-card-title">2. Alamat, Kontak & Legalitas Pajak</h4>
+      <p class="receipt-card-desc">Informasi kontak venue dan tanda bukti pemungutan pajak daerah.</p>
+    </div>
+    <div class="receipt-form-grid">
+      <div class="receipt-form-group full-width">
+        <label class="receipt-field-label">Alamat Lengkap Venue</label>
+        <textarea class="receipt-field-input receipt-textarea" data-action="update-receipt-settings-field" data-field="address" rows="2" placeholder="Jl. Pemuda No. 123, Lantai 2, Jakarta">${escapeHtml(current.address || '')}</textarea>
+      </div>
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Nomor Telepon / WhatsApp</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="phone" value="${escapeHtml(current.phone || '')}" placeholder="0812-3456-7890 / (021) 555-1234">
+      </div>
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Nomor NPWP / NOPD Pajak</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="tax_id" value="${escapeHtml(current.tax_id || '')}" placeholder="01.234.567.8-901.000">
+      </div>
+      <div class="receipt-form-group full-width">
+        <label class="receipt-field-label">Akun Media Sosial (Instagram / TikTok)</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="social_media" value="${escapeHtml(current.social_media || '')}" placeholder="IG: @happysong_karaoke / TT: @happysongid">
+      </div>
+    </div>
+  `;
+
+  // Card 3: Fasilitas Tamu & Catatan Kaki
+  const cardFooter = document.createElement("div");
+  cardFooter.className = "receipt-config-card";
+  cardFooter.innerHTML = `
+    <div class="receipt-card-header">
+      <h4 class="receipt-card-title">3. Fasilitas Tamu (Wi-Fi) & Catatan Kaki</h4>
+      <p class="receipt-card-desc">Catatan layanan untuk tamu seperti akses internet gratis dan kebijakan venue.</p>
+    </div>
+    <div class="receipt-form-grid">
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Nama Wi-Fi Tamu (SSID)</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="wifi_ssid" value="${escapeHtml(current.wifi_ssid || '')}" placeholder="HAPPY_GUEST">
+      </div>
+      <div class="receipt-form-group">
+        <label class="receipt-field-label">Kata Sandi Wi-Fi (Password)</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="wifi_password" value="${escapeHtml(current.wifi_password || '')}" placeholder="singalong2026">
+      </div>
+      <div class="receipt-form-group full-width">
+        <label class="receipt-field-label">Pesan Ucapan Terima Kasih (Footer)</label>
+        <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="footer_text" value="${escapeHtml(current.footer_text || '')}" placeholder="Terima kasih atas kunjungan Anda.">
+      </div>
+      <div class="receipt-form-group full-width">
+        <label class="receipt-field-label">Syarat, Ketentuan & Kebijakan Khusus</label>
+        <textarea class="receipt-field-input receipt-textarea" data-action="update-receipt-settings-field" data-field="footer_terms" rows="2" placeholder="Barang bawaan tertinggal di luar tanggung jawab manajemen. Dilarang membawa makanan/minuman dari luar.">${escapeHtml(current.footer_terms || '')}</textarea>
+      </div>
+    </div>
+  `;
+
+  // Card 4: Spesifikasi Kertas Printer
+  const cardPrinter = document.createElement("div");
+  cardPrinter.className = "receipt-config-card";
+  cardPrinter.innerHTML = `
+    <div class="receipt-card-header">
+      <h4 class="receipt-card-title">4. Spesifikasi Lebar Kertas Printer Thermal</h4>
+      <p class="receipt-card-desc">Pilih format lebar yang sesuai dengan spesifikasi printer thermal kasir Anda.</p>
+    </div>
+    <div class="receipt-form-grid">
+      <div class="receipt-form-group full-width">
+        <div class="receipt-radio-group">
+          <label class="receipt-radio-item ${Number(current.paper_width) !== 48 ? 'selected' : ''}">
+            <input type="radio" name="paper_width_opt" value="32" data-action="update-receipt-settings-field" data-field="paper_width" ${Number(current.paper_width) !== 48 ? 'checked' : ''}>
+            <div>
+              <strong>Kertas 58 mm (32 Karakter per Baris)</strong>
+              <p>Standar mesin kasir thermal POS mini / Bluetooth portable.</p>
+            </div>
+          </label>
+          <label class="receipt-radio-item ${Number(current.paper_width) === 48 ? 'selected' : ''}">
+            <input type="radio" name="paper_width_opt" value="48" data-action="update-receipt-settings-field" data-field="paper_width" ${Number(current.paper_width) === 48 ? 'checked' : ''}>
+            <div>
+              <strong>Kertas 80 mm (48 Karakter per Baris)</strong>
+              <p>Format printer desktop restoran / struk thermal lebar.</p>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Tombol aksi di bagian bawah formulir
+  const formActions = document.createElement("div");
+  formActions.className = "receipt-form-actions-bar";
+
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "master-button secondary";
+  resetBtn.dataset.action = "reset-receipt-settings";
+  resetBtn.textContent = "Kembalikan ke Default";
+
+  const bottomSaveBtn = document.createElement("button");
+  bottomSaveBtn.type = "button";
+  bottomSaveBtn.className = "master-button primary";
+  bottomSaveBtn.dataset.action = "save-receipt-settings";
+  bottomSaveBtn.disabled = isSavingReceiptSettings;
+  bottomSaveBtn.textContent = isSavingReceiptSettings ? "Menyimpan Konfigurasi..." : "Simpan Pengaturan Nota";
+
+  formActions.append(resetBtn, bottomSaveBtn);
+
+  formCol.append(cardIdentity, cardContact, cardFooter, cardPrinter, formActions);
+
+  // KOLOM KANAN: LIVE THERMAL RECEIPT PREVIEW
+  const previewCol = document.createElement("div");
+  previewCol.className = "receipt-settings-preview-col";
+
+  const previewCard = document.createElement("div");
+  previewCard.className = "receipt-preview-sticky-card";
+
+  const previewBadge = document.createElement("div");
+  previewBadge.className = "receipt-preview-header-badge";
+  previewBadge.innerHTML = `
+    <span class="preview-dot"></span>
+    <strong>Live Real-time Thermal Preview</strong>
+  `;
+
+  const paperRoll = document.createElement("div");
+  paperRoll.className = "receipt-thermal-roll-paper";
+
+  const logoImg = document.createElement("img");
+  logoImg.id = "receiptLivePreviewLogo";
+  logoImg.className = "receipt-live-logo-preview";
+  logoImg.alt = "Logo Tempat Usaha";
+  if (current.show_logo !== false && current.logo_base64) {
+    logoImg.src = current.logo_base64;
+    logoImg.style.display = "block";
+  } else {
+    logoImg.style.display = "none";
+  }
+
+  const dummyTx = createDummyReceiptTransaction();
+  const dummyReceiptData = buildReceiptData(dummyTx, {
+    business: current,
+    paper: { width: Number(current.paper_width) === 48 ? 48 : 32 },
+  });
+  const initialReceiptText = formatReceipt58mm(dummyReceiptData);
+
+  const previewPre = document.createElement("pre");
+  previewPre.id = "receiptLivePreviewPre";
+  previewPre.className = "receipt-thermal-pre";
+  previewPre.textContent = initialReceiptText;
+
+  paperRoll.append(logoImg, previewPre);
+
+  const previewBottomBar = document.createElement("div");
+  previewBottomBar.className = "receipt-preview-bottom-actions";
+
+  const dummyPrintBtn = document.createElement("button");
+  dummyPrintBtn.type = "button";
+  dummyPrintBtn.className = "master-button secondary";
+  dummyPrintBtn.style.width = "100%";
+  dummyPrintBtn.dataset.action = "test-print-receipt";
+  dummyPrintBtn.textContent = "Uji Cetak ke Printer Thermal";
+
+  previewBottomBar.appendChild(dummyPrintBtn);
+
+  previewCard.append(previewBadge, paperRoll, previewBottomBar);
+  previewCol.appendChild(previewCard);
+
+  layout.append(formCol, previewCol);
+  section.appendChild(layout);
+
+  return section;
 }
 
 function getAuditBadgeTone(value) {
@@ -38527,6 +38939,9 @@ async function handleRoomAction(event) {
       loadTvControlOverview();
       loadTvControlLogs({ silent: true });
     }
+    if (activeSettingsSubTab === "receipt" && !receiptSettings && !isLoadingReceiptSettings) {
+      loadReceiptSettings();
+    }
     if (activeSettingsSubTab === "backup" && !databaseBackupStatus) {
       loadDatabaseBackupStatus();
     }
@@ -39040,6 +39455,52 @@ async function handleRoomAction(event) {
   if (action === "next-tv-logs-page") {
     tvControlLogPage++;
     renderRooms();
+    return;
+  }
+
+  if (action === "save-receipt-settings") {
+    await saveReceiptSettingsToApi();
+    return;
+  }
+
+  if (action === "reset-receipt-settings") {
+    receiptSettingsFormData = { ...DEFAULT_RECEIPT_CONFIG };
+    updateThermalReceiptLivePreview();
+    renderRooms();
+    showInlineNotice("Formulir nota direset ke konfigurasi awal.", "info");
+    return;
+  }
+
+  if (action === "test-print-receipt") {
+    const config = receiptSettingsFormData || receiptSettings || DEFAULT_RECEIPT_CONFIG;
+    const dummyTx = createDummyReceiptTransaction();
+    const receiptData = buildReceiptData(dummyTx, {
+      business: config,
+      paper: { width: Number(config.paper_width) === 48 ? 48 : 32 },
+    });
+    const printStarted = printThermalReceipt(receiptData);
+    if (!printStarted) {
+      showInlineNotice("Fitur cetak thermal tidak tersedia di peramban ini.", "error");
+    } else {
+      showInlineNotice("Memulai pengujian cetak nota thermal...", "info");
+    }
+    return;
+  }
+
+  if (action === "trigger-upload-receipt-logo") {
+    const fileInput = document.getElementById("receiptLogoFileInput");
+    if (fileInput) fileInput.click();
+    return;
+  }
+
+  if (action === "remove-receipt-logo") {
+    if (!receiptSettingsFormData) {
+      receiptSettingsFormData = { ...(receiptSettings || DEFAULT_RECEIPT_CONFIG) };
+    }
+    receiptSettingsFormData.logo_base64 = "";
+    updateThermalReceiptLivePreview();
+    renderRooms();
+    showInlineNotice("Logo gambar kustom telah dihapus.", "info");
     return;
   }
 
@@ -40250,6 +40711,56 @@ function handleDashboardInput(event) {
     resetPaginationPage("settingsInventory");
     renderRooms();
     restoreSettingsSearchFocus("filter-settings-inventory", cursor);
+    return;
+  }
+
+  if (action === "update-receipt-settings-field") {
+    if (!receiptSettingsFormData) {
+      receiptSettingsFormData = { ...(receiptSettings || DEFAULT_RECEIPT_CONFIG) };
+    }
+    const prop = field.dataset.field;
+    if (prop) {
+      if (field.type === "checkbox") {
+        receiptSettingsFormData[prop] = field.checked;
+      } else if (prop === "paper_width") {
+        receiptSettingsFormData[prop] = Number(field.value) === 48 ? 48 : 32;
+        // update class visual radio item
+        const radioItems = document.querySelectorAll(".receipt-radio-item");
+        radioItems.forEach((item) => {
+          const radio = item.querySelector("input[type=radio]");
+          if (radio && radio.checked) {
+            item.classList.add("selected");
+          } else {
+            item.classList.remove("selected");
+          }
+        });
+      } else {
+        receiptSettingsFormData[prop] = field.value;
+      }
+      updateThermalReceiptLivePreview();
+    }
+    return;
+  }
+
+  if (action === "handle-logo-file-change") {
+    const file = field.files && field.files[0];
+    if (file) {
+      if (file.size > 250 * 1024) {
+        showInlineNotice("Ukuran file logo terlalu besar (maksimal 200 KB).", "error");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (!receiptSettingsFormData) {
+          receiptSettingsFormData = { ...(receiptSettings || DEFAULT_RECEIPT_CONFIG) };
+        }
+        receiptSettingsFormData.logo_base64 = String(e.target.result || "");
+        updateThermalReceiptLivePreview();
+        renderRooms();
+        showInlineNotice("Logo berhasil dimuat. Jangan lupa klik 'Simpan Pengaturan Nota'.", "info");
+      };
+      reader.readAsDataURL(file);
+    }
     return;
   }
 

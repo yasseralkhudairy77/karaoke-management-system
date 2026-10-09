@@ -12,10 +12,10 @@ const THERMAL_LOGO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAXg
 export function printThermalReceipt(receiptData) {
   const receiptText = stripReceiptTextHeader(formatReceipt58mm(receiptData));
 
-  return printThermalText(receiptText);
+  return printThermalText(receiptText, { business: receiptData?.business });
 }
 
-export function printThermalText(receiptText) {
+export function printThermalText(receiptText, options = {}) {
   if (typeof document === "undefined" || typeof window === "undefined") {
     return false;
   }
@@ -42,7 +42,7 @@ export function printThermalText(receiptText) {
     frameWindow.print();
   };
 
-  renderThermalReceiptCanvas(receiptText).then((receiptCanvas) => {
+  renderThermalReceiptCanvas(receiptText, options).then((receiptCanvas) => {
     frameDocument.open();
     frameDocument.write(buildThermalPrintDocument(receiptCanvas));
     frameDocument.close();
@@ -122,8 +122,12 @@ function buildThermalPrintDocument(receiptImage) {
 </html>`;
 }
 
-async function renderThermalReceiptCanvas(receiptText) {
-  const logo = await loadThermalLogoImage();
+async function renderThermalReceiptCanvas(receiptText, options = {}) {
+  const business = options.business || {};
+  const showLogo = business.showLogo !== false;
+  const logoSource = showLogo ? (business.logoBase64 || THERMAL_LOGO_DATA_URL) : null;
+  const logo = logoSource ? await loadImageSource(logoSource) : null;
+  const businessName = (business.name || "HAPPY SONG KARAOKE").toUpperCase();
   const receiptLines = String(receiptText).split("\n");
   const logoHeight = logo
     ? Math.round((logo.height / logo.width) * THERMAL_LOGO_WIDTH_PX)
@@ -160,7 +164,7 @@ async function renderThermalReceiptCanvas(receiptText) {
   context.font = "900 18px 'Courier New', monospace";
   context.textAlign = "center";
   context.textBaseline = "top";
-  context.fillText("HAPPY SONG KARAOKE", Math.round(THERMAL_CANVAS_WIDTH_PX / 2), y);
+  context.fillText(businessName, Math.round(THERMAL_CANVAS_WIDTH_PX / 2), y);
   y += brandTextHeight + 8;
 
   context.font = `700 ${THERMAL_FONT_SIZE_PX}px 'Courier New', monospace`;

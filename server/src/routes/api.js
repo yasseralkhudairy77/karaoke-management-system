@@ -179,6 +179,8 @@ async function handleGetAction(action, req, res) {
       return masterDataController.getPromos(req, res);
     case 'validatePromoCode':
       return masterDataController.validatePromoCode(req, res);
+    case 'getReceiptSettings':
+      return masterDataController.getReceiptSettings(req, res);
     case 'getApiCapabilities':
       return successResponse(res, { local_first: true, postgresql: true, outbox_sync: true, owner_mirror_snapshot: true });
     case 'getOwnerMirrorSnapshot':
@@ -437,6 +439,10 @@ async function handlePostAction(action, req, res, payload) {
       return masterDataController.seedReceptionistEmployee(req, res, payload);
     case 'validateAdminPin':
       return masterDataController.validateAdminPin(req, res, payload);
+    case 'getReceiptSettings':
+      return masterDataController.getReceiptSettings(req, res);
+    case 'saveReceiptSettings':
+      return masterDataController.saveReceiptSettings(req, res, payload);
     case 'getDatabaseBackupStatus':
       return backupController.getDatabaseStatus(req, res);
     case 'exportDatabaseBackup':
