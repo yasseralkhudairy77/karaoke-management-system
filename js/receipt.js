@@ -891,7 +891,7 @@ function pushReceiptHeader(lines, business, width) {
   const logoText = getText(business.logoText || DEFAULT_BUSINESS.logoText).toUpperCase();
   const businessName = getText(business.name || DEFAULT_BUSINESS.name).toUpperCase();
   const tagline = getText(business.tagline || "");
-  const border = repeatReceiptChar("#", width);
+  const border = repeatReceiptChar("-", width);
 
   lines.push(border);
   if (business.showLogo && logoText) {

@@ -214,11 +214,13 @@ function stripReceiptTextHeader(receiptText) {
   const lines = String(receiptText).split("\n");
 
   if (
-    lines.length >= 4 &&
-    /^#+$/.test(lines[0] || "") &&
-    /^#+$/.test(lines[3] || "")
+    lines.length >= 3 &&
+    /^[-=#]+$/.test(lines[0] || "")
   ) {
-    return lines.slice(4).join("\n").replace(/^\n+/, "");
+    const secondBorderIndex = lines.slice(1).findIndex((line) => /^[-=#]+$/.test(line || ""));
+    if (secondBorderIndex !== -1) {
+      return lines.slice(secondBorderIndex + 2).join("\n").replace(/^\n+/, "");
+    }
   }
 
   return String(receiptText);

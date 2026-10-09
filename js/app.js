@@ -26297,7 +26297,7 @@ function createReceiptSettingsSection() {
         <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="tagline" value="${escapeHtml(current.tagline || '')}" placeholder="FAMILY KARAOKE & RESTO">
       </div>
       <div class="receipt-form-group">
-        <label class="receipt-field-label">Teks Logo Header (Border Struk)</label>
+        <label class="receipt-field-label">Teks Logo Header (Garis Struk)</label>
         <input type="text" class="receipt-field-input" data-action="update-receipt-settings-field" data-field="logo_text" value="${escapeHtml(current.logo_text || '')}" placeholder="HAPPY SONG">
       </div>
       <div class="receipt-form-group full-width">
