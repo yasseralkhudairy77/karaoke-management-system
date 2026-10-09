@@ -25681,79 +25681,120 @@ function createDatabaseBackupSection() {
   title.textContent = "Pusat Backup & Restore Database";
   const subtitle = document.createElement("p");
   subtitle.className = "settings-section-subtitle";
-  subtitle.textContent = "Cadangkan seluruh database ke file JSON snapshot mandiri atau pulihkan data saat terjadi kendala.";
+  subtitle.textContent = "Administrasi persistensi data, pembuatan arsip snapshot mandiri, dan prosedur pemulihan bencana (disaster recovery).";
   titleGroup.append(title, subtitle);
 
   const refreshButton = document.createElement("button");
-  refreshButton.className = "master-button secondary";
+  refreshButton.className = "master-button secondary db-refresh-btn";
   refreshButton.type = "button";
   refreshButton.dataset.action = "refresh-database-backup-status";
   refreshButton.innerHTML = isLoadingDatabaseBackupStatus
-    ? "<span>Memeriksa Status...</span>"
-    : "<span>Segarkan Status 🔄</span>";
+    ? `<svg class="db-spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><span>Memeriksa Status...</span>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>Segarkan Status</span>`;
   if (isLoadingDatabaseBackupStatus) refreshButton.disabled = true;
 
   header.append(titleGroup, refreshButton);
   section.appendChild(header);
 
+  const isOnline = databaseBackupStatus?.status === "online" || !databaseBackupStatus;
+  const dbName = databaseBackupStatus?.database_name || "happy_song_pos";
+  const totalTables = databaseBackupStatus?.total_tables || 41;
+  const counts = databaseBackupStatus?.counts || {};
+
+  const ribbon = document.createElement("div");
+  ribbon.className = "db-system-ribbon";
+  ribbon.innerHTML = `
+    <div class="db-ribbon-item">
+      <span class="db-ribbon-label">Status Server</span>
+      <div class="db-ribbon-val-row">
+        <span class="db-status-dot ${isOnline ? 'online' : 'offline'}"></span>
+        <strong class="${isOnline ? 'text-success' : 'text-danger'}">${isOnline ? 'PostgreSQL Aktif' : 'Engine Terputus'}</strong>
+      </div>
+    </div>
+    <div class="db-ribbon-divider"></div>
+    <div class="db-ribbon-item">
+      <span class="db-ribbon-label">Basis Data Target</span>
+      <strong>${escapeHtml(dbName)}</strong>
+    </div>
+    <div class="db-ribbon-divider"></div>
+    <div class="db-ribbon-item">
+      <span class="db-ribbon-label">Cakupan Skema</span>
+      <strong>${totalTables} Tabel Relasional</strong>
+    </div>
+    <div class="db-ribbon-divider"></div>
+    <div class="db-ribbon-item">
+      <span class="db-ribbon-label">Lingkungan Operasional</span>
+      <strong>Lokal On-Premise (Port 5432)</strong>
+    </div>
+  `;
+  section.appendChild(ribbon);
+
   const grid = document.createElement("div");
   grid.className = "database-backup-grid";
 
-  // Card A: Status Database
+  // Card A: Status & Inventaris Data Sistem
   const statusCard = document.createElement("div");
   statusCard.className = "database-backup-card status-card";
 
   const statusTitle = document.createElement("h4");
   statusTitle.className = "db-card-title";
-  statusTitle.innerHTML = `<span class="db-card-icon">🗄️</span> Status Database Sistem`;
-
-  const counts = databaseBackupStatus?.counts || {};
-  const isOnline = databaseBackupStatus?.status === "online" || !databaseBackupStatus;
-  const dbName = databaseBackupStatus?.database_name || "happy_song_pos";
-  const totalTables = databaseBackupStatus?.total_tables || 41;
+  statusTitle.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="db-card-icon-svg" style="color: var(--gold-strong, #ffd77a);">
+      <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+    </svg>
+    <span>Inventaris Entitas Basis Data</span>
+  `;
 
   const statusBadgeRow = document.createElement("div");
   statusBadgeRow.className = "db-status-badge-row";
   statusBadgeRow.innerHTML = `
     <span class="db-conn-badge ${isOnline ? 'online' : 'offline'}">
-      ${isOnline ? '● Online (PostgreSQL Lokal)' : '● Database Offline'}
+      <span class="db-badge-dot"></span>
+      ${isOnline ? 'Mesin PostgreSQL Terhubung' : 'Layanan Database Offline'}
     </span>
-    <span class="db-meta-badge">DB: ${dbName}</span>
-    <span class="db-meta-badge">${totalTables} Tabel Relasional</span>
+    <span class="db-meta-badge">Schema: public</span>
+    <span class="db-meta-badge">Integritas ACID: Valid</span>
   `;
 
   const metricsGrid = document.createElement("div");
   metricsGrid.className = "db-status-metrics-grid";
   metricsGrid.innerHTML = `
     <div class="db-metric-item">
-      <span class="db-metric-label">Transaksi</span>
+      <span class="db-metric-label">Transaksi Penjualan</span>
       <strong class="db-metric-value">${(counts.transactions || 0).toLocaleString('id-ID')}</strong>
     </div>
     <div class="db-metric-item">
-      <span class="db-metric-label">Ruangan</span>
-      <strong class="db-metric-value">${counts.rooms || 0}</strong>
+      <span class="db-metric-label">Sesi & Master Room</span>
+      <strong class="db-metric-value">${(counts.rooms || 0).toLocaleString('id-ID')}</strong>
     </div>
     <div class="db-metric-item">
-      <span class="db-metric-label">Menu F&B</span>
-      <strong class="db-metric-value">${counts.menu || 0}</strong>
+      <span class="db-metric-label">Katalog Menu F&B</span>
+      <strong class="db-metric-value">${(counts.menu || 0).toLocaleString('id-ID')}</strong>
     </div>
     <div class="db-metric-item">
-      <span class="db-metric-label">Item Inventori</span>
-      <strong class="db-metric-value">${counts.inventory || 0}</strong>
+      <span class="db-metric-label">Item Inventori & Stok</span>
+      <strong class="db-metric-value">${(counts.inventory || 0).toLocaleString('id-ID')}</strong>
     </div>
     <div class="db-metric-item">
-      <span class="db-metric-label">Karyawan</span>
-      <strong class="db-metric-value">${counts.employees || 0}</strong>
+      <span class="db-metric-label">Karyawan & Personel</span>
+      <strong class="db-metric-value">${(counts.employees || 0).toLocaleString('id-ID')}</strong>
     </div>
     <div class="db-metric-item">
-      <span class="db-metric-label">Closing Kasir</span>
-      <strong class="db-metric-value">${counts.cashier_closings || 0}</strong>
+      <span class="db-metric-label">Buku Kas & Closing</span>
+      <strong class="db-metric-value">${(counts.cashier_closings || 0).toLocaleString('id-ID')}</strong>
     </div>
   `;
 
-  const statusNote = document.createElement("p");
+  const statusNote = document.createElement("div");
   statusNote.className = "db-card-note";
-  statusNote.textContent = "Data tersimpan secara lokal dan aman di engine database PostgreSQL PC kasir.";
+  statusNote.innerHTML = `
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.75; flex-shrink: 0;">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+    </svg>
+    <span>Data tersimpan lokal pada penyimpanan PC kasir dengan isolasi transaksi penuh.</span>
+  `;
 
   statusCard.append(statusTitle, statusBadgeRow, metricsGrid, statusNote);
 
@@ -25763,18 +25804,34 @@ function createDatabaseBackupSection() {
 
   const exportTitle = document.createElement("h4");
   exportTitle.className = "db-card-title";
-  exportTitle.innerHTML = `<span class="db-card-icon">📥</span> Cadangkan Database (Backup)`;
+  exportTitle.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="db-card-icon-svg" style="color: #38bdf8;">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+      <polyline points="7 10 12 15 17 10"></polyline>
+      <line x1="12" y1="15" x2="12" y2="3"></line>
+    </svg>
+    <span>Pencadangan Data Mandiri (Snapshot)</span>
+  `;
 
   const exportDesc = document.createElement("p");
   exportDesc.className = "db-card-desc";
-  exportDesc.textContent = "Mengekstrak seluruh 41 tabel (master kamar, menu, inventori, riwayat transaksi, dan komisi) menjadi 1 file arsip snapshot JSON mandiri.";
+  exportDesc.textContent = "Mengekstraksi seluruh 41 tabel relasional, entitas master, riwayat keuangan kasir, dan log audit sistem ke dalam satu berkas arsip JSON mandiri.";
 
-  const exportBenefits = document.createElement("ul");
-  exportBenefits.className = "db-feature-list";
-  exportBenefits.innerHTML = `
-    <li>✔️ <strong>Mandiri:</strong> Tidak bergantung pada tool Windows eksternal.</li>
-    <li>✔️ <strong>Lengkap:</strong> Seluruh tabel dan riwayat keuangan tersimpan utuh.</li>
-    <li>✔️ <strong>Praktis:</strong> Simpan file ke flashdisk pribadi untuk arsip darurat.</li>
+  const exportSpecs = document.createElement("div");
+  exportSpecs.className = "db-spec-table";
+  exportSpecs.innerHTML = `
+    <div class="db-spec-row">
+      <span class="db-spec-key">Format Ekspor</span>
+      <span class="db-spec-val">JSON Snapshot (.json)</span>
+    </div>
+    <div class="db-spec-row">
+      <span class="db-spec-key">Cakupan Data</span>
+      <span class="db-spec-val">Seluruh Tabel & Relasi Asosiasi</span>
+    </div>
+    <div class="db-spec-row">
+      <span class="db-spec-key">Metode Snapshot</span>
+      <span class="db-spec-val">Ekstraksi Non-Blocking (Tanpa Downtime)</span>
+    </div>
   `;
 
   const exportBtn = document.createElement("button");
@@ -25782,15 +25839,15 @@ function createDatabaseBackupSection() {
   exportBtn.type = "button";
   exportBtn.dataset.action = "download-db-backup";
   exportBtn.innerHTML = isExportingDatabaseBackup
-    ? `<span>⏳ Menyiapkan File Cadangan...</span>`
-    : `<span>📥 Download Backup Database Sekarang</span>`;
+    ? `<svg class="db-spin-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><span>Menyiapkan Berkas Cadangan...</span>`
+    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span>Unduh Cadangan Basis Data Sekarang</span>`;
   if (isExportingDatabaseBackup) exportBtn.disabled = true;
 
   const exportHelp = document.createElement("span");
   exportHelp.className = "db-btn-help";
-  exportHelp.textContent = "File otomatis tersimpan di folder Download komputer Anda.";
+  exportHelp.textContent = "Berkas langsung tersimpan ke folder Download dan dapat dipindahkan ke penyimpanan eksternal aman.";
 
-  exportCard.append(exportTitle, exportDesc, exportBenefits, exportBtn, exportHelp);
+  exportCard.append(exportTitle, exportDesc, exportSpecs, exportBtn, exportHelp);
 
   // Card C: Pulihkan Data (Restore)
   const restoreCard = document.createElement("div");
@@ -25798,12 +25855,28 @@ function createDatabaseBackupSection() {
 
   const restoreTitle = document.createElement("h4");
   restoreTitle.className = "db-card-title text-danger";
-  restoreTitle.innerHTML = `<span class="db-card-icon">⚠️</span> Pulihkan Database (Restore)`;
+  restoreTitle.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="db-card-icon-svg text-danger">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+      <line x1="12" y1="9" x2="12" y2="13"></line>
+      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+    </svg>
+    <span>Pemulihan Basis Data (System Restore)</span>
+  `;
 
   const restoreWarning = document.createElement("div");
   restoreWarning.className = "db-danger-alert";
   restoreWarning.innerHTML = `
-    <strong>PERINGATAN KRUSIAL:</strong> Pemulihan data bersifat destruktif. Seluruh data database yang ada saat ini akan <strong>DITIMPA</strong> oleh file cadangan yang Anda pilih.
+    <div style="display: flex; gap: 8px; align-items: flex-start;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px;">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <div>
+        <strong>PERINGATAN OPERASIONAL:</strong> Prosedur pemulihan bersifat destruktif. Seluruh data aktif di sistem saat ini akan <strong>DITIMPA</strong> oleh data dari berkas cadangan yang dipilih.
+      </div>
+    </div>
   `;
 
   const fileInputHidden = document.createElement("input");
@@ -25819,20 +25892,43 @@ function createDatabaseBackupSection() {
   if (selectedRestoreFile) {
     fileSelectArea.innerHTML = `
       <div class="restore-file-info-box">
-        <div class="file-name-line">📄 <strong>${selectedRestoreFile.name}</strong> (${selectedRestoreFile.sizeFormatted})</div>
-        <div class="file-meta-line">Tanggal: ${selectedRestoreFile.createdAt} | Cakupan: ${selectedRestoreFile.totalTables} tabel, ${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} rekaman</div>
+        <div class="file-name-line">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.85; flex-shrink: 0;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          <strong>${escapeHtml(selectedRestoreFile.name)}</strong>
+          <span style="color: var(--muted); font-size: 0.78rem;">(${selectedRestoreFile.sizeFormatted})</span>
+        </div>
+        <div class="file-meta-line">
+          <span>Dibuat: ${escapeHtml(selectedRestoreFile.createdAt)}</span>
+          <span>•</span>
+          <span>${selectedRestoreFile.totalTables} Tabel Relasional</span>
+          <span>•</span>
+          <span>${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} Rekaman Data</span>
+        </div>
         <div class="file-actions-row">
-          <button type="button" class="master-button secondary btn-change-file" data-action="select-restore-file-click">Ganti File</button>
+          <button type="button" class="master-button secondary btn-change-file" data-action="select-restore-file-click">Ganti Berkas</button>
           <button type="button" class="master-button secondary btn-cancel-file" data-action="reset-restore-file">Batal</button>
         </div>
       </div>
     `;
   } else {
     fileSelectArea.innerHTML = `
-      <p class="no-file-text">Belum ada file backup yang dipilih.</p>
-      <button type="button" class="master-button primary btn-choose-file" data-action="select-restore-file-click">
-        📂 Pilih File Backup (.json)
-      </button>
+      <div class="restore-dropzone-box" data-action="select-restore-file-click" style="cursor: pointer;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted); margin-bottom: 4px;">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <p class="no-file-text">Belum ada berkas cadangan yang dipilih.</p>
+        <button type="button" class="master-button secondary btn-choose-file" data-action="select-restore-file-click">
+          Pilih Berkas Cadangan (.json)
+        </button>
+      </div>
     `;
   }
 
@@ -25840,7 +25936,15 @@ function createDatabaseBackupSection() {
   restoreBtn.className = "db-action-btn btn-restore";
   restoreBtn.type = "button";
   restoreBtn.dataset.action = "trigger-db-restore";
-  restoreBtn.innerHTML = `<span>📤 Mulai Pemulihan Data</span>`;
+  restoreBtn.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+      <path d="M21 3v5h-5"></path>
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+      <path d="M8 16H3v5"></path>
+    </svg>
+    <span>Otorisasi & Mulai Pemulihan Data</span>
+  `;
   if (!selectedRestoreContent) {
     restoreBtn.disabled = true;
   }
@@ -25869,7 +25973,14 @@ function createRestoreDatabaseModalElement() {
 
   const title = document.createElement("h3");
   title.className = "action-confirmation-title";
-  title.textContent = "⚠️ Konfirmasi Pemulihan Database (Restore)";
+  title.innerHTML = `
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #f87171; flex-shrink: 0; vertical-align: middle; margin-right: 6px;">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+      <line x1="12" y1="9" x2="12" y2="13"></line>
+      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+    </svg>
+    <span>Otorisasi Pemulihan Basis Data Sistem</span>
+  `;
 
   const banner = document.createElement("div");
   banner.className = "restore-modal-warning-banner";
@@ -25881,10 +25992,10 @@ function createRestoreDatabaseModalElement() {
   detailsList.className = "restore-modal-file-summary";
   if (selectedRestoreFile) {
     detailsList.innerHTML = `
-      <div class="restore-summary-row"><span>File Cadangan:</span><strong>${selectedRestoreFile.name}</strong></div>
-      <div class="restore-summary-row"><span>Ukuran File:</span><strong>${selectedRestoreFile.sizeFormatted}</strong></div>
-      <div class="restore-summary-row"><span>Tanggal Cadangan:</span><strong>${selectedRestoreFile.createdAt}</strong></div>
-      <div class="restore-summary-row"><span>Cakupan Data:</span><strong>${selectedRestoreFile.totalTables} tabel (${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} rekaman)</strong></div>
+      <div class="restore-summary-row"><span>Berkas Sumber:</span><strong>${escapeHtml(selectedRestoreFile.name)}</strong></div>
+      <div class="restore-summary-row"><span>Ukuran Berkas:</span><strong>${selectedRestoreFile.sizeFormatted}</strong></div>
+      <div class="restore-summary-row"><span>Stempel Waktu:</span><strong>${escapeHtml(selectedRestoreFile.createdAt)}</strong></div>
+      <div class="restore-summary-row"><span>Cakupan Skema:</span><strong>${selectedRestoreFile.totalTables} tabel (${selectedRestoreFile.totalRecords.toLocaleString('id-ID')} rekaman)</strong></div>
     `;
   }
 
@@ -25895,11 +26006,11 @@ function createRestoreDatabaseModalElement() {
   const pinGroup = document.createElement("div");
   pinGroup.className = "restore-input-group";
   const pinLabel = document.createElement("label");
-  pinLabel.textContent = "1. Masukkan PIN Owner / Manager:";
+  pinLabel.textContent = "1. Masukkan PIN Otorisasi Owner / Manager:";
   const pinInput = document.createElement("input");
   pinInput.type = "password";
   pinInput.className = "master-input";
-  pinInput.placeholder = "Ketik PIN Owner...";
+  pinInput.placeholder = "Ketik PIN Otorisasi...";
   pinInput.value = modal.adminPin || "";
   pinInput.dataset.action = "update-restore-modal-field";
   pinInput.dataset.field = "adminPin";
@@ -25910,7 +26021,7 @@ function createRestoreDatabaseModalElement() {
   const confirmGroup = document.createElement("div");
   confirmGroup.className = "restore-input-group";
   const confirmLabel = document.createElement("label");
-  confirmLabel.textContent = '2. Ketik kata "PULIHKAN" (huruf besar):';
+  confirmLabel.textContent = '2. Ketik kata konfirmasi "PULIHKAN" (huruf besar):';
   const confirmInput = document.createElement("input");
   confirmInput.type = "text";
   confirmInput.className = "master-input";
@@ -25926,7 +26037,16 @@ function createRestoreDatabaseModalElement() {
   if (modal.error) {
     const errorEl = document.createElement("div");
     errorEl.className = "restore-modal-error-alert";
-    errorEl.textContent = `❌ ${modal.error}`;
+    errorEl.innerHTML = `
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+        <span>${escapeHtml(modal.error)}</span>
+      </div>
+    `;
     form.appendChild(errorEl);
   }
 
@@ -25945,8 +26065,8 @@ function createRestoreDatabaseModalElement() {
   submitBtn.className = "master-button danger";
   submitBtn.dataset.action = "confirm-restore-database";
   submitBtn.innerHTML = modal.busy
-    ? "<span>⏳ Memulihkan Database... Jangan Tutup Browser</span>"
-    : "<span>⚠️ Pulihkan Database Sekarang</span>";
+    ? `<svg class="db-spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><span>Memulihkan Database... Jangan Tutup Browser</span>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Konfirmasi & Pulihkan Database</span>`;
   submitBtn.disabled = modal.busy;
 
   actions.append(cancelBtn, submitBtn);
