@@ -31859,8 +31859,18 @@ function createLcReportsSubTabElement() {
   triggerBtn.style.background = lcReportSelectedIds.size > 0 ? "rgba(226, 184, 92, 0.18)" : "rgba(255, 255, 255, 0.04)";
   triggerBtn.style.borderColor = lcReportSelectedIds.size > 0 ? "rgba(255, 215, 122, 0.6)" : "rgba(226, 184, 92, 0.25)";
   triggerBtn.style.color = lcReportSelectedIds.size > 0 ? "var(--gold-strong, #ffd77a)" : "var(--text, #f6ead2)";
-  triggerBtn.style.fontWeight = lcReportSelectedIds.size > 0 ? "bold" : "normal";
-  triggerBtn.innerHTML = `<span>👤 ${escapeHtml(triggerBtnLabel)}</span> <span style="font-size: 10px; opacity: 0.8;">${lcSelectorDropdownOpen ? "▲" : "▼"}</span>`;
+  triggerBtn.innerHTML = `
+    <span style="display: inline-flex; align-items: center; gap: 6px;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.85;">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+      </svg>
+      <span>${escapeHtml(triggerBtnLabel)}</span>
+    </span>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7; margin-left: 4px;">
+      <polyline points="${lcSelectorDropdownOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}"></polyline>
+    </svg>
+  `;
 
   triggerBtn.onclick = (e) => {
     e.stopPropagation();
@@ -31887,22 +31897,24 @@ function createLcReportsSubTabElement() {
     container.appendChild(backdrop);
 
     const dropdownMenu = document.createElement("div");
-    dropdownMenu.className = "lc-selector-dropdown-menu erp-card";
+    dropdownMenu.className = "lc-selector-dropdown-menu";
     dropdownMenu.style.position = "absolute";
     dropdownMenu.style.top = "calc(100% + 4px)";
     dropdownMenu.style.left = "0";
     dropdownMenu.style.width = "320px";
     dropdownMenu.style.maxWidth = "90vw";
     dropdownMenu.style.zIndex = "2000";
-    dropdownMenu.style.backgroundColor = "#1c150e";
-    dropdownMenu.style.background = "linear-gradient(180deg, #241c14 0%, #17110b 100%)";
-    dropdownMenu.style.border = "1px solid rgba(226, 184, 92, 0.4)";
+    dropdownMenu.style.backgroundColor = "#17110b";
+    dropdownMenu.style.background = "#17110b";
+    dropdownMenu.style.backgroundImage = "linear-gradient(180deg, #241c14 0%, #150f09 100%)";
+    dropdownMenu.style.border = "1px solid rgba(226, 184, 92, 0.45)";
     dropdownMenu.style.borderRadius = "8px";
-    dropdownMenu.style.boxShadow = "0 12px 36px rgba(0,0,0,0.85), 0 0 1px rgba(255, 215, 122, 0.3)";
+    dropdownMenu.style.boxShadow = "0 16px 48px rgba(0,0,0,0.96), 0 0 1px rgba(255, 215, 122, 0.35)";
     dropdownMenu.style.padding = "10px";
     dropdownMenu.style.display = "flex";
     dropdownMenu.style.flexDirection = "column";
     dropdownMenu.style.gap = "8px";
+    dropdownMenu.style.opacity = "1";
     dropdownMenu.onclick = (e) => e.stopPropagation();
 
     const searchWrapper = document.createElement("div");
@@ -31917,11 +31929,12 @@ function createLcReportsSubTabElement() {
     searchInput.placeholder = "Cari nama LC (mis: Eka, Desi)...";
     searchInput.value = lcChecklistSearchQuery || "";
     searchInput.style.width = "100%";
-    searchInput.style.padding = "6px 8px";
+    searchInput.style.padding = "6px 10px";
     searchInput.style.fontSize = "12px";
     searchInput.style.borderRadius = "6px";
-    searchInput.style.background = "rgba(10, 8, 6, 0.8)";
-    searchInput.style.border = "1px solid rgba(226, 184, 92, 0.3)";
+    searchInput.style.backgroundColor = "#120d07";
+    searchInput.style.background = "#120d07";
+    searchInput.style.border = "1px solid rgba(226, 184, 92, 0.35)";
     searchInput.style.color = "#f6ead2";
     searchInput.oninput = (e) => {
       lcChecklistSearchQuery = e.target.value;
@@ -31942,7 +31955,7 @@ function createLcReportsSubTabElement() {
     actionBar.style.display = "flex";
     actionBar.style.justifyContent = "space-between";
     actionBar.style.alignItems = "center";
-    actionBar.style.borderBottom = "1px solid rgba(226, 184, 92, 0.15)";
+    actionBar.style.borderBottom = "1px solid rgba(226, 184, 92, 0.2)";
     actionBar.style.paddingBottom = "6px";
 
     const selectAllBtn = document.createElement("button");
@@ -31973,11 +31986,17 @@ function createLcReportsSubTabElement() {
     dropdownMenu.appendChild(actionBar);
 
     const checklistBox = document.createElement("div");
-    checklistBox.style.maxHeight = "180px";
+    checklistBox.className = "lc-checklist-box";
+    checklistBox.style.maxHeight = "190px";
     checklistBox.style.overflowY = "auto";
     checklistBox.style.display = "flex";
     checklistBox.style.flexDirection = "column";
-    checklistBox.style.gap = "4px";
+    checklistBox.style.gap = "3px";
+    checklistBox.style.backgroundColor = "#120d07";
+    checklistBox.style.background = "#120d07";
+    checklistBox.style.border = "1px solid rgba(226, 184, 92, 0.25)";
+    checklistBox.style.borderRadius = "6px";
+    checklistBox.style.padding = "6px";
 
     const filterQ = String(lcChecklistSearchQuery || "").trim().toLowerCase();
     const visibleLcs = availableLcs.filter((l) => {
@@ -32002,25 +32021,47 @@ function createLcReportsSubTabElement() {
         itemRow.style.display = "flex";
         itemRow.style.alignItems = "center";
         itemRow.style.gap = "8px";
-        itemRow.style.padding = "4px 6px";
+        itemRow.style.padding = "6px 8px";
         itemRow.style.borderRadius = "4px";
         itemRow.style.cursor = "pointer";
         itemRow.style.fontSize = "12px";
         itemRow.style.userSelect = "none";
+        itemRow.style.transition = "background-color 0.15s ease, color 0.15s ease";
 
         const isChecked = lcReportSelectedIds.has(lc.lc_id);
         if (isChecked) {
-          itemRow.style.backgroundColor = "rgba(226, 184, 92, 0.12)";
+          itemRow.style.backgroundColor = "rgba(226, 184, 92, 0.2)";
           itemRow.style.color = "var(--gold-strong, #ffd77a)";
+          itemRow.style.fontWeight = "700";
         } else {
-          itemRow.style.color = "var(--text, #f6ead2)";
+          itemRow.style.backgroundColor = "transparent";
+          itemRow.style.color = "#f1f5f9";
+          itemRow.style.fontWeight = "500";
         }
+
+        itemRow.onmouseenter = () => {
+          if (!lcReportSelectedIds.has(lc.lc_id)) {
+            itemRow.style.backgroundColor = "rgba(255, 255, 255, 0.08)";
+            itemRow.style.color = "#ffffff";
+          }
+        };
+        itemRow.onmouseleave = () => {
+          if (!lcReportSelectedIds.has(lc.lc_id)) {
+            itemRow.style.backgroundColor = "transparent";
+            itemRow.style.color = "#f1f5f9";
+          } else {
+            itemRow.style.backgroundColor = "rgba(226, 184, 92, 0.2)";
+            itemRow.style.color = "var(--gold-strong, #ffd77a)";
+          }
+        };
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = isChecked;
         checkbox.style.accentColor = "var(--gold, #d4af37)";
         checkbox.style.cursor = "pointer";
+        checkbox.style.width = "14px";
+        checkbox.style.height = "14px";
         checkbox.onchange = (e) => {
           if (e.target.checked) {
             lcReportSelectedIds.add(lc.lc_id);
@@ -32046,7 +32087,7 @@ function createLcReportsSubTabElement() {
     footerBtn.type = "button";
     footerBtn.className = "erp-btn erp-btn-primary erp-btn-solid-gold";
     footerBtn.style.width = "100%";
-    footerBtn.style.padding = "6px";
+    footerBtn.style.padding = "7px";
     footerBtn.style.fontSize = "12px";
     footerBtn.style.fontWeight = "bold";
     footerBtn.textContent = "Selesai Memilih";

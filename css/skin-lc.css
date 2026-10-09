@@ -74,6 +74,28 @@
   box-shadow: none !important;
 }
 
+/* Popover dropdown Pemilih LC Selektif wajib 100% solid, opaque, dan kontras tinggi */
+.app-tab-panel--lc .lc-selector-dropdown-menu,
+.lc-selector-dropdown-menu {
+  background: #17110b !important;
+  background-color: #17110b !important;
+  background-image: linear-gradient(180deg, #241c14 0%, #150f09 100%) !important;
+  border: 1px solid rgba(226, 184, 92, 0.45) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.96), 0 0 1px rgba(255, 215, 122, 0.35) !important;
+  color: var(--text, #f6ead2) !important;
+  opacity: 1 !important;
+  z-index: 2000 !important;
+}
+
+.app-tab-panel--lc .lc-selector-dropdown-menu .lc-checklist-box,
+.lc-selector-dropdown-menu .lc-checklist-box {
+  background: #120d07 !important;
+  background-color: #120d07 !important;
+  border: 1px solid rgba(226, 184, 92, 0.25) !important;
+  border-radius: 6px !important;
+}
+
 .app-tab-panel--lc .erp-card h3,
 .app-tab-panel--lc .erp-card h4 {
   font-size: 0.78rem;
