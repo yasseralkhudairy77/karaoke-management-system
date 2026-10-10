@@ -35336,11 +35336,11 @@ function createRoomSummaryElement() {
   const total = rooms.length;
   const totalCard = document.createElement("button");
   totalCard.type = "button";
-  totalCard.className = roomStatusFilter === "all" ? "rooms-summary-card active" : "rooms-summary-card";
+  totalCard.className = roomStatusFilter === "all" ? "rooms-summary-card active status-all tone-gold" : "rooms-summary-card status-all tone-gold";
   totalCard.dataset.action = "filter-rooms-status";
   totalCard.dataset.status = "all";
   totalCard.setAttribute("aria-pressed", String(roomStatusFilter === "all"));
-  totalCard.innerHTML = `<span class="rooms-summary-label">Semua Ruangan</span><span class="rooms-summary-value">${total}</span>`;
+  totalCard.innerHTML = `<span class="rooms-summary-dot dot-all" aria-hidden="true"></span><span class="rooms-summary-label">Semua Ruangan</span><span class="rooms-summary-value">${total}</span>`;
   wrapper.appendChild(totalCard);
 
   const order = ["occupied", "waiting_payment", "paid_waiting_start", "booked", "cleaning", "maintenance", "available"];
@@ -35352,18 +35352,19 @@ function createRoomSummaryElement() {
       return;
     }
     const card = document.createElement("button");
-        card.type = "button";
-        const tone = getRoomStatusTone(status);
-        card.className = [
-          "rooms-summary-card",
-          `tone-${tone}`,
-          count === 0 ? "is-zero" : "",
-          roomStatusFilter === status ? "active" : "",
-        ].filter(Boolean).join(" ");
+    card.type = "button";
+    const tone = getRoomStatusTone(status);
+    card.className = [
+      "rooms-summary-card",
+      `status-${status}`,
+      `tone-${tone}`,
+      count === 0 ? "is-zero" : "",
+      roomStatusFilter === status ? "active" : "",
+    ].filter(Boolean).join(" ");
     card.dataset.action = "filter-rooms-status";
     card.dataset.status = status;
     card.setAttribute("aria-pressed", String(roomStatusFilter === status));
-    card.innerHTML = `<span class="rooms-summary-label">${getStatusLabel(status)}</span><span class="rooms-summary-value">${count}</span>`;
+    card.innerHTML = `<span class="rooms-summary-dot dot-${status}" aria-hidden="true"></span><span class="rooms-summary-label">${getStatusLabel(status)}</span><span class="rooms-summary-value">${count}</span>`;
     wrapper.appendChild(card);
   });
 

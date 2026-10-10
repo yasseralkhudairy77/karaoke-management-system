@@ -709,81 +709,267 @@
   }
 }
 
-/* --- R4: ringkasan okupansi (sekaligus filter). */
+/* --- R4: Ringkasan okupansi & filter ruangan (Unified Segmented Cockpit Bar). */
 .rooms-summary {
   grid-column: 1 / -1;
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 4px;
+  padding: 4px 6px;
+  background: rgba(18, 20, 26, 0.88);
+  border: 1px solid rgba(226, 184, 92, 0.22);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  margin-bottom: 16px;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .rooms-summary-card {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 8px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text);
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
   cursor: pointer;
   font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.rooms-summary-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text, #f1f5f9);
+}
+
+.rooms-summary-card:focus-visible {
+  outline: 2px solid var(--gold-strong, #ffd77a);
+  outline-offset: 1px;
+}
+
+/* Status Dot Indicator */
+.rooms-summary-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  background-color: var(--dot-color, #94a3b8);
+  box-shadow: 0 0 6px var(--dot-glow, rgba(148, 163, 184, 0.4));
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.rooms-summary-card:hover .rooms-summary-dot {
+  transform: scale(1.15);
+}
+
+/* Dot Color semantics */
+.rooms-summary-dot.dot-all,
+.rooms-summary-card.status-all .rooms-summary-dot,
+.rooms-summary-card.tone-gold .rooms-summary-dot {
+  --dot-color: var(--gold-strong, #ffd77a);
+  --dot-glow: rgba(255, 215, 122, 0.65);
+}
+
+.rooms-summary-card.tone-danger .rooms-summary-dot {
+  --dot-color: #ef4444;
+  --dot-glow: rgba(239, 68, 68, 0.65);
+}
+
+.rooms-summary-card.tone-warning .rooms-summary-dot {
+  --dot-color: #f59e0b;
+  --dot-glow: rgba(245, 158, 11, 0.65);
+}
+
+.rooms-summary-card.tone-success .rooms-summary-dot {
+  --dot-color: #10b981;
+  --dot-glow: rgba(16, 185, 129, 0.65);
+}
+
+.rooms-summary-card.tone-info .rooms-summary-dot {
+  --dot-color: #38bdf8;
+  --dot-glow: rgba(56, 189, 248, 0.65);
 }
 
 .rooms-summary-label {
-  color: var(--muted);
+  color: inherit;
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: 600;
+  transition: color 0.2s ease;
 }
 
+/* Counter Badge */
 .rooms-summary-value {
-  font-size: 1.05rem;
-  font-weight: 900;
-  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text, #f1f5f9);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.2s ease;
 }
 
-.rooms-summary-card:hover,
-.rooms-summary-card:focus-visible {
-  border-color: var(--gold-strong);
-  outline: 2px solid var(--gold-strong);
-  outline-offset: 2px;
+.rooms-summary-card.status-all .rooms-summary-value,
+.rooms-summary-card.tone-gold .rooms-summary-value {
+  background: rgba(226, 184, 92, 0.12);
+  color: #ffd77a;
+  border-color: rgba(226, 184, 92, 0.25);
 }
 
-.rooms-summary-card.active {
-  border-color: var(--gold-strong);
-  background: rgba(255, 215, 122, 0.14);
-}
-
-.rooms-summary-card.active .rooms-summary-label,
-.rooms-summary-card.active .rooms-summary-value {
-  color: var(--gold-strong);
-}
-
-.rooms-summary-card.tone-danger .rooms-summary-value {
-  color: #ff9a90;
+.rooms-summary-card.tone-success .rooms-summary-value {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
 .rooms-summary-card.tone-warning .rooms-summary-value {
-  color: #ffd08a;
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.rooms-summary-card.tone-danger .rooms-summary-value {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.25);
 }
 
 .rooms-summary-card.tone-info .rooms-summary-value {
-  color: #9dc4ff;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.25);
 }
 
-/* Hitungan nol = tidak ada yang perlu dilihat. Dibuat redup dengan SENGAJA
-   supaya mata kasir langsung tertuju ke angka yang bukan nol. */
+/* Active State (Segment Aktif Terpilih) */
+.rooms-summary-card.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.rooms-summary-card.active .rooms-summary-label {
+  color: #fff;
+  font-weight: 700;
+}
+
+.rooms-summary-card.active .rooms-summary-dot {
+  transform: scale(1.25);
+}
+
+/* Active tone highlights */
+.rooms-summary-card.active.status-all,
+.rooms-summary-card.active.tone-gold {
+  background: rgba(226, 184, 92, 0.16);
+  border-color: rgba(226, 184, 92, 0.45);
+}
+.rooms-summary-card.active.status-all .rooms-summary-value,
+.rooms-summary-card.active.tone-gold .rooms-summary-value {
+  background: var(--gold-strong, #ffd77a);
+  color: #0b0c10;
+  font-weight: 900;
+  border-color: var(--gold-strong, #ffd77a);
+  box-shadow: 0 0 8px rgba(255, 215, 122, 0.35);
+}
+
+.rooms-summary-card.active.tone-success {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+.rooms-summary-card.active.tone-success .rooms-summary-value {
+  background: #10b981;
+  color: #042f2e;
+  font-weight: 900;
+  border-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
+}
+
+.rooms-summary-card.active.tone-warning {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+.rooms-summary-card.active.tone-warning .rooms-summary-value {
+  background: #f59e0b;
+  color: #451a03;
+  font-weight: 900;
+  border-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+}
+
+.rooms-summary-card.active.tone-danger {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.rooms-summary-card.active.tone-danger .rooms-summary-value {
+  background: #ef4444;
+  color: #450a0a;
+  font-weight: 900;
+  border-color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.35);
+}
+
+.rooms-summary-card.active.tone-info {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+.rooms-summary-card.active.tone-info .rooms-summary-value {
+  background: #38bdf8;
+  color: #082f49;
+  font-weight: 900;
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+}
+
+/* State jika count = 0 (is-zero) */
 .rooms-summary-card.is-zero {
   opacity: 0.55;
 }
 
-.rooms-summary-card.is-zero .rooms-summary-value {
-  color: var(--muted);
+.rooms-summary-card.is-zero:hover,
+.rooms-summary-card.is-zero.active {
+  opacity: 1;
 }
 
-/* Ruangan KOSONG: TV mati itu wajar, jadi titiknya netral (bukan merah) —
+.rooms-summary-card.is-zero .rooms-summary-value {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted, #64748b);
+  border-color: transparent;
+}
+
+@media (max-width: 768px) {
+  .rooms-summary {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .rooms-summary::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Ruangan KOSONG: TV mati itu wajar, jadi titiknya netral (bukan merah):
    merah hanya untuk status yang benar-benar perlu ditindak. */
 .app-tab-panel--rooms .room-card.available .tv-indicator {
   color: #cbd5e1;
