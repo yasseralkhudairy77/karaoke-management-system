@@ -23602,6 +23602,9 @@ function openMasterDataForm(type, mode, item = null) {
     values: {
       ...defaults[type],
       ...(item || {}),
+      rate_per_hour: type === "room" && item?.rate_per_hour !== undefined && item?.rate_per_hour !== null && item?.rate_per_hour !== ""
+        ? formatRupiahInput(item.rate_per_hour)
+        : (item?.rate_per_hour ?? defaults[type]?.rate_per_hour),
       selling_price: item?.selling_price ?? initialSellingPrice,
       qty_per_unit: item?.stock_qty_per_unit ?? item?.qty_per_unit ?? defaults[type]?.qty_per_unit,
     },
@@ -23910,11 +23913,17 @@ function createMasterCurrencyField({ label, field, helper = "" }) {
   labelElement.className = "master-form-label";
   labelElement.textContent = label;
 
+  const defaultPlaceholder = field === "rate_per_hour" ? "Contoh: Rp 125.000" : "Contoh: Rp 1.950.000";
+  const customPlaceholder = (typeof arguments[0] === "object" && arguments[0] !== null && arguments[0].placeholder)
+    ? arguments[0].placeholder
+    : defaultPlaceholder;
+
   const input = document.createElement("input");
   input.type = "text";
   input.inputMode = "numeric";
   input.className = "master-form-input master-form-currency-input";
-  input.placeholder = "Contoh: Rp 1.950.000";
+  input.placeholder = customPlaceholder;
+  input.dataset.field = field;
 
   const currentVal = masterDataForm?.values?.[field];
   input.value = formatRupiahInput(currentVal);
@@ -24164,7 +24173,12 @@ function createMasterDataFormElement() {
 
     grid.append(
       createMasterField({ label: "Nama Room", field: "room_name" }),
-      createMasterField({ label: "Tarif per Jam", field: "rate_per_hour", type: "number" }),
+      createMasterCurrencyField({
+        label: "Tarif per Jam",
+        field: "rate_per_hour",
+        helper: "Format otomatis Rupiah. Contoh: Rp 125.000",
+        placeholder: "Contoh: Rp 125.000",
+      }),
       createMasterField({ label: "TV Device ID", field: "tv_device_id" }),
       createMasterField({
         label: "Status",
@@ -28971,7 +28985,7 @@ function buildMasterPayload(authData = null, adminPin = "") {
       action: isEdit ? "updateRoomMaster" : "saveRoomMaster",
       room_id: values.room_id || "",
       room_name: values.room_name || "",
-      rate_per_hour: Number(values.rate_per_hour),
+      rate_per_hour: parseRupiahInput(values.rate_per_hour),
       tv_device_id: values.tv_device_id || "",
       status: values.status || "available",
     };
@@ -29052,6 +29066,19 @@ async function submitMasterDataForm() {
     return;
   }
 
+  if (masterDataForm.type === "room") {
+    const roomName = String(masterDataForm.values?.room_name || "").trim();
+    const rate = parseRupiahInput(masterDataForm.values?.rate_per_hour);
+    if (!roomName) {
+      showInlineNotice("Nama room wajib diisi.", "error");
+      return;
+    }
+    if (!rate || rate <= 0) {
+      showInlineNotice("Tarif per jam harus lebih besar dari 0.", "error");
+      return;
+    }
+  }
+
   if (masterDataForm.type === "menu" && masterDataForm.values?.menu_type === "fnb_bundle") {
     const components = Array.isArray(masterDataForm.values.bundle_components) ? masterDataForm.values.bundle_components : [];
     if (components.length === 0) {
@@ -29120,8 +29147,8 @@ function isSensitiveMasterDataChange() {
   const original = masterDataForm.originalValues || {};
 
   if (masterDataForm.type === "room") {
-    const originalRate = Number(original.rate_per_hour) || 0;
-    const nextRate = Number(values.rate_per_hour) || 0;
+    const originalRate = parseRupiahInput(original.rate_per_hour);
+    const nextRate = parseRupiahInput(values.rate_per_hour);
     const originalStatus = String(original.status || "").trim().toLowerCase();
     const nextStatus = String(values.status || "").trim().toLowerCase();
 
