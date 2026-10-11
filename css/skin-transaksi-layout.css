@@ -208,3 +208,24 @@
     gap: 4px !important;
   }
 }
+
+/* Pastikan wadah daftar transaksi tidak memotong menu popup/dropdown yang terbuka */
+.app-tab-panel--transactions .transaction-list {
+  overflow: visible !important;
+}
+
+/* Berikan prioritas z-index tertinggi pada baris dan dropdown aksi yang sedang dibuka */
+.app-tab-panel--transactions .transaction-row.has-open-menu {
+  z-index: 300 !important;
+}
+
+.app-tab-panel--transactions .transaction-row.has-open-menu .transaction-actions-cell {
+  z-index: 301 !important;
+}
+
+.app-tab-panel--transactions .transaction-menu-dropdown {
+  z-index: 302 !important;
+  max-height: min(380px, calc(100vh - 100px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

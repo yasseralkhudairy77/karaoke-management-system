@@ -38914,7 +38914,10 @@ async function handleRoomAction(event) {
         row.classList.add("has-open-menu");
       }
       const rect = dropdown.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight - 20 && rect.top > rect.height) {
+      const buttonRect = button.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - buttonRect.bottom;
+      const spaceAbove = buttonRect.top;
+      if (rect.bottom > window.innerHeight - 20 && (spaceAbove > spaceBelow || spaceAbove >= rect.height)) {
         dropdown.classList.add("open-upward");
       }
     }

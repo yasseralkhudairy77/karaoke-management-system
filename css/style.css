@@ -8403,6 +8403,9 @@ select.action-confirmation-input option {
   top: calc(100% + 6px);
   right: 0;
   min-width: 200px;
+  max-height: min(380px, calc(100vh - 100px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: none;
   flex-direction: column;
   padding: 6px;
@@ -13717,7 +13720,7 @@ select.action-confirmation-input option {
   display: grid;
   gap: 8px;
   width: 100%;
-  overflow-x: auto;
+  overflow: visible;
   padding-bottom: 6px;
   -webkit-overflow-scrolling: touch;
 }
