@@ -178,6 +178,7 @@ function runTests() {
   const menuItems = dropdown.querySelectorAll(".transaction-menu-item");
   const actionNames = menuItems.map((item) => item.dataset.action);
 
+  assert(actionNames.includes("open-receipt-preview-modal"), "Menu must contain Lihat Preview Struk");
   assert(actionNames.includes("open-change-payment-method"), "Menu must contain Ubah Metode Bayar");
   assert(actionNames.includes("reprint-sales-commission"), "Menu must contain Cetak Slip Komisi");
   assert(actionNames.includes("open-transaction-manual-discount"), "Menu must contain Tambah Diskon");
@@ -202,6 +203,7 @@ function runTests() {
   const cashierMenuItems = cashierDropdown.querySelectorAll(".transaction-menu-item");
   const cashierActionsList = cashierMenuItems.map((item) => item.dataset.action);
 
+  assert(cashierActionsList.includes("open-receipt-preview-modal"), "Cashier has Lihat Preview Struk");
   assert(cashierActionsList.includes("open-change-payment-method"), "Cashier has Ubah Metode");
   assert(!cashierActionsList.includes("open-delete-transaction"), "Cashier cannot delete transactions");
   assert(!cashierActionsList.includes("open-transaction-package-correction"), "Cashier cannot correct packages");
