@@ -2,10 +2,10 @@ import { formatReceipt58mm } from "./receipt.js?v=stock-handover-slip-v1";
 
 const THERMAL_METRICS_80MM = {
   pageWidthMm: 80,
-  printableWidthMm: 76,
+  printableWidthMm: 72,
   canvasWidthPx: 576,
-  canvasPaddingPx: 6,
-  logoWidthPx: 380,
+  canvasPaddingPx: 14,
+  logoWidthPx: 360,
   paperWidth: 48,
 };
 
