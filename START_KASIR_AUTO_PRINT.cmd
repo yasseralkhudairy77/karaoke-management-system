@@ -29,7 +29,7 @@ if not defined CHROME_EXE if exist "%LOCALAPPDATA%\Google\Chrome\Application\chr
 
 if defined CHROME_EXE (
   echo Membuka Google Chrome dengan Kiosk Printing...
-  start "" "%CHROME_EXE%" --kiosk-printing --user-data-dir="%PROFILE_DIR%" "%DASHBOARD_URL%"
+  start "" "%CHROME_EXE%" --kiosk-printing --no-first-run --no-default-browser-check --user-data-dir="%PROFILE_DIR%" "%DASHBOARD_URL%"
   goto :done
 )
 
@@ -40,7 +40,7 @@ if not defined EDGE_EXE if exist "%ProgramFiles%\Microsoft\Edge\Application\msed
 
 if defined EDGE_EXE (
   echo Membuka Microsoft Edge dengan Kiosk Printing...
-  start "" "%EDGE_EXE%" --kiosk-printing --user-data-dir="%PROFILE_DIR%" "%DASHBOARD_URL%"
+  start "" "%EDGE_EXE%" --kiosk-printing --no-first-run --no-default-browser-check --user-data-dir="%PROFILE_DIR%" "%DASHBOARD_URL%"
   goto :done
 )
 
