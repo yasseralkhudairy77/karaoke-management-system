@@ -4515,8 +4515,6 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
     return;
   }
 
-  selectedReceiptTransaction = preparedTransaction;
-
   try {
     const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
     const receiptData = buildReceiptData(preparedTransaction, {
@@ -20689,7 +20687,7 @@ function createTransactionActionsElement(transaction) {
   printButton.dataset.action = "show-receipt-print";
   printButton.dataset.transactionId = transaction?.transaction_id || "";
   printButton.textContent = transaction?.payment_status === "paid" ? "Cetak" : "Struk";
-  printButton.title = transaction?.payment_status === "paid" ? "Cetak struk thermal langsung" : "Cetak tagihan sementara thermal";
+  printButton.title = transaction?.payment_status === "paid" ? "Cetak struk transaksi" : "Cetak tagihan sementara";
   primaryActions.appendChild(printButton);
 
   const operatorRole = getCurrentOperatorRole();
@@ -20705,14 +20703,6 @@ function createTransactionActionsElement(transaction) {
       title: "Ubah durasi atau ganti LC jika salah pilih",
     });
   }
-
-  secondaryItems.push({
-    action: "open-receipt-preview-modal",
-    label: "Lihat Preview Struk",
-    icon: "👁️",
-    category: "operational",
-    title: "Lihat tampilan nota struk di layar",
-  });
 
   secondaryItems.push({
     action: "open-change-payment-method",
@@ -40001,16 +39991,6 @@ async function handleRoomAction(event) {
   }
 
   if (action === "show-receipt-print") {
-    const tx = await findTransactionForAction(button);
-    if (tx) {
-      await printThermalReceiptFromTransaction(tx);
-    } else {
-      showInlineNotice("Belum ada transaksi untuk dicetak.", "error");
-    }
-    return;
-  }
-
-  if (action === "open-receipt-preview-modal") {
     showReceiptPrint(await findTransactionForAction(button));
     return;
   }
