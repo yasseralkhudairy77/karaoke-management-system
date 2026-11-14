@@ -176,28 +176,31 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
   const fontStack = "Consolas, 'Segoe UI Mono', 'Cascadia Mono', 'Liberation Mono', 'Courier New', monospace";
   const targetTextWidth = metrics.canvasWidthPx - (metrics.canvasPaddingPx * 2);
 
-  // Ukur character width secara presisi pada kanvas dummy
+  // Ukur character width secara presisi pada kanvas dummy dengan bobot bold
   const measureCanvas = document.createElement("canvas");
   const measureContext = measureCanvas.getContext("2d");
-  measureContext.font = `600 20px ${fontStack}`;
+  measureContext.font = `bold 20px ${fontStack}`;
   const baseDashWidth = measureContext.measureText("-").width || 11;
   const targetCharWidth = targetTextWidth / metrics.paperWidth;
   const calculatedFontSize = Math.floor((20 * (targetCharWidth / baseDashWidth)) * 10) / 10;
-  const lineHeightPx = Math.round(calculatedFontSize * 1.36);
+
+  // Tinggikan font 10% (vertical scale factor 1.10) dan sesuaikan line-height
+  const VERTICAL_FONT_SCALE = 1.10;
+  const lineHeightPx = Math.round(calculatedFontSize * 1.36 * VERTICAL_FONT_SCALE);
 
   const logoHeight = logo
     ? Math.round((logo.height / logo.width) * metrics.logoWidthPx)
     : 0;
-  const brandTextHeight = 34;
+  const brandTextHeight = 36;
   const textHeight = receiptLines.length * lineHeightPx;
   const canvasHeight = Math.ceil(
     metrics.canvasPaddingPx +
     logoHeight +
-    (logo ? 14 : 0) +
+    (logo ? 16 : 0) +
     brandTextHeight +
-    10 +
+    12 +
     textHeight +
-    24
+    28
   );
 
   // Skala 2x Retina untuk ketajaman font tinggi (mencegah efek gerigi dot matrix)
@@ -226,16 +229,20 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
     y += logoHeight + 14;
   }
 
-  // Nama Bisnis tebal dan proporsional
+  // Nama Bisnis tebal dan proporsional (tinggi +10%)
   context.fillStyle = "#000000";
-  context.font = `700 24px ${fontStack}`;
+  context.font = `bold 24px ${fontStack}`;
   context.textAlign = "center";
   context.textBaseline = "top";
-  context.fillText(businessName, Math.round(metrics.canvasWidthPx / 2), y);
-  y += brandTextHeight + 10;
+  context.save();
+  context.translate(Math.round(metrics.canvasWidthPx / 2), y);
+  context.scale(1, VERTICAL_FONT_SCALE);
+  context.fillText(businessName, 0, 0);
+  context.restore();
+  y += brandTextHeight + 12;
 
-  // Teks baris struk: konsisten mengisi lebar penuh kanvas dengan padding minimal
-  context.font = `600 ${calculatedFontSize}px ${fontStack}`;
+  // Teks baris struk: bobot bold dinaikkan (bold) dan tinggi dinaikkan 10%
+  context.font = `bold ${calculatedFontSize}px ${fontStack}`;
   context.textAlign = "left";
   context.textBaseline = "top";
 
@@ -244,7 +251,11 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
   const textStartX = Math.max(metrics.canvasPaddingPx, Math.round((metrics.canvasWidthPx - actualBlockWidth) / 2));
 
   receiptLines.forEach((line) => {
-    context.fillText(line, textStartX, y);
+    context.save();
+    context.translate(textStartX, y);
+    context.scale(1, VERTICAL_FONT_SCALE);
+    context.fillText(line, 0, 0);
+    context.restore();
     y += lineHeightPx;
   });
 
