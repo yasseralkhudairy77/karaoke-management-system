@@ -8279,9 +8279,9 @@ select.action-confirmation-input option {
   background: #ffffff;
   color: #000000;
   font-family: Consolas, 'Segoe UI Mono', 'Cascadia Mono', monospace;
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre;
 }
 

@@ -4,7 +4,7 @@ const THERMAL_METRICS_80MM = {
   pageWidthMm: 80,
   printableWidthMm: 72,
   canvasWidthPx: 576,
-  canvasPaddingPx: 14,
+  canvasPaddingPx: 12,
   logoWidthPx: 360,
   paperWidth: 48,
 };
@@ -184,14 +184,14 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
   const targetCharWidth = targetTextWidth / metrics.paperWidth;
   const calculatedFontSize = Math.floor((20 * (targetCharWidth / baseDashWidth)) * 10) / 10;
 
-  // Tinggikan font 10% (vertical scale factor 1.10) dan sesuaikan line-height
-  const VERTICAL_FONT_SCALE = 1.10;
-  const lineHeightPx = Math.round(calculatedFontSize * 1.36 * VERTICAL_FONT_SCALE);
+  // Tinggikan font sekitar +22% total (tambahan ~10% dari sebelumnya) dan sesuaikan line-height
+  const VERTICAL_FONT_SCALE = 1.22;
+  const lineHeightPx = Math.round(calculatedFontSize * 1.38 * VERTICAL_FONT_SCALE);
 
   const logoHeight = logo
     ? Math.round((logo.height / logo.width) * metrics.logoWidthPx)
     : 0;
-  const brandTextHeight = 36;
+  const brandTextHeight = 40;
   const textHeight = receiptLines.length * lineHeightPx;
   const canvasHeight = Math.ceil(
     metrics.canvasPaddingPx +
@@ -229,9 +229,9 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
     y += logoHeight + 14;
   }
 
-  // Nama Bisnis tebal dan proporsional (tinggi +10%)
+  // Nama Bisnis tebal dan proporsional (tinggi +22%)
   context.fillStyle = "#000000";
-  context.font = `bold 24px ${fontStack}`;
+  context.font = `bold 26px ${fontStack}`;
   context.textAlign = "center";
   context.textBaseline = "top";
   context.save();

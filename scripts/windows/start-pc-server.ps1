@@ -96,20 +96,43 @@ function Test-LanHealth {
 }
 
 function Open-Dashboard {
+  param(
+    [switch]$KioskPrinting = $true
+  )
+
   $chromeCandidates = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
   )
 
+  $profileDir = Join-Path $env:LOCALAPPDATA "HappySongKasir"
+  $kioskArgs = @(
+    "--kiosk-printing",
+    "--user-data-dir=$profileDir",
+    $dashboardUrl
+  )
+
   foreach ($chromePath in $chromeCandidates) {
     if ($chromePath -and (Test-Path $chromePath)) {
-      Start-Process $chromePath -ArgumentList @($dashboardUrl)
+      Start-Process $chromePath -ArgumentList $kioskArgs
       return
     }
   }
 
-  Write-Host "Google Chrome tidak ditemukan. Membuka dengan browser default Windows..."
+  $edgeCandidates = @(
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+  )
+
+  foreach ($edgePath in $edgeCandidates) {
+    if ($edgePath -and (Test-Path $edgePath)) {
+      Start-Process $edgePath -ArgumentList $kioskArgs
+      return
+    }
+  }
+
+  Write-Host "Google Chrome/Edge tidak ditemukan. Membuka dengan browser default Windows..."
   Start-Process $dashboardUrl
 }
 
