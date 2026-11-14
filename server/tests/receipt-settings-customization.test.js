@@ -155,3 +155,32 @@ test('Receipt Engine - Receipt formatting contains tax, social media, wifi, and 
   assert.ok(formattedReceipt.includes('Sampai jumpa di kunjungan'), 'Harus memuat footer text');
   assert.ok(formattedReceipt.includes('Barang tertinggal di luar'), 'Harus memuat syarat/ketentuan');
 });
+
+test('Receipt Engine - Default paper is 80mm (48 chars) and formats wide receipt cleanly', async () => {
+  const receiptModulePath = path.resolve(__dirname, '../../js/receipt.js');
+  const receipt = await import('file://' + receiptModulePath.replace(/\\/g, '/'));
+
+  assert.equal(masterDataController.DEFAULT_RECEIPT_CONFIG.paper_width, 48);
+
+  const dummyTx = {
+    transaction_id: 'TRX-80MM-001',
+    created_at: '2026-11-14T14:00:00.000Z',
+    cashier_name: 'Kasir 80mm',
+    room_name: 'VIP 5',
+    duration_minutes: 120,
+    rate_per_hour: 135000,
+    room_total: 270000,
+    grand_total: 270000,
+    payment_method: 'cash',
+    payment_status: 'paid',
+  };
+
+  const receiptData = receipt.buildReceiptData(dummyTx);
+  const formattedReceipt = receipt.formatReceipt58mm(receiptData);
+
+  // Divider lines should be 48 characters long
+  const lines = formattedReceipt.split('\n');
+  const dashLines = lines.filter((l) => /^-{30,}$/.test(l));
+  assert.ok(dashLines.length > 0, 'Harus ada garis pemisah');
+  assert.equal(dashLines[0].length, 48, 'Garis pemisah harus 48 karakter untuk 80mm');
+});

@@ -1035,7 +1035,7 @@ const DEFAULT_RECEIPT_CONFIG = {
   footer_terms: "",
   show_logo: true,
   logo_base64: "",
-  paper_width: 32,
+  paper_width: 48,
 };
 let receiptSettings = null;
 let isLoadingReceiptSettings = false;
@@ -4478,7 +4478,7 @@ async function showThermalReceiptPreview(transaction) {
 
   const receiptData = buildReceiptData(preparedTransaction, {
     business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
-    paper: { width: receiptSettings?.paper_width || 32 },
+    paper: { width: receiptSettings?.paper_width || 48 },
     fnbOrders: getReceiptFnbOrders(preparedTransaction),
     lcDetails: getReceiptLcDetails(preparedTransaction),
     print: getReceiptPrintAudit(preparedTransaction),
@@ -4493,7 +4493,8 @@ async function showThermalReceiptPreview(transaction) {
 
     const title = document.createElement("h3");
     title.className = "thermal-receipt-preview-title";
-    title.textContent = "Preview Thermal 58mm";
+    const paperWidth = Number(receiptSettings?.paper_width) === 32 ? 32 : 48;
+    title.textContent = `Preview Thermal ${paperWidth === 48 ? "80mm" : "58mm"}`;
 
     content = document.createElement("pre");
     content.className = "thermal-receipt-preview-content";
@@ -4518,7 +4519,7 @@ async function printThermalReceiptFromTransaction(transaction = selectedReceiptT
     const audit = await logReceiptPrintAttempt(preparedTransaction, "thermal");
     const receiptData = buildReceiptData(preparedTransaction, {
       business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
-      paper: { width: receiptSettings?.paper_width || 32 },
+      paper: { width: receiptSettings?.paper_width || 48 },
       fnbOrders: getReceiptFnbOrders(preparedTransaction),
       lcDetails: getReceiptLcDetails(preparedTransaction),
       print: audit,
@@ -9853,7 +9854,7 @@ function createReceiptPrintElement(transaction) {
   const printAudit = getReceiptPrintAudit(transaction);
   const receiptData = buildReceiptData(transaction, {
     business: receiptSettings || DEFAULT_RECEIPT_CONFIG,
-    paper: { width: receiptSettings?.paper_width || 32 },
+    paper: { width: receiptSettings?.paper_width || 48 },
     fnbOrders: getReceiptFnbOrders(transaction),
     lcDetails: getReceiptLcDetails(transaction),
     print: printAudit,
@@ -26224,7 +26225,7 @@ function updateThermalReceiptLivePreview() {
   const dummyTx = createDummyReceiptTransaction();
   const receiptData = buildReceiptData(dummyTx, {
     business: config,
-    paper: { width: Number(config.paper_width) === 48 ? 48 : 32 },
+    paper: { width: Number(config.paper_width) === 32 ? 32 : 48 },
   });
   const formattedText = formatReceipt58mm(receiptData);
 
@@ -26389,6 +26390,7 @@ function createReceiptSettingsSection() {
   `;
 
   // Card 4: Spesifikasi Kertas Printer
+  const is32mm = Number(current.paper_width) === 32;
   const cardPrinter = document.createElement("div");
   cardPrinter.className = "receipt-config-card";
   cardPrinter.innerHTML = `
@@ -26399,18 +26401,18 @@ function createReceiptSettingsSection() {
     <div class="receipt-form-grid">
       <div class="receipt-form-group full-width">
         <div class="receipt-radio-group">
-          <label class="receipt-radio-item ${Number(current.paper_width) !== 48 ? 'selected' : ''}">
-            <input type="radio" name="paper_width_opt" value="32" data-action="update-receipt-settings-field" data-field="paper_width" ${Number(current.paper_width) !== 48 ? 'checked' : ''}>
+          <label class="receipt-radio-item ${!is32mm ? 'selected' : ''}">
+            <input type="radio" name="paper_width_opt" value="48" data-action="update-receipt-settings-field" data-field="paper_width" ${!is32mm ? 'checked' : ''}>
+            <div>
+              <strong>Kertas 80 mm (48 Karakter per Baris) — Standar</strong>
+              <p>Format printer desktop kasir lebar / hasil cetak tajam, lapang & simetris.</p>
+            </div>
+          </label>
+          <label class="receipt-radio-item ${is32mm ? 'selected' : ''}">
+            <input type="radio" name="paper_width_opt" value="32" data-action="update-receipt-settings-field" data-field="paper_width" ${is32mm ? 'checked' : ''}>
             <div>
               <strong>Kertas 58 mm (32 Karakter per Baris)</strong>
               <p>Standar mesin kasir thermal POS mini / Bluetooth portable.</p>
-            </div>
-          </label>
-          <label class="receipt-radio-item ${Number(current.paper_width) === 48 ? 'selected' : ''}">
-            <input type="radio" name="paper_width_opt" value="48" data-action="update-receipt-settings-field" data-field="paper_width" ${Number(current.paper_width) === 48 ? 'checked' : ''}>
-            <div>
-              <strong>Kertas 80 mm (48 Karakter per Baris)</strong>
-              <p>Format printer desktop restoran / struk thermal lebar.</p>
             </div>
           </label>
         </div>
@@ -26470,7 +26472,7 @@ function createReceiptSettingsSection() {
   const dummyTx = createDummyReceiptTransaction();
   const dummyReceiptData = buildReceiptData(dummyTx, {
     business: current,
-    paper: { width: Number(current.paper_width) === 48 ? 48 : 32 },
+    paper: { width: Number(current.paper_width) === 32 ? 32 : 48 },
   });
   const initialReceiptText = formatReceipt58mm(dummyReceiptData);
 
@@ -39507,7 +39509,7 @@ async function handleRoomAction(event) {
     const dummyTx = createDummyReceiptTransaction();
     const receiptData = buildReceiptData(dummyTx, {
       business: config,
-      paper: { width: Number(config.paper_width) === 48 ? 48 : 32 },
+      paper: { width: Number(config.paper_width) === 32 ? 32 : 48 },
     });
     const printStarted = printThermalReceipt(receiptData);
     if (!printStarted) {
@@ -40754,7 +40756,7 @@ function handleDashboardInput(event) {
       if (field.type === "checkbox") {
         receiptSettingsFormData[prop] = field.checked;
       } else if (prop === "paper_width") {
-        receiptSettingsFormData[prop] = Number(field.value) === 48 ? 48 : 32;
+        receiptSettingsFormData[prop] = Number(field.value) === 32 ? 32 : 48;
         // update class visual radio item
         const radioItems = document.querySelectorAll(".receipt-radio-item");
         radioItems.forEach((item) => {

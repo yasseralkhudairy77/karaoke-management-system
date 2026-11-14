@@ -15,7 +15,7 @@ const DEFAULT_BUSINESS = {
 };
 
 const DEFAULT_PAPER = {
-  width: 32,
+  width: 48,
 };
 
 export function buildReceiptData(transaction, options = {}) {

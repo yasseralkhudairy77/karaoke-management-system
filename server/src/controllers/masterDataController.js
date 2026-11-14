@@ -1130,7 +1130,7 @@ const DEFAULT_RECEIPT_CONFIG = {
   footer_terms: '',
   show_logo: true,
   logo_base64: '',
-  paper_width: 32,
+  paper_width: 48,
 };
 
 async function getReceiptSettings(req, res) {
@@ -1170,7 +1170,7 @@ async function saveReceiptSettings(req, res, payload) {
       footer_terms: String(data.footer_terms || '').trim(),
       show_logo: data.show_logo !== false,
       logo_base64: String(data.logo_base64 || '').trim(),
-      paper_width: Number(data.paper_width) === 48 ? 48 : 32,
+      paper_width: Number(data.paper_width) === 32 ? 32 : 48,
     };
 
     const jsonString = JSON.stringify(sanitized);
