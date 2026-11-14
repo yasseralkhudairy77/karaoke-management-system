@@ -2,23 +2,19 @@ import { formatReceipt58mm } from "./receipt.js?v=stock-handover-slip-v1";
 
 const THERMAL_METRICS_80MM = {
   pageWidthMm: 80,
-  printableWidthMm: 72,
+  printableWidthMm: 76,
   canvasWidthPx: 576,
-  canvasPaddingPx: 16,
-  logoWidthPx: 320,
-  fontSizePx: 17,
-  lineHeightPx: 24,
+  canvasPaddingPx: 6,
+  logoWidthPx: 380,
   paperWidth: 48,
 };
 
 const THERMAL_METRICS_58MM = {
   pageWidthMm: 58,
-  printableWidthMm: 48,
+  printableWidthMm: 52,
   canvasWidthPx: 384,
-  canvasPaddingPx: 12,
-  logoWidthPx: 220,
-  fontSizePx: 16,
-  lineHeightPx: 22,
+  canvasPaddingPx: 6,
+  logoWidthPx: 250,
   paperWidth: 32,
 };
 
@@ -175,17 +171,31 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
   const logo = logoSource ? await loadImageSource(logoSource) : null;
   const businessName = (business.name || "HAPPY SONG KARAOKE").toUpperCase();
   const receiptLines = String(receiptText).split("\n");
+
+  // Ukuran font dan line-height optimal agar teks memenuhi lebar kertas
+  const fontStack = "Consolas, 'Segoe UI Mono', 'Cascadia Mono', 'Liberation Mono', 'Courier New', monospace";
+  const targetTextWidth = metrics.canvasWidthPx - (metrics.canvasPaddingPx * 2);
+
+  // Ukur character width secara presisi pada kanvas dummy
+  const measureCanvas = document.createElement("canvas");
+  const measureContext = measureCanvas.getContext("2d");
+  measureContext.font = `600 20px ${fontStack}`;
+  const baseDashWidth = measureContext.measureText("-").width || 11;
+  const targetCharWidth = targetTextWidth / metrics.paperWidth;
+  const calculatedFontSize = Math.floor((20 * (targetCharWidth / baseDashWidth)) * 10) / 10;
+  const lineHeightPx = Math.round(calculatedFontSize * 1.36);
+
   const logoHeight = logo
     ? Math.round((logo.height / logo.width) * metrics.logoWidthPx)
     : 0;
-  const brandTextHeight = metrics.lineHeightPx + 8;
-  const textHeight = receiptLines.length * metrics.lineHeightPx;
+  const brandTextHeight = 34;
+  const textHeight = receiptLines.length * lineHeightPx;
   const canvasHeight = Math.ceil(
     metrics.canvasPaddingPx +
     logoHeight +
-    (logo ? 10 : 0) +
+    (logo ? 14 : 0) +
     brandTextHeight +
-    8 +
+    10 +
     textHeight +
     24
   );
@@ -213,31 +223,29 @@ async function renderThermalReceiptCanvas(receiptText, options = {}) {
   if (logo) {
     const logoX = Math.round((metrics.canvasWidthPx - metrics.logoWidthPx) / 2);
     context.drawImage(logo, logoX, y, metrics.logoWidthPx, logoHeight);
-    y += logoHeight + 10;
+    y += logoHeight + 14;
   }
 
-  // Tipografi modern sans-serif monospace: Consolas / Segoe UI Mono
-  const fontStack = "Consolas, 'Segoe UI Mono', 'Cascadia Mono', 'Liberation Mono', 'Courier New', monospace";
-
+  // Nama Bisnis tebal dan proporsional
   context.fillStyle = "#000000";
-  context.font = `700 18px ${fontStack}`;
+  context.font = `700 24px ${fontStack}`;
   context.textAlign = "center";
   context.textBaseline = "top";
   context.fillText(businessName, Math.round(metrics.canvasWidthPx / 2), y);
-  y += brandTextHeight + 8;
+  y += brandTextHeight + 10;
 
-  context.font = `600 ${metrics.fontSizePx}px ${fontStack}`;
+  // Teks baris struk: konsisten mengisi lebar penuh kanvas dengan padding minimal
+  context.font = `600 ${calculatedFontSize}px ${fontStack}`;
   context.textAlign = "left";
   context.textBaseline = "top";
 
-  // Hitung offset horizontal agar blok teks monospace 48 karakter terpusat rapi di kanvas
-  const sampleCharWidth = context.measureText("-").width;
-  const blockWidth = metrics.paperWidth * sampleCharWidth;
-  const textStartX = Math.max(metrics.canvasPaddingPx, Math.round((metrics.canvasWidthPx - blockWidth) / 2));
+  const actualCharWidth = context.measureText("-").width;
+  const actualBlockWidth = metrics.paperWidth * actualCharWidth;
+  const textStartX = Math.max(metrics.canvasPaddingPx, Math.round((metrics.canvasWidthPx - actualBlockWidth) / 2));
 
   receiptLines.forEach((line) => {
     context.fillText(line, textStartX, y);
-    y += metrics.lineHeightPx;
+    y += lineHeightPx;
   });
 
   return canvas;
